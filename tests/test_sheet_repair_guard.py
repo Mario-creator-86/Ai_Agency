@@ -41,12 +41,22 @@ def unresolved(engine, dispatched: dict, *, minutes_ago: float = 0) -> None:
     with Session(engine) as session, session.begin():
         task_row = session.get(TaskQueueItem, dispatched["task_id"])
         task_row.status = "COMPLETED"
-        if minutes_ago:
-            when = datetime.now(UTC) - timedelta(minutes=minutes_ago)
-            task_row.created_at = when.isoformat()
         report = session.get(AgentMessage, dispatched["message_id"])
+        body = dict(report.body_json)
+        if minutes_ago:
+            now = datetime.now(UTC)
+            when = now - timedelta(minutes=minutes_ago)
+            task_row.created_at = when.isoformat()
+            # The dispatch key carries the day the attempt was made: a task moved back across
+            # midnight (UTC) keeps its own day, and stays unique, as one really made then would.
+            # Without this the tests failed every morning before 10:00 UTC (attempt 1's key
+            # came back and the old, finished task was answered instead of a new attempt).
+            today = f"-{now.date().isoformat()}-"
+            then = f"-{when.date().isoformat()}-{task_row.id[:8]}-"
+            task_row.idempotency_key = str(task_row.idempotency_key).replace(today, then)
+            body["dispatch_key"] = str(body.get("dispatch_key", "")).replace(today, then)
         report.body_json = {
-            **report.body_json,
+            **body,
             "repair_result": {"status": "UNRESOLVED", "reason": "Instrumentul a eșuat."},
         }
 

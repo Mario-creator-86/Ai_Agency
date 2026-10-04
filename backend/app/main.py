@@ -4,7 +4,7 @@ import re
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
-from datetime import UTC
+from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated
@@ -261,6 +261,9 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        # The moment this process started: a film lease taken before it, and never renewed,
+        # was left by an earlier process (`reclaim_abandoned_leases`, below).
+        process_started = datetime.now(UTC)
         # Migrations/bootstrap are explicit startup commands, never hidden destructive schema edits.
         with engine.connect() as connection:
             revision = database_revision(connection)
@@ -402,6 +405,22 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
                     },
                 )
         if settings.worker_enabled and (lock_path is None or worker_lock is not None):
+            # The one process that runs the worker takes back the film purchase leases that
+            # earlier processes left (2026-10-03: a redo whose process had been stopped held
+            # the Owner's film «în lucru» for hours). A lease another live process renews is
+            # never touched; each one taken back is a letter to the Owner.
+            try:
+                from app.media.shooting_sheet import reclaim_abandoned_leases  # noqa: PLC0415
+
+                await asyncio.to_thread(
+                    reclaim_abandoned_leases,
+                    engine,
+                    correlation_id=str(uuid4()),
+                    started_at=process_started,
+                    timezone=settings.timezone,
+                )
+            except Exception as exc:  # noqa: BLE001 - logged; the studio still starts
+                logger.warning("film_lease_reclaim_failed", extra={"error": type(exc).__name__})
             # The day is on the studio's wall clock — STUDIO_DAILY_RUN_HOUR_LOCAL in
             # STUDIO_TIMEZONE — not on the moment the process started; the hour follows the
             # setting on every start-up.

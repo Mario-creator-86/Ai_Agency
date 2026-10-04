@@ -259,6 +259,7 @@ class Recorder:
         *,
         timeout: float = 120,
         expect_json: bool = True,
+        total_seconds: float | None = None,
     ) -> Any:
         self.calls.append((host, method, path))
         if not self.responses:

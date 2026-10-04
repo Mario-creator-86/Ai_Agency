@@ -9,6 +9,7 @@ publishing gate would then reason about as if a provider had made it.
 
 from __future__ import annotations
 
+import contextlib
 import http.client
 import ipaddress
 import json
@@ -16,6 +17,7 @@ import re
 import socket
 import ssl
 import struct
+import time
 from collections.abc import Callable
 from typing import Any
 from urllib.parse import urlsplit
@@ -142,6 +144,7 @@ def request(
     timeout: float = 120,
     expect_json: bool = True,
     public_only: bool = False,
+    total_seconds: float | None = None,
 ) -> tuple[Any, bytes, str]:
     """Make one HTTPS request and return (parsed json | None, raw body, content type).
 
@@ -150,7 +153,17 @@ def request(
     ``public_only`` is for a host the vendor's answer named rather than the code (an output
     URL): the name must resolve to public addresses only, and the socket is pinned to the
     one checked.
+
+    ``timeout`` bounds each socket operation, never the whole answer: a server that keeps
+    sending a byte now and then holds the caller for as long as it likes. ``total_seconds``
+    is the whole request's end (2026-10-03: a still redo of the Owner's waited past fifteen
+    minutes with nothing recorded): the body is read in pieces and, once it has passed, the
+    request raises as unanswered - the vendor may have served it, so a purchase is never
+    sent again on this.
     """
+    deadline = time.monotonic() + float(total_seconds) if total_seconds else None
+    if deadline is not None:
+        timeout = max(0.1, min(float(timeout), float(total_seconds or timeout)))
     if public_only:
         connection: http.client.HTTPSConnection = PinnedHTTPSConnection(
             host, public_address(host), timeout=timeout
@@ -165,12 +178,29 @@ def request(
             connection.request(method, path, body, headers)
         except (OSError, http.client.HTTPException) as exc:
             raise MediaProviderError(f"{host} could not be reached", unsent=True) from exc
+        # The overall end is enforced on the socket itself: a read blocks until it has the
+        # bytes it asked for, and a vendor that sends one byte inside every socket timeout
+        # (in its headers or its body) would hold a check made between reads for ever. At
+        # the deadline the guard shuts the socket down and the answer counts as unanswered.
+        guard = _DeadlineGuard(connection, deadline) if deadline is not None else None
         try:
             response = connection.getresponse()
             limit = MAX_JSON_BYTES if expect_json else MAX_MEDIA_BYTES
-            payload = response.read(limit + 1)
+            payload = (
+                response.read(limit + 1)
+                if deadline is None
+                else _read_until(connection, response, limit + 1, deadline, host, total_seconds)
+            )
         except (OSError, http.client.HTTPException) as exc:
+            if guard is not None and guard.fired:
+                raise _past_deadline(host, total_seconds) from exc
             raise MediaProviderError(f"{host} did not answer", unanswered=True) from exc
+        finally:
+            if guard is not None:
+                guard.cancel()
+        if guard is not None and guard.fired:
+            # A body cut by the guard may look complete; it is never taken for the answer.
+            raise _past_deadline(host, total_seconds)
         if len(payload) > limit:
             raise MediaProviderError(f"{host} returned more data than the adapter accepts")
         if response.status != 200:
@@ -200,6 +230,72 @@ def request(
             raise MediaProviderError(f"{host} returned a malformed response") from exc
     finally:
         connection.close()
+
+
+#: The piece a bounded answer is read in: small enough that its deadline is checked often.
+_READ_CHUNK = 64 * 1024
+
+
+def _read_until(
+    connection: http.client.HTTPSConnection,
+    response: Any,
+    limit: int,
+    deadline: float,
+    host: str,
+    total_seconds: float | None,
+) -> bytes:
+    """The body, read in pieces until it ends, ``limit`` bytes are in, or ``deadline`` passes
+    (raised as unanswered: the vendor may have served the request)."""
+    parts: list[bytes] = []
+    size = 0
+    while size < limit:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise _past_deadline(host, total_seconds)
+        sock = getattr(connection, "sock", None)
+        if sock is not None:
+            # Each wait for the next piece ends with the request's own end at the latest.
+            sock.settimeout(max(0.1, min(remaining, sock.gettimeout() or remaining)))
+        piece = response.read(min(_READ_CHUNK, limit - size))
+        if not piece:
+            break
+        parts.append(piece)
+        size += len(piece)
+    return b"".join(parts)
+
+
+def _past_deadline(host: str, total_seconds: float | None) -> MediaProviderError:
+    """The error of an answer that did not end by the request's overall deadline: unanswered,
+    because the vendor may have served (and billed) the request."""
+    return MediaProviderError(
+        f"{host} did not finish its answer within {float(total_seconds or 0):.0f} s",
+        unanswered=True,
+    )
+
+
+class _DeadlineGuard:
+    """Shuts a request's socket down when its overall deadline passes, whatever read is
+    blocked on it then (a status line, a header, a body piece)."""
+
+    def __init__(self, connection: Any, deadline: float) -> None:
+        import threading  # noqa: PLC0415
+
+        self._connection = connection
+        self.fired = False
+        self._timer = threading.Timer(max(0.0, deadline - time.monotonic()), self._fire)
+        self._timer.daemon = True
+        self._timer.start()
+
+    def _fire(self) -> None:
+        self.fired = True
+        sock = getattr(self._connection, "sock", None)
+        if sock is None:
+            return
+        with contextlib.suppress(OSError):
+            sock.shutdown(socket.SHUT_RDWR)
+
+    def cancel(self) -> None:
+        self._timer.cancel()
 
 
 def possibly_served(status: int) -> bool:

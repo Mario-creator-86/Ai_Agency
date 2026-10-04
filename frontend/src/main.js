@@ -48,7 +48,7 @@ import {
 } from './owner_controls.js';
 import {
   ASSEMBLE_STEP, SHEET_TITLE, approveAssemble, approveRedo, approveStep, buyingNotice, redoKey, requestRender, sceneModelPath, sheetHtml,
-  sheetKeyFor, sheetPath, takeDecisionPath, withdrawnWords,
+  sheetKeyFor, sheetPath, sheetStatusText, takeDecisionPath, withdrawnWords,
 } from './shooting_sheet.js';
 import { bannersKey, pageBanners } from './build_banner.js';
 import { apiErrorMessage, fetchFailure } from './api_errors.js';
@@ -3387,11 +3387,20 @@ const sheetDrawer = {
   /** @type {string|null} */ confirm: null,
   notice: '',
   noticeError: false,
+  /** The refusal's code (FILM_BUSY …) behind a failed notice, or null. @type {string|null} */
+  noticeCode: null,
   /** PAGE-06: a purchase of the film on screen is in flight (sheetBusy, kept per storyboard). */
   get busy() { return Boolean(this.id && sheetBusy.has(this.id)); },
   /** What the assembly answered last (its QC and the letter), for this storyboard. @type {any} */ assembled: null,
   /** Whether «Schimbă regula» is open, kept across repaints. */
   ruleOpen: false,
+  /** TAKE_CHOICE_SEEN: the take button pressed, while the studio answers. @type {{take: string, decision: string}|null} */
+  pressed: null,
+  /**
+   * TAKE_CHOICE_SEEN: the answer to his last look at a take, shown in the scene he pressed.
+   * @type {{scene: number, take: string, decision: string, failed: boolean, network?: boolean, message: string}|null}
+   */
+  choice: null,
 };
 /**
  * PAGE-06: the presses still running, by storyboard, with what they buy in words. Kept apart
@@ -3416,9 +3425,9 @@ function sheetDialog() {
   dialog.id = 'shooting-sheet-drawer';
   dialog.className = 'studio-dialog sheet-drawer';
   dialog.setAttribute('aria-label', SHEET_TITLE);
-  dialog.innerHTML = '<div class="dialog-header"><div><p class="eyebrow dialog-eyebrow">PRODUCȚIE · ÎNAINTE DE ORICE CREDIT</p>'
+  dialog.innerHTML = '<div class="dialog-header"><div>'
     + `<h2 class="dialog-title">${escapeHtml(SHEET_TITLE)}</h2>`
-    + '<p class="dialog-desc">Tot ce cumpără filmul, înainte de primul credit: fiecare imagine, fiecare prompt, modelul fiecărei scene, secundele, creditele, soldul și plafonul.</p></div>'
+    + '<p class="dialog-desc">Urmărește scenele și pornește următorul pas. Verifică prețul înainte de orice cumpărare.</p></div>'
     + '<button type="button" class="dialog-close" data-sheet-action="close" aria-label="Închide">'
     + '<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.4 6.4l11.2 11.2M17.6 6.4L6.4 17.6"/></svg></button></div>'
     // PAGE-19: one status line for the whole drawer, outside the body a repaint replaces, so
@@ -3489,13 +3498,18 @@ function restoreFocus(body, key) {
   else /** @type {HTMLElement|null} */ (sheetDialog().querySelector('[data-sheet-action="close"]'))?.focus({ preventScroll: true });
 }
 
-/** The drawer's one status line. @param {string} text @param {boolean} error */
-function sheetStatus(text, error) {
+/**
+ * The drawer's one status line. SHEET_BUSY_ONCE: a press refused because the film is at work is
+ * answered with a pointer to the bar that already says so (sheetStatusText), not the same sentence.
+ */
+function sheetStatus() {
   const line = /** @type {HTMLElement|null} */ (sheetDialog().querySelector('[data-sheet-status]'));
   if (!line) return;
+  const { text, tone } = sheetStatusText(sheetDrawer.notice, sheetDrawer.noticeCode, sheetDrawer.noticeError, sheetDrawer.sheet);
   if (line.textContent !== text) line.textContent = text;
   line.hidden = !text;
-  line.classList.toggle('sheet-blocked', Boolean(text && error));
+  line.classList.toggle('sheet-blocked', Boolean(text && tone === 'error'));
+  line.classList.toggle('sheet-waiting', Boolean(text && tone === 'waiting'));
 }
 
 function paintSheet() {
@@ -3504,7 +3518,7 @@ function paintSheet() {
   const focused = focusKey(document.activeElement, body);
   // the repaint removes every clip the body held: their object URLs go with them (PAGE-17)
   sheetClips.revokeAll();
-  sheetStatus(sheetDrawer.notice, sheetDrawer.noticeError);
+  sheetStatus();
   if (!sheetDrawer.sheet) {
     body.innerHTML = sheetDrawer.noticeError ? '' : '<p class="topics-loading">Se citește foaia de filmare (0 credite)…</p>';
     return;
@@ -3519,6 +3533,8 @@ function paintSheet() {
     policy: state?.policy || null,
     assembled: sheetDrawer.assembled,
     ruleOpen: sheetDrawer.ruleOpen,
+    pressed: sheetDrawer.pressed,
+    choice: sheetDrawer.choice,
   });
   body.querySelectorAll('img[data-sheet-src]').forEach((node) => {
     const img = /** @type {HTMLImageElement} */ (node);
@@ -3535,8 +3551,7 @@ async function loadSheet() {
     sheetDrawer.sheet = await api(sheetPath(sheetDrawer.id), { timeoutMs: 60000 });
   } catch (error) {
     sheetDrawer.sheet = null;
-    sheetDrawer.notice = `Foaia de filmare nu a putut fi citită: ${error.message}`;
-    sheetDrawer.noticeError = true;
+    sheetNotice(`Foaia de filmare nu a putut fi citită: ${error.message}`, true);
   }
   paintSheet();
 }
@@ -3550,16 +3565,17 @@ async function openShootingSheet(storyboardId, message = '') {
   if (sheetDrawer.id !== storyboardId) Object.assign(sheetDrawer, { sheet: null, assembled: null });
   // A purchase still in flight for this film keeps its notice and its disabled buttons.
   const buying = sheetBusy.get(storyboardId);
-  Object.assign(sheetDrawer, { id: storyboardId, confirm: null, notice: buying || message, noticeError: false });
+  Object.assign(sheetDrawer, { id: storyboardId, confirm: null, notice: buying || message, noticeError: false, noticeCode: null, choice: null });
   if (!dialog.open) dialog.showModal();
   paintSheet();
   await loadSheet();
 }
 
-/** @param {string} text @param {boolean} [failed] */
-function sheetNotice(text, failed = false) {
+/** @param {string} text @param {boolean} [failed] @param {string|null} [code] the refusal's code */
+function sheetNotice(text, failed = false, code = null) {
   sheetDrawer.notice = text;
   sheetDrawer.noticeError = failed;
+  sheetDrawer.noticeCode = failed ? code : null;
 }
 
 /** @param {HTMLElement} node */
@@ -3599,6 +3615,14 @@ function sheetRefusal(result, fallback) {
   return [...new Set(lines)].join(' ');
 }
 
+/**
+ * A refusal as an error that keeps the backend's code (FILM_BUSY …) for the status line.
+ * @param {{message?: string, scenes?: string[], code?: string|null}} result @param {string} fallback
+ */
+function refusalError(result, fallback) {
+  return Object.assign(new Error(sheetRefusal(result, fallback)), { code: result.code || null });
+}
+
 /** «(1 întrebare veche retrasă …)» after a notice, when the press withdrew older questions. @param {{withdrawn?: string[]}} result */
 function withdrawnNote(result) {
   const n = Array.isArray(result.withdrawn) ? result.withdrawn.length : 0;
@@ -3636,7 +3660,7 @@ function sheetCommand(node, id) {
     if (step === ASSEMBLE_STEP) {
       return async () => {
         const result = await approveAssemble(api, { storyboardId: id, planHash, note, allowOverBudget: over, commandId: crypto.randomUUID(), purchaseId: crypto.randomUUID() });
-        if (result.status !== 'ASSEMBLED') throw new Error(sheetRefusal(result, 'Filmul nu a fost asamblat.'));
+        if (result.status !== 'ASSEMBLED') throw refusalError(result, 'Filmul nu a fost asamblat.');
         sheetDrawer.assembled = result.result;
         const verdict = result.result?.qc?.status === 'PASSED' ? 'a trecut controlul calității' : 'nu a trecut controlul calității: motivele și scrisoarea sunt mai jos';
         return `Filmul a fost asamblat din cadrele acceptate și ${verdict}.${withdrawnNote(result)}`;
@@ -3644,7 +3668,7 @@ function sheetCommand(node, id) {
     }
     return async () => {
       const result = await approveStep(api, { storyboardId: id, step, planHash, note, allowOverBudget: over, commandId: crypto.randomUUID(), purchaseId: crypto.randomUUID() });
-      if (result.status !== 'BOUGHT') throw new Error(sheetRefusal(result, 'Pasul nu a cumpărat nimic.'));
+      if (result.status !== 'BOUGHT') throw refusalError(result, 'Pasul nu a cumpărat nimic.');
       return `Pasul a fost cumpărat cu aprobarea ta, pentru foaia pe care ai văzut-o. Foaia de mai jos arată ce s-a cumpărat.${withdrawnNote(result)}`;
     };
   }
@@ -3664,7 +3688,7 @@ function sheetCommand(node, id) {
         commandId: crypto.randomUUID(),
         purchaseId: crypto.randomUUID(),
       });
-      if (result.status !== 'DONE') throw new Error(sheetRefusal(result, 'Nimic nu a fost refăcut.'));
+      if (result.status !== 'DONE') throw refusalError(result, 'Nimic nu a fost refăcut.');
       // a redone film is a new film: the QC shown was the old one's
       sheetDrawer.assembled = null;
       return `${redoDoneWords(kind, scene)}${withdrawnNote(result)}`;
@@ -3673,10 +3697,16 @@ function sheetCommand(node, id) {
   if (action === 'take') {
     const decision = node.dataset.decision === 'APPROVED' ? 'APPROVED' : 'REJECTED';
     return async () => {
-      await api(takeDecisionPath(node.dataset.take || ''), { method: 'POST', body: JSON.stringify({ decision, note: null }) });
+      // the decision builds the sheet before it answers (to name the next step): it is given as
+      // long as the sheet's own read, so a slow answer is not taken for a refused choice
+      const result = await api(takeDecisionPath(node.dataset.take || ''), { method: 'POST', body: JSON.stringify({ decision, note: null }), timeoutMs: 60000 });
+      // TAKE_CHOICE_SEEN (2026-10-04): the server says what his choice set going (the film's
+      // continuation and what it buys under his rule); the page never guesses what was bought.
+      const said = result?.outcome?.message_ro;
+      if (said) return String(said);
       return decision === 'APPROVED'
-        ? 'Aprobat. Foaia are o amprentă nouă: o aprobare veche nu mai cumpără nimic. Nimic nu s-a cumpărat.'
-        : 'Respins: nu se mai folosește în film. Nimic nu s-a cumpărat.';
+        ? 'Aprobat. Foaia are o amprentă nouă: o aprobare dată altei foi nu cumpără nimic pe aceasta; ce cumpără filmul mai departe urmează regula ta pentru pașii plătiți.'
+        : 'Respins: nu se mai folosește în film.';
     };
   }
   if (action === 'model') {
@@ -3685,7 +3715,7 @@ function sheetCommand(node, id) {
     const named = model === 'LOCAL_MOVE' ? 'imagine fixă animată local' : model || 'alegerea studioului';
     return async () => {
       await api(sceneModelPath(id, scene), { method: 'PUT', body: JSON.stringify({ model_id: model || null, note: null }) });
-      return `Scena ${scene}: ${named}. Foaia are o amprentă nouă; o aprobare veche nu mai cumpără nimic.`;
+      return `Scena ${scene}: ${named}. Foaia are o amprentă nouă; o aprobare dată altei foi nu cumpără nimic pe aceasta.`;
     };
   }
   return null;
@@ -3705,6 +3735,13 @@ async function onSheetClick(event) {
   if (action === 'cancel-step') { sheetDrawer.confirm = null; paintSheet(); return; }
   if (action === 'to-steps') {
     sheetDialog().querySelector('#sheet-steps')?.scrollIntoView({ behavior: reducedMotion() ? 'auto' : 'smooth', block: 'start' });
+    return;
+  }
+  if (action === 'to-scene') {
+    const index = Number(node.dataset.scene);
+    const scene = Array.from(sheetDialog().querySelectorAll('[data-scene-index]')).find((card) => Number(/** @type {HTMLElement} */ (card).dataset.sceneIndex) === index);
+    scene?.scrollIntoView({ behavior: reducedMotion() ? 'auto' : 'smooth', block: 'start' });
+    /** @type {HTMLElement|null} */ (scene?.querySelector('.sheet-scene-line'))?.focus({ preventScroll: true });
     return;
   }
   if (action === 'play') { await playSheetClip(node); return; }
@@ -3732,27 +3769,62 @@ async function onSheetClick(event) {
   if (!run) return;
   // PAGE-06: say what is being bought and that a second press is not needed; the purchase is
   // kept busy for this film until the server answers, whatever the drawer shows meanwhile.
-  const buying = action === 'confirm-step'
-    ? buyingNotice(node.dataset.step || '')
-    : action === 'confirm-redo' ? buyingNotice(redoKey(node.dataset.kind || '', node.dataset.scene || null)) : 'Se trimite…';
+  // TAKE_CHOICE_SEEN: a look at a take is answered where he clicked: the pressed button says it
+  // is working, and the answer goes to that scene's card (and to the status line, as always).
+  const card = /** @type {HTMLElement|null} */ (node.closest('[data-scene-index]'));
+  const choiceScene = action === 'take' && card ? Number(card.dataset.sceneIndex) : null;
+  const take = { take: node.dataset.take || '', decision: node.dataset.decision === 'APPROVED' ? 'APPROVED' : 'REJECTED' };
+  sheetDrawer.choice = null;
+  sheetDrawer.pressed = action === 'take' ? take : null;
+  let buying = 'Se trimite…';
+  if (action === 'confirm-step') buying = buyingNotice(node.dataset.step || '');
+  else if (action === 'confirm-redo') buying = buyingNotice(redoKey(node.dataset.kind || '', node.dataset.scene || null));
+  else if (choiceScene !== null) buying = `Se trimite alegerea ta pentru scena ${choiceScene}…`;
   sheetBusy.set(id, buying);
   sheetNotice(buying);
   paintSheet();
   let said = '';
   let failed = false;
+  // no answer arrived (fetchFailure): the server may have done it; the card never says it failed
+  let network = false;
+  /** @type {string|null} */
+  let code = null;
   try {
     said = await run();
     if (sheetDrawer.id === id) sheetDrawer.confirm = null;
   } catch (error) {
     said = error.message;
     failed = true;
+    network = Boolean(error?.network);
+    code = typeof error?.code === 'string' ? error.code : null;
   } finally {
     sheetBusy.delete(id);
+    sheetDrawer.pressed = null;
     // the answer belongs to its film: shown only while that film's sheet is the one open
     if (sheetDrawer.id === id) {
-      sheetNotice(said, failed);
+      sheetNotice(said, failed, code);
+      if (choiceScene !== null) sheetDrawer.choice = { scene: choiceScene, ...take, failed, network, message: said };
       await loadSheet();
+      if (choiceScene !== null && sheetDrawer.id === id) keepSceneInView(choiceScene);
     }
+  }
+}
+
+/**
+ * TAKE_CHOICE_SEEN: after the answer's repaint, the scene he pressed stays in view (its chosen
+ * picture and the note of what his choice did), and the note takes the keyboard focus the pressed
+ * button had (that button is gone: the chosen picture is the scene's still now).
+ * @param {number} scene
+ */
+function keepSceneInView(scene) {
+  const card = sheetDialog().querySelector(`[data-scene-index="${CSS.escape(String(scene))}"]`);
+  if (!card) return;
+  card.querySelector('[data-sheet-choice]')?.scrollIntoView({ behavior: 'auto', block: 'nearest' });
+  const note = /** @type {HTMLElement|null} */ (card.querySelector('.sheet-choice-note'));
+  (note || card).scrollIntoView({ behavior: 'auto', block: 'nearest' });
+  if (note) {
+    note.tabIndex = -1;
+    note.focus({ preventScroll: true });
   }
 }
 

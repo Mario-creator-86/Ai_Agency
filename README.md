@@ -50,7 +50,23 @@ and migrates the database (`data/studio.db`, backed up before any later migratio
 employees, channels and books, builds the page, prints a preflight read from the studio itself,
 and serves http://127.0.0.1:8000. Paste `STUDIO_OWNER_TOKEN` from `.env` into the sign-in form.
 Ctrl+C stops it. Every step is idempotent: run the same command to restart or upgrade.
-Flags: `--skip-frontend`, `--skip-sync`, `--rebuild`.
+Flags: `--skip-frontend`, `--skip-sync`, `--rebuild`, `--no-graphics`.
+
+**The live headquarters start and stop with the studio** (Windows, when Unreal and Epic's
+Pixel Streaming infrastructure are installed: `AMN_PS_INFRA`, `AMN_PS_NODE`, `AMN_UE_ROOT` in the
+environment or `art-source/unreal/.env.paths`, and `STUDIO_OFFICE_STREAM_SIGNALLING_URL` in
+`.env`). Once the server answers, `start.py` starts the signalling server (wilbur) and Unreal
+with the arguments in `art-source/unreal/live/stream_command.json`, the same list
+`start_live_hq.ps1` reads; a stream already running is adopted, never doubled, and an Unreal
+editor on another project is never touched. While Path of Exile or League of Legends runs, or
+free memory (commit) is under 16 GB, the studio runs and the graphics wait, then start by
+themselves; a stream that dies is started again after a pause, at most three times an hour.
+**Ctrl+C** lets the server stop cleanly first (up to 30 s; a day stops at its boundary, never
+inside a purchase), then stops Unreal and wilbur and says what it stopped; pressing it again
+does not hurry the server. Closing the window, or ending `start.py`, also ends everything it
+started (a Windows Job Object), but the server then gets no clean stop: use Ctrl+C. Without the
+machine paths, in `--demo`, with `--no-graphics`, or in a service without a desktop (session 0),
+the graphics are skipped with one line saying why and the page draws its own building.
 
 **A new studio starts safe:** autonomy STOPPED, mode **MANUAL**, environment **TEST**, the daily
 job dormant, no vendor connected. Nothing runs, nothing is bought and nothing is published until
@@ -138,6 +154,8 @@ vault key is wrapped with DPAPI for your Windows account; `-RunWhenLoggedOff` (S
 able to unwrap it, so the supported unattended mode is an interactive logon with automatic
 sign-in. The studio then starts DEGRADED and the day is blocked with a letter rather than run on
 unreadable keys. The service does not activate the daily job and does not keep the PC awake.
+The default (interactive) task starts the live headquarters like `start.cmd`; an S4U task runs
+in session 0, without a desktop, and starts the studio without them.
 
 **Linux** — a systemd user unit, [scripts/amn-ai.service](scripts/amn-ai.service) (installation
 steps inside). On Linux the vault key is stored **unwrapped** with mode 0600 beside the database:

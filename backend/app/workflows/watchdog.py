@@ -27,7 +27,12 @@ day nobody is running any more (2026-10-02, REL-03): a day writes its row RUNNIN
 begins, so a process that died under it leaves that row behind; when the day's queue task no
 longer holds a live lease (or, for a day started without the queue, nothing moved for longer
 than a lease) the row becomes INTERRUPTED at the stage it was in, with one letter to the Owner.
-The day is not run again: what it bought stays bought. And it keeps publishing honest
+The day is not run again: what it bought stays bought. And it takes back a film's purchase
+lease whose holder is gone (2026-10-03): a holder renews its lease while it buys, so a lease
+that lapsed was left by a process that stopped under it; the film is freed, the budget hold
+it took is released, and the Owner gets one letter saying what his spent yes bought according
+to the balance readings and that nothing is bought again unless he presses again (a live
+purchase, which renews, is never touched). And it keeps publishing honest
 (2026-10-02, PUB-01/PUB-08): a publication left STARTED past `publish_stuck_after_seconds`
 (a process that died mid-upload) becomes REMOTE_UNKNOWN and is reconciled like any other; an
 uncertain publication YouTube never named is asked of the channel's own uploads by its exact
@@ -535,12 +540,17 @@ def _collect_paid_tasks(
     """Every SUBMITTED take asked about by its task id; a summary of what became of each.
     A collected output is written under the Owner's media root (STUDIO_MEDIA_ROOT)."""
     from app.media import assembler  # noqa: PLC0415
+    from app.media.shooting_sheet import held_films  # noqa: PLC0415
 
+    # A film whose buyer is at work (its purchase lease held, renewed by a live holder) polls
+    # its own tasks: collected here beside it, a task's candidates would land twice. Its
+    # tasks wait for the lease to be given back, or reclaimed above from a buyer that is gone.
     outcomes = assembler.collect_submitted_takes(
         engine,
         collector_for=collector_for,
         correlation_id=correlation_id,
         storage_root=storage_root,
+        exclude_storyboards=held_films(engine),
     )
     return {
         "checked": len(outcomes),
@@ -617,6 +627,7 @@ def run_watchdog(
             "leases": {"expired": 0, "task_ids": []},
             "reservations": {"released": [], "ttl_seconds": 0, "cutoff": None},
             "takes": {"checked": 0, "paid": 0, "refused": 0, "lost": 0, "waiting": 0},
+            "film_leases": {"reclaimed": [], "letters": []},
             "days": {"interrupted": []},
             "intermediates": {"status": "OFF", "files": [], "bytes": 0},
             "correlation_id": correlation,
@@ -655,6 +666,18 @@ def run_watchdog(
         correlation_id=correlation,
     )
 
+    # A film's purchase lease whose holder is gone: freed, its hold released, the Owner told.
+    # Before the collection below, so his letter says what was still at the vendor.
+    try:
+        from app.media.shooting_sheet import reclaim_abandoned_leases  # noqa: PLC0415
+
+        film_leases = reclaim_abandoned_leases(
+            engine, correlation_id=correlation, timezone=getattr(settings, "timezone", None)
+        )
+    except Exception as exc:  # noqa: BLE001 - one part's failure must not lose the others'
+        logger.error("watchdog_film_leases_failed", extra={"error": type(exc).__name__})
+        film_leases = {"reclaimed": [], "letters": [], "error": True}
+
     # The fifth: a task the vendor accepted, and may have billed, that nobody collected.
     try:
         takes = _collect_paid_tasks(
@@ -690,6 +713,7 @@ def run_watchdog(
         "leases": leases,
         "reservations": reservations,
         "takes": takes,
+        "film_leases": film_leases,
         "days": days,
         "intermediates": intermediates,
         "correlation_id": correlation,
@@ -704,6 +728,7 @@ def run_watchdog(
             "reservations_released": len(reservations["released"]),
             "takes_checked": takes["checked"],
             "takes_lost": takes["lost"],
+            "film_leases_reclaimed": len(film_leases["reclaimed"]),
             "days_interrupted": len(days["interrupted"]),
             "intermediates_swept": len(intermediates["files"]),
         },

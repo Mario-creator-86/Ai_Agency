@@ -1,5 +1,12 @@
 # Roadmap / TODO v3
 
+## Shooting-sheet clarity — 2026-10-04
+
+- [x] SHOOTING_SHEET_UI — overview with actual media state; production rows before wide scenes;
+  folded technical/history/budget details; held hero recovery at its real redo price; readable
+  desktop/tablet/phone layouts. 795 frontend tests, TypeScript, build and read-only browser review.
+  Provider generation and whole-backend acceptance remain outside this UI milestone.
+
 Implementation 2026-09-09: Phase 0 acceptance verified. See [VERIFICATION.md](VERIFICATION.md).
 
 > **Audit correction, 2026-09-09** — see [AUDIT_2026-09-09_EXTERNAL.md](AUDIT_2026-09-09_EXTERNAL.md)
@@ -53,6 +60,33 @@ cost comparison, and never at the price of a locked character's voice.
 > Order of work: close 4, then 5, then 6, before starting 7.
 Canonical phase numbering and original-version mapping: [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md).
 Early STOP/event primitives do not complete Phase 1/2/10 requirements.
+
+## start.py starts the graphics, a stop stops everything — 2026-10-04
+
+The Owner: «cand rulez python start.py, trebuie sa porneasca si grafica. La fel, cand opresc,
+totul trebuie sa se opreasca!» Done in `scripts/` and its own tests, every process faked; the
+real stream not yet started this way (see CURRENT_STATUS, START_WITH_GRAPHICS).
+
+- [x] START_WITH_GRAPHICS — start.py starts wilbur and Unreal once the server answers (one argument list in `stream_command.json`, shared with `start_live_hq.ps1`); adopts, never doubles; never his editor; waits for his games and 16 GB of commit; bounded restarts; Ctrl+C stops the server cleanly, then Unreal, then wilbur; a kill-on-close Job Object and a close handler leave nothing running
+
+Still open:
+- [ ] A verifier starts the real stream through start.py under the gates, then Ctrl+C, a closed window and a killed start.py, and confirms nothing is left (UnrealEditor.exe, node.exe of the stream)
+- [ ] Whether Unreal re-joins a restarted wilbur by itself (else restart both together)
+
+## A redo that hung — 2026-10-03
+
+The Owner: «am dat mai devreme să facă o imagine și a rămas blocat acolo». Done in code and its
+own tests, every provider faked (0 credits); proven on fakes only (see CURRENT_STATUS).
+
+- [x] REDO_HANG — an overall deadline on every Runway call, on a still purchase and on a paid narration request; the redo's accepted tasks SUBMITTED before any poll, IN_FLIGHT and collected free; the film lease renewed by its holder and reclaimed when it lapses (watchdog, next press, worker start) with its hold released and the Owner's letter
+
+- [x] SHEET_BUSY_ONCE (page) — the sheet's status line has its own grid row (no longer under the body and its sticky bar); the busy sentence is said once, in the bar; a FILM_BUSY press is answered in warning colours; a paid «Refă» (still, motion) cannot be pressed while the film's lease stands, so no yes is asked for a press that would be refused
+
+Still open:
+- [ ] Restart of his studio so it runs this code, and `npm run build --prefix frontend` (or start.py, which rebuilds the page) so the page shows the fix (the 17:36 lease was taken over at 20:45 UTC by the old code: no reclaim letter will come for it; its hold 57b2e59e is released by the watchdog's 6 h rule)
+- [ ] A reclaimed holder's hold is released, not booked: credits a vanished process committed never reach the ledger as spend
+- [ ] Character reference sets (`media.services`, `generate_image`) are bounded in time now but still keep no task id before the poll
+- [ ] A host name that never resolves (`getaddrinfo` has no timeout) and an LLM or ffmpeg call inside a leased step are bounded only by the lease's ceiling
 
 ## Next-round balance — 2026-10-03
 

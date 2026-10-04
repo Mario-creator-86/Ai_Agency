@@ -610,6 +610,29 @@ def paid_step_interrupted_letter(
     )
 
 
+def purchase_abandoned_letter(
+    engine: Engine,
+    *,
+    kind: str,
+    storyboard_id: str,
+    subject: str,
+    body: dict[str, Any],
+    body_text: str,
+    correlation_id: str,
+) -> str:
+    """A film purchase whose process stopped under it (`shooting_sheet._settle_abandoned`):
+    what his spent yes bought according to the balance readings, what is collected free, and
+    that nothing is bought again unless he presses again. Worded by the sheet; one each time."""
+    return _letter_each_time(
+        engine,
+        kind,
+        subject=subject,
+        body={**body, "storyboard_id": storyboard_id},
+        body_text=body_text,
+        correlation=correlation_id,
+    )
+
+
 def _local_moment(iso: str, timezone: str) -> str:
     """An ISO instant as the Owner reads a clock, or unchanged when it cannot be parsed.
 

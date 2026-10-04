@@ -5842,25 +5842,41 @@ details[open].pf-ok .pf-ok-line .pf-message { white-space: normal; overflow: vis
 /* ------------------------------------------------- Foaia de filmare (SHEET_DRAWER, 2026-10-01) */
 /* The drawer in front of every purchase of a film: scenes as a contact sheet, the footer the backend
    priced, and one approval button per paid step. Built by shooting_sheet.js, opened by main.js. */
-.sheet-drawer { width: min(1180px, 96vw); }
+.sheet-drawer { width: min(1280px, 96vw); --fs-body: .9375rem; --fs-meta: .875rem; --fs-micro: .8125rem; --fs-h3: 1.125rem; }
 .sheet-body { display: grid; gap: var(--s5); overflow-y: auto; }
 .sheet-head { display: grid; gap: var(--s2); }
 .sheet-eyebrow { margin: 0; text-transform: uppercase; letter-spacing: var(--track-caps); font-size: var(--fs-micro); color: var(--ink-3); }
-.sheet-title { margin: 0; font-size: var(--fs-h3); font-weight: var(--w-bold); color: var(--ink); }
+.sheet-title { margin: 0; font-size: var(--fs-h3); font-weight: var(--w-bold); color: var(--ink); max-width: 65ch; line-height: var(--lh-snug); }
 .sheet-rule, .sheet-meta, .sheet-lint-summary { margin: 0; font-size: var(--fs-meta); color: var(--ink-2); }
 .sheet-meta { font-family: var(--font-mono); }
 .sheet-flag { margin: 0; padding: var(--s2) var(--s3); border: 1px solid var(--warn-line); border-radius: var(--radius-sm); background: var(--warn-bg); color: var(--warn-ink); font-size: var(--fs-meta); }
 .sheet-notice { margin: 0; padding: var(--s2) var(--s3); border: 1px solid var(--ok-line); border-radius: var(--radius-sm); color: var(--ok-ink); font-size: var(--fs-meta); }
 .sheet-blocked, .sheet-notice.sheet-blocked { border-color: var(--alert-line); background: var(--alert-bg); color: var(--alert-ink); }
-.sheet-scenes { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: var(--s4); }
+.sheet-notice.sheet-waiting { border-color: var(--warn-line); background: var(--warn-bg); color: var(--warn-ink); }
+/* SHEET_BUSY_ONCE (2026-10-03): the drawer has three children (header, status line, body) and the
+   shell's grid named two rows, so the status line fell into the `minmax(0, 1fr)` row, which the
+   body's implicit `auto` row left at zero height: its text ran down under the body and the sticky
+   summary bar painted over it. Each child now has its own row; a hidden status line leaves an
+   empty `auto` row and the body keeps the scrolling one. */
+.studio-dialog.sheet-drawer[open] { grid-template-rows: auto auto minmax(0, 1fr); }
+.sheet-drawer > .dialog-header { grid-row: 1; }
+.sheet-drawer > .sheet-status { grid-row: 2; margin: var(--s4) var(--s7) 0; max-height: 40vh; overflow-y: auto; overflow-wrap: anywhere; line-height: var(--lh-snug); }
+.sheet-drawer > .sheet-body { grid-row: 3; }
+@media (max-width: 600px) {
+  /* the body's phone gutter (16 px) */
+  .sheet-drawer > .sheet-status { margin: var(--s3) var(--s4) 0; }
+}
+.sheet-scenes { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s4); }
 .sheet-scene { display: grid; align-content: start; gap: var(--s2); padding: var(--s4); border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); min-width: 0; }
+.sheet-body .sheet-scene { max-width: none; }
 .sheet-scene[data-kind="DATA_CARD"], .sheet-scene[data-kind="TITLE_CARD"], .sheet-scene[data-kind="BLACK"] { background: var(--surface-quiet); }
 .sheet-scene-line { margin: 0; font-size: var(--fs-body); font-weight: var(--w-semi); color: var(--ink); font-variant-numeric: tabular-nums; }
-.sheet-narration { margin: 0; font-size: var(--fs-meta); color: var(--ink-2); font-style: italic; }
+.sheet-narration { margin: 0; padding: var(--s3) 0 var(--s3) var(--s3); border-left: 2px solid var(--line-strong); font-size: var(--fs-meta); color: var(--ink-2); line-height: 1.6; max-width: 65ch; }
+.sheet-narration span { display: block; margin-bottom: var(--s1); font-style: normal; font-size: var(--fs-micro); color: var(--ink-3); }
 .sheet-still-box { margin: 0; display: grid; gap: var(--s1); }
 .sheet-still { width: 100%; aspect-ratio: 9 / 16; object-fit: cover; border-radius: var(--radius-sm); border: 1px solid var(--line-strong); background: var(--surface-sunk); }
 .sheet-still-box figcaption, .sheet-still-price, .sheet-why, .sheet-sub { margin: 0; font-size: var(--fs-micro); color: var(--ink-3); }
-.sheet-sub { text-transform: uppercase; letter-spacing: var(--track-caps); }
+.sheet-sub { font-weight: var(--w-semi); color: var(--ink-2); }
 .sheet-still-missing, .sheet-problem { margin: 0; font-size: var(--fs-meta); color: var(--warn-ink); }
 .sheet-models, .sheet-take-actions { display: flex; flex-wrap: wrap; gap: var(--s1); }
 .sheet-model, .sheet-take-btn, .sheet-redo, .sheet-play { min-height: var(--hit); font-size: var(--fs-micro); }
@@ -5879,20 +5895,39 @@ details[open].pf-ok .pf-ok-line .pf-message { white-space: normal; overflow: vis
 .sheet-thumb { width: 72px; aspect-ratio: 9 / 16; object-fit: cover; border-radius: var(--radius-sm); }
 .sheet-take-status[data-status="REJECTED"], .sheet-take-status[data-status="REFUSED"] { color: var(--alert-ink); font-weight: var(--w-semi); }
 .sheet-take-status[data-status="APPROVED"] { color: var(--ok-ink); font-weight: var(--w-semi); }
+/* TAKE_CHOICE_SEEN (2026-10-04): his choice is answered in the scene he pressed. The chosen
+   picture is marked; the one chosen just now is outlined, with a note of what the choice set going. */
+.sheet-chosen-mark { display: inline-block; margin-right: var(--s1); padding: 0 var(--s1); border: 1px solid var(--ok-line); border-radius: var(--radius-sm); background: var(--ok-bg); color: var(--ok-ink); font-weight: var(--w-semi); text-transform: none; letter-spacing: normal; }
+.sheet-chosen-now .sheet-still { border-color: var(--ok-ink); box-shadow: 0 0 0 2px var(--ok-line); }
+.sheet-choice-note { margin: 0; padding: var(--s2) var(--s3); border: 1px solid var(--ok-line); border-radius: var(--radius-sm); background: var(--ok-bg); color: var(--ok-ink); font-size: var(--fs-meta); line-height: var(--lh-snug); overflow-wrap: anywhere; }
+.sheet-choice-note.sheet-blocked { border-color: var(--alert-line); background: var(--alert-bg); color: var(--alert-ink); }
+.sheet-choice-note.sheet-waiting { border-color: var(--warn-line); background: var(--warn-bg); color: var(--warn-ink); }
+.sheet-choice-note:focus { outline: none; }
+.sheet-choice-note:focus-visible { outline: 2px solid var(--ok-ink); outline-offset: 2px; }
+.sheet-take-btn[aria-busy="true"] { cursor: progress; }
+/* The sheet's body is replaced on every repaint, so W28's content-visibility (a part laid out only
+   near the view, 320 px kept for it) never had a remembered height here: each press jumped the view
+   away from the scene he pressed, and the note scrolled into view slid out again. Laid out whole. */
+.studio-dialog .dialog-body.sheet-body:not(.dialog-body-railed) > * { content-visibility: visible; contain-intrinsic-size: none; }
+/* a vendor's refusals that cost nothing: one closed group under the bought candidates */
+.sheet-refused > summary, .sheet-vendor-text > summary { cursor: pointer; min-height: var(--hit); display: flex; align-items: center; font-size: var(--fs-micro); color: var(--ink-3); }
+.sheet-refused > .sheet-candidates { margin-top: var(--s1); }
+.sheet-vendor-text p { margin: var(--s1) 0 0; font-family: var(--font-mono); font-size: var(--fs-micro); line-height: 1.5; color: var(--ink-2); overflow-wrap: anywhere; }
 .sheet-video { width: 100%; aspect-ratio: 9 / 16; border-radius: var(--radius-sm); background: var(--surface-sunk); }
 .sheet-card-title { margin: 0; font-weight: var(--w-semi); color: var(--ink); }
 .sheet-card-bars { margin: 0; padding-left: var(--s4); font-size: var(--fs-meta); font-variant-numeric: tabular-nums; }
-.sheet-footer { display: grid; gap: var(--s3); padding-top: var(--s4); border-top: 1px solid var(--line-strong); }
+.sheet-footer { display: grid; gap: var(--s3); }
 .sheet-rows { margin: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: var(--s2) var(--s4); }
 .sheet-row { display: grid; gap: 2px; }
 .sheet-row dt { font-size: var(--fs-micro); text-transform: uppercase; letter-spacing: var(--track-caps); color: var(--ink-3); }
 .sheet-row dd { margin: 0; font-size: var(--fs-meta); color: var(--ink); font-variant-numeric: tabular-nums; }
 .sheet-row[data-key="total"] dd, .sheet-row[data-key="cap"] dd { font-weight: var(--w-bold); }
 .sheet-summary { margin: 0; font-size: var(--fs-meta); color: var(--ink-2); }
-.sheet-steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: var(--s3); }
-.sheet-step-box { display: grid; align-content: start; gap: var(--s2); padding: var(--s3); border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--surface-quiet); }
+.sheet-steps { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0; border: 1px solid var(--line-strong); border-radius: var(--radius); overflow: hidden; }
+.sheet-step-box { display: grid; grid-template-columns: minmax(210px, .9fr) minmax(0, 1.5fr) minmax(220px, 1fr); align-items: start; gap: var(--s4); padding: var(--s4); border-bottom: 1px solid var(--line); background: var(--surface); }
+.sheet-step-box:last-child { border-bottom: 0; }
 .sheet-step { min-height: var(--hit-lg, 44px); font-weight: var(--w-semi); }
-.sheet-step:disabled, .sheet-step[disabled] { opacity: .55; cursor: not-allowed; }
+.sheet-step:disabled, .sheet-step[disabled] { opacity: 1; cursor: not-allowed; background: var(--surface-quiet); border-color: var(--line-strong); color: var(--ink-3); box-shadow: none; }
 .sheet-step-price { font-size: var(--fs-meta); color: var(--ink-2); font-variant-numeric: tabular-nums; }
 .sheet-step-why { margin: 0; font-size: var(--fs-micro); color: var(--warn-ink); }
 .sheet-step-warn { margin: 0; font-size: var(--fs-micro); color: var(--alert-ink); }
@@ -5909,11 +5944,12 @@ details[open].pf-ok .pf-ok-line .pf-message { white-space: normal; overflow: vis
 /* DRAWER_COMPLETE (2026-10-01): the «Refă» buttons with their prices, the SAFETY suggestion, each
    shot's clip QC, «Asamblează filmul» with the QC verdict and letter, and his paid-media rule. */
 .sheet-redos { display: grid; gap: var(--s2); padding-top: var(--s2); border-top: 1px solid var(--line); }
-.sheet-redo-box { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s1) var(--s2); }
+.sheet-redo-box { display: grid; grid-template-columns: minmax(130px, auto) minmax(0, 1fr); align-items: center; gap: var(--s1) var(--s3); }
+.sheet-redo-box .sheet-step-why, .sheet-redo-box .sheet-redo-why { grid-column: 1 / -1; }
 .sheet-redo-box .sheet-step-why, .sheet-redo-why { flex-basis: 100%; }
 .sheet-redo-why { margin: 0; font-size: var(--fs-micro); color: var(--ink-3); }
 .sheet-redo-btn { min-height: var(--hit); font-size: var(--fs-micro); font-weight: var(--w-semi); }
-.sheet-redo-btn:disabled, .sheet-redo-btn[disabled] { opacity: .55; cursor: not-allowed; }
+.sheet-redo-btn:disabled, .sheet-redo-btn[disabled] { opacity: 1; color: var(--ink-3); cursor: not-allowed; }
 .sheet-redo-price { font-size: var(--fs-micro); color: var(--ink-2); font-variant-numeric: tabular-nums; }
 .sheet-redo-audio { display: grid; }
 .sheet-redo-audio .sheet-redos { border-top: 0; padding-top: 0; }
@@ -5926,7 +5962,7 @@ details[open].pf-ok .pf-ok-line .pf-message { white-space: normal; overflow: vis
 .sheet-clip-qc[data-verdict="PASSED"] { color: var(--ok-ink); }
 .sheet-clip-qc[data-verdict="FAILED"] { color: var(--alert-ink); font-weight: var(--w-semi); }
 .sheet-clip-qc[data-verdict="UNCHECKED"] { color: var(--warn-ink); }
-.sheet-assemble { border-color: var(--gold-line, var(--gold-ink)); background: var(--surface); box-shadow: var(--shadow-raised); }
+.sheet-assemble { background: var(--surface-sunk); }
 .sheet-assemble .sheet-step { font-weight: var(--w-bold); }
 .sheet-assemble-line { margin: 0; font-size: var(--fs-micro); color: var(--ink-3); }
 .sheet-qc { display: grid; gap: var(--s2); padding: var(--s3); border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--surface-quiet); }
@@ -5941,7 +5977,8 @@ details[open].pf-ok .pf-ok-line .pf-message { white-space: normal; overflow: vis
 .sheet-letter-box summary { cursor: pointer; min-height: var(--hit); display: flex; align-items: center; font-size: var(--fs-meta); color: var(--ink-2); }
 .sheet-letter { white-space: pre-line; font-size: var(--fs-meta); line-height: 1.55; color: var(--ink); max-width: var(--measure, 72ch); }
 .sheet-rule-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s1) var(--s3); }
-.sheet-rule-box { flex-basis: 100%; }
+.sheet-rule-box { margin-left: auto; }
+.sheet-rule-box[open] { flex-basis: 100%; margin-left: 0; }
 .sheet-rule-box > summary { cursor: pointer; display: inline-flex; align-items: center; min-height: var(--hit); font-size: var(--fs-meta); color: var(--teal); font-weight: var(--w-semi); }
 .paid-media-form { display: grid; gap: var(--s2); margin-top: var(--s2); padding: var(--s3); border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--surface-quiet); }
 .paid-media-options { display: grid; gap: var(--s2); margin: 0; padding: 0; border: 0; min-width: 0; }
@@ -5961,13 +5998,94 @@ details[open].pf-ok .pf-ok-line .pf-message { white-space: normal; overflow: vis
   .sheet-scenes, .sheet-rows, .sheet-steps { grid-template-columns: minmax(0, 1fr); }
 }
 
+/* The production sequence leads; scenes read as wide working rows with optional details. */
+.sheet-progress { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--s4); margin: var(--s2) 0 0; padding: var(--s3) 0; border-block: 1px solid var(--line); }
+.sheet-progress dt { color: var(--ink-3); font-size: var(--fs-meta); margin-bottom: var(--s1); }
+.sheet-progress dd { margin: 0; color: var(--ink); font-size: var(--fs-body); font-weight: var(--w-semi); font-variant-numeric: tabular-nums; }
+.sheet-progress small { font-size: var(--fs-micro); color: var(--ink-2); font-weight: var(--w-normal); }
+.sheet-section-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s1) var(--s4); margin-bottom: var(--s3); }
+.sheet-section-heading h2 { margin: 0; color: var(--ink); font-size: var(--fs-h3); font-weight: var(--w-semi); }
+.sheet-section-heading p { margin: 0; color: var(--ink-3); font-size: var(--fs-meta); }
+.sheet-step-main { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: var(--s1) var(--s2); align-items: center; }
+.sheet-step-main h3 { margin: 0; color: var(--ink); font-size: var(--fs-body); font-weight: var(--w-semi); }
+.sheet-step-index { display: grid; place-items: center; width: 26px; height: 26px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); color: var(--ink-3); font-variant-numeric: tabular-nums; font-size: var(--fs-meta); }
+.sheet-step-state { grid-column: 2; color: var(--ink-3); font-size: var(--fs-micro); }
+.sheet-step-state[data-tone="ok"] { color: var(--ok-ink); }
+.sheet-step-state[data-tone="alert"] { color: var(--alert-ink); }
+.sheet-step-state[data-tone="info"] { color: var(--info-ink); }
+.sheet-step-state[data-tone="warn"] { color: var(--warn-ink); }
+.sheet-step-copy, .sheet-step-action { display: grid; gap: var(--s1); min-width: 0; }
+.sheet-step-explain, .sheet-step-scope { margin: 0; color: var(--ink-2); font-size: var(--fs-meta); line-height: 1.55; max-width: 65ch; }
+.sheet-step-scope { color: var(--ink-3); }
+.sheet-step-action .sheet-step { margin-top: var(--s2); width: 100%; }
+.sheet-step-cap { color: var(--ink-3); font-size: var(--fs-micro); font-variant-numeric: tabular-nums; }
+.sheet-step-done { color: var(--ok-ink); font-size: var(--fs-meta); padding-top: var(--s2); }
+.sheet-step-box > .sheet-confirm, .sheet-step-box > .sheet-qc, .sheet-step-box > .sheet-step-warn { grid-column: 1 / -1; }
+.sheet-step-details summary, .sheet-specs > summary, .sheet-production-details > summary, .sheet-alternatives > summary, .sheet-shot-history > summary, .sheet-budget > summary, .sheet-warning > summary { display: flex; align-items: center; gap: var(--s2); min-height: var(--hit); color: var(--ink-2); font-size: var(--fs-meta); cursor: pointer; }
+.sheet-step-details summary::before, .sheet-specs > summary::before, .sheet-production-details > summary::before, .sheet-alternatives > summary::before, .sheet-shot-history > summary::before, .sheet-budget > summary::before, .sheet-warning > summary::before { content: '+'; color: var(--ink-3); font-size: var(--fs-body); }
+.sheet-step-details[open] summary::before, .sheet-specs[open] > summary::before, .sheet-production-details[open] > summary::before, .sheet-alternatives[open] > summary::before, .sheet-shot-history[open] > summary::before, .sheet-budget[open] > summary::before, .sheet-warning[open] > summary::before { content: '−'; }
+.sheet-step-details ul { margin: 0; padding-left: var(--s4); color: var(--warn-ink); font-size: var(--fs-micro); line-height: 1.55; }
+.sheet-scene-line { scroll-margin-top: var(--s4); line-height: 1.55; }
+.sheet-scene-line:focus-visible { outline: 2px solid var(--teal); outline-offset: var(--s1); }
+.sheet-scene-layout { display: grid; grid-template-columns: 144px minmax(0, 1.6fr) minmax(220px, 1fr); gap: var(--s5); align-items: start; margin-top: var(--s2); }
+.sheet-scene-preview, .sheet-scene-work, .sheet-scene-options { display: grid; gap: var(--s3); min-width: 0; }
+.sheet-scene-preview .sheet-still { max-height: 256px; object-fit: contain; }
+.sheet-scene-preview figcaption { line-height: 1.5; }
+.sheet-scene-work .sheet-media-state { margin: 0; font-size: var(--fs-body); color: var(--ink-2); font-weight: var(--w-semi); }
+.sheet-media-state[data-tone="ok"] { color: var(--ok-ink); }
+.sheet-media-state[data-tone="info"] { color: var(--info-ink); }
+.sheet-media-state[data-tone="alert"] { color: var(--alert-ink); }
+.sheet-media-state[data-tone="warn"] { color: var(--warn-ink); }
+.sheet-media-guidance { margin: 0; font-size: var(--fs-meta); color: var(--ink-2); line-height: 1.55; max-width: 65ch; }
+.sheet-scenes-section { min-width: 0; }
+.sheet-scene-options { border-left: 1px solid var(--line); padding-left: var(--s4); gap: var(--s1); }
+.sheet-details-content { display: grid; gap: var(--s3); padding: var(--s2) 0 var(--s3); min-width: 0; }
+.sheet-alternatives .sheet-candidate { grid-template-columns: 72px minmax(0, 1fr); border-style: solid; align-items: start; }
+.sheet-alternatives .sheet-thumb { grid-row: 1 / 4; }
+.sheet-alternatives .sheet-take-actions { grid-column: 1 / -1; }
+.sheet-card-layout { grid-template-columns: 144px minmax(0, 1fr); }
+.sheet-card-placeholder { display: grid; place-content: center; min-height: 144px; padding: var(--s3); border: 1px solid var(--line-strong); border-radius: var(--radius-sm); color: var(--ink-3); background: var(--surface-sunk); font-size: var(--fs-meta); text-align: center; }
+.sheet-card-layout .sheet-still { max-height: 256px; object-fit: contain; }
+.sheet-budget { padding: var(--s3) var(--s4); border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--surface-sunk); }
+.sheet-warning { padding: var(--s2) var(--s3); border: 1px solid var(--line); border-radius: var(--radius-sm); }
+.sheet-warning p { margin: var(--s2) 0; color: var(--ink-2); font-size: var(--fs-meta); line-height: 1.55; }
+.sheet-body, .sheet-head, .sheet-step-box, .sheet-scene { overflow-wrap: anywhere; }
+@media (max-width: 1000px) {
+  .sheet-step-box { grid-template-columns: minmax(0, 1fr) minmax(220px, .6fr); }
+  .sheet-step-main { grid-column: 1; }
+  .sheet-step-copy { grid-column: 1; }
+  .sheet-step-action { grid-column: 2; grid-row: 1 / 3; }
+  .sheet-scene-layout { grid-template-columns: 128px minmax(0, 1fr); gap: var(--s4); }
+  .sheet-scene-options { grid-column: 2; border-left: 0; padding-left: 0; }
+  .sheet-scene-preview { grid-row: 1 / 3; }
+}
+@media (max-width: 600px) {
+  .sheet-progress { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s3); }
+  .sheet-step-box { grid-template-columns: minmax(0, 1fr); gap: var(--s3); }
+  .sheet-step-main, .sheet-step-copy, .sheet-step-action { grid-column: 1; grid-row: auto; }
+  .sheet-scene { padding: var(--s3); }
+  .sheet-scene-layout, .sheet-card-layout { grid-template-columns: minmax(0, 1fr); }
+  .sheet-scene-preview { grid-row: auto; width: 144px; justify-self: center; }
+  .sheet-scene-options, .sheet-card-layout > .sheet-redos { grid-column: 1; }
+  .sheet-card-layout > .sheet-still-box { grid-row: auto; width: 144px; justify-self: center; }
+  .sheet-redo-box { grid-template-columns: minmax(0, 1fr); }
+  .sheet-rule-box { margin-left: 0; }
+  .sheet-drawer > .sheet-status { margin: var(--s3) var(--s4) 0; }
+}
+
 /* --------------------------------------------- PAGE_OWNER_DAY (2026-10-02): the Owner's day */
-/* The sheet's bar: his rule and the next step with its price, kept in view over the scenes. */
-.sheet-summary-bar { position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s4); padding: var(--s2) var(--s3); border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--surface); box-shadow: var(--shadow-raised); }
+/* The sheet's bar: his rule and the next step with its price, first in the sheet. It scrolls
+   with the sheet: the Owner (2026-10-03) does not want it pinned over the scenes. */
+.sheet-summary-bar { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: var(--s2) var(--s4); padding: 0 0 var(--s3); }
+.sheet-summary-bar > .sheet-title, .sheet-summary-bar > .sheet-progress { grid-column: 1 / -1; }
 .sheet-summary-rule, .sheet-summary-next { margin: 0; font-size: var(--fs-meta); color: var(--ink-2); }
 .sheet-summary-next strong { color: var(--ink); font-weight: var(--w-semi); }
 .sheet-summary-why { color: var(--warn-ink); }
-.sheet-summary-go { margin-left: auto; }
+.sheet-summary-go { justify-self: start; }
+@media (max-width: 600px) {
+  .sheet-summary-bar { grid-template-columns: minmax(0, 1fr); }
+  .sheet-drawer > .sheet-status { margin: var(--s3) var(--s4) 0; }
+}
 /* The page's own warnings: older than the studio, or something that keeps it running is wrong. */
 .page-banners { position: sticky; top: 0; z-index: 50; display: grid; gap: 0; }
 .page-banner { margin: 0; padding: var(--s2) var(--s4); font-size: var(--fs-meta); font-weight: var(--w-semi); text-align: center; border-bottom: 1px solid var(--warn-line); background: var(--warn-bg); color: var(--warn-ink); }

@@ -187,6 +187,11 @@ powershell -File art-source/unreal/live/start_live_hq.ps1            # wilbur + 
 STUDIO_OFFICE_STREAM_SIGNALLING_URL=ws://127.0.0.1:8890               # .env, then restart the backend
 ```
 
+Since 2026-10-04 `scripts/start.py` starts the stream with the studio and stops it with it
+(`scripts/live_graphics.py`; README, «Install and first run»). Both read the argument lists from
+`art-source/unreal/live/stream_command.json`; `start_live_hq.ps1 -PrintOnly` prints the two
+command lines without starting anything.
+
 - **Signalling server.** Epic's `PixelStreamingInfrastructure` release `UE5.8-0.1.0` (the
   engine's `get_ps_servers` script only knows up to 5.7), built with the Node 22.14.0 it asks for.
   Its batch scripts break on spaces in paths, so it lives in `E:\AMN_PixelStreaming` (override

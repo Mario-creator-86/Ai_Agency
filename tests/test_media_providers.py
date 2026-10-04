@@ -95,6 +95,7 @@ class Recorder:
         timeout=120,
         expect_json=True,
         public_only=False,
+        total_seconds=None,
     ):
         self.calls.append(
             {
@@ -576,7 +577,18 @@ class RawRecorder(Recorder):
     that the reference bytes never left.
     """
 
-    def __call__(self, host, method, path, headers, body=None, *, timeout=120, expect_json=True):
+    def __call__(
+        self,
+        host,
+        method,
+        path,
+        headers,
+        body=None,
+        *,
+        timeout=120,
+        expect_json=True,
+        total_seconds=None,
+    ):
         self.calls.append(
             {"host": host, "method": method, "path": path, "headers": headers, "body": body}
         )
@@ -933,6 +945,34 @@ def test_without_a_first_frame_an_auto_ratio_is_never_chosen(monkeypatch):
     _submit(adapter, image_ref=None)
 
     assert recorder.calls[0]["body"]["ratio"] == "720:1280"
+
+
+#: wan3's live contract (2026-10-03): explicit ratios up to 1080p AND the `auto_*` ones.
+WAN_LIVE = _video_contract(
+    ["duration", "model", "promptImage", "promptText", "ratio", "seed"],
+    ["1080:1920", "1280:720", "1920:1080", "720:1280", "auto_1080p", "auto_480p", "auto_720p"],
+    {"min": 2, "max": 30},
+)
+
+
+def test_a_wan_keyframe_shot_uses_auto_even_when_an_explicit_ratio_matches(monkeypatch):
+    """The Owner's Nepal test shot (2026-10-03) was refused, 0 credits: «Keyframe
+    image-to-video requests must use `auto_480p`, `auto_720p`, or `auto_1080p` because the
+    output aspect ratio follows the first frame.» The contract lists 1080:1920 too, and the
+    studio chose it. With a first frame, a model that offers `auto_*` ratios is sent one."""
+    adapter, recorder = _runway_video(monkeypatch, "wan3", WAN_LIVE)
+
+    _submit(adapter)
+
+    assert recorder.calls[0]["body"]["ratio"] == "auto_1080p"
+
+
+def test_a_wan_shot_without_a_first_frame_keeps_the_explicit_ratio(monkeypatch):
+    adapter, recorder = _runway_video(monkeypatch, "wan3", WAN_LIVE)
+
+    _submit(adapter, image_ref=None)
+
+    assert recorder.calls[0]["body"]["ratio"] == "1080:1920"
 
 
 def test_the_first_frame_travels_as_a_jpeg(monkeypatch):

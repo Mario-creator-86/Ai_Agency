@@ -20,6 +20,16 @@ Options:
                       nothing bought, nothing published (SELL-03, app.demo)
     --demo-dir PATH   where the demo's database, films and logs live
     --demo-port N     the demo's port (8010, so it never takes the studio's 8000)
+    --no-graphics     do not start the live headquarters (wilbur + Unreal) with the studio
+
+The live headquarters start with the studio (the Owner, 2026-10-04: «cand rulez python
+start.py, trebuie sa porneasca si grafica. La fel, cand opresc, totul trebuie sa se
+opreasca!»): once the server answers, scripts/live_graphics.py starts wilbur and Unreal (or
+adopts the ones already running, never a second), waits while one of his games runs or memory
+is short, and brings a dead one back a bounded number of times. Ctrl+C lets the server stop
+cleanly first (its 30 s; a day stops at its boundary, never inside a purchase), then stops the
+graphics. Everything this script starts is in a Windows Job Object that ends with it, so a
+closed window or a killed start.py leaves nothing running.
 """
 
 from __future__ import annotations
@@ -27,11 +37,17 @@ from __future__ import annotations
 import argparse
 import os
 import shutil
+import signal
+import socket
 import subprocess
 import sys
+import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+
+import live_graphics
+import win_processes
 
 ROOT = Path(__file__).resolve().parents[1]
 FRONTEND = ROOT / "frontend"
@@ -270,6 +286,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--demo", action="store_true", help="the demo, on simulated vendors")
     parser.add_argument("--demo-dir", type=Path, default=DEMO_DIR)
     parser.add_argument("--demo-port", type=int, default=DEMO_PORT)
+    parser.add_argument(
+        "--no-graphics",
+        action="store_true",
+        help="do not start the live headquarters (wilbur + Unreal) with the studio",
+    )
     return parser
 
 
@@ -282,9 +303,220 @@ def utf8_console() -> None:
             reconfigure(encoding="utf-8", errors="replace")
 
 
+#: What the console-close handler needs alive for as long as the process lives.
+_KEEP_ALIVE: list[Any] = []
+
+
+def port_answers(host: str, port: int) -> bool:
+    """Whether something already accepts connections on the studio's address."""
+    target = "127.0.0.1" if host in ("", "0.0.0.0") else host  # noqa: S104 - a connect target
+    try:
+        with socket.create_connection((target, port), timeout=0.5):
+            return True
+    except OSError:
+        return False
+
+
+#: The server runs in a process group of its own, so the console's Ctrl+C reaches start.py
+#: only. A second Ctrl+C reaching uvicorn while it waits for open connections (the page's
+#: sockets) sets its force_exit and skips the lifespan shutdown, where the day stops at its
+#: boundary (REL-10): seen on uvicorn 0.52.4, 2026-10-04. start.py asks the server once.
+CREATE_NEW_PROCESS_GROUP = 0x00000200
+#: How a server asked with CTRL_BREAK ends: uvicorn re-raises SIGBREAK after its clean stop and
+#: the C runtime exits with 3; before uvicorn listens, Windows ends it with STATUS_CONTROL_C_EXIT.
+STATUS_CONTROL_C_EXIT = 0xC000013A
+STOPPED_BY_BREAK = frozenset({3, STATUS_CONTROL_C_EXIT})
+#: start.py waits for the server in steps this long, so that its own Ctrl+C is seen.
+WAIT_STEP_SECONDS = 0.5
+
+
+def ask_server_to_stop(server: Any) -> bool:
+    """Ask the server once for its clean stop: CTRL_BREAK to its own process group on Windows
+    (uvicorn handles SIGBREAK like the first Ctrl+C), SIGINT elsewhere."""
+    try:
+        if sys.platform == "win32":
+            os.kill(server.pid, signal.CTRL_BREAK_EVENT)
+        else:
+            server.send_signal(signal.SIGINT)
+    except OSError:
+        return False
+    return True
+
+
+def catch_ctrl_break() -> None:
+    """Ctrl+Break is a Ctrl+C for start.py: by default it ends start.py at once, and its job
+    would then end the server in the middle of its clean stop."""
+    if sys.platform == "win32":
+        signal.signal(signal.SIGBREAK, signal.default_int_handler)
+
+
+def uninterrupted(step: Callable[[], Any]) -> Any:
+    """Run a step of the stop to its end, however many Ctrl+C come meanwhile."""
+    while True:
+        try:
+            return step()
+        except KeyboardInterrupt:
+            continue
+
+
+def wait_for_server(server: Any, on_interrupt: Callable[[], None] = lambda: None) -> int:
+    """Wait for the server to end, however many Ctrl+C come: each one calls `on_interrupt`
+    (which asks the server once) and the wait goes on; the server stops cleanly in its own time
+    (scripts/run.py, 30 s; a day stops at its boundary). subprocess.run used to kill it 0.25 s
+    after the first Ctrl+C.
+
+    The wait is taken in short steps: on Windows Popen.wait() without a timeout cannot be
+    interrupted, so a Ctrl+C would only be seen once the server had ended - and the server,
+    in its own process group, never gets one."""
+    pending = False
+    while True:
+        try:
+            if pending:
+                pending = False
+                on_interrupt()
+            return int(server.wait(timeout=WAIT_STEP_SECONDS))
+        except subprocess.TimeoutExpired:
+            continue
+        except KeyboardInterrupt:
+            pending = True
+
+
+def serve(
+    command: list[str],
+    *,
+    graphics: Any = None,
+    popen: Callable[..., Any] = subprocess.Popen,
+    port_busy: Callable[[], bool] = lambda: False,
+    port_open: Callable[[], bool] = lambda: True,
+    assign: Callable[[int], Any] = lambda pid: None,
+    install_close_handler: Callable[[Callable[[], None]], Any] = lambda callback: None,
+    interrupt: Callable[[Any], bool] = ask_server_to_stop,
+) -> int:
+    """Run the server; beside it, once it answers, the graphics' supervisor. Stop order: the
+    server (asked once by start.py at the first Ctrl+C), then the graphics (Unreal, then
+    wilbur). From the first Ctrl+C on, the supervisor starts nothing more."""
+    if graphics is not None and port_busy():
+        print(
+            "    [grafica] Adresa studioului răspunde deja (un alt studio pornit?): "
+            "grafica nu este atinsă de această pornire.",
+            flush=True,
+        )
+        graphics = None
+    flags = CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0
+    server = popen(command, cwd=str(ROOT), creationflags=flags)
+    stop_event = threading.Event()
+    state = {"told": False, "asked": False, "stopping": False}
+
+    def interrupted() -> None:
+        state["stopping"] = True
+        stop_event.set()
+        if not state["told"]:
+            state["told"] = True
+            print(
+                "\n=== Oprire cerută: serverul se oprește curat (până la 30 s; o zi în lucru "
+                "se oprește la granița ei, niciodată în mijlocul unei plăți), apoi grafica. "
+                "Alte Ctrl+C nu îl grăbesc.",
+                flush=True,
+            )
+        if not state["asked"]:
+            state["asked"] = bool(interrupt(server))
+            if not state["asked"]:
+                print(
+                    "    Nu am putut cere serverului oprirea; încerc din nou la următorul Ctrl+C.",
+                    flush=True,
+                )
+
+    def window_closed() -> None:
+        # Windows ends every process of a closing console within about five seconds, and the
+        # server - which gets the same close - at once, without its clean stop: the graphics
+        # go first, fast; the Job Object takes whatever is left when start.py ends.
+        state["stopping"] = True
+        stop_event.set()
+        if graphics is not None:
+            graphics.stop(fast=True)
+        try:
+            server.wait(timeout=2.5)
+        except (subprocess.TimeoutExpired, KeyboardInterrupt):
+            pass
+
+    thread = None
+    try:
+        try:
+            assign(server.pid)
+            _KEEP_ALIVE.append(install_close_handler(window_closed))
+            if graphics is not None:
+                thread = threading.Thread(
+                    target=graphics.run,
+                    args=(lambda: server.poll() is None and port_open(), stop_event),
+                    name="live-graphics",
+                    daemon=True,
+                )
+                thread.start()
+        except KeyboardInterrupt:
+            interrupted()
+        code = wait_for_server(server, interrupted)
+        # STATUS_CONTROL_C_EXIT: a console event ended it (a closed window reaches the server
+        # first, sometimes before start.py's own handler runs): a stop, not a failed start.
+        if code == STATUS_CONTROL_C_EXIT or (state["stopping"] and code in STOPPED_BY_BREAK):
+            code = 0
+        print(f"    Serverul studioului (pid {server.pid}) s-a oprit (cod {code}).", flush=True)
+    finally:
+        stop_event.set()
+        if thread is not None:
+            joining = thread
+            uninterrupted(lambda: joining.join(timeout=30))
+        if graphics is not None:
+            uninterrupted(graphics.stop)
+    return code
+
+
+def prepare_graphics(args: argparse.Namespace, settings: Any, job: Any) -> Any:
+    """The graphics' supervisor for this start, or None with one line saying why not."""
+    reason = live_graphics.skip_reason(
+        no_graphics=args.no_graphics,
+        demo=args.demo,
+        platform=sys.platform,
+        session=win_processes.session_id(),
+        signalling_url=getattr(settings, "office_stream_signalling_url", None),
+    )
+    setup: Any = None
+    if reason is None:
+        setup = live_graphics.stream_setup()
+        if isinstance(setup, str):
+            reason = f"Grafica live nu pornește: {setup}."
+    if reason is not None:
+        print(f"    [grafica] {reason}", flush=True)
+        return None
+    system = live_graphics.WindowsSystem(
+        job=job, remote_control_url=getattr(settings, "office_unreal_remote_url", None)
+    )
+    return live_graphics.Supervisor(setup, system)
+
+
+def tie_to_this_window() -> Any:
+    """Everything start.py starts from here on lives in one Job Object that ends with it
+    (closed window, killed start.py). start.py itself goes in, so its children and theirs are
+    in from their first instruction; the job is never closed by hand (that would end start.py)."""
+    job = win_processes.KillOnCloseJob.create()
+    if job is None:
+        if win_processes.WINDOWS:
+            print("    Atenție: nu am putut lega procesele pornite de această fereastră.")
+        return None
+    if not job.assign_current():
+        print(
+            "    Atenție: start.py nu a putut intra în propriul job Windows; leg serverul și "
+            "grafica unul câte unul.",
+            flush=True,
+        )
+    _KEEP_ALIVE.append(job)
+    return job
+
+
 def main() -> int:
     utf8_console()
     args = build_parser().parse_args()
+    catch_ctrl_break()
+    job = tie_to_this_window()
 
     try:
         if args.demo:
@@ -335,8 +567,25 @@ def main() -> int:
         # 4. Report the real state, then hand over to the server.
         preflight_report()
 
-        say("Starting the studio — press Ctrl+C to stop")
-        run([sys.executable, str(ROOT / "scripts" / "run.py")], cwd=ROOT, step="Server")
+        sys.path.insert(0, str(ROOT / "backend"))
+        from app.config import Settings  # noqa: PLC0415
+
+        settings = Settings()  # type: ignore[call-arg]
+        say("Starting the studio — press Ctrl+C to stop (the studio, then its graphics)")
+        graphics = prepare_graphics(args, settings, job)
+        server_command = [sys.executable, str(ROOT / "scripts" / "run.py")]
+        print(f"    $ {' '.join(server_command)}", flush=True)
+        code = serve(
+            server_command,
+            graphics=graphics,
+            port_busy=lambda: port_answers(settings.host, settings.port),
+            port_open=lambda: port_answers(settings.host, settings.port),
+            assign=lambda pid: job.assign(pid) if job is not None else None,
+            install_close_handler=win_processes.install_close_handler,
+        )
+        if code != 0:
+            raise StepFailed(f"Server: `{' '.join(server_command)}` exited with code {code}.")
+        print("\n=== Tot ce a pornit start.py este oprit.")
 
     except StepFailed as exc:
         print(f"\nSTART FAILED — {exc}", file=sys.stderr)

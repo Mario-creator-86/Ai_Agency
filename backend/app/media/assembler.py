@@ -8096,8 +8096,12 @@ def collect_submitted_takes(
     storage_root: Path | None = None,
     now: datetime | None = None,
     max_age_seconds: float = SUBMITTED_TAKE_MAX_AGE_SECONDS,
+    exclude_storyboards: Sequence[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Collect every SUBMITTED take (of one film, or all) by its task id. Buys nothing.
+
+    ``exclude_storyboards``: films whose buyer is at work now (the watchdog passes the films
+    whose purchase lease is held): their tasks are that buyer's to collect, never twice.
 
     ``collector_for(take)`` gives the adapter that may be asked about it (None: nobody can be
     asked now). SUCCEEDED: the output is downloaded into the take, PAID (a still candidate
@@ -8112,6 +8116,8 @@ def collect_submitted_takes(
             query = query.where(SceneTake.storyboard_id == storyboard_id)
         if kinds is not None:
             query = query.where(SceneTake.kind.in_(list(kinds)))
+        if exclude_storyboards:
+            query = query.where(SceneTake.storyboard_id.not_in(list(exclude_storyboards)))
         rows = list(session.scalars(query.order_by(SceneTake.created_at)).all())
         for row in rows:
             session.expunge(row)
@@ -9876,6 +9882,18 @@ def _still_redo_plan(
     with Session(engine) as session:
         replaces = _scene_approved_stills(session, plan["storyboard_id"], index)
         invalidates = _scene_shot_takes(session, plan["storyboard_id"], index)
+        # A request the vendor accepted for this scene and has not handed over yet: it is
+        # collected free, by its task id, and the scene is never bought a second time meanwhile.
+        in_flight = sorted(
+            session.scalars(
+                select(SceneTake.id).where(
+                    SceneTake.storyboard_id == plan["storyboard_id"],
+                    SceneTake.scene_number == index,
+                    SceneTake.kind == "still",
+                    SceneTake.status == "SUBMITTED",
+                )
+            ).all()
+        )
         if first_live is not None and int(first_live["scene_index"]) != index:
             reference = usable_take(
                 session,
@@ -9913,6 +9931,13 @@ def _still_redo_plan(
         "Imaginea veche și cadrul filmat din ea se retrag abia după aprobare; mișcarea scenei "
         "se reface apoi separat. Celelalte scene nu se ating."
     )
+    if in_flight:
+        plan.update(buyable=False, in_flight=in_flight)
+        reason = (
+            f"Imaginile scenei {index} sunt deja cumpărate: furnizorul a primit cererea și nu "
+            "le-a predat încă. Se ridică fără plată, după numărul sarcinii, și apar pe foaia de "
+            "filmare; până atunci scena nu se cumpără din nou."
+        )
     return _seal(
         plan,
         {
@@ -9927,6 +9952,7 @@ def _still_redo_plan(
             "figure_one_sha256": figure_one,
             "replaces": replaces,
             "invalidates": invalidates,
+            **({"in_flight": in_flight} if in_flight else {}),
         },
         reason,
     )
@@ -10729,8 +10755,29 @@ def redo_scene(
         free = _free_redo(engine, storyboard_id, correlation_id, plan, ffmpeg_path=ffmpeg_path)
         return _redo_done(engine, correlation_id, plan, free, {}, (0.0, None))
 
-    _paid_redo_gate(plan, plan_hash)
     storage_root = storage_root or media_root(settings)
+    if kind == "still" and image_adapter is not None:
+        # Pictures of this scene already paid for and not yet judged (an interrupted redo's,
+        # collected later by its task id) are judged first, free; one the gate approves ends
+        # the press with nothing bought (review 2026-10-03: they were bought again blind).
+        judged = _judge_paid_stills_first(
+            engine,
+            storyboard_id,
+            correlation_id,
+            int(plan["scene_index"]),
+            image_adapter=image_adapter,
+            registry=registry,
+            judge=judge,
+            face_counter=face_counter,
+            measure=measure,
+            environment=environment,
+            ffmpeg_path=ffmpeg_path,
+            storage_root=storage_root,
+        )
+        if judged is not None:
+            raise SceneRedoRefused(PAID_PICTURES_JUDGED, judged, plan=current())
+        plan = current()
+    _paid_redo_gate(plan, plan_hash)
     no_room = disk_refusal(storage_root, settings)
     if no_room:
         raise SceneRedoRefused(LOW_DISK, no_room, plan=plan)
@@ -11088,6 +11135,75 @@ def _free_redo(
     }
 
 
+#: A still redo pressed while pictures of the scene, already paid for, waited for judgement:
+#: they were judged first, free, and one was approved; nothing was bought.
+PAID_PICTURES_JUDGED = "PAID_PICTURES_JUDGED"
+
+
+def _judge_paid_stills_first(
+    engine: Engine,
+    storyboard_id: str,
+    correlation_id: str,
+    index: int,
+    *,
+    image_adapter: Any,
+    storage_root: Path | None,
+    **wiring: Any,
+) -> str | None:
+    """The scene's paid, unjudged still candidates (and its accepted tasks, collected by id)
+    judged by the stills gate before anything is bought; nothing here buys or asks a yes.
+
+    Returns the Owner's reason when the gate approved one of them (the press ends there),
+    or None when there was nothing waiting or nothing passed (the redo goes on as asked)."""
+    from app.media import stills_stage as stills  # noqa: PLC0415 - stills_stage imports us
+
+    def approved_and_waiting() -> tuple[set[str], bool]:
+        with Session(engine) as session:
+            rows = session.scalars(
+                select(SceneTake).where(
+                    SceneTake.storyboard_id == storyboard_id,
+                    SceneTake.scene_number == index,
+                    SceneTake.kind == "still",
+                    SceneTake.status.in_(("APPROVED", "PAID", "SUBMITTED")),
+                )
+            ).all()
+            approved = {row.id for row in rows if row.status == "APPROVED"}
+            waiting = any(
+                row.status == "SUBMITTED"
+                or (row.status == "PAID" and row.failure_code == UNJUDGED_FAILURE_CODE)
+                for row in rows
+            )
+            return approved, waiting
+
+    from app.media.shooting_sheet import FilmBusy, film_purchase_lease  # noqa: PLC0415
+
+    before, waiting = approved_and_waiting()
+    if not waiting:
+        return None
+    try:
+        # Under the film's purchase lease: a buyer at work polls its own tasks, and a second
+        # collector beside it would land the same candidates twice.
+        with film_purchase_lease(engine, storyboard_id, holder=correlation_id, step=REDO_STEP):
+            stills.settle_stills(
+                engine,
+                storyboard_id,
+                correlation_id,
+                image_adapter=image_adapter,
+                storage_root=storage_root,
+                **{key: value for key, value in wiring.items() if value is not None},
+            )
+    except FilmBusy:
+        return None  # the redo itself is refused FILM_BUSY under the same lease
+    after, _waiting = approved_and_waiting()
+    if not after - before:
+        return None
+    return (
+        f"Scena {index} avea imagini deja plătite, ridicate de la furnizor și încă nejudecate: "
+        "au fost judecate acum, fără plată, și una a fost aprobată. Nu s-a cumpărat nimic; "
+        "dacă tot vrei alta, apasă din nou «Refă»."
+    )
+
+
 def _paid_redo_gate(plan: dict[str, Any], plan_hash: str | None) -> None:
     """The refusals before a paid redo is asked or bought: no plan, a stale plan, nothing to
     buy. The budgets and the film's ceiling are asked next, inside the film's lease
@@ -11216,12 +11332,25 @@ def _film_after_motion(
     )
 
 
+#: Why a still redo stopped with its request accepted and its pictures not yet delivered.
+REDO_IN_FLIGHT_REASON = (
+    "Scena {scene}: furnizorul a primit cererea plătită a refacerii, dar imaginile nu au sosit "
+    "la timp; se ridică mai târziu după numărul sarcinii, fără plată, și nu se cumpără din nou."
+)
+
+
 def _redo_next_step(
     plan: dict[str, Any], film: dict[str, Any] | None, detail: dict[str, Any]
 ) -> str:
     """What happens next, in one Romanian line for the Owner."""
     index = plan["scene_index"]
     if plan["kind"] == "still":
+        if (detail.get("still") or {}).get("status") == "IN_FLIGHT":
+            return (
+                f"Imaginile scenei {index} se ridică de la furnizor fără plată când sunt gata "
+                "(paznicul studioului întreabă de ele); apoi sunt judecate și apar pe foaia de "
+                "filmare. Scena nu se cumpără din nou până atunci."
+            )
         if (detail.get("still") or {}).get("status") == "APPROVED":
             return (
                 f"Scena {index} are o imagine nouă. Mișcarea ei se reface separat (cu aprobare); "
@@ -11524,7 +11653,20 @@ class _StillRedoBuyer:
                 bool(c.get("with_figure", c["references"])),
                 with_character=bool(c.get("with_character", False)),
             )
-            heard: list[str] = []
+            # (take id, task id) of each task the vendor accepted for this request: on the
+            # books, SUBMITTED with the vendor's id, the moment it is accepted and before any
+            # poll (as the stills step does). Until 2026-10-03 the redo kept the id in memory
+            # only: the Owner's redo of scene 3 was charged 18 credits and left no record.
+            intents: list[tuple[str | None, str]] = []
+
+            def submitted(
+                task_id: str,
+                *,
+                _identity: str = identity,
+                _intents: list[tuple[str | None, str]] = intents,
+            ) -> None:
+                _intents.append((self._intent(_identity, task_id, per_request), task_id))
+
             self.meter.attempts += 1
             try:
                 candidates, quoted = stills._buy(
@@ -11532,24 +11674,40 @@ class _StillRedoBuyer:
                     prompt,
                     c["references"],
                     STILL_CANDIDATES,
-                    on_submitted=heard.append,
+                    on_submitted=submitted,
                 )
+            except TaskStillOpen as exc:
+                # Accepted (and charged) and not delivered in time: the takes stay SUBMITTED
+                # with their task ids and are collected later, free (the watchdog, the next
+                # stills step); nothing more is bought, and this request is never sent again.
+                if not intents:
+                    intents.append((self._intent(identity, exc.task_id, per_request), exc.task_id))
+                self.committed += per_request
+                outcome = {
+                    "status": "IN_FLIGHT",
+                    "reason": REDO_IN_FLIGHT_REASON.format(scene=index),
+                    "take_ids": [take for take, _task in intents if take],
+                    "task_ids": [task for _take, task in intents],
+                }
+                break
             except MediaProviderError as exc:
                 failure = classify_vendor_failure(exc, previous_kind)
                 previous_kind = failure.kind
-                charged = possibly_charged(exc, submitted=bool(heard))
+                charged = possibly_charged(exc, submitted=bool(intents))
                 # A request with no task heard and no answer: its outcome is unknown, so it is
                 # counted and never sent again automatically.
-                unknown = outcome_unknown(exc, submitted=bool(heard))
+                unknown = outcome_unknown(exc, submitted=bool(intents))
                 if charged:
                     self.committed += per_request  # a refusal may be paid like a success
-                self._take(
-                    identity,
-                    "REFUSED",
-                    exc=exc,
-                    quoted=float(per_request) if charged else None,
-                    code=UNANSWERED_FAILURE_CODE if unknown else None,
-                )
+                for intent_take, _task in intents or [(None, "")]:
+                    self._take(
+                        identity,
+                        "REFUSED",
+                        exc=exc,
+                        quoted=float(per_request) if charged else None,
+                        code=UNANSWERED_FAILURE_CODE if unknown else None,
+                        take_id=intent_take,
+                    )
                 if failure.kind in stills.RETRY_KINDS and not retried and not unknown:
                     retried = True
                     continue
@@ -11571,6 +11729,7 @@ class _StillRedoBuyer:
             )
             share = (quoted / len(candidates)) if quoted and candidates else per_request / 2
             verdicts: list[tuple[str, Any]] = []
+            open_intents = list(intents)
             for number, candidate in enumerate(candidates):
                 suffix = candidate.format if candidate.format in ("png", "jpeg", "webp") else "png"
                 path = c["work_dir"] / (
@@ -11579,8 +11738,22 @@ class _StillRedoBuyer:
                 )
                 path.write_bytes(candidate.image_bytes)
                 self.images += 1
+                raw = candidate.raw_response if isinstance(candidate.raw_response, dict) else {}
+                intent_take, task_id = stills._claim_intent(
+                    open_intents, raw.get("task_id"), [task for _take, task in intents]
+                )
+                # PAID and UNJUDGED until the gate below has looked, as in the stills step: a
+                # process that dies in between leaves a candidate judged later, not re-bought.
                 take_id = self._take(
-                    identity, "PAID", path=path, data=candidate.image_bytes, quoted=share
+                    identity,
+                    "PAID",
+                    path=path,
+                    data=candidate.image_bytes,
+                    quoted=share,
+                    take_id=intent_take,
+                    task_id=task_id,
+                    code=UNJUDGED_FAILURE_CODE,
+                    detail=UNJUDGED_DETAIL,
                 )
                 report = stills._judge_candidate(
                     engine,
@@ -11595,6 +11768,16 @@ class _StillRedoBuyer:
                     ffmpeg_path=c["ffmpeg_path"],
                 )
                 verdicts.append((take_id, report))
+            for intent_take, _task in open_intents:
+                # A task the vendor accepted that handed over nothing: refused, on its own row.
+                if intent_take:
+                    self._take(
+                        identity,
+                        "REFUSED",
+                        take_id=intent_take,
+                        code=stills.NO_OUTPUT_CODE,
+                        detail="Furnizorul a încheiat sarcina fără nicio imagine.",
+                    )
             reports = [report for _take, report in verdicts]
             best = choose_best(reports)
             stills._set_verdicts(engine, verdicts, best)
@@ -11650,12 +11833,16 @@ class _StillRedoBuyer:
         data: bytes | None = None,
         quoted: float | None = None,
         code: str | None = None,
+        detail: str | None = None,
+        take_id: str | None = None,
+        task_id: str | None = None,
     ) -> str:
         from app.media.stills_stage import STILL_RATIO  # noqa: PLC0415
 
         c = self.context
-        take_id = record_take(
+        written = record_take(
             c["engine"],
+            take_id=take_id,
             storyboard_id=c["storyboard_id"],
             scene_number=int(c["scene"].index),
             kind="still",
@@ -11667,11 +11854,34 @@ class _StillRedoBuyer:
             credits_quoted=float(quoted) if quoted is not None else None,
             path=path,
             sha256=hashlib.sha256(data).hexdigest() if data is not None else None,
-            failure_code=(failure_code_of(exc) or code) if exc is not None else None,
-            failure_detail=failure_detail_of(exc) if exc is not None else None,
+            failure_code=(failure_code_of(exc) or code) if exc is not None else code,
+            failure_detail=failure_detail_of(exc) if exc is not None else detail,
+            remote_task_id=task_id,
         )
-        self.take_ids.append(take_id)
-        return take_id
+        if written not in self.take_ids:
+            self.take_ids.append(written)
+        return written
+
+    def _intent(self, identity: str, task_id: str, per_request: int) -> str | None:
+        """The SUBMITTED take of a task the vendor just accepted (`_record_intent`)."""
+        from app.media.stills_stage import STILL_RATIO  # noqa: PLC0415
+
+        c = self.context
+        written = _record_intent(
+            c["engine"],
+            task_id,
+            storyboard_id=c["storyboard_id"],
+            scene_number=int(c["scene"].index),
+            kind="still",
+            prompt_hash=identity,
+            model_id=c["model_id"],
+            resolution=STILL_RATIO,
+            correlation_id=c["correlation_id"],
+            credits=float(per_request),
+        )
+        if written and written not in self.take_ids:
+            self.take_ids.append(written)
+        return written
 
 
 def _measured_still_spend(

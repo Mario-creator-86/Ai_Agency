@@ -1,5 +1,51 @@
 # Changelog
 
+## A readable shooting sheet — 2026-10-04
+
+- Overview with approved images, actual current clip files, locally composed scenes and Runway balance.
+- Four compact production rows before the scenes, with state, short blocker, scope, price and cap.
+  Remaining clips explicitly name the batch covered by one approval.
+- Wide scene rows: selected image, clip state/narration/redo actions, optional production details,
+  alternative images and previous attempts. Readable phone/tablet layouts and local typography.
+- A refused test shot is shown as no clip, with the existing priced redo and a link to its scene.
+  Paid redos wait when the known balance is short or cannot be read; completed motion is labelled
+  for review/done and an unnecessary test shot is never called accepted.
+- 795 frontend tests, TypeScript and production build passed; browser checks at 320/390/768/1382 px
+  used a read-only real-sheet snapshot. No paid generation or backend mutation.
+
+## start.py starts the graphics, and a stop stops everything — 2026-10-04
+
+His words: «cand rulez python start.py, trebuie sa porneasca si grafica. La fel, cand opresc, totul trebuie sa se opreasca!» Tested on fakes (no Unreal, node or PowerShell in the tests); the real stream not yet started this way (a verifier starts it under the gates).
+
+- **Start = studio + graphics**: once the server answers, `start.py` starts wilbur, then Unreal (`scripts/live_graphics.py`); the server never waits for Unreal's ~25 s. `--no-graphics` skips them; so do `--demo`, a machine without `AMN_PS_INFRA`/`AMN_PS_NODE`/`AMN_UE_ROOT`, a studio without `STUDIO_OFFICE_STREAM_SIGNALLING_URL`, and session 0 (an S4U service, no desktop), each with one Romanian line.
+- **One command line**: the stream's arguments moved to `art-source/unreal/live/stream_command.json`, read by `start_live_hq.ps1` and by `start.py` (byte-identical to the script's old command line; `-PrintOnly` prints it).
+- **Never two, never his editor**: a stream already running is adopted; a second Unreal of the stream is stopped; a process is the stream's only by name AND command line, checked again before any stop; an Unreal on another project is never touched; an Unreal working on AMNReference (a rebuild, the editor) holds the stream.
+- **His games and memory**: while Path of Exile or League of Legends runs, or free commit is under 16 GB, the studio runs and the graphics wait, said once, and start by themselves after two game-free checks.
+- **Kept up**: a dead Unreal or wilbur comes back after 30, 60, 120 s, at most three restarts an hour, under the same gates, saying why.
+- **Stop = everything**: Ctrl+C lets the server stop cleanly first, then Unreal, then wilbur (asked to close, killed after a short wait), each named. `start.py` used to kill the server 0.25 s after Ctrl+C (`subprocess.run` kills its child on KeyboardInterrupt), cutting the 30 s graceful stop of REL-10. Everything `start.py` starts is in a Windows Job Object with kill-on-close (start.py itself is in it), so a closed window or a killed `start.py` leaves nothing; a closed window also stops the graphics in its five seconds. Checked on this machine with Python processes: killing a `uv run` parent ended its child and grandchild.
+- **Another Ctrl+C never hurries the server** (adversarial check): a second Ctrl+C reached uvicorn while a request was open and skipped its lifespan shutdown, where the day stops at its boundary (seen on a real uvicorn). The server now has its own process group; `start.py` asks it once (CTRL_BREAK) and waits in short steps, so its own Ctrl+C is seen. Ctrl+Break is a Ctrl+C for `start.py` (it used to end it, and the job the server, mid-stop); a Ctrl+C at any moment of the start or the stop no longer skips the wait or the graphics' stop; from the first Ctrl+C no Unreal is started. A closed window gives the server no clean stop at all (Windows ends it at once), not five seconds: Ctrl+C is the clean stop.
+
+## His choice of a picture is seen where he clicked — 2026-10-04
+
+His words: «Dacă apăs pe Alege imaginea aceasta, nu se întâmplă nimic!» Every provider faked, 0 credits; proven on fakes only.
+
+- **Seen where he clicked**: the pressed button reads «Se alege…»; the scene he pressed then says «Aleasă acum.» (or why the choice was refused), the chosen picture is marked «Imaginea aleasă» and stays in view after the repaint; the top status line stays.
+- **Told truly**: the decision answers with what it set going (the film's continuation and what it buys under his rule), instead of a fixed «Nimic nu s-a cumpărat».
+- **The assembly's wait once**: «Scenele 1, 2, 3, 4 și 6 nu au încă un cadru acceptat …», not one sentence per scene.
+- **A vendor's refusal in Romanian**: the 5 MB picture limit and the keyframe ratio by name, the vendor's text once behind «Textul furnizorului», refusals that cost nothing grouped under one closed «Refuzate de furnizor (0 credite)».
+- **Adversary review (truth and money)**: choosing a picture back no longer claims the film continues when its old continuation already ran; a yes he gave a plan he returns to is said to buy; manual mode says the film does not continue by itself; the paid narration is no longer hidden behind «niciun pas plătit»; a refusal Runway may have charged (accepted, then failed) shows «poate fi taxată, până la N credite», never 0; the keyframe refusal is no longer called «reparat».
+- **Adversary review (the page)**: a press no longer jumps the sheet away from the scene he pressed (its body is laid out whole, not part by part as he scrolls); an answer that never arrived says «Răspunsul nu a sosit …» and lets the re-read sheet show what is chosen, instead of «Alegerea nu s-a făcut.», and the choice gets 60 s to answer.
+
+## A redo that hung never holds a film again — 2026-10-03
+
+His words: «am dat mai devreme să facă o imagine și a rămas blocat acolo». Every provider faked, 0 credits; proven on fakes only.
+
+- **Every vendor wait ends**: each Runway call, and each paid ElevenLabs narration request, has an overall deadline of its own (a socket timeout bounded one read, never an answer that kept trickling); a still purchase ends at 7 minutes and leaves its task open, by its id, for a free collection.
+- **What Runway accepted is on the books at once**: a scene redo writes the vendor's task SUBMITTED before any poll, as the stills step does; an interrupted or slow redo is collected later for 0 credits and never bought twice.
+- **A lease outlives no holder**: the buyer renews its film's lease every minute, never more than five ahead; a holder that is gone frees the film within minutes, and the watchdog (or the next press, or the start of the worker's process) releases its budget hold and writes the Owner one letter: his yes was spent, what the balance readings say was taken, what is collected free, and that nothing is bought unless he presses again.
+- **The busy line tells the truth**: «Filmul este deja în lucru» is shown only while the buyer still renews.
+- **The sheet's red line is readable** (his words: «Textul este suprapus»): the drawer's status line has its own grid row, so it no longer runs under the body and its sticky «Regula ta / Următorul pas» bar; the busy sentence is said once, in that bar; a press refused because the film is at work is answered in warning colours («Apăsarea ta nu a pornit nimic…»); a paid «Refă» cannot be pressed while the film is at work, so his yes is never asked for a press that would be refused.
+
 ## A paid step asks for its next round only — 2026-10-03
 
 His question: «De ce avem nevoie de asa de multe credite daca sa creezi o imagine costa 10-20 de credite». His choice: «Doar pentru runda următoare». Every provider faked, 0 credits; proven on fakes only.

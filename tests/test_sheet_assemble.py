@@ -576,7 +576,8 @@ def test_in_production_assembly_is_refused_per_scene_without_an_accepted_take_or
     assert response.status_code == 409, response.text
     detail = response.json()["detail"]
     assert detail["status"] == "TAKES_NOT_ACCEPTED"
-    assert "Scena 1" in detail["message"] and "Scena 2" in detail["message"]
+    # the scenes grouped in one sentence (2026-10-04), each still named in ``scenes``
+    assert "Scenele 1 și 2 nu au încă un cadru acceptat" in detail["message"]
     assert [item["scene_index"] for item in detail["scenes"]] == [1, 2]
     assert jobs(engine) == [] and approvals(engine) == []
 

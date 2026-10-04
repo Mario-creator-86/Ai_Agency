@@ -1625,12 +1625,15 @@ def _walk_staircase(
             # Nothing left to buy; but a filmed scene with no accepted take and no LOCAL_MOVE
             # of his cannot be cut in (PRODUCTION): the film waits for his look on the sheet,
             # and nobody is asked about a narration for a film that cannot be assembled.
-            blocked = ((sheet.get("steps") or {}).get("assemble") or {}).get("blocked") or []
+            assemble = (sheet.get("steps") or {}).get("assemble") or {}
+            blocked = assemble.get("blocked") or []
             if blocked:
                 return stop(
                     "WAITING",
                     None,
-                    " ".join(str(item.get("reason_ro") or "") for item in blocked),
+                    # the scenes grouped, said once (`sheet_words.blocked_words`)
+                    str(assemble.get("blocked_ro") or "")
+                    or " ".join(str(item.get("reason_ro") or "") for item in blocked),
                     refusal="TAKES_NOT_ACCEPTED",
                 )
             return stop("READY", None, "")

@@ -850,7 +850,9 @@ test('the sheet opens on a summary bar: his rule, the next step with its price a
   assert.ok(html.includes('Mergi la pași'));
   // with every paid step bought, the next step is the assembly
   assert.equal(sheetSummary(afterMotion(), null).next?.step, 'assemble');
-  assert.match(STYLE, /\.sheet-summary-bar\s*\{[^}]*position:\s*sticky/);
+  // The Owner (2026-10-03): «Cardul cu "Regula ta: ..." este pinuit sus, nu vreau asta» - the
+  // bar is the first thing of the sheet and scrolls away with it; nothing pins it over the scenes.
+  assert.doesNotMatch(STYLE, /\.sheet-summary-bar\s*\{[^}]*position:\s*(sticky|fixed|absolute)/);
 });
 
 test('the film\'s own ceiling is a footer row', () => {
@@ -877,4 +879,298 @@ test('the sheet shows the backend repair state and never calls a queued repair s
     assert.ok(html.includes(words), status);
     assert.ok(html.includes('Raport &lt;verificat&gt;'));
   }
+});
+
+// ------------------------------------------------- SHEET_BUSY_ONCE (2026-10-03, the Nepal redo)
+//
+// He pressed «Refă» while the film's lease stood. The drawer's status line (the 409's sentence, in
+// red) sat in the shell's `minmax(0, 1fr)` row, which the body's implicit `auto` row left at zero
+// height: its text ran down under the body, and the sticky summary bar painted over its lower half.
+// The same sentence was also in the bar («Următorul pas: … — Filmul este deja în lucru …») and under
+// every step button below.
+
+/** The CSS block of the first rule whose selector list matches `selector`. @param {RegExp} selector */
+function cssRule(selector) {
+  const found = new RegExp(`(?:^|\n)([^{}\n]*${selector.source}[^{}\n]*)\{([^}]*)\}`).exec(STYLE);
+  return found ? found[2] : '';
+}
+
+test('the drawer gives its status line a row of its own, so it never runs under the body', () => {
+  const shell = cssRule(/\.sheet-drawer\[open\]/);
+  assert.match(shell, /grid-template-rows:\s*auto\s+auto\s+minmax\(0,\s*1fr\)/, 'header, status line, body');
+  assert.match(cssRule(/\.sheet-drawer\s*>\s*\.dialog-header/), /grid-row:\s*1\b/);
+  assert.match(cssRule(/\.sheet-drawer\s*>\s*\.sheet-status/), /grid-row:\s*2\b/);
+  assert.match(cssRule(/\.sheet-drawer\s*>\s*\.sheet-body/), /grid-row:\s*3\b/, 'a hidden status line leaves the body in the scrolling row');
+  const status = cssRule(/\.sheet-drawer\s*>\s*\.sheet-status/);
+  assert.doesNotMatch(status, /position:\s*(absolute|fixed|sticky)/);
+  assert.doesNotMatch(status, /(^|[^-])height:\s*\d/, 'no fixed height');
+  assert.match(status, /overflow-wrap:\s*anywhere/, 'a long Romanian sentence wraps fully');
+  // aligned with the body's gutters: 32 px on a desk, 16 px on a phone
+  assert.match(status, /margin:[^;]*var\(--s7\)/);
+  // the phone rule, in whichever 600 px block holds it (other blocks may follow it)
+  const phone = STYLE.split('@media (max-width: 600px)').slice(1)
+    .find((block) => /\.sheet-drawer\s*>\s*\.sheet-status\s*\{/.test(block.split(/\n\}/)[0])) || '';
+  assert.match(phone.split(/\n\}/)[0], /\.sheet-drawer\s*>\s*\.sheet-status\s*\{[^}]*margin:[^;]*var\(--s4\)/);
+  // a waiting line is the warning's colours, readable on the dark ground
+  assert.match(cssRule(/\.sheet-notice\.sheet-waiting/), /background:\s*var\(--warn-bg\)[^}]*color:\s*var\(--warn-ink\)|color:\s*var\(--warn-ink\)[^}]*background:\s*var\(--warn-bg\)/);
+});
+
+/** The fixture with the film's lease standing (the backend's `in_progress`). */
+function busySheet() {
+  const s = withHero('APPROVED');
+  s.in_progress = { holder: 'h-1', step: 'scene_redo', reason_ro: 'Filmul este deja în lucru: o refacere de scenă a început acum 144 de minute și nu s-a terminat. Nu se cumpără nimic de două ori; foaia de filmare se reîncarcă singură când pasul se termină.' };
+  return s;
+}
+
+test('the busy sentence is said once on the sheet: in the bar at the top, never again under each step', async () => {
+  const { BUSY_SEE_BAR } = await import('../src/shooting_sheet.js');
+  const s = busySheet();
+  const reason = s.in_progress.reason_ro;
+  const html = sheetHtml(s, { escape: e });
+  assert.equal(html.split(e(reason)).length - 1, 1, 'one copy');
+  const bar = html.slice(html.indexOf('sheet-summary-bar'), html.indexOf('sheet-head'));
+  assert.ok(bar.includes(e(reason)), 'the copy is in the bar');
+  // each disabled step below points to the bar in a few words, and keeps its other reasons
+  const footer = html.slice(html.indexOf('sheet-footer'));
+  assert.ok(footer.includes(e(BUSY_SEE_BAR)));
+  assert.match(BUSY_SEE_BAR, /deja în lucru/);
+  // the buttons themselves keep the whole reason (the bar reads it; a title may)
+  for (const b of stepButtons(s)) assert.ok(b.reasons.includes(reason), b.step);
+});
+
+test('his refused press is answered in the status line without repeating the bar', async () => {
+  const { sheetStatusText, BUSY_PRESS_WORDS } = await import('../src/shooting_sheet.js');
+  const s = busySheet();
+  const said = 'Filmul este deja în lucru: o refacere de scenă a început acum 144 de minute și nu s-a terminat.';
+  const answer = sheetStatusText(said, 'FILM_BUSY', true, s);
+  assert.equal(answer.text, BUSY_PRESS_WORDS);
+  assert.equal(answer.tone, 'waiting', 'a film at work is a wait, not a failure');
+  assert.ok(!answer.text.includes('144'), 'the minutes are the bar\'s, read again on every repaint');
+  assert.match(BUSY_PRESS_WORDS, /bara de sus/);
+  // the lease ended before the sheet was read again: the bar says nothing, the line says it all
+  const free = withHero('APPROVED');
+  assert.deepEqual(sheetStatusText(said, 'FILM_BUSY', true, free), { text: said, tone: 'error' });
+  // every other answer is shown as it came
+  assert.deepEqual(sheetStatusText('Sold insuficient.', 'INSUFFICIENT_BALANCE', true, s), { text: 'Sold insuficient.', tone: 'error' });
+  assert.deepEqual(sheetStatusText('Imaginea a fost refăcută.', null, false, s), { text: 'Imaginea a fost refăcută.', tone: 'ok' });
+  assert.deepEqual(sheetStatusText('', null, false, s), { text: '', tone: 'ok' });
+});
+
+test('while the film is at work a paid «Refă» cannot be pressed, so his yes is never asked for nothing', async () => {
+  // He pressed «Refă», said «Da, aprob și refac», his yes was decided, and only then the redo was
+  // refused FILM_BUSY. A still or motion redo takes the film's lease; a card or the sound does not.
+  const { BUSY_SEE_BAR } = await import('../src/shooting_sheet.js');
+  const s = busySheet();
+  const html = sheetHtml(s, { escape: e });
+  assert.match(html, /data-sheet-action="redo" data-kind="still" data-scene="1"[^>]*disabled/);
+  assert.match(html, /data-sheet-action="redo" data-kind="motion" data-scene="1"[^>]*disabled/);
+  assert.doesNotMatch(html, /data-sheet-action="redo" data-kind="card" data-scene="5"[^>]*disabled/, 'a free card redo takes no lease');
+  assert.doesNotMatch(html, /data-sheet-action="redo" data-kind="audio" data-scene=""[^>]*disabled/, 'the sound takes no lease');
+  const one = html.slice(html.indexOf('Cadrul 1 ·'), html.indexOf('Cadrul 2 ·'));
+  assert.ok(one.includes(e(BUSY_SEE_BAR)), 'the scene points to the bar');
+  assert.equal(html.split(e(s.in_progress.reason_ro)).length - 1, 1, 'still one copy of the busy sentence');
+  // no question opens for a paid redo while the lease stands; a free one still asks
+  assert.equal(redoConfirmHtml(s, redoKey('still', 1), { escape: e }), '');
+  assert.equal(redoConfirmHtml(s, redoKey('motion', 1), { escape: e }), '');
+  assert.ok(redoConfirmHtml(s, redoKey('card', 5), { escape: e }).includes('Refaci cardul scenei 5?'));
+  // the lease gone, the same redo is pressable again
+  assert.match(redoConfirmHtml(withHero('APPROVED'), redoKey('still', 1), { escape: e }), /Da, aprob și refac/);
+});
+
+test('main.js carries the refusal\'s code to the status line', () => {
+  const command = MAIN.slice(MAIN.indexOf('function sheetCommand('), MAIN.indexOf('async function onSheetClick('));
+  assert.equal((command.match(/throw new Error\(sheetRefusal/g) || []).length, 0, 'no refusal loses its code');
+  assert.ok((command.match(/refusalError\(/g) || []).length >= 3, 'step, assembly and redo');
+  const status = MAIN.slice(MAIN.indexOf('function sheetStatus('), MAIN.indexOf('function paintSheet()'));
+  assert.match(status, /sheetStatusText\(/);
+  assert.match(status, /sheet-waiting/);
+});
+
+// ------------------------------------------------ TAKE_CHOICE_SEEN (2026-10-04, the Nepal sheet)
+//
+// «Dacă apăs pe Alege imaginea aceasta, nu se întâmplă nimic!» The books show every press landed.
+// What he saw did not change where he clicked: the answer went to the status line at the top, and
+// after the repaint the chosen picture and the other one swapped places (two near-identical Nepal
+// landscapes), so the card looked the same. The answer also said «Nimic nu s-a cumpărat» while the
+// continuation his choice queued bought the test shot under his rule seconds later.
+
+/** Scene 3 after he chose its runner-up: the runner-up is the still, the old still a candidate. */
+function chosenRunnerUp() {
+  const s = sheet();
+  const three = scene(s, 3);
+  const runner = three.candidates[0];
+  const old = three.still;
+  three.still = { ...old, take_id: runner.take_id, file_url: runner.file_url, approved_by: 'owner', status: 'APPROVED' };
+  three.candidates = [{ ...runner, take_id: old.take_id, file_url: old.file_url, status: 'PAID' }];
+  return { s, chosen: runner.take_id };
+}
+
+/** The markup of one scene's card. @param {string} html @param {number} n */
+function sceneCard(html, n) {
+  const start = html.indexOf(`data-scene-index="${n}"`);
+  assert.ok(start >= 0, `scene ${n} has its card`);
+  const end = html.indexOf('<li class="sheet-scene"', start);
+  return html.slice(start, end < 0 ? html.indexOf('</ol>', start) : end);
+}
+
+test('the pressed choice says it is working, in the button he pressed', () => {
+  const runner = scene(SHEET, 3).candidates[0].take_id;
+  const html = sheetHtml(SHEET, { escape: e, pressed: { take: runner, decision: 'APPROVED' } });
+  assert.match(html, new RegExp(`data-take="${runner}" data-decision="APPROVED"[^>]*disabled[^>]*aria-busy="true"[^>]*>Se alege…<`));
+  // the other button of the same take is held too, and keeps its words
+  assert.match(html, new RegExp(`data-take="${runner}" data-decision="REJECTED"[^>]*disabled[^>]*>Respinge<`));
+  const rejecting = sheetHtml(SHEET, { escape: e, pressed: { take: runner, decision: 'REJECTED' } });
+  assert.match(rejecting, new RegExp(`data-take="${runner}" data-decision="REJECTED"[^>]*aria-busy="true"[^>]*>Se respinge…<`));
+  // nothing pressed: the buttons read as always
+  assert.match(sheetHtml(SHEET, { escape: e }), new RegExp(`data-take="${runner}" data-decision="APPROVED">Alege imaginea aceasta<`));
+});
+
+test('after his choice the scene he pressed shows the chosen picture, marked, with a note of what it set going', () => {
+  const { s, chosen } = chosenRunnerUp();
+  const said = 'Imaginea scenei 3 este aleasă. Filmul continuă singur: cadrul de probă se cumpără acum, fără altă întrebare.';
+  const html = sheetHtml(s, { escape: e, choice: { scene: 3, take: chosen, decision: 'APPROVED', failed: false, message: said } });
+  const card = sceneCard(html, 3);
+  // the chosen picture carries a clear mark, and the card says it was chosen just now
+  assert.match(card, /class="sheet-still-box sheet-chosen-now"[^>]*data-sheet-choice/);
+  assert.ok(card.includes('<span class="sheet-chosen-mark">Imaginea aleasă</span>'));
+  assert.match(card, /class="sheet-choice-note" role="status"><strong>Aleasă acum\.<\/strong> /);
+  assert.ok(card.includes(e(said)), 'the server\'s truth, in the card he looks at');
+  // only that card: the other scenes keep their mark and no note
+  const two = sceneCard(html, 2);
+  assert.ok(two.includes('Imaginea aleasă'), 'every scene marks its chosen picture');
+  assert.ok(!two.includes('sheet-choice-note') && !two.includes('sheet-chosen-now'));
+  // the old still is a candidate again, choosable
+  assert.match(card, /data-sheet-action="take" data-take="[^"]+" data-decision="APPROVED">Alege imaginea aceasta</);
+  // no choice: no note anywhere
+  assert.ok(!sheetHtml(s, { escape: e }).includes('sheet-choice-note'));
+});
+
+test('a refused choice is said in the card he pressed, not only at the top', () => {
+  const runner = scene(SHEET, 3).candidates[0].take_id;
+  const html = sheetHtml(SHEET, { escape: e, choice: { scene: 3, take: runner, decision: 'APPROVED', failed: true, message: 'Foaia s-a schimbat <între timp>.' } });
+  const card = sceneCard(html, 3);
+  assert.match(card, /class="sheet-choice-note sheet-blocked" role="alert"><strong>Alegerea nu s-a făcut\.<\/strong> Foaia s-a schimbat &lt;între timp&gt;\./);
+  assert.ok(!card.includes('sheet-chosen-now'), 'nothing was chosen');
+  const rejected = sheetHtml(SHEET, { escape: e, choice: { scene: 3, take: runner, decision: 'REJECTED', failed: false, message: 'Imaginea respinsă a scenei 3 nu se mai folosește în film.' } });
+  assert.match(sceneCard(rejected, 3), /<strong>Respinsă acum\.<\/strong> Imaginea respinsă a scenei 3/);
+  const notRejected = sheetHtml(SHEET, { escape: e, choice: { scene: 3, take: runner, decision: 'REJECTED', failed: true, message: 'Eroare.' } });
+  assert.match(sceneCard(notRejected, 3), /<strong>Respingerea nu s-a făcut\.<\/strong> Eroare\./);
+});
+
+test('a choice whose answer never arrived is not said to have failed: the server may have made it', () => {
+  // the decision builds the sheet on the server before it answers; on his loaded machine the
+  // answer can come after the page stopped waiting, while the choice is already in the books
+  const runner = scene(SHEET, 3).candidates[0].take_id;
+  const html = sheetHtml(SHEET, { escape: e, choice: { scene: 3, take: runner, decision: 'APPROVED', failed: true, network: true, message: 'Studioul nu a răspuns la timp.' } });
+  const card = sceneCard(html, 3);
+  assert.ok(!card.includes('Alegerea nu s-a făcut'), 'never claimed undone: it may be done');
+  assert.match(card, /class="sheet-choice-note sheet-waiting" role="status"><strong>Răspunsul nu a sosit\.<\/strong> /);
+  assert.ok(card.includes('foaia de mai jos, citită din nou, arată imaginea aleasă acum'));
+  const rejecting = sheetHtml(SHEET, { escape: e, choice: { scene: 3, take: runner, decision: 'REJECTED', failed: true, network: true, message: '' } });
+  assert.ok(!sceneCard(rejecting, 3).includes('Respingerea nu s-a făcut'));
+  assert.match(STYLE, /\.sheet-choice-note\.sheet-waiting\s*\{[^}]*var\(--warn-bg\)/);
+  // the page waits as long for the decision as for the sheet it builds, and marks a lost answer
+  const command = MAIN.slice(MAIN.indexOf('function sheetCommand('), MAIN.indexOf('async function onSheetClick('));
+  const take = command.slice(command.indexOf("action === 'take'"), command.indexOf("action === 'model'"));
+  assert.match(take, /timeoutMs:\s*60000/);
+  const click = MAIN.slice(MAIN.indexOf('async function onSheetClick('), MAIN.indexOf('const MEDIA_PAGE'));
+  assert.match(click, /network/);
+});
+
+test('the sheet\'s body is laid out whole: a repaint never jumps away from the scene he pressed', () => {
+  // W28 lays the parts of a door out only as they come near the view (content-visibility: auto,
+  // 320 px kept for each). The sheet's body is replaced on every repaint, so its new parts have no
+  // remembered height: in a Playwright run at 375 px the press jumped the view from scene 4 to the
+  // top (5448 -> 924 px), and after the answer the note scrolled into view slid 945 px out again.
+  const rule = STYLE.match(/\.studio-dialog \.dialog-body\.sheet-body:not\(\.dialog-body-railed\) > \*\s*\{([^}]*)\}/);
+  assert.ok(rule, 'the sheet\'s body has its own rule, as specific as W28\'s and after it');
+  assert.match(rule[1], /content-visibility:\s*visible/);
+  assert.ok(STYLE.indexOf(rule[0]) > STYLE.indexOf('.studio-dialog .dialog-body:not(.dialog-body-railed) > *'));
+});
+
+test('main.js says the server\'s outcome, keeps the pressed scene in view and never claims nothing was bought', () => {
+  const command = MAIN.slice(MAIN.indexOf('function sheetCommand('), MAIN.indexOf('async function onSheetClick('));
+  const take = command.slice(command.indexOf("action === 'take'"), command.indexOf("action === 'model'"));
+  assert.match(take, /outcome\?\.message_ro/, 'the answer the server gave');
+  assert.ok(!take.includes('Nimic nu s-a cumpărat'), 'the page never invents what was bought');
+  const click = MAIN.slice(MAIN.indexOf('async function onSheetClick('), MAIN.indexOf('const MEDIA_PAGE'));
+  assert.match(click, /sheetDrawer\.pressed\s*=/, 'the pressed button says it is working');
+  assert.match(click, /sheetDrawer\.choice\s*=/, 'the answer is kept for the card he pressed');
+  assert.match(click, /keepSceneInView\(/, 'the drawer keeps that scene in view after the repaint');
+  const paint = MAIN.slice(MAIN.indexOf('function paintSheet()'), MAIN.indexOf('async function loadSheet()'));
+  assert.match(paint, /pressed:\s*sheetDrawer\.pressed/);
+  assert.match(paint, /choice:\s*sheetDrawer\.choice/);
+  const keep = MAIN.slice(MAIN.indexOf('function keepSceneInView('));
+  assert.match(keep.slice(0, 900), /data-scene-index/);
+  assert.match(keep.slice(0, 900), /scrollIntoView\(\{[^}]*block:\s*'nearest'/);
+  // the status line at the top stays
+  assert.match(click, /sheetNotice\(said, failed, code\)/);
+});
+
+test('the assembly\'s wait is said once, the scenes grouped as the backend wrote it', () => {
+  const held = afterMotion();
+  held.steps.assemble.ready = false;
+  const one = (/** @type {number} */ n) => ({ scene_index: n, code: 'NO_SHOT', why_ro: '', reason_ro: `Scena ${n} nu are un cadru acceptat, iar Proprietarul nu a ales „imagine fixă animată local” pentru ea pe foaia de filmare.` });
+  held.steps.assemble.blocked = [1, 2, 3, 4, 6].map(one);
+  held.steps.assemble.blocked_ro = 'Scenele 1, 2, 3, 4 și 6 nu au încă un cadru acceptat (nici „imagine fixă animată local” aleasă pe foaia de filmare).';
+  held.steps.assemble.paid_steps_left = ['test_shot', 'motion'];
+  const reasons = assembleButton(held).reasons;
+  assert.deepEqual(reasons, [
+    'Întâi pașii plătiți rămași: cadrul de probă, mișcarea. Filmul se asamblează după ultimul.',
+    held.steps.assemble.blocked_ro,
+  ]);
+  const html = sheetHtml(held, { escape: e });
+  assert.equal(html.split('nu are un cadru acceptat').length - 1, 0, 'no sentence per scene');
+});
+
+/** A refused request as the backend shows it (`sheet_words.refusal_view`). @param {string} id @param {number} credits */
+function refusedTake(id, credits = 0) {
+  const vendor = 'Validation of body failed; referenceImages.[0]..uri: Data URI is too large: 8.6MB exceeds the 5MB limit. Upload the file and pass the returned URI instead.';
+  return {
+    take_id: id, kind: 'still', status: 'REFUSED', model_id: 'gen4_image', file_url: null, credits_measured: credits ? credits : null,
+    failure_code: 'HTTP_400', reason_ro: `${vendor}; ${vendor.slice(vendor.indexOf('referenceImages'))}`,
+    refusal: { kind: 'PICTURE_TOO_LARGE', explain_ro: 'Imaginea de referință trimisă avea 8,6 MB, peste limita Runway de 5 MB, iar Runway a refuzat cererea înainte să genereze ceva. Reparat de atunci (626b59d): studioul micșorează imaginea sub limită înainte s-o trimită.', vendor_text: vendor, credits },
+  };
+}
+
+test('refused requests are said in Romanian, grouped under one closed «Refuzate de furnizor (0 credite)»', () => {
+  const s = sheet();
+  const three = scene(s, 3);
+  three.candidates = [...three.candidates, refusedTake('r-1'), refusedTake('r-2'), refusedTake('r-3'), refusedTake('r-paid', 9)];
+  const html = sheetHtml(s, { escape: e });
+  const card = sceneCard(html, 3);
+  // the bought candidate stays first and easy to find
+  assert.ok(card.indexOf('Alege imaginea aceasta') < card.indexOf('sheet-refused'));
+  // one closed group for the requests that cost nothing; identical refusals said once, counted
+  assert.equal(card.split('<details class="sheet-refused">').length - 1, 1);
+  assert.match(card, /<details class="sheet-refused"><summary>Refuzate de furnizor \(0 credite\): 3 cereri<\/summary>/);
+  const group = card.slice(card.indexOf('<details class="sheet-refused">'));
+  assert.equal(group.split('Imaginea de referință trimisă avea 8,6 MB').length - 1, 1, 'the same refusal once');
+  assert.ok(group.includes('de 3 ori'));
+  // the vendor's text, once, behind «Textul furnizorului»
+  assert.match(card, /<details class="sheet-vendor-text"><summary>Textul furnizorului<\/summary><p lang="en">Validation of body failed; referenceImages/);
+  assert.equal(card.split('Data URI is too large').length - 1, 2, 'once in the group, once for the refusal that cost credits');
+  // a refusal that cost credits stays in the main list, explained, with what it cost
+  const paid = card.slice(0, card.indexOf('<details class="sheet-refused">'));
+  assert.ok(paid.includes('Imaginea de referință trimisă avea 8,6 MB'));
+  assert.ok(paid.includes('9 credite'));
+  // no refused request can be chosen
+  for (const id of ['r-1', 'r-2', 'r-3', 'r-paid']) assert.doesNotMatch(html, new RegExp(`data-take="${id}"`));
+});
+
+test('a refusal whose cost was not measured is said as «poate fi taxată, până la», never as a cost or as 0', () => {
+  const s = sheet();
+  const three = scene(s, 3);
+  const maybe = refusedTake('r-maybe');
+  maybe.failure_code = 'VENDOR.FAILED';
+  maybe.refusal = {
+    kind: 'UNKNOWN',
+    explain_ro: 'Furnizorul a refuzat cererea, fără un motiv cunoscut studioului. Cererea ajunsese la furnizor: poate fi taxată, până la 40 credite (costul nu a fost măsurat).',
+    vendor_text: 'Task failed.', credits: 40, credits_known: false,
+  };
+  three.candidates = [...three.candidates, maybe];
+  const card = sceneCard(sheetHtml(s, { escape: e }), 3);
+  assert.doesNotMatch(card, /sheet-refused/, 'not in the 0-credit group');
+  assert.ok(card.includes('poate fi taxată, până la 40 credite'));
+  assert.ok(!card.includes('măsurat). · '), 'the unmeasured number is not said again as a cost');
 });

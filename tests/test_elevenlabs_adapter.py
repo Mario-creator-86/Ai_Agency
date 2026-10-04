@@ -63,7 +63,18 @@ class Transport:
         self.responses = list(responses)
         self.calls: list[dict] = []
 
-    def __call__(self, host, method, path, headers, body=None, *, timeout=120, expect_json=True):
+    def __call__(
+        self,
+        host,
+        method,
+        path,
+        headers,
+        body=None,
+        *,
+        timeout=120,
+        expect_json=True,
+        total_seconds=None,
+    ):
         self.calls.append({"path": path, "body": json.loads(body) if body else None})
         if not self.responses:
             raise AssertionError("the adapter asked the vendor more times than the test allows")
@@ -295,3 +306,38 @@ def test_the_render_tells_each_scene_the_words_around_it_and_keys_them(engine, t
     # The same words in the same places are the same recordings: nothing is bought again.
     render()
     assert len(voice.asked) == 3
+
+
+class _TotalsTransport:
+    """Records each call's ``total_seconds`` (the whole answer's end, REDO_HANG)."""
+
+    def __init__(self, *responses) -> None:
+        self.responses = list(responses)
+        self.totals: list[tuple[str, object]] = []
+
+    def __call__(self, host, method, path, headers, body=None, **kwargs):
+        self.totals.append((path, kwargs.get("total_seconds")))
+        outcome = self.responses.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+
+@pytest.mark.parametrize("timed_refused", [False, True])
+def test_every_paid_narration_call_carries_a_total_deadline(monkeypatch, timed_refused):
+    # REDO_HANG, 2026-10-03: a socket timeout bounds one read, never an answer that keeps
+    # trickling. The narration is bought inside the sheet's assemble step, under the film's
+    # purchase lease, which its live holder keeps renewing: a voice request without an end of
+    # its own would hold the film «în lucru» up to the lease's three-hour ceiling.
+    plain = (None, _mp3(), "audio/mpeg")
+    responses = (_refused(404), plain) if timed_refused else (_answer(),)
+    transport = _TotalsTransport(*responses)
+    monkeypatch.setattr(elevenlabs, "request", transport)
+    adapter = ElevenLabsTTSAdapter("key", voice_id="v1", model="eleven_multilingual_v2")
+
+    asyncio.run(adapter.synthesize(TEXT))
+
+    assert transport.totals, "nothing was asked"
+    assert all(isinstance(total, int | float) and total > 0 for _path, total in transport.totals), (
+        transport.totals
+    )

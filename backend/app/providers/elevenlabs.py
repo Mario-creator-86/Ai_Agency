@@ -56,6 +56,12 @@ logger = logging.getLogger(__name__)
 #: The documented default, named so the result's `format` and `sample_rate` are what was
 #: asked for rather than whatever the vendor defaults to that day.
 OUTPUT_FORMAT = "mp3_44100_128"
+#: The end of one paid narration request as a whole (`media_http.request`'s ``total_seconds``,
+#: REDO_HANG 2026-10-03): a socket timeout bounds one read, never an answer that keeps
+#: trickling, and the narration is bought inside the sheet's assemble step under the film's
+#: purchase lease, which a live holder keeps renewing. Past it the request is unanswered: it
+#: may have been billed, so it is never sent again.
+NARRATION_TOTAL_SECONDS = 180
 #: Refusals that mean "this endpoint shape is not served" (a contract change): no audio was
 #: made, so asking the plain endpoint once buys nothing twice.
 CONTRACT_REFUSALS = frozenset({404, 405, 422})
@@ -464,6 +470,7 @@ class ElevenLabsTTSAdapter(TTSProvider):
                 self._headers("audio/mpeg"),
                 json.dumps(fields).encode("utf-8"),
                 expect_json=False,
+                total_seconds=NARRATION_TOTAL_SECONDS,
             )
             if not audio or "audio" not in content_type:
                 raise MediaProviderError("ElevenLabs did not return audio") from None
@@ -558,6 +565,7 @@ class ElevenLabsTTSAdapter(TTSProvider):
             self._headers("application/json"),
             json.dumps(fields).encode("utf-8"),
             expect_json=False,
+            total_seconds=NARRATION_TOTAL_SECONDS,
         )
 
     @staticmethod

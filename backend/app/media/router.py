@@ -1028,9 +1028,28 @@ def create_media_router() -> APIRouter:
         take_id: Annotated[str, FPath(min_length=1, max_length=36)],
         cmd: TakeDecisionCommand,
     ) -> dict:
-        """The Owner's look at a paid take on the contact sheet: APPROVED or REJECTED."""
+        """The Owner's look at a paid take on the contact sheet: APPROVED or REJECTED.
+
+        The answer's ``outcome`` says what the choice set going (2026-10-04): the next step of
+        the sheet as it is now is named from a read with no live call (no balance, no faces)."""
+        engine = request.app.state.engine
+
+        def sheet_now(storyboard_id: str) -> dict[str, Any]:
+            wiring = _sheet_wiring(request)
+            return build_sheet(
+                engine,
+                storyboard_id,
+                capabilities=wiring["capabilities"],
+                integration_id=wiring["integration_id"],
+                resolution=wiring["resolution"],
+                stills_model=getattr(wiring["image_adapter"], "model", None),
+                read_live=False,
+            )
+
         try:
-            return decide_sheet_take(request.app.state.engine, take_id, cmd.decision, note=cmd.note)
+            return decide_sheet_take(
+                engine, take_id, cmd.decision, note=cmd.note, sheet_reader=sheet_now
+            )
         except SheetNotFound as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except PermissionError as exc:

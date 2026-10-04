@@ -244,7 +244,9 @@ class YouTubeAnalyticsProvider(AnalyticsProvider):
             raise ValueError(f"Unsupported analytics window {window!r}")
         return (today - timedelta(days=days)).isoformat(), today.isoformat()
 
-    def _report(self, params: dict[str, str], token: str) -> dict:
+    def _report(self, params: dict[str, str], token: str, *, asked_again: bool = False) -> dict:
+        """One report. ``asked_again``: a refused query (not a refused account) is answered by
+        a smaller question, so its refusal is an INFO line, not an error in the console."""
         url = f"https://youtubeanalytics.googleapis.com/v2/reports?{urlencode(params)}"
         req = Request(url, headers={"Authorization": f"Bearer {token}"})
         try:
@@ -263,7 +265,12 @@ class YouTubeAnalyticsProvider(AnalyticsProvider):
             # reconnecting. Any other status is this query refused, which the caller may ask
             # again in a smaller shape.
             refused = exc.code in (401, 403)
-            logger.error("youtube_analytics_api_error: HTTP %s", exc.code)
+            if asked_again and not refused:
+                # YouTube Analytics does not serve the impression metrics (2026-10-04: HTTP 400
+                # for each video, then the smaller question measured both): not an error.
+                logger.info("youtube_analytics_query_refused_asking_smaller: HTTP %s", exc.code)
+            else:
+                logger.error("youtube_analytics_api_error: HTTP %s", exc.code)
             raise MetricsUnavailable(
                 (
                     f"YouTube Analytics a refuzat contul (HTTP {exc.code}): accesul la "
@@ -315,7 +322,7 @@ class YouTubeAnalyticsProvider(AnalyticsProvider):
 
         impressions_reported = True
         try:
-            data = self._report(params, token)
+            data = self._report(params, token, asked_again=True)
         except MetricsUnavailable as exc:
             # Impression metrics are not available for every account or query shape. Retry with
             # the core metrics and report no impressions rather than inventing them. Only a

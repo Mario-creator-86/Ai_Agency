@@ -597,6 +597,53 @@ def test_a_report_google_refuses_is_no_data_and_an_impression_refusal_still_fall
     assert len(calls) == 2
 
 
+def test_the_impressions_refusal_answered_by_the_smaller_question_is_not_an_error(
+    monkeypatch, caplog
+):
+    """The Owner (2026-10-03): «dacă nu-i o eroare, nu ar trebui să fie» în consolă. At 05:00 on
+    2026-10-04 each of his two videos logged «youtube_analytics_api_error: HTTP 400»: YouTube
+    Analytics does not serve the impression metrics, and the smaller question that follows
+    measured both videos. A refusal that ends in no data is still a warning."""
+    import asyncio
+    import io
+    import json
+    import logging
+
+    import app.providers.youtube_analytics as module
+    from app.providers.youtube_analytics import YouTubeAnalyticsProvider
+
+    class Answer(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    calls: list[str] = []
+
+    def impressions_refused(request, timeout=None):
+        calls.append(request.full_url)
+        if "impressions" in request.full_url:
+            return _google_refuses(400, b'{"error": {"code": 400}}')(request, timeout)
+        body = {"columnHeaders": [{"name": "views"}], "rows": [[3]]}
+        return Answer(json.dumps(body).encode("utf-8"))
+
+    reader = YouTubeAnalyticsProvider(
+        access_token="a", channel_id="UC_main"
+    )  # pragma: allowlist secret
+    monkeypatch.setattr(module, "urlopen", impressions_refused)
+    with caplog.at_level(logging.DEBUG):
+        metrics = asyncio.run(reader.fetch_video_metrics("yt_real_abc"))
+    assert metrics.views == 3 and len(calls) == 2
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING], caplog.text
+
+    caplog.clear()
+    monkeypatch.setattr(module, "urlopen", _google_refuses(400, b'{"error": {"code": 400}}'))
+    with caplog.at_level(logging.DEBUG), pytest.raises(MetricsUnavailable):
+        asyncio.run(reader.fetch_video_metrics("yt_real_abc"))
+    assert [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+
 def test_measuring_a_channel_whose_token_google_refuses_records_no_data_and_tells_the_preflight(
     engine, channel, monkeypatch
 ):

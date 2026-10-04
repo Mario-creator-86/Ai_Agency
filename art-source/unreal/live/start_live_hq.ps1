@@ -2,7 +2,10 @@
 # then Unreal running /Game/HQ/HQ_Dusk as a game that streams into it over Pixel Streaming 2.
 # The web page connects to ws://localhost:<player_port> (wilbur.config.json) and shows the video.
 #
-#   powershell -File art-source/unreal/live/start_live_hq.ps1 [-ResX 1920] [-ResY 1080] [-Windowed]
+#   powershell -File art-source/unreal/live/start_live_hq.ps1 [-ResX 1920] [-ResY 1008] [-Windowed] [-PrintOnly]
+#
+# scripts/start.py starts the same two processes with the studio (scripts/live_graphics.py), from
+# the same stream_command.json, and stops them with it; this script is for a stream on its own.
 #
 # Paths come from the parameters, else the environment (AMN_PS_INFRA, AMN_PS_NODE, AMN_UE_ROOT), else
 # art-source\unreal\.env.paths; with none of them the script stops and says which to set. Epic's
@@ -10,10 +13,12 @@
 # without spaces.
 
 param(
-    # The page frames the scene at 1600:840; the stream keeps that shape so clicks line up.
-    [int]$ResX = 1920,
-    [int]$ResY = 1008,
+    # 0 = the size in stream_command.json (1920x1008: the page frames the scene at 1600:840).
+    [int]$ResX = 0,
+    [int]$ResY = 0,
     [switch]$Windowed,
+    # Print the two command lines and start nothing.
+    [switch]$PrintOnly,
     # Appended to the game's command line, for a measurement only: the phase gate's frame time is the
     # engine's CSV profiler (-csvCaptureFrames=N, written under AMNReference/Saved/Profiling/CSV).
     [string[]]$ExtraArgs = @(),
@@ -50,40 +55,37 @@ $node = if ($NodePath) { $NodePath } else { Get-AmnPath "AMN_PS_NODE" "folder ho
 $ueRoot = if ($UeRoot) { $UeRoot } else { Get-AmnPath "AMN_UE_ROOT" "Unreal Engine root (the folder holding Engine\Binaries)" }
 
 $config = Get-Content (Join-Path $here "wilbur.config.json") -Raw | ConvertFrom-Json
-$wilburDist = Join-Path $infra "SignallingWebServer\dist\index.js"
+# The argument lists live in stream_command.json, which scripts/start.py reads too (it starts the
+# stream with the studio): one list for both, never a copy. Its "_why" says why each argument is there.
+$command = Get-Content (Join-Path $here "stream_command.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+if (-not $ResX) { $ResX = [int]$command.res_x }
+if (-not $ResY) { $ResY = [int]$command.res_y }
+$wilburDist = Join-Path $infra ($command.wilbur_script -replace '/', '\')
+$wilburConfig = Join-Path $here $command.wilbur_config
+$nodeExe = Join-Path $node "node.exe"
+$wilburArgs = @("`"$wilburDist`"", "--config_file", "`"$wilburConfig`"")
+
+$uproject = Join-Path $repo ($command.uproject -replace '/', '\')
+$ueArgs = @("`"$uproject`"", $command.map)
+foreach ($arg in $command.unreal_args) {
+    $ueArgs += ($arg -replace '\{streamer_port\}', $config.streamer_port -replace '\{res_x\}', $ResX -replace '\{res_y\}', $ResY)
+}
+if (-not $Windowed) { $ueArgs += $command.offscreen_args } else { $ueArgs += $command.windowed_args }
+$ueArgs += $ExtraArgs
+$ueExe = Join-Path $ueRoot "Engine\Binaries\Win64\UnrealEditor.exe"
+
+if ($PrintOnly) {
+    Write-Output "`"$nodeExe`" $($wilburArgs -join ' ')"
+    Write-Output "`"$ueExe`" $($ueArgs -join ' ')"
+    return
+}
 if (-not (Test-Path $wilburDist)) { throw "wilbur is not built: $wilburDist" }
 
 $logs = Join-Path $infra "SignallingWebServer\logs"
 New-Item -ItemType Directory -Force $logs | Out-Null
-$wilbur = Start-Process -FilePath (Join-Path $node "node.exe") `
-    -ArgumentList "`"$wilburDist`"", "--config_file", "`"$(Join-Path $here 'wilbur.config.json')`"" `
+$wilbur = Start-Process -FilePath $nodeExe -ArgumentList $wilburArgs `
     -WorkingDirectory (Join-Path $infra "SignallingWebServer") -PassThru -WindowStyle Hidden  # a minimized console still took the focus
 Write-Output "wilbur pid $($wilbur.Id): streamer port $($config.streamer_port), player port $($config.player_port)"
 
-$uproject = Join-Path $repo "art-source\unreal\AMNReference\AMNReference.uproject"
-$ueArgs = @(
-    "`"$uproject`"", "/Game/HQ/HQ_Dusk", "-game",
-    "-PixelStreamingConnectionURL=ws://127.0.0.1:$($config.streamer_port)",
-    # Offer every codec (H.264, VP8, VP9, AV1) and let the browser pick one it can decode. Forced to
-    # H.264, a browser built without it got no video: Unreal logged "Missing codec
-    # from recv codec capabilities", the page gave up after 13 s and retried every 15 s.
-    "-PixelStreamingWebRTCNegotiateCodecs",
-    # Remote Control's HTTP API (localhost only): the backend moves the scene's people from studio state.
-    "-RCWebControlEnable",
-    # A development binary prints engine warnings over the picture; the stream must not show them.
-    # The game otherwise starts at scalability level 3 (High): the quality groups are asked for Epic
-    # here, where they apply to the streamed game only, and the tonemapper sharpens a little to hold
-    # detail through the stream's own compression.
-    # The encoder's own quality. Everything here runs on one machine over the loopback, so there is
-    # no network to spare: the picture may as well be encoded at the highest quality the codec has.
-    # At the defaults (MinQP 0 but a start bitrate of 1 Mbit and a 20 Mbit ceiling) WebRTC settles
-    # low and the stream softens every edge - the Owner reads that as a lack of clarity.
-    "-PixelStreamingWebRTCStartBitrate=40000000", "-PixelStreamingWebRTCMaxBitrate=100000000",
-    "-PixelStreamingWebRTCMinBitrate=20000000", "-PixelStreamingEncoderMaxQP=18",
-    "-ExecCmds=`"DisableAllScreenMessages,sg.ViewDistanceQuality 4,sg.AntiAliasingQuality 4,sg.ShadowQuality 4,sg.GlobalIlluminationQuality 4,sg.ReflectionQuality 4,sg.PostProcessQuality 4,sg.TextureQuality 4,sg.EffectsQuality 4,sg.FoliageQuality 4,sg.ShadingQuality 4,r.Tonemapper.Sharpen 0.6,r.ScreenPercentage 150,r.MotionBlurQuality 0,PixelStreaming.Encoder.MaxQP 18,PixelStreaming.WebRTC.MaxBitrate 100000000,PixelStreaming.WebRTC.StartBitrate 40000000,PixelStreaming.WebRTC.MinBitrate 20000000`"",
-    "-ResX=$ResX", "-ResY=$ResY", "-ForceRes", "-nosplash", "-unattended"
-)
-if (-not $Windowed) { $ueArgs += "-RenderOffScreen" } else { $ueArgs += "-windowed" }
-$ueArgs += $ExtraArgs
-$ue = Start-Process -FilePath (Join-Path $ueRoot "Engine\Binaries\Win64\UnrealEditor.exe") -ArgumentList $ueArgs -PassThru
-Write-Output "unreal pid $($ue.Id): streaming /Game/HQ/HQ_Dusk at ${ResX}x${ResY}"
+$ue = Start-Process -FilePath $ueExe -ArgumentList $ueArgs -PassThru
+Write-Output "unreal pid $($ue.Id): streaming $($command.map) at ${ResX}x${ResY}"

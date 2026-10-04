@@ -93,7 +93,18 @@ class Transport:
         self.responses = list(responses)
         self.calls: list[dict] = []
 
-    def __call__(self, host, method, path, headers, body=None, *, timeout=120, expect_json=True):
+    def __call__(
+        self,
+        host,
+        method,
+        path,
+        headers,
+        body=None,
+        *,
+        timeout=120,
+        expect_json=True,
+        total_seconds=None,
+    ):
         self.calls.append(
             {
                 "host": host,

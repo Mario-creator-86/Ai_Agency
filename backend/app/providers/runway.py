@@ -60,6 +60,19 @@ IMAGE_TASKS = ("text_to_image",)
 #: still running then is reported as such rather than waited for indefinitely.
 IMAGE_DEADLINE_SECONDS = 240
 IMAGE_POLL_SECONDS = 3.0
+#: The end of one still purchase as a whole, from its submit to its last picture downloaded.
+#: A purchase past it stops (TaskStillOpen: the task is on the books by its id and collected
+#: later, free). Measured 2026-10-03: a normal pair of 2K stills took 132 s end to end; the
+#: Owner's redo of scene 3 never ended, because no wait below had an end of its own.
+IMAGE_PURCHASE_DEADLINE_SECONDS = 420
+#: Every Runway call has an end of its own (`media_http.request`'s ``total_seconds``): a
+#: socket timeout bounds one read, never an answer that keeps trickling.
+READ_TOTAL_SECONDS = 30
+SUBMIT_TOTAL_SECONDS = 90
+POLL_TOTAL_SECONDS = 45
+#: One still is a few megabytes; a shot up to `MAX_MEDIA_BYTES`.
+IMAGE_DOWNLOAD_TOTAL_SECONDS = 120
+DOWNLOAD_TOTAL_SECONDS = 600
 
 #: Host suffixes a task's output may be downloaded from. Runway's docs
 #: (https://docs.dev.runwayml.com/assets/outputs/, read 2026-10-01) show one example output
@@ -333,9 +346,11 @@ def pick_ratio(ratios: list[str] | None, aspect_ratio: str, *, follows_image: bo
     """The contract ratio closest to the requested aspect ("9:16", "16:9", "1:1").
 
     Among ratios of the same aspect the largest wins (1080:1920 over 720:1280). With a first
-    frame (`follows_image`), an ``auto_<N>p`` ratio keeps the frame's own framing at N; it
-    is chosen when no explicit ratio of the wanted aspect reaches that resolution — wan
-    offers 9:16 only at 720p explicitly, and ``auto_1080p`` at 1080p.
+    frame (`follows_image`), a model that offers ``auto_<N>p`` ratios is always sent the
+    largest of them: the frame's own framing at N. Runway refuses an explicit ratio there
+    (the Owner's Nepal test shot, 2026-10-03, 0 credits: «Keyframe image-to-video requests
+    must use `auto_480p`, `auto_720p`, or `auto_1080p` because the output aspect ratio
+    follows the first frame»), even when the contract also lists 1080:1920.
     """
     if not ratios:
         raise MediaProviderError(
@@ -358,12 +373,9 @@ def pick_ratio(ratios: list[str] | None, aspect_ratio: str, *, follows_image: bo
             scored.append((round(abs(rw / rh - wanted), 3), -min(rw, rh), ratio))
         except (ValueError, ZeroDivisionError):
             continue
-    best = min(scored) if scored else None
     if follows_image and autos:
-        exact_side = -best[1] if best is not None and best[0] <= 0.01 else 0
-        side, auto_ratio = max(autos)
-        if side > exact_side:
-            return auto_ratio
+        return max(autos)[1]
+    best = min(scored) if scored else None
     if best is None:
         raise MediaProviderError("The Runway contract lists no usable ratios for this model")
     return best[2]
@@ -568,7 +580,14 @@ class _RunwayClient:
 
     async def organization(self) -> dict[str, Any]:
         data, _, _ = await asyncio.to_thread(
-            retrying, request, HOST, "GET", "/v1/organization", self._headers(), timeout=20
+            retrying,
+            request,
+            HOST,
+            "GET",
+            "/v1/organization",
+            self._headers(),
+            timeout=20,
+            total_seconds=READ_TOTAL_SECONDS,
         )
         if not isinstance(data, dict) or not isinstance(data.get("tier"), dict):
             raise MediaProviderError("Runway did not describe the organization")
@@ -596,6 +615,7 @@ class _RunwayClient:
             self._headers(),
             json.dumps(body).encode("utf-8"),
             timeout=60,
+            total_seconds=SUBMIT_TOTAL_SECONDS,
         )
         # Runway answers a new task with the most it may charge, as {"credits": n}. It is
         # the only number the vendor states about the money, so it is kept for the books
@@ -631,6 +651,7 @@ class _RunwayClient:
                 self._headers(),
                 json.dumps({**body, "dryRun": True}).encode("utf-8"),
                 timeout=60,
+                total_seconds=SUBMIT_TOTAL_SECONDS,
             )
         except MediaProviderError:
             # A refused question costs nothing and teaches nothing; the studio keeps the
@@ -655,6 +676,7 @@ class _RunwayClient:
                 self._headers(),
                 timeout=30,
                 expect_json=False,
+                total_seconds=POLL_TOTAL_SECONDS,
             )
         except MediaProviderError:
             return
@@ -668,6 +690,7 @@ class _RunwayClient:
             f"/v1/tasks/{quote(job_id, safe='')}",
             self._headers(),
             timeout=30,
+            total_seconds=POLL_TOTAL_SECONDS,
         )
         if not isinstance(data, dict) or not isinstance(data.get("status"), str):
             raise MediaProviderError("Runway did not return the task status")
@@ -714,7 +737,9 @@ class _RunwayClient:
             result["outputs"] = [await self._download(url) for url in urls]
         return result
 
-    async def _download(self, url: str) -> tuple[bytes, str]:
+    async def _download(
+        self, url: str, total_seconds: float = DOWNLOAD_TOTAL_SECONDS
+    ) -> tuple[bytes, str]:
         parts = urlsplit(url)
         if parts.scheme != "https" or not parts.hostname:
             raise MediaProviderError("Runway returned an output that is not an HTTPS URL")
@@ -730,6 +755,7 @@ class _RunwayClient:
             timeout=120,
             expect_json=False,
             public_only=True,
+            total_seconds=total_seconds,
         )
         if not payload:
             raise MediaProviderError("Runway's output could not be downloaded")
@@ -757,7 +783,14 @@ class RunwayImageAdapter(_RunwayClient, ImageProvider):
     async def health_check(self) -> dict[str, Any]:
         try:
             data, _, _ = await asyncio.to_thread(
-                retrying, request, HOST, "GET", "/v1/organization", self._headers(), timeout=20
+                retrying,
+                request,
+                HOST,
+                "GET",
+                "/v1/organization",
+                self._headers(),
+                timeout=20,
+                total_seconds=READ_TOTAL_SECONDS,
             )
         except MediaProviderError as exc:
             return {"status": "OFFLINE", "detail": str(exc), "code": exc.code}
@@ -765,13 +798,16 @@ class RunwayImageAdapter(_RunwayClient, ImageProvider):
             return {"status": "OFFLINE", "detail": "Runway did not describe the organization"}
         return {"status": "HEALTHY", "detail": ""}
 
-    async def _image_outputs(self, job_id: str) -> list[str]:
+    async def _image_outputs(self, job_id: str, until: float | None = None) -> list[str]:
         """Poll a text_to_image task until it ends; the output URLs it served, in order.
 
         The task exists and may be billed from its submit on: a poll the vendor does not
-        answer and the deadline are TaskStillOpen (collect it later), never a refusal. Only
+        answer and the deadline (``IMAGE_DEADLINE_SECONDS``, or the purchase's own end
+        ``until`` when sooner) are TaskStillOpen (collect it later), never a refusal. Only
         the vendor's own FAILED or CANCELLED is a refusal."""
         deadline = time.monotonic() + IMAGE_DEADLINE_SECONDS
+        if until is not None:
+            deadline = min(deadline, until)
         while True:
             try:
                 data = await self._task(job_id)
@@ -871,11 +907,32 @@ class RunwayImageAdapter(_RunwayClient, ImageProvider):
 
         served: list[tuple[str, str]] = []
         prices: list[float | None] = []
+        # The purchase's own end: past it nothing more is waited for (TaskStillOpen).
+        until = time.monotonic() + IMAGE_PURCHASE_DEADLINE_SECONDS
+        accepted: list[str] = []
         for _ in range(tasks):
-            job_id = await self._submit(task, body)
-            if on_submitted is not None:
-                on_submitted(job_id)
-            urls = await self._image_outputs(job_id)
+            current: str | None = None
+            try:
+                job_id = await self._submit(task, body)
+                current = job_id
+                accepted.append(job_id)
+                if on_submitted is not None:
+                    on_submitted(job_id)
+                urls = await self._image_outputs(job_id, until)
+            except TaskStillOpen:
+                raise
+            except MediaProviderError as exc:
+                earlier = [job for job in accepted if job != current]
+                if earlier:
+                    # A task accepted (and charged) before this failure is still the vendor's
+                    # to hand over: the purchase stays open on it, collected free by its id,
+                    # never a refusal that throws its picture away or lets a retry buy it again
+                    # (review 2026-10-03: two tasks, the second POST unanswered or failed).
+                    raise TaskStillOpen(
+                        "Runway accepted part of this purchase and the rest did not complete",
+                        task_id=earlier[0],
+                    ) from exc
+                raise
             prices.append(self.last_estimated_credits)
             served += [(job_id, url) for url in urls]
         self.last_estimated_credits = (
@@ -883,8 +940,16 @@ class RunwayImageAdapter(_RunwayClient, ImageProvider):
         )
         results: list[ImageResult] = []
         for index, (job_id, url) in enumerate(served[:wanted]):
+            remaining = until - time.monotonic()
+            if remaining <= 0:
+                raise TaskStillOpen(
+                    "Runway's stills were not downloaded before the purchase's deadline",
+                    task_id=job_id,
+                )
             try:
-                image, content_type = await self._download(url)
+                image, content_type = await self._download(
+                    url, min(float(IMAGE_DOWNLOAD_TOTAL_SECONDS), remaining)
+                )
             except MediaProviderError as exc:
                 raise TaskStillOpen(
                     "Runway's still could not be downloaded", task_id=job_id
@@ -962,7 +1027,7 @@ class RunwayImageAdapter(_RunwayClient, ImageProvider):
             body["referenceImages"] = [{"uri": _image_data_uri(reference, "reference image")}]
         job_id = await self._submit(task, body)
         url = (await self._image_outputs(job_id))[0]
-        image, content_type = await self._download(url)
+        image, content_type = await self._download(url, IMAGE_DOWNLOAD_TOTAL_SECONDS)
         fmt, actual_width, actual_height = image_dimensions(image, content_type)
         return ImageResult(
             image_bytes=image,
@@ -1008,6 +1073,7 @@ class RunwayVideoAdapter(_RunwayClient, VideoProvider):
             CONTRACT_PATH,
             {"Accept": "application/json"},
             timeout=30,
+            total_seconds=2 * READ_TOTAL_SECONDS,
         )
         return parse_model_contract(data)
 

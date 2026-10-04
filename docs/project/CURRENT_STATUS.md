@@ -79,6 +79,382 @@ window (2026-10-03)» below), except the CI remote and the always-on host.
    the clip QC thresholds, the captions, the grade and the mix. Loosen the rule to MODE only after.
 6. Decide: a git remote or runner for CI; `narration_purchase`; LOCAL_MOVE; an always-on host.
 
+## Completed — SHOOTING_SHEET_UI (Codex /root, 2026-10-04; claim released)
+
+Owner request: clean, correct and understandable shooting-sheet UI with better placement.
+Changed `frontend/src/shooting_sheet.js`, `main.js`, `style.css`; added
+`frontend/tests/sheet_layout.test.js` (10 focused cases). Existing local changes preserved.
+The overview counts actual approved images and usable current clip files; a submitted/refused
+request without a file is never counted as a generated clip. Production steps precede wide scene
+rows. Model details, alternatives, attempt history and budget details are folded. A held test shot
+links to its scene with the existing redo's real price/cap; insufficient or unknown balance
+disables paid redo controls. Existing approval hashes, leases and backend gates are preserved.
+
+Verified: all **795 frontend tests passed**, TypeScript check and Vite production build passed.
+Documentation inventory/architecture hashes passed; Studio HTTP 200 serves JS/CSS byte-identical
+to the new production build (read-only check, recorded in `verification.json` beside the screenshots).
+Browser review used the actual renderer/CSS with a read-only captured real Nepal sheet; loaded
+chosen/alternative images, scene navigation/focus, refusal history, budget details and redo
+confirmation/cancel checked. No horizontal overflow at 320, 390, 768 or 1382 px; temporary
+viewport overrides reset. Screenshots and before-edit backups:
+`C:/Users/mario/OneDrive/Documente/ChatGPT/AI Acency/output/sheet-ui-20261004/`.
+
+No paid media, backend mutation, publication or provider verification performed by this UI task.
+The captured sheet had 5/5 approved images, 0/5 usable clips and a REFUSED hero request; balance
+100 credits, hero redo 100 credits with 115 needed to start. These are snapshot values, not live
+constants. Reload an already-open studio page to load the rebuilt UI. The existing backend test
+suite/production-QC limitations below remain; this frontend check does not close them.
+
+## start.py starts the graphics, and a stop stops everything (2026-10-04, START_WITH_GRAPHICS)
+
+Claim: START_WITH_GRAPHICS (Claude, 2026-10-04) — `scripts/start.py`, `scripts/live_graphics.py`
+and `scripts/win_processes.py` (new), `art-source/unreal/live/stream_command.json` (new) and
+`start_live_hq.ps1`, `tests/test_live_graphics.py` (new), the service script's comment, README
+and these documents. Nothing in `backend/` or `frontend/`. His words: «cand rulez python
+start.py, trebuie sa porneasca si grafica. La fel, cand opresc, totul trebuie sa se opreasca!»
+
+- **What it does.** `start.py` (not `--demo`) starts wilbur, then Unreal, once the server
+  answers; adopts a stream already running, never a second; never touches an Unreal on another
+  project; waits while his games run or free commit is under 16 GB, and starts the graphics by
+  itself after two game-free checks; brings a dead process back after 30/60/120 s, at most three
+  times an hour. Ctrl+C: the server stops cleanly first (the old `subprocess.run` killed it
+  0.25 s after Ctrl+C), then Unreal, then wilbur. `start.py` is in a kill-on-close Job Object
+  with everything it starts; a closed window also stops the graphics within its five seconds.
+  Decisions ADR-START-WITH-GRAPHICS, ADR-STREAM-GATES, ADR-STOP-STOPS-EVERYTHING.
+- **Tested.** `tests/test_live_graphics.py`, 38 tests, every process faked (seen failing first:
+  no module; the refused-start test failed before its fix), plus two read-only Windows tests
+  (this process listed with its command line, a kill-on-close job made and read back). With
+  `test_start_launcher.py` and `test_rebuild_script.py`: 72 passed. A start Windows refuses
+  counts as a death (same pause, same hourly limit). ruff check and format clean; mypy (backend) unchanged,
+  and `mypy --strict` clean on the two new scripts.
+- **Checked on this machine, read-only or on Python processes only.** The Python-built Unreal
+  and wilbur command lines are identical to `start_live_hq.ps1 -PrintOnly`; free commit read by
+  ctypes 32.8 GB vs Win32_OperatingSystem 32.9 GB; the live process list named no stream
+  process (the stream was down) and no game; a `uv run` parent in the job, killed, took its
+  child and grandchild with it; close/kill/wait on a scratch sleeper.
+- **Not yet seen.** The real stream started, adopted, restarted or stopped by `start.py`; a
+  real console window closed; Unreal's answer to WM_CLOSE under `-RenderOffScreen` (it is
+  killed after 10 s if it does not close); whether Unreal re-joins a restarted wilbur by itself.
+  A verifier starts it under the gates; not marked working until then.
+- **Process note.** A stray `ruff format` with an empty file list reformatted
+  `tests/test_phase7_analytics.py` (another workflow's file in progress): formatting only, left
+  as it is.
+- **Adversarial check of the lifecycle (2026-10-04, START_WITH_GRAPHICS_VERIFY).** Real harmless
+  processes only (Python sleepers, a real uvicorn 0.52.4 with a dummy app on loopback in a
+  console of its own; no Unreal, node, studio or `data/`). Held: `taskkill /F` on a start.py
+  harness in its job ended its child, grandchild and a CREATE_NO_WINDOW child; killing the venv
+  launcher above it did the same; a child asking CREATE_BREAKAWAY_FROM_JOB is refused (access
+  denied); closing the console window left nothing running; a crash loop of three hours gives
+  ten Unreal starts, each said. Found and fixed (tests first, seen failing): (1) a second
+  Ctrl+C reached uvicorn while it waited for an open request and set its force_exit: the
+  lifespan shutdown, where the day stops at its boundary (REL-10), never ran. The server now runs
+  in its own process group; start.py asks it once (CTRL_BREAK, uvicorn's graceful stop) and
+  waits in 0.5 s steps (on Windows `Popen.wait()` without a timeout cannot be interrupted, so
+  a Ctrl+C was not seen at all - caught by the same real run). Seen after the fix: three Ctrl+C,
+  or Ctrl+Break then two Ctrl+C, with a request in flight - the lifespan shutdown ran to its
+  end, then the graphics stopped; (2) Ctrl+Break ended start.py at once and its job then ended
+  the server mid-stop: it is now a Ctrl+C for start.py; (3) a Ctrl+C between the server's start
+  and the wait (or during the stop's join) skipped the wait or the graphics' stop; (4) from the
+  first Ctrl+C the supervisor starts nothing more (it could start Unreal, 13 GB, while the server
+  was stopping); (5) a server ended by a console event (exit 0xC000013A, or 3 after start.py's
+  CTRL_BREAK) is a stop, not «START FAILED». Corrected: a closed window gives the server no
+  clean stop at all - Windows ends it as soon as its own handler returns (seen: no lifespan
+  shutdown), not «about five seconds»; only Ctrl+C stops a day at its boundary. Open, for the
+  Owner: a stream already running keeps running (13 GB, the GPU) when one of his games starts;
+  the machine note says GPU work stops while he plays - a card. A verifier running start.py on
+  another port while his stream runs would adopt it and stop it at its own stop: use
+  `--no-graphics` there, or stop his stream first. `tests/test_live_graphics.py`: 48 passed
+  (with the launcher and rebuild tests: 80).
+
+## His choice of a picture is seen where he clicked, and told truly (2026-10-04, TAKE_CHOICE_SEEN)
+
+Claim: TAKE_CHOICE_SEEN (Claude, 2026-10-04) — `backend/app/media/sheet_words.py` (new), the
+take decision in `media/router.py` and `media/shooting_sheet.py` (`decide_sheet_take`, the
+assemble step's `blocked_ro`, a take's `refusal`), the sheet drawer in `frontend/src/shooting_sheet.js`,
+`main.js` and `style.css`, and their tests. Closed the same day. Every provider faked, 0 credits;
+nothing started, nothing bought; his studio on :8000 was not touched (the page reaches him with his
+next restart, which rebuilds it).
+
+The Owner, 2026-10-04 ~00:00 local, on the Nepal sheet (storyboard 81438d13): «Daca apas pe Alege
+imaginea aceasta, nu se intampla nimic!»
+
+- **What the books say** (a copy of his database, read-only). Every press landed:
+  `media.scene_take_decided` at 20:56:12 UTC (scene 1, 36b012ca over deaa682c), 20:56:33 (scene 1
+  back to deaa682c) and 20:56:38 (scene 2, bcd10f30 over 7ecd0cfd). His first choice queued
+  FILM_CONTINUE (`assembler.decide_take` → `services.queue_film_continue`, PRODUCTION only), which
+  under his rule MODE in AUTONOMOUS_CEO bought the test shot step at 20:56:43 (2 USD reserved;
+  Runway refused it, 0 credits). The page had said «… Nimic nu s-a cumpărat.»
+- **Root cause.** (1) The answer went only to the drawer's status line at the top, far from the
+  card; after the repaint the chosen picture and the other one swapped places, two near-identical
+  landscapes, so the card looked the same. (2) The page's sentence was fixed text, written before
+  a choice could set the film going; the server's answer did not say what it had queued.
+- **Fixed, test first.** POST /media/takes/{id}/decision answers with `outcome`
+  (`sheet_words.decision_outcome`): what the choice did and what the continuation it queued will
+  do, read from the policy `services.may_act` reads (stop, safe mode, his rule, the daily budget,
+  the mode) and the sheet as it is now (no live call), never by asking `may_act`. The page shows
+  that sentence. The pressed button reads «Se alege…» and is held; after the answer the scene he
+  pressed carries «Aleasă acum.» with the server's sentence (or «Alegerea nu s-a făcut.» with the
+  refusal), every chosen picture is marked «Imaginea aleasă», the one chosen now is outlined, the
+  drawer scrolls that scene's picture and note into view (`block: 'nearest'`) and the note takes
+  the focus. The top status line is kept.
+- **The assemble card** says its wait once: «Scenele 1, 2, 3, 4 și 6 nu au încă un cadru acceptat
+  (nici „imagine fixă animată local” aleasă pe foaia de filmare).», one scene in the singular
+  (`sheet_words.blocked_words`, the step's `blocked_ro`); each item keeps its own `reason_ro`.
+- **A vendor's refusal** is explained in Romanian (`sheet_words.refusal_view`: the 5 MB picture
+  limit, fixed in 626b59d; the keyframe's `auto_*` ratio; the rest by
+  `production_policy.classify_failure`'s kind), with the vendor's text deduplicated behind
+  «Textul furnizorului»; refusals that cost 0 credits are grouped, closed, under «Refuzate de
+  furnizor (0 credite): N cereri», identical ones once with «(de N ori)».
+- **Tests.** `tests/test_take_choice_words.py` (13) and six new tests in
+  `frontend/tests/shooting_sheet.test.js`, seen failing first. Run: the sheet neighbours
+  (`test_scene_takes`, `test_sheet_assemble`, `test_shooting_sheet`, `test_sheet_blocker_repair`,
+  `test_sheet_story_repair`: pass), `npm test` 782/782, `npm run check`, ruff, ruff format,
+  mypy, check_docs. A static fixture page of the drawer was looked at in a browser (not :8000).
+- **Seen red, not this change.** `tests/test_sheet_repair_guard.py`: 3 tests fail before 10:00
+  UTC. `blocker_repair.submit_sheet_issues` counts attempts by UTC calendar day (its dispatch key
+  is `…-{today}-{attempt}`), and the tests date their attempts 600 minutes back: across midnight
+  UTC the count is 0 and the first attempt's key is reused (traced with a spy: one task, guard
+  None). The guard's own window is a rolling 24 h; the key's day is the mismatch. Not fixed here
+  (SHEET_BLOCKER_REPAIR's file).
+- **Adversary review, truth and money (2026-10-04, same day).** Five untrue sentences found and
+  fixed, test first (`tests/test_take_choice_words.py`, 13 → 20; one frontend test):
+  (1) `queue_film_continue` is keyed per take, so choosing a picture back returns the task of its
+  first choice. The books show it: his 20:56:33 press (deaa682c) got task b765b05d, COMPLETED at
+  17:36; nothing new was queued, yet the answer would have said «Filmul continuă singur … se
+  cumpără acum». `decision_outcome` now asks whether a continuation of the film is still QUEUED,
+  RETRYING, CLAIMED or RUNNING (his own task or another, e.g. the 36b012ca walk that did buy at
+  20:56:43); with none it says «nimic nu pornește acum». Queueing was not changed (no new path
+  to a purchase). (2) Under EVERY_PAID_STEP/OVER_USD (and SUPERVISED T3) a yes he gave for the
+  plan he chose his way back to is spent by the continuation (`_answered_approval`, read here and
+  never spent); the answer said «așteaptă aprobarea ta … o aprobare dată foii vechi nu mai cumpără
+  nimic». It now says the step is bought with the yes he already gave (or that he refused it).
+  (3) MANUAL: `continue_film` skips the film (media stage T2); the answer now says so instead of
+  «filmul trece singur la asamblare». (4) With no image or shot left, the assembly still voices a
+  paid narration (ElevenLabs); «Nu mai e niciun pas plătit» is no longer said then. (5) A REFUSED
+  motion take the vendor accepted (or never answered) keeps what it may cost in `credits_quoted`
+  with no measured spend; it was shown as 0 credits inside the closed 0-credit group. Now
+  `refusal_view` reports it «poate fi taxată, până la N credite (costul nu a fost măsurat)»,
+  `credits_known: false`, outside the group; an HTTP 4xx at submit stays 0. The keyframe-ratio
+  refusal is said as what the studio does since, not «Reparat» (a model with no `auto_*` in its
+  contract still gets a fixed ratio). `main.js` fallbacks no longer say «o aprobare veche nu mai
+  cumpără nimic». **Ratio check:** only wan3 and wan3_prime list `auto_*` (image_to_video and
+  text_to_video alike, per task); `pick_ratio` takes autos only with a first frame, so
+  text_to_video is unchanged, and for wan3 the old pick (1080:1920) and the new (`auto_1080p`)
+  are both 1080p, the price the sheet uses by default. **Not fixed, pre-existing:** the adapter
+  never receives the film's resolution (`aspect_ratio="9:16"` only; `MOTION_RESOLUTION` is
+  1080:1920), so with STUDIO_MOTION_RESOLUTION=720p the sheet prices wan3 at 720p (10 cr/s) while
+  Runway is sent 1080p (20 cr/s), before and after this change. Run: the 15 neighbour files
+  (providers, runway connection and image size, film models catalog, shooting sheet, motion,
+  clip QC wiring, scene redo, scene takes, sheet assemble/blocker/story repair, paid-path
+  escapes, docs truth) 249 pass; `npm test` 791/791; `npm run check`, ruff, ruff format, mypy,
+  check_docs clean.
+- **Adversary review, the page (2026-10-04, same day).** Driven in headless Chromium on the e2e
+  harness (`scripts/e2e_server.py`, TEST, page built into a temp folder, sheet and decision routed
+  to a fixture; never :8000, no vendor). Seen working: «Se alege…» with aria-busy, every button of
+  the body held while the answer runs (a second scene pressed meanwhile sends nothing: one POST),
+  the closed «Refuzate de furnizor (0 credite): 3 cereri», the summary bar `position: static`, no
+  horizontal scroll at 375 px, a 409 said in the card as «Alegerea nu s-a făcut.». Two defects
+  found and fixed, test first (`frontend/tests/shooting_sheet.test.js`, two tests):
+  (1) **The view jumped away from the scene he pressed.** W28's `content-visibility: auto` on a
+  door body's children (320 px kept for each part off view) also applied to the sheet, whose body
+  is replaced on every repaint, so no part had a remembered height: at 375 px the press itself
+  jumped the drawer from scene 4 (scrollTop 5448) to 924, and after the answer the note scrolled
+  into view slid 945 px out again as the parts were measured. `style.css` now lays the sheet's
+  body out whole (`.studio-dialog .dialog-body.sheet-body:not(.dialog-body-railed) > *`). Seen on
+  the desk (1680): the press keeps the view (1308 → 1364) and the note is in view and focused. The
+  phone run after the fix was not finished: the Owner's game started and the browser check was
+  stopped, by his rule. (2) **A lost answer was called a refusal.** The decision builds the sheet
+  before it answers and was given the page's default 10 s; a slow answer (his machine is shared
+  with the Unreal stream) or a dropped connection showed «Alegerea nu s-a făcut.» while the choice
+  may already be in the books. The decision now gets 60 s, like the sheet's read, and an answer that
+  never arrived says «Răspunsul nu a sosit. Decizia ta poate fi înregistrată pe server: foaia de
+  mai jos, citită din nou, arată imaginea aleasă acum. …» in warning colours (`network` on the
+  choice). Seen at 375 px with the route aborted.
+  **Left as they are:** a test shot approved from «Clipuri cumpărate» gets its note under the
+  scene's picture at the top of the card, not next to the clip; `blocked_words` says «cumpărați
+  sau aprobați» (formal plural) where the sheet otherwise speaks to him as «tu». **Red, not this
+  change:** `npm test` 790/791 at the end: «the drawer gives its status line a row of its own»
+  reads the last `@media (max-width: 600px)` of `style.css`, and a `.sheet-summary-bar` media rule
+  appended after it by another session at 08:35 (local) now comes last; left to that session.
+
+## A redo that hung, and a film held «în lucru» for hours (2026-10-03, REDO_HANG)
+
+Claim: REDO_HANG (Claude, 2026-10-03) — backend only: app/providers (media_http, runway),
+app/media (assembler's still redo, shooting_sheet's lease), app/workflows/watchdog, app/main
+(start-up), app/economy/accountant, and their tests. The page (frontend/) is another agent's
+(the overlapping busy banner); no field the page reads changed shape. Closed the same day.
+
+The Owner, 2026-10-03 ~23:00 local: «am dat mai devreme să facă o imagine și a rămas blocat
+acolo», and every later «Refă» on his Nepal film (storyboard 81438d13) was refused «Filmul este
+deja în lucru: o refacere de scenă a început acum 144 de minute».
+
+- **What the books say** (a copy of his database and his log, read-only). 17:36:33 UTC: his
+  «Refă» on the still of **scene 3** (approval 8f4b42c8, «imaginea scenei 3: 2 variante la 2K,
+  18 credite, plafon 54») was answered 202, approved, and the redo took the film's purchase
+  lease (holder 83ed8dc7, step scene_redo, three hours: until 20:36 UTC) and its budget hold
+  (reservation 57b2e59e, 0,54 USD, still RESERVED); his yes was spent at 17:36:34.314 (after the
+  balance read). Then nothing: no take, no booking, no `request_complete` and no error for that
+  request, until the process was stopped. Runway read 334 credits at 17:35 (the scene 2 redo's
+  `balance_after`) and 316 at 17:54 (the LHC sheet repair's text): 18 credits, exactly one
+  request of 2 candidates × 9, with nothing recorded for them.
+- **Root cause, three parts.** (1) No vendor wait had an end of its own: `media_http.request`'s
+  `timeout` bounds each socket operation, never a whole answer (`response.read(limit + 1)` loops
+  as long as bytes keep coming), and the still purchase's 240 s poll deadline is checked only
+  between polls - a poll or a download that kept trickling held the redo's HTTP request open
+  indefinitely; no retry was logged, so it was one call that never returned (which one cannot
+  be told: nothing was written between the submit and the first candidate). (2) The redo kept
+  the vendor's task id in memory only (`on_submitted=heard.append`; the stills step has written
+  a SUBMITTED take since 2026-10-01), so the request Runway accepted and charged left no record
+  and cannot be collected: the adapter can find a task only by its id (GET /v1/tasks/{id});
+  there is no listing. The same gap made a TaskStillOpen in a redo a REFUSED take that the
+  transient-failure rule could buy a second time. (3) The lease stood three hours whatever
+  became of its holder; nothing released it, its hold, or told the Owner what his yes bought.
+- **Fixed, test first, every provider faked (0 credits).**
+  (a) `media_http.request(total_seconds=…)` reads the body in pieces and ends at the request's
+  own deadline (raised as unanswered: a purchase is never resent on it). Every Runway call
+  carries one (organization 30 s, submit 90 s, poll 45 s, a still's download 120 s, a shot's
+  600 s), and a still purchase as a whole ends at `IMAGE_PURCHASE_DEADLINE_SECONDS` (420 s):
+  past it the purchase stops with TaskStillOpen and its task id. The motion path shares the
+  download and poll bounds.
+  (b) The still redo writes each accepted task SUBMITTED with the vendor's id before any poll
+  (`_record_intent`, as the stills step); candidates land on that row (PAID, UNJUDGED until
+  judged); a TaskStillOpen stops the redo IN_FLIGHT (Romanian reason: collected later by the
+  task's number, free, never bought again), books what was committed and settles the hold. The
+  watchdog and `settle_stills` collect and judge it like any stills take. A scene with a
+  SUBMITTED still is not buyable in a redo plan («Imaginile scenei N sunt deja cumpărate…»).
+  (c) The lease is renewed by its holder's process every 60 s and never stands more than 300 s
+  ahead (`LEASE_RENEW_SECONDS`, `LEASE_STALE_SECONDS`; the settings' 3 h is now the ceiling of
+  one purchase): a holder that is gone stops renewing and the film is free within five minutes;
+  a live purchase, in this process or another studio process on the same database, renews and
+  is never taken. `reclaim_abandoned_leases` takes back a lapsed lease (the watchdog's pass, and
+  any new press that takes it over) and, at the start of the process that runs the worker
+  (`data/studio.lock`), a lease from before that start that nobody renews (the old three-hour
+  rows). For each: the film's `sheet:*` holds taken under it are released, an event
+  `media.film_purchase_lease_reclaimed` records the approvals consumed, the holds released, the
+  takes SUBMITTED/delivered and the balance readings around it, and the Owner gets one letter
+  (kind `film_purchase_abandoned`): what started, that his yes was spent, what is collected
+  free, the Runway balance before and after with the credits the books do not explain, the hold
+  released, and «Nimic nu se cumpără automat… apasă din nou «Refă»». Nothing is re-bought.
+  (d) The page's busy line comes from `current_lease`: a lease nobody renews lapses within five
+  minutes, so the sheet stops claiming «în lucru» for a holder that is gone.
+- **Tests.** `tests/test_redo_purchase_bounds.py` (11) is new: the task on the books before any
+  poll; an in-flight redo bought once, booked, its hold settled, the scene not buyable again;
+  collected free and judged; a never-ending answer cut at its total; every Runway call of a
+  still purchase bounded; a purchase past its deadline left open with its id; a held lease
+  renewed and never reclaimed; a redo whose process died reclaimed by the watchdog with its
+  hold released and one letter; his own case (a three-hour lease, 334 → 316, no take) reclaimed
+  at start with the 18 credits told; a renewed lease of another process left alone; a press
+  after a lapsed lease settling what was left. The request fakes of test_media_providers and
+  test_provider_retry take the new `total_seconds`. Run: the new file with test_scene_redo,
+  test_stills_stage, test_watchdog, test_budget_gates, test_shooting_sheet (103 passed);
+  test_media_providers, test_provider_retry, test_runway_connection, test_runway_image_size,
+  test_scene_takes, test_motion, test_film_costing, test_paid_step_interrupted,
+  test_next_round_balance, test_sheet_blocker_repair, test_no_paid_path_escapes,
+  test_elevenlabs_adapter, test_character_references, test_scheduler_worker, test_worker (all
+  passing after the fakes took the new keyword); test_daily_run_stages, test_phase10_runbook,
+  test_phase11_economy, test_sheet_assemble (221 passed); ruff check, ruff format --check, mypy
+  backend and scripts/check_docs.py pass. Proven on fakes only; his studio runs the old code
+  until he restarts it.
+- **For the Owner.** The 18 credits (0,18 USD) of scene 3's redo were taken by Runway at about
+  17:36 UTC and nothing came back to the studio; the task's id was never written, so the studio
+  cannot collect it. His yes 8f4b42c8 was spent. The film's lease lapses on its own at 20:36 UTC
+  (23:36 his time); from his next restart on this code the lapsed lease is reclaimed, the 0,54
+  USD hold (if the watchdog's 6 h rule has not already let it go) is released, and he gets one
+  letter saying so (with 334 credits before; the 316 reading of 17:54 was only in the repair's
+  text, so the letter says no later reading is on the books unless a paid step reads one
+  first). Then he can press «Refă» again: a new question, a new yes, nothing bought for him.
+  (Overtaken by the books, see the money-lens review below: at 20:45 UTC his running studio took
+  the lapsed lease over and redid scene 3, so no letter will come for the 17:36 purchase.)
+- **Left open.** A request that never resolves its host name is bounded only by the OS
+  resolver (`getaddrinfo` has no timeout of its own). A holder whose renewals fail for five
+  minutes in a row (the database locked that long, or the machine asleep) can be taken over
+  while it still runs. The shooting sheet's own stills and motion steps already wrote their
+  tasks SUBMITTED; only the redo did not.
+- **Adversarial review, money lens (Claude, 2026-10-03, REDO_HANG).** Three holes found and
+  closed test-first (each test seen failing first, except the last one):
+  (1) the "overall deadline" was checked only between body pieces, and `response.read(n)`
+  blocks until it has n bytes: on a real loopback socket a vendor trickling one byte every 50
+  ms, in the body or in a header line, held the request past 15 s with `total_seconds=1`.
+  `media_http.request` now arms a `_DeadlineGuard` timer that shuts the socket down at the
+  deadline; the answer counts as unanswered, and a body cut by the guard is never taken for a
+  whole one.
+  (2) Without `outputCount` (one task per candidate), a second POST that went unanswered or a
+  second task the vendor failed came back as a plain refusal. The paid first task was marked
+  REFUSED (its picture thrown away), and a transient code let the redo buy the whole request
+  again. `generate_candidates` now raises TaskStillOpen with the first task's id, so the
+  purchase stays open and is collected free.
+  (3) A redo's pictures collected later (PAID, `COLLECTED.UNJUDGED`) made the scene buyable
+  again, and a second press bought them again blind. `redo_scene` (still) now judges them first,
+  free (`stills_stage.settle_stills`, under the film's lease so nothing is collected beside a
+  buyer at work). If one is approved, the press ends `PAID_PICTURES_JUDGED` (409) with nothing
+  bought and no yes asked. The lease-guard test was added after the code.
+  Books read again from a fresh copy (20:48 UTC): at 20:44 UTC the Owner accepted the
+  paid-media rule «mode». At 20:45:53 UTC the running b3eb5dc studio took over the lapsed lease
+  and redid scene 3 (18 credits, 316 -> 298, one candidate APPROVED, hold 18f830b6 SETTLED). No
+  approval was reused. The old lease row is gone, so no reclaim letter will come for the 17:36
+  purchase. Its hold 57b2e59e (0,54 USD) stays RESERVED until the watchdog's 6 h rule (about
+  23:36 UTC). Still open: a reclaimed holder's hold is released, not booked, so credits a
+  vanished process committed (SUBMITTED takes) never reach the ledger as spend.
+- **Adversarial review, restart and concurrency lens (Claude, 2026-10-04, REDO_HANG).** Two
+  holes closed test-first (both tests seen failing first):
+  (1) A holder alive in this very process whose row lapsed (the machine slept, a clock jump, a
+  write lock past the 5-minute window) was reclaimed by its own process's watchdog (a false
+  letter, the live purchase's hold released) and could be taken over by a second press (a
+  second purchase). Holders now register while their keeper renews (`_LIVE_HOLDERS`):
+  `current_lease`, `film_purchase_lease` and `reclaim_abandoned_leases` treat such a row as
+  live. Another process's holders are still known only by their renewals. Test:
+  `test_a_live_holder_in_this_process_keeps_its_lapsed_lease`.
+  (2) The watchdog collected every SUBMITTED take, also those of a buyer still polling them
+  (a redo, the stills, a stair, now that each writes its task at once): a pass inside that
+  window landed the same candidates twice. `collect_submitted_takes(exclude_storyboards=...)`
+  and `shooting_sheet.held_films` leave a held film's tasks to its buyer; reclaim runs first,
+  so a gone buyer's tasks are collected in the same pass. Test (test_watchdog):
+  `test_a_task_whose_buyer_is_still_at_work_is_left_to_that_buyer`.
+  Checked and sound: startup reclaim only in the worker-lock holder (an OS file lock, released
+  when its process dies); a renewing holder in another process is never taken (rows never
+  stand more than 300 s ahead, the start-up window is 360 s); nested holders (the staircase,
+  then its stair) keep one keeper; all lease and book timestamps are aware UTC ISO strings;
+  no column was added (alembic head 0054 = the copy's revision, bootstrap not needed). A
+  simulated watchdog pass on a 23:02 copy reclaimed the 17:36 lease with the expected letter;
+  that row no longer exists in the live books (see above). Not run: the full suite.
+- **Completeness pass (Claude, 2026-10-04, REDO_HANG).** The paid narration had no end of its
+  own: the sheet's assemble step buys it from ElevenLabs under the film's lease, and a live
+  holder renews that lease, so a voice answer that kept trickling would have held the film
+  «în lucru» up to the three-hour ceiling. Both paid ElevenLabs POSTs (timed and plain) now
+  carry `NARRATION_TOTAL_SECONDS` (180 s), unanswered past it and never sent again; test
+  `test_every_paid_narration_call_carries_a_total_deadline` (2 cases) seen failing first, and
+  the two ElevenLabs request fakes take the new keyword. The motion claim is now proven:
+  `test_every_runway_call_of_a_shot_purchase_carries_a_total_deadline` (submit, polls,
+  download of a shot; written after the code, checked to fail with the poll's end removed).
+  Still unbounded: a host name that never resolves, an LLM or ffmpeg call inside a leased step
+  (held to the lease's ceiling), and the free card/sound redo paths (no lease).
+  Also found by the joint run: three tests of `test_sheet_repair_guard.py` failed every day
+  between 00:00 and 10:00 UTC (a helper moved finished attempts 600 minutes back but kept
+  today's dispatch key, so attempt 1's key came back). The helper now gives a moved attempt its
+  own day in the key; no product code changed. ruff fixes (import order, two long lines,
+  format) were applied to the TAKE_CHOICE_SEEN work in progress (`sheet_words.py`,
+  `test_take_choice_words.py`, the `sheet_words` import in `shooting_sheet.py`). Joint run of
+  the 33 touched and neighbouring test files: 756 passed, the 3 above failed, then 8/8 after
+  the fix; frontend 782/782 and tsc clean; mypy, check_docs clean.
+- **The page, SHEET_BUSY_ONCE (2026-10-03/04).** His words: «Textul este suprapus și nu ar
+  trebui». The drawer's status line (`.sheet-status`, the red 409 sentence) is the shell's third
+  child, but `.studio-dialog[open]` names two grid rows: the line got the `minmax(0, 1fr)` row,
+  sized 0 px, and the body (an implicit `auto` row) with its sticky «Regula ta / Următorul pas»
+  bar painted over it. Measured with the old grid forced back: rows 140/0/668 px, the line under
+  the body. Fixed in `frontend/src/style.css`: `.studio-dialog.sheet-drawer[open]` has
+  `auto auto minmax(0, 1fr)`, header, line and body pinned to rows 1-3; the line wraps, aligns
+  with the body's gutters (32 px, 16 px on a phone) and is capped at 40vh. The busy sentence is
+  said once, in the sticky bar; the steps below say «Filmul este deja în lucru (vezi bara de
+  sus).»; a FILM_BUSY press is answered in warning colours («Apăsarea ta nu a pornit nimic…»,
+  `sheetStatusText`, `.sheet-waiting`), and main.js keeps the refusal's code (`refusalError`).
+  Completeness pass: a paid «Refă» (still, motion: they take the film's lease) is disabled while
+  `sheet.in_progress` stands and opens no question, so his yes is no longer decided for a press
+  the backend then refuses FILM_BUSY; card and sound redos take no lease and stay pressable.
+  Tests: 5 new in `frontend/tests/shooting_sheet.test.js`, each seen failing first; a static
+  Playwright harness on a scratchpad build (5 states × 1440 and 375 px) found no overlap, one
+  copy of the sentence and no sideways scroll. His studio serves `frontend/dist`, built before
+  this fix: the page shows it after `npm run build --prefix frontend` (or start.py) and a reload.
+
 ## A paid step asks for its next round only (2026-10-03, NEXT_ROUND_BALANCE)
 
 Claim: NEXT_ROUND_BALANCE (Claude, 2026-10-03) — backend/app/media (balance_rule, stills_stage,

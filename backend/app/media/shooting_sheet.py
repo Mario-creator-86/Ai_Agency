@@ -49,6 +49,7 @@ import json
 import logging
 import subprocess
 import tempfile
+import threading
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -135,6 +136,7 @@ from app.media.prompt_lint import (
     lint_film,
     summary_ro,
 )
+from app.media.sheet_words import NO_SHOT, NO_STILL, blocked_words, decision_outcome, refusal_view
 from app.media.stills_stage import (
     STILLS_ACTION,
     STILLS_STEP,
@@ -477,12 +479,17 @@ def decide_sheet_take(
     *,
     note: str | None = None,
     correlation_id: str | None = None,
+    sheet_reader: Callable[[str], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """The Owner's look at a take on the contact sheet: APPROVED or REJECTED.
 
     Approving a still makes it THE still of its scene for its prompt: any other approved still
     of that scene and prompt goes back to PAID (kept, never deleted), so one scene never has
     two pictures the motion could start from.
+
+    The answer carries ``outcome`` (`sheet_words.decision_outcome`): what the choice did and
+    what the continuation it queued will do. ``sheet_reader(storyboard_id)`` reads the sheet
+    with no live call so the next step can be named; without it the step goes unnamed.
     """
     from uuid import uuid4  # noqa: PLC0415
 
@@ -529,7 +536,31 @@ def decide_sheet_take(
                     {"scene_number": scene, "chosen": take_id, "superseded": superseded},
                     correlation,
                 )
-    return {**result, "superseded": superseded}
+    # 2026-10-04: the answer says what the choice set going (the FILM_CONTINUE decide_take
+    # queued, and what it will buy under his rule), read from the sheet as it is now.
+    sheet = None
+    if result.get("continue_task_id") and sheet_reader is not None:
+        try:
+            sheet = sheet_reader(storyboard_id)
+        except Exception:  # noqa: BLE001 - the decision stands; only the step goes unnamed
+            logger.warning("take_outcome_sheet_unread", extra={"storyboard_id": storyboard_id})
+    outcome = decision_outcome(
+        engine,
+        kind=kind,
+        scene_number=int(scene),
+        decision=decision,
+        continue_task_id=result.get("continue_task_id"),
+        sheet=sheet,
+        storyboard_id=storyboard_id,
+    )
+    return {
+        **result,
+        "superseded": superseded,
+        "storyboard_id": storyboard_id,
+        "scene_number": int(scene),
+        "decision": decision,
+        "outcome": outcome,
+    }
 
 
 # ------------------------------------------------------------------------- the sheet
@@ -671,6 +702,17 @@ def _take_view(
         # 2026-10-02): still PAID, never APPROVED, which stays his.
         "accepted_by": accepted_by,
         "accepted_ro": ACCEPTED_BY_CLIP_QC_RO if accepted_by == HERO_ACCEPTED_BY else None,
+        # A vendor's refusal in his words, its text once and what it cost (2026-10-04).
+        "refusal": (
+            refusal_view(
+                take.failure_code,
+                take.failure_detail,
+                take.credits_measured,
+                take.credits_quoted,
+            )
+            if take.status == "REFUSED"
+            else None
+        ),
     }
 
 
@@ -870,6 +912,9 @@ def _scene_readiness(
             "scene_index": index,
             "ok": False,
             "how": None,
+            # the code lets the assemble card group the scenes (`sheet_words.blocked_words`)
+            "code": NO_STILL,
+            "why_ro": "",
             "reason_ro": (
                 f"Scena {index} nu are o imagine aprobată pentru promptul de acum; "
                 "cumpărați sau aprobați imaginea ei pe foaia de filmare."
@@ -908,6 +953,8 @@ def _scene_readiness(
         "scene_index": index,
         "ok": False,
         "how": None,
+        "code": NO_SHOT,
+        "why_ro": why,
         "reason_ro": (
             (f"{why} " if why else "")
             + f"Scena {index} nu are un cadru acceptat, iar Proprietarul nu a ales "
@@ -1421,15 +1468,23 @@ def _sheet(
         "environment": environment,
         "ready": not blocked,
         "blocked": [
-            {"scene_index": item["scene_index"], "reason_ro": item["reason_ro"]} for item in blocked
+            {
+                "scene_index": item["scene_index"],
+                "reason_ro": item["reason_ro"],
+                "code": item.get("code"),
+                "why_ro": item.get("why_ro") or "",
+            }
+            for item in blocked
         ],
+        # The wait said once, the scenes grouped (2026-10-04: one sentence per scene, x5).
+        "blocked_ro": blocked_words(blocked),
         "scenes": readiness,
         "paid_steps_left": paid_left,
         "narration": narration,
         "cost_usd": narration["usd"],
         "cost_credits": 0,
         "cap_credits": 0,
-        "waiting_ro": " ".join(item["reason_ro"] for item in blocked),
+        "waiting_ro": blocked_words(blocked),
         "in_progress": bool(lease and lease["step"] in (ASSEMBLE_STEP, "staircase")),
     }
 
@@ -1710,7 +1765,19 @@ LEASE_WORDS_RO: dict[str, str] = {
     "staircase": "rularea zilei",
 }
 #: How long a lease stands when the settings do not say (STUDIO_FILM_PURCHASE_LEASE_SECONDS).
+#: The ceiling of one purchase's hold: its holder renews it up to this, never beyond.
 DEFAULT_LEASE_SECONDS = 10_800
+#: A held lease is renewed this often by its holder's process (`_LeaseKeeper`) ...
+LEASE_RENEW_SECONDS = 60.0
+#: ... and never stands further ahead than this: a holder that is gone (the studio restarted,
+#: or crashed) stops renewing, and its lease lapses within these few minutes instead of the
+#: three hours it once stood (2026-10-03: the Owner's film refused every press «acum 144 de
+#: minute» for a redo whose process had been stopped two hours before).
+LEASE_STALE_SECONDS = 300
+#: The event of a lease taken back from a holder that is gone, with what it had done.
+LEASE_RECLAIMED_EVENT = "media.film_purchase_lease_reclaimed"
+#: The kind of the Owner's letter about it.
+ABANDONED_LETTER_KIND = "film_purchase_abandoned"
 #: The film ceiling's default stills allowance: the stills cap of a six-scene film.
 DEFAULT_CEILING_SCENES = 6
 
@@ -1756,7 +1823,7 @@ def _busy_reason(lease: dict[str, Any]) -> str:
         started = datetime.fromisoformat(str(lease["acquired_at"]))
         minutes = max(0, int((_now() - started).total_seconds() // 60))
         since = f"a început acum {count_ro(minutes, 'minut', 'minute')}"
-    except (KeyError, ValueError):
+    except (KeyError, ValueError, TypeError):
         since = "a început mai devreme"
     return (
         f"Filmul este deja în lucru: {what} {since} și nu s-a terminat. Nu se cumpără nimic de "
@@ -1764,13 +1831,38 @@ def _busy_reason(lease: dict[str, Any]) -> str:
     )
 
 
+#: The film leases whose holder is alive in THIS process: (storyboard_id, holder) while its
+#: keeper renews it. A row that lapsed while its holder here still runs (the machine slept,
+#: the clock jumped, a write lock stood past the window) is not a holder that is gone: the
+#: watchdog of this process does not reclaim it and a second press here does not take it.
+#: Another process's holders are known only by their renewals.
+_LIVE_HOLDERS: set[tuple[str, str]] = set()
+_LIVE_HOLDERS_LOCK = threading.Lock()
+
+
+def _alive_here(storyboard_id: str, holder: str) -> bool:
+    with _LIVE_HOLDERS_LOCK:
+        return (storyboard_id, holder) in _LIVE_HOLDERS
+
+
 def current_lease(engine: Engine, storyboard_id: str) -> dict[str, Any] | None:
-    """Who is buying for this film now, or None (an expired lease is nobody's)."""
+    """Who is buying for this film now, or None (an expired lease is nobody's, unless its
+    holder is still alive in this process)."""
     with Session(engine) as session:
         row = session.get(FilmPurchaseLease, storyboard_id)
-        if row is None or row.expires_at <= _now().isoformat():
+        if row is None:
+            return None
+        if row.expires_at <= _now().isoformat() and not _alive_here(storyboard_id, row.holder):
             return None
         return _lease_view(row)
+
+
+def held_films(engine: Engine) -> list[str]:
+    """The films whose purchase lease is held now (`current_lease` for each row): their paid
+    tasks belong to the buyer at work, who collects them itself."""
+    with Session(engine) as session:
+        films = list(session.scalars(select(FilmPurchaseLease.storyboard_id)).all())
+    return [film for film in films if current_lease(engine, film) is not None]
 
 
 @contextmanager
@@ -1788,7 +1880,12 @@ def film_purchase_lease(
     serialised: the second reads the first one's row. The same ``holder`` (one run's
     correlation id) may take it again inside its own block (the day's staircase, then each
     stair it buys): the row then names the step being bought and is given back as it was.
-    A row past its expiry was left by a process that died under it and is taken over.
+
+    The holder's process renews the row while the block runs (`_LeaseKeeper`, every
+    ``LEASE_RENEW_SECONDS``), never further ahead than ``LEASE_STALE_SECONDS`` and never past
+    ``ttl_seconds`` from its start. A row past its expiry was left by a process that is gone:
+    it is taken over, and what that holder left (its budget hold, the Owner's spent yes) is
+    settled and told to him (`reclaim_abandoned_leases`).
     """
     from app.db import lock_for_write  # noqa: PLC0415
 
@@ -1796,11 +1893,15 @@ def film_purchase_lease(
     holder = str(holder)[:100]
     nested_step: str | None = None
     missing = False
+    abandoned: dict[str, Any] | None = None
+    ceiling: datetime | None = None
     with Session(engine) as session, session.begin():
         lock_for_write(session)
         now = _now()
         row = session.get(FilmPurchaseLease, storyboard_id)
-        live = row is not None and row.expires_at > now.isoformat()
+        live = row is not None and (
+            row.expires_at > now.isoformat() or _alive_here(storyboard_id, row.holder)
+        )
         if row is not None and live and row.holder != holder:
             view = _lease_view(row)
             raise FilmBusy(_busy_reason(view), view)
@@ -1814,23 +1915,448 @@ def film_purchase_lease(
             view = _lease_view(row)
         else:
             if row is not None:
+                abandoned = {**_lease_view(row), "why": "expired"}
                 session.delete(row)
                 session.flush()
+            ceiling = now + timedelta(seconds=ttl)
             row = FilmPurchaseLease(
                 storyboard_id=storyboard_id,
                 holder=holder,
                 step=step[:20],
                 acquired_at=now.isoformat(),
-                expires_at=(now + timedelta(seconds=ttl)).isoformat(),
+                expires_at=min(ceiling, now + timedelta(seconds=LEASE_STALE_SECONDS)).isoformat(),
             )
             session.add(row)
             session.flush()
             view = _lease_view(row)
+    if abandoned is not None:
+        try:
+            _settle_abandoned(engine, abandoned, correlation_id=holder)
+        except Exception as exc:  # noqa: BLE001 - the new purchase must not fail on its letter
+            logger.warning(
+                "film_lease_settlement_failed",
+                extra={"storyboard_id": storyboard_id, "error": type(exc).__name__},
+            )
+    keeper = (
+        _LeaseKeeper(engine, storyboard_id, holder, ceiling)
+        if ceiling is not None and not missing
+        else None
+    )
     try:
+        if keeper is not None:
+            keeper.start()
         yield view
     finally:
+        if keeper is not None:
+            keeper.stop()
         if not missing:
             _give_back_lease(engine, storyboard_id, holder, nested_step)
+
+
+class _LeaseKeeper:
+    """Renews a held film lease in the background while its purchase runs, as the worker's
+    `LeaseKeeper` renews a task's: a process that is gone renews nothing, so its lease lapses
+    within ``LEASE_STALE_SECONDS``; a purchase that runs, however long, is never taken over.
+    A missed renewal (a write lock held elsewhere) is logged and tried again at the next one;
+    a row that is no longer this holder's, or the lease's ceiling, ends the renewals."""
+
+    def __init__(self, engine: Engine, storyboard_id: str, holder: str, ceiling: datetime) -> None:
+        self._engine = engine
+        self._storyboard_id = storyboard_id
+        self._holder = holder
+        self._ceiling = ceiling
+        self._stop = threading.Event()
+        self._thread = threading.Thread(
+            target=self._run, name=f"film-lease-{storyboard_id[:8]}", daemon=True
+        )
+        self.renewals = 0
+
+    def start(self) -> None:
+        with _LIVE_HOLDERS_LOCK:
+            _LIVE_HOLDERS.add((self._storyboard_id, self._holder))
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._forget()
+        if self._thread.is_alive():
+            self._thread.join(timeout=30)
+
+    def _forget(self) -> None:
+        with _LIVE_HOLDERS_LOCK:
+            _LIVE_HOLDERS.discard((self._storyboard_id, self._holder))
+
+    def _run(self) -> None:
+        while not self._stop.wait(float(LEASE_RENEW_SECONDS)):
+            try:
+                held = self._renew()
+            except Exception as exc:  # noqa: BLE001 - one missed renewal is not a lost lease
+                logger.warning(
+                    "film_lease_renewal_failed",
+                    extra={"storyboard_id": self._storyboard_id, "error": type(exc).__name__},
+                )
+                continue
+            if not held:
+                # Past its ceiling, or no longer this holder's: not alive here any more.
+                self._forget()
+                return
+            self.renewals += 1
+
+    def _renew(self) -> bool:
+        from app.db import lock_for_write  # noqa: PLC0415
+
+        now = _now()
+        until = min(self._ceiling, now + timedelta(seconds=LEASE_STALE_SECONDS))
+        if until <= now:
+            return False
+        with Session(self._engine) as session, session.begin():
+            lock_for_write(session)
+            row = session.get(FilmPurchaseLease, self._storyboard_id)
+            if row is None or row.holder != self._holder:
+                return False
+            row.expires_at = until.isoformat()
+        return True
+
+
+def reclaim_abandoned_leases(
+    engine: Engine,
+    *,
+    correlation_id: str,
+    started_at: datetime | None = None,
+    timezone: str | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Take back every film lease whose holder is gone, and settle what it left behind.
+
+    Gone means: the row lapsed (its holder stopped renewing it), or - only when the caller is
+    a process that has just started (``started_at``) - the row was taken before that start
+    and stands further ahead than any renewing holder ever writes it (a lease from before
+    renewals, three hours long). A lease its holder renews, in this process or another
+    studio process on the same database, is never touched.
+
+    For each: the row goes, the film's budget hold taken under it is released, an event
+    (``media.film_purchase_lease_reclaimed``) records what the holder had done, and the Owner
+    gets one letter: what was bought on his yes according to the balance readings, what is
+    collected free, and that nothing is bought again unless he presses again."""
+    from app.db import lock_for_write  # noqa: PLC0415
+
+    moment = now or _now()
+    window = moment + timedelta(seconds=LEASE_STALE_SECONDS + 60)
+    taken: list[dict[str, Any]] = []
+    with Session(engine) as session, session.begin():
+        lock_for_write(session)
+        for row in session.scalars(select(FilmPurchaseLease)).all():
+            if _alive_here(row.storyboard_id, row.holder):
+                # Its holder runs in this process (renewals late after a sleep, a clock jump
+                # or a long write lock): not gone, whatever the row says.
+                continue
+            lapsed = row.expires_at <= moment.isoformat()
+            from_before = (
+                started_at is not None
+                and row.acquired_at < started_at.isoformat()
+                and row.expires_at > window.isoformat()
+            )
+            if lapsed or from_before:
+                taken.append({**_lease_view(row), "why": "expired" if lapsed else "before_start"})
+                session.delete(row)
+    letters: list[str | None] = []
+    for view in taken:
+        try:
+            letters.append(
+                _settle_abandoned(engine, view, correlation_id=correlation_id, timezone=timezone)
+            )
+        except Exception as exc:  # noqa: BLE001 - the lease is back; the rest is told later
+            logger.warning(
+                "film_lease_settlement_failed",
+                extra={"storyboard_id": view["storyboard_id"], "error": type(exc).__name__},
+            )
+            letters.append(None)
+    if taken:
+        logger.warning(
+            "film_purchase_leases_reclaimed",
+            extra={"films": [view["storyboard_id"] for view in taken]},
+        )
+    return {"reclaimed": [view["storyboard_id"] for view in taken], "letters": letters}
+
+
+#: The events whose payload carries a reading of the Runway balance, and its key.
+_BALANCE_READINGS: dict[str, str] = {
+    "media.paid_step_balance_read": "credits",
+    "media.stills_step_finished": "balance_after",
+    "media.motion_step_finished": "balance_after",
+    "media.scene_redone": "balance_after",
+}
+
+
+def _balance_around(session: Session, moment: str) -> tuple[dict | None, dict | None]:
+    """The last balance reading before ``moment`` and the first after it, from the books
+    (never the vendor): ``{"credits", "at"}`` each, or None."""
+    from app.models import DomainEvent  # noqa: PLC0415
+
+    def reading(event: Any) -> dict | None:
+        payload = event.payload if isinstance(event.payload, dict) else {}
+        value = payload.get(_BALANCE_READINGS[event.event_type])
+        if isinstance(value, bool) or not isinstance(value, int | float):
+            return None
+        return {"credits": float(value), "at": event.timestamp}
+
+    kinds = list(_BALANCE_READINGS)
+    before = None
+    for event in session.scalars(
+        select(DomainEvent)
+        .where(DomainEvent.event_type.in_(kinds), DomainEvent.timestamp < moment)
+        .order_by(DomainEvent.sequence.desc())
+        .limit(50)
+    ):
+        before = reading(event)
+        if before is not None:
+            break
+    after = None
+    for event in session.scalars(
+        select(DomainEvent)
+        .where(DomainEvent.event_type.in_(kinds), DomainEvent.timestamp > moment)
+        .order_by(DomainEvent.sequence)
+        .limit(50)
+    ):
+        after = reading(event)
+        if after is not None:
+            break
+    return before, after
+
+
+def _settle_abandoned(
+    engine: Engine,
+    view: dict[str, Any],
+    *,
+    correlation_id: str,
+    timezone: str | None = None,
+) -> str | None:
+    """What a holder that is gone left behind, settled and told: its film's budget holds let
+    go, an event, and the Owner's letter. Returns the letter's id."""
+    import re  # noqa: PLC0415
+
+    from app.economy.accountant import purchase_abandoned_letter  # noqa: PLC0415
+    from app.economy.models import ProviderCostRecord, SpendReservation  # noqa: PLC0415
+    from app.models import ApprovalRequest  # noqa: PLC0415
+    from app.services import append_event  # noqa: PLC0415
+
+    storyboard_id = str(view["storyboard_id"])
+    since = str(view.get("acquired_at") or "")
+    # What the holder did lies between its start and the last moment its lease stood (a
+    # renewing holder's row lapses a few minutes after it stopped): nothing later is its.
+    until = min(str(view.get("expires_at") or _now().isoformat()), _now().isoformat())
+    with Session(engine) as session:
+        board = session.get(Storyboard, storyboard_id)
+        title = board.title if board is not None else storyboard_id[:8]
+        holds = [
+            (row.id, int(row.usd_micros))
+            for row in session.scalars(
+                select(SpendReservation).where(
+                    SpendReservation.correlation_id == storyboard_id,
+                    SpendReservation.status == "RESERVED",
+                    SpendReservation.purpose.like("sheet:%"),
+                    SpendReservation.reserved_at >= since,
+                    SpendReservation.reserved_at <= until,
+                )
+            )
+        ]
+        approvals = list(
+            session.scalars(
+                select(ApprovalRequest)
+                .where(
+                    ApprovalRequest.subject == storyboard_id,
+                    ApprovalRequest.action.like("media.%"),
+                    ApprovalRequest.consumed_at.is_not(None),
+                    ApprovalRequest.consumed_at >= since,
+                    ApprovalRequest.consumed_at <= until,
+                )
+                .order_by(ApprovalRequest.consumed_at)
+            )
+        )
+        consumed = [(row.id, str(row.evidence or "")) for row in approvals]
+        takes = list(
+            session.scalars(
+                select(SceneTake).where(
+                    SceneTake.storyboard_id == storyboard_id,
+                    SceneTake.created_at >= since,
+                    SceneTake.created_at <= until,
+                )
+            )
+        )
+        submitted = [take.id for take in takes if take.status == "SUBMITTED"]
+        delivered = [take.id for take in takes if take.sha256]
+        before, after = _balance_around(session, since)
+        recorded = 0.0
+        if before is not None and after is not None:
+            for cost in session.scalars(
+                select(ProviderCostRecord).where(
+                    ProviderCostRecord.provider == "runway",
+                    ProviderCostRecord.recorded_at > before["at"],
+                    ProviderCostRecord.recorded_at < after["at"],
+                )
+            ):
+                credits = (cost.attribution_json or {}).get("credits")
+                if isinstance(credits, int | float) and not isinstance(credits, bool):
+                    recorded += float(credits)
+    for hold_id, _micros in holds:
+        release_step_hold(
+            engine, hold_id, "cumpărare oprită: procesul studioului nu mai rula", correlation_id
+        )
+    drop = (before["credits"] - after["credits"]) if before and after else None
+    unexplained = max(0.0, drop - recorded) if drop is not None else None
+    scene = next(
+        (int(m.group(1)) for _id, text in consumed if (m := re.search(r"scenei (\d+)", text))),
+        None,
+    )
+    step = str(view.get("step") or "")
+    payload = {
+        "severity": "WARNING",
+        "holder": view.get("holder"),
+        "step": step,
+        "acquired_at": view.get("acquired_at"),
+        "expires_at": view.get("expires_at"),
+        "why": view.get("why"),
+        "scene_index": scene,
+        "approvals_consumed": [approval_id for approval_id, _text in consumed],
+        "reservations_released": [hold_id for hold_id, _micros in holds],
+        "submitted_takes": submitted,
+        "delivered_takes": delivered,
+        "balance_before": before,
+        "balance_after": after,
+        "recorded_credits": round(recorded, 4),
+        "unexplained_credits": round(unexplained, 4) if unexplained is not None else None,
+    }
+    with Session(engine) as session, session.begin():
+        append_event(
+            session, LEASE_RECLAIMED_EVENT, "storyboard", storyboard_id, 1, payload, correlation_id
+        )
+    what = (
+        f"Refacerea scenei {scene}"
+        if step == "scene_redo" and scene is not None
+        else LEASE_WORDS_RO.get(step, "Un pas plătit").capitalize()
+    )
+    text = _abandoned_text(
+        what=what,
+        title=title,
+        step=step,
+        started=_clock(view.get("acquired_at"), timezone),
+        consumed=consumed,
+        submitted=len(submitted),
+        delivered=len(delivered),
+        before=before,
+        after=after,
+        recorded=recorded,
+        unexplained=unexplained,
+        held_micros=sum(micros for _id, micros in holds),
+        timezone=timezone,
+    )
+    return purchase_abandoned_letter(
+        engine,
+        kind=ABANDONED_LETTER_KIND,
+        storyboard_id=storyboard_id,
+        subject=f"{what} s-a oprit înainte să se termine",
+        body={**payload, "storyboard_id": storyboard_id},
+        body_text=text,
+        correlation_id=correlation_id,
+    )
+
+
+def _clock(iso: Any, timezone: str | None) -> str:
+    """An instant as the Owner reads his clock («03.10.2026 20:36»), UTC when no zone."""
+    from zoneinfo import ZoneInfo  # noqa: PLC0415
+
+    try:
+        moment = datetime.fromisoformat(str(iso))
+    except ValueError:
+        return str(iso)
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=UTC)
+    try:
+        zone = ZoneInfo(timezone) if timezone else UTC
+    except Exception:  # noqa: BLE001 - an unknown zone reads as UTC, named
+        zone = UTC
+    label = "" if timezone and zone is not UTC else " UTC"
+    return moment.astimezone(zone).strftime("%d.%m.%Y %H:%M") + label
+
+
+def _abandoned_text(
+    *,
+    what: str,
+    title: str,
+    step: str,
+    started: str,
+    consumed: list[tuple[str, str]],
+    submitted: int,
+    delivered: int,
+    before: dict | None,
+    after: dict | None,
+    recorded: float,
+    unexplained: float | None,
+    held_micros: int,
+    timezone: str | None,
+) -> str:
+    """The Owner's letter about a purchase whose process stopped under it, in Romanian."""
+    lines = [
+        f"Către Owner. {what} a filmului «{title}» a pornit la {started}, iar procesul "
+        "studioului s-a oprit înainte să o termine (studioul a fost repornit sau s-a oprit). "
+        "Filmul era ținut ocupat de ea; acum este liber."
+    ]
+    if consumed:
+        lines.append(
+            "Aprobarea ta pentru ea a fost folosită și nu mai poate cumpăra nimic: "
+            + "; ".join(text for _id, text in consumed if text)[:300]
+            + "."
+        )
+    if submitted:
+        lines.append(
+            f"Furnizorul a primit {count_ro(submitted, 'cerere plătită', 'cereri plătite')}; "
+            "numărul sarcinii este în registru, iar imaginile se ridică fără plată și apar pe "
+            "foaia de filmare. Nu se cumpără nimic din nou pentru ele."
+        )
+    elif delivered:
+        lines.append(
+            f"Studioul a înregistrat {count_ro(delivered, 'imagine', 'imagini')} din ea; "
+            "le găsești pe foaia de filmare."
+        )
+    else:
+        lines.append("Studioul nu are nicio imagine sau niciun cadru înregistrat din ea.")
+    if before is not None and after is not None:
+        first = _clock(before["at"], timezone)
+        second = _clock(after["at"], timezone)
+        line = (
+            f"Soldul Runway: {count_ro(round(before['credits']), 'credit', 'credite')} la ultima "
+            f"citire de dinainte ({first}) și "
+            f"{count_ro(round(after['credits']), 'credit', 'credite')} la prima citire de după "
+            f"({second})."
+        )
+        if unexplained:
+            line += (
+                f" Registrul explică {count_ro(round(recorded), 'credit', 'credite')} din "
+                f"diferență; {count_ro(round(unexplained), 'credit', 'credite')} lipsesc fără "
+                "nicio cumpărătură înregistrată: cel mai probabil plata acestei cereri, primită "
+                "de furnizor."
+            )
+        lines.append(line)
+    elif before is not None:
+        lines.append(
+            f"Ultima citire a soldului Runway de dinainte: "
+            f"{count_ro(round(before['credits']), 'credit', 'credite')} "
+            f"({_clock(before['at'], timezone)}); studioul nu are încă o citire de după. "
+            "Soldul de acum se vede pe site-ul Runway."
+        )
+    else:
+        lines.append("Studioul nu are citiri ale soldului Runway în jurul ei.")
+    if held_micros:
+        lines.append(f"Rezervarea de buget a pasului ({_ro_usd(held_micros)}) a fost eliberată.")
+    again = (
+        "apasă din nou «Refă» pe foaia de filmare"
+        if step == "scene_redo"
+        else "pornește pasul din nou de pe foaia de filmare"
+    )
+    lines.append(
+        f"Nimic nu se cumpără automat. Dacă o vrei, {again}: vei fi întrebat din nou, cu prețul."
+    )
+    return "\n".join(lines)
 
 
 def _give_back_lease(
@@ -3103,7 +3629,7 @@ def run_assemble_step(
     if info["blocked"]:
         raise SheetStepRefused(
             "TAKES_NOT_ACCEPTED",
-            "Filmul nu se asamblează: " + " ".join(i["reason_ro"] for i in info["blocked"]),
+            "Filmul nu se asamblează: " + blocked_words(info["blocked"]),
             scenes=info["blocked"],
         )
 

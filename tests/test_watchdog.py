@@ -807,3 +807,37 @@ def test_the_owners_answer_that_the_film_is_not_there_gives_the_retry_its_attemp
     with Session(engine) as session:
         assert session.get(PublicationRecord, publication_id).status == "PUBLISHED_SIMULATED"
     assert len(_owner_letters(engine)) == 1
+
+
+def test_a_task_whose_buyer_is_still_at_work_is_left_to_that_buyer(
+    engine, settings, tmp_path, monkeypatch
+):
+    """A paid step (a redo, the stills, a stair) writes its task SUBMITTED the moment the
+    vendor accepts it and then polls it itself. A watchdog pass that falls inside that window
+    must not collect the same task beside it: two collectors would land the same candidates
+    twice (a row each, the task's credits counted twice). While the film's purchase lease is
+    held, its tasks are its buyer's; once the lease is given back, or reclaimed from a buyer
+    that is gone, the watchdog collects what is left."""
+    from app.media.shooting_sheet import film_purchase_lease
+
+    _autonomy(engine, False)
+    take_id = _submitted_take(engine, tmp_path, task_id="task-live", made_ago=timedelta(minutes=1))
+    storyboard_id = _take(engine, take_id).storyboard_id
+    adapter, transport = _runway(
+        monkeypatch,
+        {"task-live": {"status": "SUCCEEDED", "output": ["https://files.test/out.mp4?sig=1"]}},
+    )
+
+    with film_purchase_lease(engine, storyboard_id, holder="the-redo", step="scene_redo"):
+        result = run_watchdog(
+            engine, settings, correlation_id=str(uuid4()), collector_for=lambda take: adapter
+        )
+        assert transport.calls == [], "the watchdog asked about a task its buyer is polling"
+        assert _take(engine, take_id).status == "SUBMITTED"
+        assert result["takes"]["paid"] == 0
+
+    result = run_watchdog(
+        engine, settings, correlation_id=str(uuid4()), collector_for=lambda take: adapter
+    )
+    assert _take(engine, take_id).status == "PAID"
+    assert result["takes"]["paid"] == 1

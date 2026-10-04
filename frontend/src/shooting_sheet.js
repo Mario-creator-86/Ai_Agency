@@ -204,6 +204,43 @@ function isCard(scene) {
   return String(scene?.kind || 'LIVE') in COMPOSED_WORDS;
 }
 
+/** A file from the current prompt, rather than a submitted or refused request. @param {any} scene */
+export function sceneMediaState(scene) {
+  if (isCard(scene)) return { label: 'Grafic local', tone: 'quiet', generated: false, take: null };
+  if (scene?.motion?.status === 'LOCAL') return { label: 'Animație locală aleasă', tone: 'quiet', generated: false, take: null };
+  const shots = (Array.isArray(scene?.shots) ? scene.shots : []).filter((/** @type {any} */ s) => s.for_current_prompt !== false);
+  const files = shots.filter((/** @type {any} */ s) => s.file_url && ['PAID', 'APPROVED'].includes(s.status));
+  const take = files.find((/** @type {any} */ s) => s.status === 'APPROVED') || files[0];
+  if (take) return { label: take.status === 'APPROVED' ? 'Clip aprobat' : 'Clip generat, de verificat', tone: take.status === 'APPROVED' ? 'ok' : 'info', generated: true, take };
+  if (shots.some((/** @type {any} */ s) => s.status === 'SUBMITTED')) return { label: 'Cerere trimisă, fără clip încă', tone: 'info', generated: false, take: null };
+  if (shots.some((/** @type {any} */ s) => s.status === 'REFUSED')) return { label: 'Refuzat, fără clip', tone: 'alert', generated: false, take: null };
+  if (shots.some((/** @type {any} */ s) => s.status === 'REJECTED')) return { label: 'Clip respins', tone: 'warn', generated: false, take: null };
+  return { label: 'Clip negenerat', tone: 'quiet', generated: false, take: null };
+}
+
+/** Counts only the sheet's chosen images and current usable clip files. @param {any} sheet */
+export function sheetProgress(sheet) {
+  const scenes = Array.isArray(sheet?.scenes) ? sheet.scenes : [];
+  const filmed = scenes.filter((/** @type {any} */ s) => !isCard(s));
+  return {
+    filmed: filmed.length,
+    images: filmed.filter((/** @type {any} */ s) => s.still?.take_id && s.still?.approved_by).length,
+    clips: filmed.filter((/** @type {any} */ s) => sceneMediaState(s).generated).length,
+    local: filmed.filter((/** @type {any} */ s) => s.motion?.status === 'LOCAL').length,
+    cards: scenes.length - filmed.length,
+  };
+}
+
+/** The backend's held hero can be retried through its existing, priced redo. @param {any} sheet */
+export function testShotRecovery(sheet) {
+  const hero = sheet?.footer?.hero_scene;
+  if (hero === null || hero === undefined) return null;
+  const scene = (Array.isArray(sheet?.scenes) ? sheet.scenes : []).find((/** @type {any} */ s) => Number(s.scene_index) === Number(hero));
+  const held = (sheet?.steps?.test_shot?.held || []).includes(Number(hero)) || scene?.motion?.step_status === 'NEEDS_OWNER';
+  if (!scene || !held || sceneMediaState(scene).generated || scene.motion?.status === 'LOCAL') return null;
+  return redoButtons(scene).find((b) => b.kind === 'motion') || null;
+}
+
 /**
  * One scene in one line: «Cadrul 3 · Peisaj · seedance2_5 · 1080p · 5 s · 340 de credite». A card
  * reads «Cadrul 5 · Grafic compus local · 0 credite»; a scene with no model says so.
@@ -255,7 +292,7 @@ export function clipQcWords(record) {
 /**
  * @typedef {{kind: string, scene: number|null, label: string, price_ro: string, cap_ro: string,
  *   free: boolean, plan_hash: string|null, disabled: boolean, reason_ro: string, cap_usd: number,
- *   replaces: string[], invalidates: string[]}} RedoButton
+ *   replaces: string[], invalidates: string[], round_credits: number}} RedoButton
  */
 
 /** @param {string} kind @param {any} plan @param {number|null} scene @returns {RedoButton} */
@@ -275,6 +312,7 @@ function redoButton(kind, plan, scene) {
     disabled,
     reason_ro: String(p.reason_ro || ''),
     cap_usd: Number(p.cap_usd) || 0,
+    round_credits: Number(p.credits) || 0,
     replaces: Array.isArray(p.replaces) ? p.replaces.map(String) : [],
     invalidates: Array.isArray(p.invalidates) ? p.invalidates.map(String) : [],
   };
@@ -358,6 +396,40 @@ function inProgressReason(sheet) {
   const lease = sheet?.in_progress;
   if (!lease || typeof lease !== 'object') return '';
   return String(lease.reason_ro || 'Filmul este deja în lucru: o cumpărare a lui nu s-a încheiat încă.');
+}
+
+/**
+ * SHEET_BUSY_ONCE: the busy sentence is said once on the sheet, in the sticky bar at the top (it
+ * is there whether he pressed or not, and its minutes are read again on every repaint). Each step
+ * below points to it in these few words instead of repeating it.
+ */
+export const BUSY_SEE_BAR = 'Filmul este deja în lucru (vezi bara de sus).';
+
+/**
+ * Whether a «Refă» must wait for the film's lease: a still or motion redo buys under the film's
+ * one purchase lease (backend redo_scene), so while `sheet.in_progress` stands it would only be
+ * refused FILM_BUSY after his yes had been decided. A card or the sound takes no lease.
+ * @param {any} sheet @param {RedoButton} b
+ */
+function redoWaitsForLease(sheet, b) {
+  return PAID_REDOS.includes(b.kind) && Boolean(inProgressReason(sheet));
+}
+
+/** What the status line says when his press was refused because the film is at work (FILM_BUSY). */
+export const BUSY_PRESS_WORDS = 'Apăsarea ta nu a pornit nimic: filmul este deja în lucru, iar bara de sus spune de când. Apasă din nou după ce pasul în curs se termină.';
+
+/**
+ * The drawer's status line for a notice: a press refused FILM_BUSY while the sheet's bar already
+ * says the film is at work is answered with a pointer to the bar (a wait, not a failure), so the
+ * sentence is not shown twice. If the lease ended before the sheet was read again, the bar says
+ * nothing and the line keeps the backend's sentence.
+ * @param {string} notice @param {string|null|undefined} code @param {boolean} failed @param {any} sheet
+ * @returns {{text: string, tone: 'ok'|'error'|'waiting'}}
+ */
+export function sheetStatusText(notice, code, failed, sheet) {
+  const text = String(notice || '');
+  if (failed && code === 'FILM_BUSY' && inProgressReason(sheet)) return { text: BUSY_PRESS_WORDS, tone: 'waiting' };
+  return { text, tone: text && failed ? 'error' : 'ok' };
 }
 
 /**
@@ -455,7 +527,11 @@ export function assembleButton(sheet) {
   else if (step.in_progress) reasons.push('Asamblarea este deja în curs; foaia se reîncarcă singură când se termină.');
   const left = (Array.isArray(step.paid_steps_left) ? step.paid_steps_left : []).map((/** @type {string} */ s) => STEP_WORDS[/** @type {keyof typeof STEP_WORDS} */ (s)] || s);
   if (left.length) reasons.push(`Întâi pașii plătiți rămași: ${left.join(', ')}. Filmul se asamblează după ultimul.`);
-  for (const b of Array.isArray(step.blocked) ? step.blocked : []) if (b && b.reason_ro) reasons.push(String(b.reason_ro));
+  // TAKE_CHOICE_SEEN (2026-10-04): the backend groups the scenes the assembly waits for into one
+  // sentence per reason (`blocked_ro`, «Scenele 1, 2, 3, 4 și 6 …»); an older studio sent only
+  // one sentence per scene, said here as before.
+  if (step.blocked_ro) reasons.push(String(step.blocked_ro));
+  else for (const b of Array.isArray(step.blocked) ? step.blocked : []) if (b && b.reason_ro) reasons.push(String(b.reason_ro));
   if (step.ready === false && !reasons.length) reasons.push(String(step.waiting_ro || 'Filmul nu poate fi asamblat încă.'));
   return {
     label,
@@ -541,18 +617,55 @@ export function footerRows(sheet) {
 
 /**
  * @typedef {{escape: (value: unknown) => string, confirm?: string|null, notice?: string,
- *   noticeError?: boolean, policy?: any, assembled?: any, ruleOpen?: boolean}} SheetOptions
+ *   noticeError?: boolean, policy?: any, assembled?: any, ruleOpen?: boolean,
+ *   pressed?: TakePress|null, choice?: TakeChoice|null}} SheetOptions
+ */
+/**
+ * TAKE_CHOICE_SEEN: the take button he pressed, while the studio answers.
+ * @typedef {{take: string, decision: string}} TakePress
+ */
+/**
+ * TAKE_CHOICE_SEEN: what the studio answered to his look at a take, shown in the scene he pressed
+ * (`message` is the server's `outcome.message_ro`, or the refusal's sentence when `failed`).
+ * (`network`: no answer arrived, so the choice may have been made: never said as refused).
+ * @typedef {{scene: number, take: string, decision: string, failed: boolean, network?: boolean, message: string}} TakeChoice
  */
 
-/** @param {(value: unknown) => string} e @param {any} take @param {string} what */
-function takeButtons(e, take, what) {
+/**
+ * @param {(value: unknown) => string} e @param {any} take @param {string} what
+ * @param {TakePress|null} [pressed] the take button pressed, while the studio answers
+ */
+function takeButtons(e, take, what, pressed = null) {
   if (!take || take.status !== 'PAID') return '';
   const approve = what === 'shot' && take.kind === 'test_shot' ? 'Aprobă cadrul de probă după ce l-ai văzut' : what === 'shot' ? 'Aprobă cadrul' : 'Alege imaginea aceasta';
   const reject = what === 'shot' ? 'Respinge cadrul' : 'Respinge';
+  // TAKE_CHOICE_SEEN: the pressed button says it is working, and both of its take's buttons hold
+  const held = Boolean(pressed && pressed.take === take.take_id);
+  /** @param {string} decision @param {string} words @param {string} working */
+  const one = (decision, words, working) => {
+    const busy = held && pressed?.decision === decision;
+    return `<button type="button" class="quiet sheet-take-btn" data-sheet-action="take" data-take="${e(take.take_id)}" data-decision="${decision}"`
+      + `${held ? ' disabled' : ''}${busy ? ' aria-busy="true"' : ''}>${e(busy ? working : words)}</button>`;
+  };
   return `<div class="sheet-take-actions">`
-    + `<button type="button" class="quiet sheet-take-btn" data-sheet-action="take" data-take="${e(take.take_id)}" data-decision="APPROVED">${e(approve)}</button>`
-    + `<button type="button" class="quiet sheet-take-btn" data-sheet-action="take" data-take="${e(take.take_id)}" data-decision="REJECTED">${e(reject)}</button>`
+    + one('APPROVED', approve, what === 'shot' ? 'Se aprobă…' : 'Se alege…')
+    + one('REJECTED', reject, 'Se respinge…')
     + '</div>';
+}
+
+/**
+ * Whether a take is a vendor's refusal that cost nothing (`refusal.credits` 0): such takes are
+ * grouped, closed, under «Refuzate de furnizor (0 credite)» so the bought candidates stay in view.
+ * @param {any} take
+ */
+function freeRefusal(take) {
+  return take?.status === 'REFUSED' && take?.refusal && typeof take.refusal === 'object' && Number(take.refusal.credits) === 0;
+}
+
+/** The vendor's own text, once, behind «Textul furnizorului» ('' without one). @param {(value: unknown) => string} e @param {any} take */
+function vendorTextHtml(e, take) {
+  const text = take?.refusal?.vendor_text;
+  return text ? `<details class="sheet-vendor-text"><summary>Textul furnizorului</summary><p lang="en">${e(text)}</p></details>` : '';
 }
 
 /** @param {(value: unknown) => string} e @param {any} take */
@@ -561,7 +674,61 @@ function takeWords(e, take) {
   let why = take?.reason_ro || take?.failure_code;
   // a shot the clip QC rejected says why on its own line (clipQcWords), not twice
   if (take?.clip_qc && String(take?.reason_ro || '').startsWith('Controlul clipului')) why = '';
+  // a vendor's refusal in Romanian, with what it cost; its own text goes behind «Textul furnizorului»
+  const refusal = take?.status === 'REFUSED' && take?.refusal && typeof take.refusal === 'object' ? take.refusal : null;
+  // a cost nobody measured (`credits_known` false) is already said in explain_ro as «până la»;
+  // repeating its number here would state it as what the refusal cost
+  if (refusal) {
+    why = refusal.credits_known === false
+      ? `${refusal.explain_ro || why || ''}`
+      : `${refusal.explain_ro || why || ''} · ${creditWords(Number(refusal.credits) || 0)}`;
+  }
   return `<span class="sheet-take-status" data-status="${e(take?.status)}">${e(status)}</span>${why ? `<span class="sheet-take-why">: ${e(why)}</span>` : ''}`;
+}
+
+/**
+ * The refusals that cost nothing, in one closed group: each kind of refusal once, counted.
+ * @param {(value: unknown) => string} e @param {any[]} takes
+ */
+function freeRefusalsHtml(e, takes) {
+  if (!takes.length) return '';
+  /** @type {Map<string, {take: any, count: number}>} */
+  const kinds = new Map();
+  for (const take of takes) {
+    const key = `${take.refusal.explain_ro || ''}\n${take.refusal.vendor_text || ''}`;
+    const seen = kinds.get(key);
+    if (seen) seen.count += 1;
+    else kinds.set(key, { take, count: 1 });
+  }
+  const rows = [...kinds.values()].map(({ take, count }) => '<li class="sheet-candidate">'
+    + `<p>${e(take.refusal.explain_ro || take.reason_ro || '')}${count > 1 ? ` (de ${e(countWords(count, 'dată', 'ori'))})` : ''}</p>`
+    + `${vendorTextHtml(e, take)}</li>`).join('');
+  return `<details class="sheet-refused"><summary>Refuzate de furnizor (0 credite): ${e(countWords(takes.length, 'cerere', 'cereri'))}</summary>`
+    + `<ul class="sheet-candidates">${rows}</ul></details>`;
+}
+
+/**
+ * TAKE_CHOICE_SEEN: what his look at a take in this scene did, said in the scene's card (the
+ * status line at the top says it too). '' for any other scene, or when he pressed nothing.
+ * @param {(value: unknown) => string} e @param {any} scene @param {TakeChoice|null|undefined} choice
+ */
+function choiceNoteHtml(e, scene, choice) {
+  if (!choice || Number(choice.scene) !== Number(scene?.scene_index)) return '';
+  const shot = (Array.isArray(scene.shots) ? scene.shots : []).some((/** @type {any} */ s) => s?.take_id === choice.take);
+  const approved = choice.decision === 'APPROVED';
+  let head = approved ? 'Aleasă acum.' : 'Respinsă acum.';
+  if (shot) head = approved ? 'Aprobat acum.' : 'Respins acum.';
+  // no answer is not a refusal: the server may have recorded his choice before the page stopped
+  // waiting, and the sheet read again right after says what is chosen now
+  if (choice.failed && choice.network) {
+    const what = shot ? 'cadrul aprobat acum' : 'imaginea aleasă acum';
+    return `<p class="sheet-choice-note sheet-waiting" role="status"><strong>Răspunsul nu a sosit.</strong> ${e(`Decizia ta poate fi înregistrată pe server: foaia de mai jos, citită din nou, arată ${what}. Uită-te la ea înainte să apeși din nou.`)}</p>`;
+  }
+  if (choice.failed) head = approved ? 'Alegerea nu s-a făcut.' : 'Respingerea nu s-a făcut.';
+  const message = choice.message ? ` ${e(choice.message)}` : '';
+  return choice.failed
+    ? `<p class="sheet-choice-note sheet-blocked" role="alert"><strong>${e(head)}</strong>${message}</p>`
+    : `<p class="sheet-choice-note" role="status"><strong>${e(head)}</strong>${message}</p>`;
 }
 
 /**
@@ -572,7 +739,7 @@ function takeWords(e, take) {
 export function redoConfirmHtml(sheet, key, o) {
   const e = o.escape;
   const b = redoFor(sheet, key);
-  if (!b || b.disabled) return '';
+  if (!b || b.disabled || redoWaitsForLease(sheet, b)) return '';
   const paid = PAID_REDOS.includes(b.kind);
   const lines = [];
   if (b.replaces.length) {
@@ -606,15 +773,29 @@ export function redoConfirmHtml(sheet, key, o) {
 function redoBlockHtml(sheet, buttons, title, o) {
   const e = o.escape;
   if (!buttons.length) return '';
-  const rows = buttons.map((b) => '<div class="sheet-redo-box">'
-    + `<button type="button" class="quiet sheet-redo-btn" data-sheet-action="redo" data-kind="${e(b.kind)}" data-scene="${e(b.scene ?? '')}" title="${e(b.reason_ro)}"${b.disabled ? ' disabled' : ''}>${e(b.label)}</button>`
+  const rows = buttons.map((b) => {
+    const balanceReason = redoBalanceReason(sheet, b);
+    return '<div class="sheet-redo-box">'
+    + `<button type="button" class="quiet sheet-redo-btn" data-sheet-action="redo" data-kind="${e(b.kind)}" data-scene="${e(b.scene ?? '')}" title="${e(b.reason_ro)}"${b.disabled || redoWaitsForLease(sheet, b) || balanceReason ? ' disabled' : ''}>${e(b.label)}</button>`
     + `<span class="sheet-redo-price">${e(b.cap_ro ? `${b.price_ro} · ${b.cap_ro}` : b.price_ro)}</span>`
     + (b.disabled && b.reason_ro ? `<p class="sheet-step-why">${e(b.reason_ro)}</p>` : '')
+    + (balanceReason && !b.disabled ? `<p class="sheet-step-why">${e(balanceReason)}</p>` : '')
+    + (!b.disabled && redoWaitsForLease(sheet, b) ? `<p class="sheet-step-why">${e(BUSY_SEE_BAR)}</p>` : '')
     // the sound's plan is one short sentence (what it remasters, or that there is no film yet)
     + (!b.disabled && b.kind === 'audio' && b.reason_ro ? `<p class="sheet-redo-why">${e(b.reason_ro)}</p>` : '')
-    + '</div>').join('');
+    + '</div>'; }).join('');
   const open = buttons.map((b) => redoKey(b.kind, b.scene)).includes(String(o.confirm || '')) ? redoConfirmHtml(sheet, o.confirm, o) : '';
   return `<div class="sheet-redos"><p class="sheet-sub">${e(title)}</p>${rows}${open}</div>`;
+}
+
+/** A redo needs its next purchase and the same margin, never its whole cap. @param {any} sheet @param {RedoButton} b */
+function redoBalanceReason(sheet, b) {
+  if (b.free || !PAID_REDOS.includes(b.kind) || !b.round_credits) return '';
+  const credits = sheet?.footer?.balance?.credits;
+  if (credits === null || credits === undefined || !Number.isFinite(Number(credits))) return 'Soldul Runway este necunoscut; reîncarcă foaia înainte de refacere.';
+  const margin = Number(sheet?.footer?.balance_rule?.motion?.margin) || BALANCE_MARGIN;
+  const needed = Math.ceil(Math.round(b.round_credits * margin * 1e6) / 1e6);
+  return Number(credits) < needed ? `Pentru pornire: ${creditWords(needed)}. Lipsesc ${creditWords(needed - Number(credits))}.` : '';
 }
 
 /** The SAFETY suggestion the motion step left on a scene, and the press that chooses it. @param {(value: unknown) => string} e @param {any} scene */
@@ -637,17 +818,33 @@ function liveSceneHtml(sheet, scene, o) {
   const e = o.escape;
   const m = scene.motion || {};
   const index = scene.scene_index;
+  // TAKE_CHOICE_SEEN: the chosen picture is marked as such, and the one he chose just now stands out
+  // (two near-identical candidates swap places after his choice: the card must still show it).
+  const choice = o.choice || null;
+  const chosenNow = Boolean(choice && !choice.failed && choice.decision === 'APPROVED' && Number(choice.scene) === Number(index)
+    && scene.still && scene.still.take_id === choice.take);
   const still = scene.still
-    ? `<figure class="sheet-still-box"><img class="sheet-still" data-sheet-src="${e(scene.still.file_url)}" alt="Imaginea aprobată a scenei ${e(index)}"><figcaption>Aprobată de ${e(scene.still.approved_by || '—')} · ${e(scene.still.model_id || '')}</figcaption></figure>`
+    ? `<figure class="sheet-still-box${chosenNow ? ' sheet-chosen-now' : ''}" data-sheet-choice><img class="sheet-still" data-sheet-src="${e(scene.still.file_url)}" alt="Imaginea aleasă a scenei ${e(index)}">`
+      + `<figcaption><span class="sheet-chosen-mark">Imaginea aleasă</span> Aprobată de ${e(scene.still.approved_by || '—')} · ${e(scene.still.model_id || '')}</figcaption></figure>`
     : '<p class="sheet-still-missing">Nicio imagine aprobată încă: scena intră în pasul imaginilor.</p>';
-  const candidates = (Array.isArray(scene.candidates) ? scene.candidates : []).map((/** @type {any} */ c) => `<li class="sheet-candidate">`
+  const pressed = o.pressed || null;
+  const all = Array.isArray(scene.candidates) ? scene.candidates : [];
+  const candidates = all.filter((/** @type {any} */ c) => !freeRefusal(c)).map((/** @type {any} */ c) => `<li class="sheet-candidate">`
     + (c.file_url ? `<img class="sheet-thumb" data-sheet-src="${e(c.file_url)}" alt="Candidat pentru scena ${e(index)}">` : '')
-    + `<p>${takeWords(e, c)}</p>${takeButtons(e, c, 'still')}</li>`).join('');
-  const shots = (Array.isArray(scene.shots) ? scene.shots : []).map((/** @type {any} */ s) => `<li class="sheet-shot">`
+    + `<p>${takeWords(e, c)}</p>${vendorTextHtml(e, c)}${takeButtons(e, c, 'still', pressed)}</li>`).join('');
+  const refused = freeRefusalsHtml(e, all.filter(freeRefusal));
+  const allShots = Array.isArray(scene.shots) ? scene.shots : [];
+  /** @param {any} s */
+  const shotHtml = (s) => `<li class="sheet-shot">`
     + `<p>${s.kind === 'test_shot' ? 'Cadrul de probă' : 'Clip'} · ${e(s.model_id || '—')} · ${e(s.seconds ?? '?')} s · ${takeWords(e, s)}</p>`
-    + `<p class="sheet-clip-qc" data-verdict="${e(s.clip_qc?.verdict || 'NONE')}">${e(clipQcWords(s.clip_qc))}</p>`
+    + vendorTextHtml(e, s)
+    + (s.file_url ? `<p class="sheet-clip-qc" data-verdict="${e(s.clip_qc?.verdict || 'NONE')}">${e(clipQcWords(s.clip_qc))}</p>` : '')
     + (s.file_url ? `<button type="button" class="quiet sheet-play" data-sheet-action="play" data-sheet-src="${e(s.file_url)}">Redă clipul</button>` : '')
-    + `${takeButtons(e, s, 'shot')}</li>`).join('');
+    + `${takeButtons(e, s, 'shot', pressed)}</li>`;
+  const current = allShots.filter((/** @type {any} */ s) => s.for_current_prompt !== false && ['PAID', 'APPROVED', 'SUBMITTED'].includes(s.status));
+  const history = allShots.filter((/** @type {any} */ s) => !current.includes(s));
+  const shots = current.map(shotHtml).join('');
+  const media = sceneMediaState(scene);
   const why = m.reason_ro ? `<p class="sheet-why">${e(m.reason_ro)}${m.decided_by === 'owner' ? ' <strong>(alegerea ta)</strong>' : ''}${m.price_source ? ` · ${e(m.price_source)}` : ''}</p>` : '';
   const choices = [];
   if (m.cheaper && m.cheaper.model_id) {
@@ -665,8 +862,24 @@ function liveSceneHtml(sheet, scene, o) {
   const findings = (Array.isArray(scene.lint) ? scene.lint : []).map((/** @type {any} */ f) => `<li class="sheet-finding" data-severity="${e(f.severity)}">${e(f.message_ro)}</li>`).join('');
   const badges = (Array.isArray(scene.badges) ? scene.badges : []).map((/** @type {any} */ b) => `<li class="sheet-badge" title="${e(`sursa: ${b.source || '—'}`)}">${e(b.label_ro)}</li>`).join('');
   const lint = lintLine(scene);
-  return still
-    + `${why}${safetyHtml(e, scene)}${choices.length ? `<div class="sheet-models">${choices.join('')}</div>` : ''}`
+  const guidance = media.generated ? 'Leagă aprobarea de clipul pe care l-ai văzut.'
+    : media.tone === 'alert' ? 'Cererea a fost refuzată. Nu există un fișier video; folosește „Refă mișcarea” pentru o nouă încercare.'
+      : media.tone === 'info' ? 'Cererea a fost trimisă; rezultatul nu este disponibil încă.'
+        : media.tone === 'warn' ? 'Clipul respins nu intră în film. Poți reface doar mișcarea acestei scene.'
+          : media.label === 'Animație locală aleasă' ? 'Filmul va folosi mișcarea locală a imaginii, la asamblare.'
+            : scene.still ? 'Imaginea este aleasă. Mișcarea nu a fost generată încă.' : 'Generează și alege întâi imaginea acestei scene.';
+  return '<div class="sheet-scene-layout">'
+    + `<div class="sheet-scene-preview">${still}</div>`
+    + '<div class="sheet-scene-work">'
+    + `<p class="sheet-media-state" data-tone="${e(media.tone)}">${e(media.label)}</p><p class="sheet-media-guidance">${e(guidance)}</p>`
+    + choiceNoteHtml(e, scene, choice)
+    + (scene.narration ? `<blockquote class="sheet-narration" lang="en"><span>Narațiune</span>«${e(scene.narration)}»</blockquote>` : '')
+    + safetyHtml(e, scene)
+    + (shots ? `<ul class="sheet-shots">${shots}</ul>` : '')
+    + redoBlockHtml(sheet, redoButtons(scene), 'Refă doar această scenă', o)
+    + '</div><div class="sheet-scene-options">'
+    + '<details class="sheet-production-details"><summary>Model, prompturi și verificări</summary><div class="sheet-details-content">'
+    + `${why}${choices.length ? `<div class="sheet-models">${choices.join('')}</div>` : ''}`
     + `<p class="sheet-still-price">Imaginea: ${e(creditWords(scene.still_credits))} (${e(scene.still_price_source || 'fără preț')}) · sămânța ${e(m.seed ?? '—')}</p>`
     + (badges ? `<ul class="sheet-badges">${badges}</ul>` : '')
     + `<p class="sheet-lint">Verificarea prompturilor: <strong class="${lint === 'curat' ? 'sheet-ok' : 'sheet-warn'}">${e(lint)}</strong></p>`
@@ -674,10 +887,10 @@ function liveSceneHtml(sheet, scene, o) {
     + `<details class="sheet-prompt"><summary>Vezi promptul imaginii</summary><p lang="en">${e(scene.still_prompt)}</p></details>`
     + `<details class="sheet-prompt"><summary>Vezi promptul de mișcare</summary><p lang="en">${e(scene.motion_prompt)}</p>`
     + (scene.negative_prompt ? `<p class="sheet-negative">Prompt negativ: <span lang="en">${e(scene.negative_prompt)}</span></p>` : '')
-    + '</details>'
-    + (candidates ? `<p class="sheet-sub">Alte imagini</p><ul class="sheet-candidates">${candidates}</ul>` : '')
-    + (shots ? `<p class="sheet-sub">Clipuri cumpărate</p><ul class="sheet-shots">${shots}</ul>` : '')
-    + redoBlockHtml(sheet, redoButtons(scene), 'Refă doar această scenă', o);
+    + '</details></div></details>'
+    + (candidates || refused ? `<details class="sheet-alternatives"><summary>Alte imagini (${e(all.length)})</summary><div class="sheet-details-content">${candidates ? `<ul class="sheet-candidates">${candidates}</ul>` : ''}${refused}</div></details>` : '')
+    + (history.length ? `<details class="sheet-shot-history"><summary>Încercări anterioare (${e(history.length)})</summary><ul class="sheet-shots">${history.map(shotHtml).join('')}</ul></details>` : '')
+    + '</div></div>';
 }
 
 /** @param {any} sheet @param {any} scene @param {SheetOptions} o */
@@ -686,13 +899,14 @@ function cardSceneHtml(sheet, scene, o) {
   const card = scene.card || {};
   const spec = card.card_json || {};
   const bars = (Array.isArray(spec.bars) ? spec.bars : []).map((/** @type {any} */ b) => `<li>${e(b.label)}: ${e(cardValue(b.value))} ${e(b.unit)}</li>`).join('');
-  return (card.preview_url ? `<figure class="sheet-still-box"><img class="sheet-still" data-sheet-src="${e(card.preview_url)}" alt="Previzualizarea scenei ${e(scene.scene_index)}, compusă local"></figure>` : '')
+  return `<div class="sheet-scene-preview">${card.preview_url ? `<figure class="sheet-still-box"><img class="sheet-still" data-sheet-src="${e(card.preview_url)}" alt="Previzualizarea scenei ${e(scene.scene_index)}, compusă local"></figure>` : '<div class="sheet-card-placeholder">Scenă compusă local<br>0 credite Runway</div>'}</div>`
+    + '<div class="sheet-scene-work">'
     + (spec.title ? `<p class="sheet-card-title">${e(spec.title)}</p>` : '')
     + (bars ? `<ul class="sheet-card-bars">${bars}</ul>` : '')
     + (spec.cta ? `<p class="sheet-card-cta">${e(spec.cta)}</p>` : '')
     + (card.problem_ro ? `<p class="sheet-problem">${e(card.problem_ro)}</p>` : '')
     + `<p class="sheet-why">${e(COMPOSED_WHY[/** @type {keyof typeof COMPOSED_WHY} */ (scene.kind)] || COMPOSED_WHY.DATA_CARD)}</p>`
-    + redoBlockHtml(sheet, redoButtons(scene), 'Refă doar această scenă', o);
+    + redoBlockHtml(sheet, redoButtons(scene), 'Refă doar această scenă', o) + '</div>';
 }
 
 /**
@@ -779,19 +993,104 @@ export function sheetSummary(sheet, policy) {
   return { rule_ro: paidMediaRuleWords(rule), next: { step: ASSEMBLE_STEP, label: a.label, price_ro: a.price_ro, cap_ro: '', disabled: a.disabled, reason_ro: a.reason_ro } };
 }
 
-/** The bar at the top of the drawer (sticky while he scrolls the scenes). @param {any} sheet @param {SheetOptions} o */
+/** The overview at the top, scrolling with the sheet. @param {any} sheet @param {SheetOptions} o */
 function sheetSummaryHtml(sheet, o) {
   const e = o.escape;
   const summary = sheetSummary(sheet, o.policy || null);
   const next = summary.next;
   const busy = inProgressReason(sheet);
+  const progress = sheetProgress(sheet);
+  const recovery = testShotRecovery(sheet);
+  const heroScene = (sheet?.scenes || []).find((/** @type {any} */ s) => Number(s.scene_index) === Number(sheet?.footer?.hero_scene));
+  const reviewHero = heroScene && sceneMediaState(heroScene).generated && !heroState(sheet).approved && !HERO_LETS_MOTION.includes(sheet?.steps?.motion?.hero?.status);
+  const balance = sheet?.footer?.balance?.credits;
+  const balanceWords = balance !== null && balance !== undefined && Number.isFinite(Number(balance)) ? creditWords(Number(balance)) : 'Necunoscut';
   return '<div class="sheet-summary-bar" role="region" aria-label="Pe scurt">'
-    + `<p class="sheet-summary-rule">${e(summary.rule_ro)}</p>`
-    + (next
+    + `<h2 class="sheet-title">${e(String(sheet?.title || '').replace(/^Storyboard:\s*/i, ''))}</h2>`
+    + '<dl class="sheet-progress">'
+    + `<div><dt>Imagini aprobate</dt><dd>${e(progress.images)} / ${e(progress.filmed)}</dd></div>`
+    + `<div><dt>Clipuri disponibile</dt><dd>${e(progress.clips)} / ${e(progress.filmed - progress.local)}${progress.local ? ` <small>+ ${e(progress.local)} local</small>` : ''}</dd></div>`
+    + `<div><dt>Scene compuse local</dt><dd>${e(progress.cards)}</dd></div>`
+    + `<div><dt>Sold Runway</dt><dd>${e(balanceWords)}</dd></div></dl>`
+    + (recovery && !busy ? `<p class="sheet-summary-next">Următorul pas: <strong>Reia clipul de probă</strong> (scena ${e(recovery.scene)}) · ${e(recovery.price_ro)} · ${e(recovery.cap_ro)}${redoBalanceReason(sheet, recovery) ? ` <span class="sheet-summary-why">${e(redoBalanceReason(sheet, recovery))}</span>` : ''}</p>` : '')
+    + (reviewHero && !busy ? `<p class="sheet-summary-next">Următorul pas: <strong>Vezi și aprobă clipul de probă</strong> (scena ${e(heroScene.scene_index)}).</p>` : '')
+    + (next && ((!recovery && !reviewHero) || busy)
       ? `<p class="sheet-summary-next">Următorul pas: <strong>${e(next.label)}</strong> · ${e(next.price_ro)}${next.cap_ro ? ` · ${e(next.cap_ro)}` : ''}${next.disabled ? ` <span class="sheet-summary-why">— ${e(busy || next.reason_ro)}</span>` : ''}</p>`
       : '')
     + '<button type="button" class="quiet sheet-summary-go" data-sheet-action="to-steps">Mergi la pași</button>'
     + '</div>';
+}
+
+/** The production sequence, before the scenes, with the backend's gates and prices. @param {any} sheet @param {SheetOptions} o */
+function workflowHtml(sheet, o) {
+  const e = o.escape;
+  const progress = sheetProgress(sheet);
+  const recovery = testShotRecovery(sheet);
+  const hero = heroState(sheet);
+  const heroScene = (sheet?.scenes || []).find((/** @type {any} */ s) => Number(s.scene_index) === Number(hero.scene));
+  const remainingScenes = (sheet?.scenes || []).filter((/** @type {any} */ s) => !isCard(s) && Number(s.scene_index) !== hero.scene);
+  const motionAvailable = remainingScenes.every((/** @type {any} */ s) => s.motion?.status === 'LOCAL' || sceneMediaState(s).generated);
+  const motionReview = remainingScenes.find((/** @type {any} */ s) => sceneMediaState(s).take?.status === 'PAID');
+  const busy = inProgressReason(sheet);
+  /** @param {string[]} reasons */
+  const fullReasons = (reasons) => [...new Set(reasons.map((r) => busy && r === busy ? BUSY_SEE_BAR : r))];
+  /** @param {string[]} reasons */
+  const reasonDetails = (reasons) => reasons.length ? `<details class="sheet-step-details"><summary>Detalii blocaj</summary><ul>${fullReasons(reasons).map((r) => `<li>${e(r)}</li>`).join('')}</ul></details>` : '';
+  /** @param {any} b */
+  const shortReason = (b) => {
+    if (busy) return BUSY_SEE_BAR;
+    if (sheet?.lint_blocked) return 'Prompturile au blocaje. Vezi verificările scenelor.';
+    if (sheet?.shot_plan_gaps?.length) return `Lipsește planul scenelor ${sheet.shot_plan_gaps.join(', ')}.`;
+    const reasons = [];
+    if (b.step === 'motion' && b.reasons.some((/** @type {string} */ r) => /cadrul de probă/i.test(r))) reasons.push(`Întâi rezolvă clipul de probă (scena ${hero.scene}).`);
+    const balance = sheet?.footer?.balance?.credits;
+    const needed = sheet?.footer?.balance_needed_credits?.[b.step];
+    if (b.to_buy.length && (balance === null || balance === undefined || !Number.isFinite(Number(balance)))) reasons.push('Soldul Runway este necunoscut. Reîncarcă foaia.');
+    else if (b.to_buy.length && needed !== null && needed !== undefined && Number.isFinite(Number(needed)) && Number(balance) < Number(needed)) reasons.push(`Pentru pornire: ${creditWords(Number(needed))}. Lipsesc ${creditWords(Number(needed) - Number(balance))}.`);
+    return reasons.join(' ') || (b.disabled ? b.reasons[0] || 'Așteaptă pasul anterior.' : 'Poți porni acest pas.');
+  };
+  const titles = { stills: 'Imaginile scenelor', test_shot: 'Clipul de probă', motion: 'Toate clipurile rămase' };
+  const rows = stepButtons(sheet).map((b, index) => {
+    const held = b.step === 'test_shot' ? recovery : null;
+    const unnecessary = b.step === 'stills' ? progress.filmed === 0
+      : b.step === 'test_shot' ? hero.scene === null
+        : remainingScenes.length === 0;
+    const done = b.step === 'stills' ? progress.images === progress.filmed
+      : b.step === 'test_shot' ? hero.approved || HERO_LETS_MOTION.includes(sheet?.steps?.motion?.hero?.status)
+        : !busy && !b.to_buy.length && motionAvailable;
+    const review = b.step === 'test_shot' ? !done && heroScene && sceneMediaState(heroScene).generated
+      : b.step === 'motion' && done && motionReview;
+    const reviewScene = b.step === 'test_shot' ? hero.scene : motionReview?.scene_index;
+    const state = held ? sceneMediaState(heroScene).label : unnecessary ? 'Nu este necesar' : review ? 'De verificat' : done ? 'Gata' : b.disabled ? 'În așteptare' : 'Pregătit';
+    const tone = held ? sceneMediaState(heroScene).tone : review ? 'warn' : done ? 'ok' : b.disabled ? 'quiet' : 'info';
+    const detail = held ? `Scena ${held.scene} nu are un clip acceptat. Reia mișcarea din acțiunile scenei. ${redoBalanceReason(sheet, held)}`
+      : unnecessary ? 'Planul filmului nu cere acest pas.'
+      : review ? b.step === 'test_shot' ? 'Clipul există. Redă-l și aprobă-l înainte de celelalte scene.' : 'Clipurile există. Verifică rezultatele în scenele de mai jos.'
+      : done && b.step === 'stills' ? `${progress.images} din ${progress.filmed} imagini aprobate.`
+        : done ? b.step === 'test_shot' ? 'Clipul de probă este acceptat.' : 'Toate scenele rămase au clip sau animație locală.' : shortReason(b);
+    const scope = b.step === 'motion' && b.to_buy.length
+      ? `<p class="sheet-step-scope">O singură aprobare pentru scenele ${e(b.to_buy.join(', '))}. Se procesează automat, pe rând.</p>` : '';
+    const action = held || review
+      ? `<button type="button" class="quiet sheet-step" data-sheet-action="to-scene" data-scene="${e(held ? held.scene : reviewScene)}">Deschide scena ${e(held ? held.scene : reviewScene)}</button>`
+      : done || unnecessary ? '<span class="sheet-step-done">Nicio acțiune necesară</span>'
+      : `<button type="button" class="sheet-step" data-sheet-action="step" data-step="${e(b.step)}"${b.disabled ? ' disabled' : ''}>${e(b.label)}</button>`;
+    return `<div class="sheet-step-box" data-step-state="${e(state)}">`
+      + `<div class="sheet-step-main"><span class="sheet-step-index" aria-hidden="true">${index + 1}</span><h3>${e(titles[/** @type {keyof typeof titles} */ (b.step)])}</h3><span class="sheet-step-state" data-tone="${e(tone)}">${e(state)}</span></div>`
+      + `<div class="sheet-step-copy"><p class="sheet-step-explain">${e(detail)}</p>${scope}${done || unnecessary ? '' : reasonDetails(b.reasons)}</div>`
+      + `<div class="sheet-step-action"><span class="sheet-step-price">${e(held ? held.price_ro : done || review || unnecessary ? 'Nimic de cumpărat' : b.price_ro)}</span>`
+      + (!done && !review && !unnecessary ? `<span class="sheet-step-cap">${e(held ? held.cap_ro : b.cap_ro)}</span>` : '') + action + '</div>'
+      + (b.over_budget && !b.disabled ? `<p class="sheet-step-warn">${e(b.over_budget_ro)}</p>` : '')
+      + (o.confirm === b.step ? stepConfirmHtml(sheet, b.step, o) : '') + '</div>';
+  }).join('');
+  const a = assembleButton(sheet);
+  const blocked = sheet?.steps?.assemble?.blocked || [];
+  const assemble = '<div class="sheet-step-box sheet-assemble">'
+    + `<div class="sheet-step-main"><span class="sheet-step-index" aria-hidden="true">4</span><h3>Asamblarea filmului</h3><span class="sheet-step-state" data-tone="${a.disabled ? 'quiet' : 'info'}">${a.disabled ? 'În așteptare' : 'Pregătit'}</span></div>`
+    + `<div class="sheet-step-copy"><p class="sheet-step-explain">${e(busy ? BUSY_SEE_BAR : blocked.length ? `Așteaptă clipurile scenelor ${[...new Set(blocked.map((/** @type {any} */ b) => b.scene_index))].join(', ')}.` : a.disabled ? 'Finalizează pașii de producție înainte de asamblare.' : 'Unește scenele, narațiunea și subtitrările; apoi rulează controlul calității.')}</p>${reasonDetails(a.reasons)}</div>`
+    + `<div class="sheet-step-action"><span class="sheet-step-price">${e(a.price_ro)}</span><button type="button" class="sheet-step" data-sheet-action="step" data-step="assemble"${a.disabled ? ' disabled' : ''}>${e(a.label)}</button></div>`
+    + (o.confirm === ASSEMBLE_STEP ? stepConfirmHtml(sheet, ASSEMBLE_STEP, o) : '')
+    + assembleResultHtml(o.assembled, o) + '</div>';
+  return `<section class="sheet-footer" id="sheet-steps" aria-label="Pașii producției"><div class="sheet-section-heading"><h2>Pașii producției</h2><p>Fiecare acțiune plătită arată costul și plafonul înainte de aprobare.</p></div><div class="sheet-steps">${rows}${assemble}</div></section>`;
 }
 
 /**
@@ -810,42 +1109,25 @@ export function sheetHtml(sheet, o) {
     : sheet?.owner_rule;
   const problem = sheet?.footer?.catalogue_problem_ro;
   const head = '<header class="sheet-head">'
-    + `<p class="eyebrow sheet-eyebrow">${e(SHEET_TITLE)} · 0 credite</p>`
-    + `<h2 class="sheet-title">${e(sheet?.title || '')}</h2>`
     + `<div class="sheet-rule-line"><p class="sheet-rule">${e(paidMediaRuleWords(rule))}</p>`
     + `<details class="sheet-rule-box"${o.ruleOpen ? ' open' : ''}><summary>Schimbă regula</summary>${paidMediaFormHtml(o.policy || null, o)}</details></div>`
+    + '<details class="sheet-specs"><summary>Detalii de producție</summary>'
     + `<p class="sheet-meta">Rezoluție ${e(sheet?.resolution || '—')} · sămânța filmului ${e(sheet?.seed ?? '—')} · foaia ${e(hash)}</p>`
     + (sheet?.reference_images_verified === false
       ? '<p class="sheet-flag">Imaginile scenelor 2 și următoarele folosesc imaginea scenei 1 ca referință (lumină, paletă, granulație). Pe acest cont efectul este încă nevalidat, până la primul pas aprobat.</p>'
-      : '')
+      : '') + '</details>'
     + (problem ? `<p class="sheet-flag sheet-blocked">Lista ta de modele (config/film_models.json) nu a putut fi citită: ${e(problem)}</p>` : '')
     + (gaps.length ? `<p class="sheet-flag sheet-blocked">Scenele ${e(gaps.join(', '))} nu au planul de cadre scris de model; filmul așteaptă planul de cadre.</p>` : '')
     + (sheet?.lint_summary_ro ? `<p class="sheet-lint-summary${sheet?.lint_blocked ? ' sheet-blocked' : ''}">${e(sheet.lint_summary_ro)}</p>` : '')
     + (blocks ? `<ul class="sheet-findings sheet-blocked">${blocks}</ul>` : '')
     + (o.notice ? `<p class="sheet-notice${o.noticeError ? ' sheet-blocked' : ''}" role="status">${e(o.notice)}</p>` : '')
     + '</header>';
-  const list = scenes.map((/** @type {any} */ scene) => `<li class="sheet-scene" data-kind="${e(scene.kind)}">`
-    + `<h3 class="sheet-scene-line">${e(sceneLine(scene))}</h3>`
-    + (scene.narration ? `<p class="sheet-narration">«${e(scene.narration)}»</p>` : '')
-    + (isCard(scene) ? cardSceneHtml(sheet, scene, o) : liveSceneHtml(sheet, scene, o))
+  // data-scene-index: the page keeps the scene he pressed in view after the repaint (TAKE_CHOICE_SEEN)
+  const list = scenes.map((/** @type {any} */ scene) => `<li class="sheet-scene" data-kind="${e(scene.kind)}" data-scene-index="${e(scene.scene_index)}">`
+    + `<h3 class="sheet-scene-line" tabindex="-1">${e(sceneLine(scene))}</h3>`
+    + (isCard(scene) ? `<div class="sheet-scene-layout sheet-card-layout">${cardSceneHtml(sheet, scene, o)}</div>` : liveSceneHtml(sheet, scene, o))
     + '</li>').join('');
   const rows = footerRows(sheet).map((r) => `<div class="sheet-row" data-key="${e(r.key)}"><dt>${e(r.label)}</dt><dd>${e(r.value)}</dd></div>`).join('');
-  const steps = stepButtons(sheet).map((b) => '<div class="sheet-step-box">'
-    + `<button type="button" class="sheet-step" data-sheet-action="step" data-step="${e(b.step)}"${b.disabled ? ' disabled' : ''}>${e(b.label)}</button>`
-    + `<span class="sheet-step-price">${e(b.price_ro)} · ${e(b.cap_ro)}</span>`
-    + (b.reason_ro ? `<p class="sheet-step-why">${e(b.reason_ro)}</p>` : '')
-    + (b.over_budget && !b.disabled ? `<p class="sheet-step-warn">${e(b.over_budget_ro)}</p>` : '')
-    + (o.confirm === b.step ? stepConfirmHtml(sheet, b.step, o) : '')
-    + '</div>').join('');
-  const a = assembleButton(sheet);
-  const assemble = '<div class="sheet-step-box sheet-assemble">'
-    + `<button type="button" class="sheet-step" data-sheet-action="step" data-step="${e(ASSEMBLE_STEP)}"${a.disabled ? ' disabled' : ''}>${e(a.label)}</button>`
-    + `<span class="sheet-step-price">${e(a.price_ro)}</span>`
-    + (a.line_ro ? `<p class="sheet-assemble-line">${e(a.line_ro)}</p>` : '')
-    + (a.reason_ro ? `<p class="sheet-step-why">${e(a.reason_ro)}</p>` : '')
-    + (o.confirm === ASSEMBLE_STEP ? stepConfirmHtml(sheet, ASSEMBLE_STEP, o) : '')
-    + assembleResultHtml(o.assembled, o)
-    + '</div>';
   const sound = audioRedoButton(sheet);
   const repair = sheet?.remediation;
   /** @type {Record<string, string>} */
@@ -856,13 +1138,13 @@ export function sheetHtml(sheet, o) {
     WAITING_OWNER: 'Așteaptă decizia ta', STALE: 'Foaia s-a schimbat; raportul vechi a fost oprit',
     DEAD_LETTER: 'Remedierea s-a oprit', BLOCKED: 'Remedierea este oprită de politica studioului',
   };
-  const remediation = repair ? `<div class="sheet-warning" role="status"><strong>${e(repairWords[repair.status] || 'Starea remedierii: ' + repair.status)}</strong><p>${e(repair.reason || '')}</p></div>` : '';
-  return `${sheetSummaryHtml(sheet, o)}${remediation}${head}<ol class="sheet-scenes">${list}</ol>`
-    + `<footer class="sheet-footer" id="sheet-steps"><dl class="sheet-rows">${rows}</dl>`
+  const remediation = repair ? `<details class="sheet-warning"><summary>${e(repairWords[repair.status] || 'Starea remedierii: ' + repair.status)}</summary><p>${e(repair.reason || '')}</p></details>` : '';
+  return `${sheetSummaryHtml(sheet, o)}${head}${workflowHtml(sheet, o)}${remediation}`
+    + `<section class="sheet-scenes-section" aria-label="Scenele filmului"><div class="sheet-section-heading"><h2>Scenele filmului</h2><p>Imaginea aleasă, starea clipului și acțiunile fiecărei scene.</p></div><ol class="sheet-scenes">${list}</ol></section>`
+    + `<details class="sheet-budget"><summary>Costuri, bugete și alternative</summary><div class="sheet-details-content"><dl class="sheet-rows">${rows}</dl>`
     + (sheet?.footer?.summary_ro ? `<p class="sheet-summary">${e(sheet.footer.summary_ro)}</p>` : '')
-    + `<div class="sheet-steps">${steps}${assemble}</div>`
     + (sound ? `<div class="sheet-redo-audio">${redoBlockHtml(sheet, [sound], 'Sunetul filmului', o)}</div>` : '')
-    + '</footer>';
+    + '</div></details>';
 }
 
 /* ------------------------------------------------------------------------- talking to the studio */
