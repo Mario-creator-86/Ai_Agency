@@ -54,6 +54,7 @@ def test_the_settings_reach_nothing_beyond_the_machine(tmp_path):
     assert settings.office_weather_host is None
     assert settings.office_unreal_remote_url is None
     assert settings.min_free_gb == 0
+    assert settings.local_auto_login is False  # the flows sign in through the form
     assert (
         str(tmp_path) in settings.database_url.replace("/", "\\")
         or str(tmp_path.as_posix()) in settings.database_url

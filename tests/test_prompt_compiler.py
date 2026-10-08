@@ -53,6 +53,28 @@ from app.media.series_look import FACTUAL_LOOK_FILE, load_factual_look, look_blo
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = Path(__file__).parent / "fixtures" / "nepal_1d530880"
 
+
+def test_airless_scene_does_not_gain_invented_weather():
+    compiled = compile_prompts(
+        {
+            "subject": "The Moon",
+            "environment": "Black space",
+            "camera_move": "slow orbit",
+            "camera": "Medium shot",
+            "motion": "Cratered surface rotates slowly.",
+        },
+        {
+            "world": "The airless Moon in space",
+            "weather": "airless vacuum",
+            "lighting": "direct cold sunlight",
+            "palette": "grey and black",
+        },
+    )
+    assert "haze" not in compiled["motion_prompt"].lower()
+    assert "overcast" not in compiled["still_prompt"].lower()
+    assert "rotates" in compiled["motion_prompt"].lower()
+
+
 #: Colour words: the palette belongs to the still, never to the motion prompt.
 PALETTE_WORDS = re.compile(
     r"\b(?:blue|blues|gold|golden|grey|gray|greys|brown|browns|green|greens|red|amber|ochre"

@@ -1,7 +1,6 @@
-"""start.py starts the studio AND its graphics, and stopping it stops everything (2026-10-04).
+"""start.py starts without graphics; --graphics opts into the existing lifecycle (2026-10-04).
 
-The Owner's words: «cand rulez python start.py, trebuie sa porneasca si grafica. La fel, cand
-opresc, totul trebuie sa se opreasca!» The graphics are the live streamed headquarters: Epic's
+The Owner's latest request disables the automatic launch. Optional graphics are Epic's
 signalling server (wilbur, node.exe) and Unreal streaming /Game/HQ/HQ_Dusk. Every process here
 is faked: no Unreal, node or PowerShell runs in these tests, and nothing reaches a socket.
 """
@@ -277,7 +276,7 @@ def test_a_machine_without_the_paths_gets_one_line_naming_what_is_missing(tmp_pa
 # --------------------------------------------------------------------- when the graphics skip
 
 
-def test_the_graphics_start_by_default_and_skip_with_one_romanian_line():
+def test_requested_graphics_skip_with_one_romanian_line_when_unavailable():
     ok = {
         "no_graphics": False,
         "demo": False,
@@ -298,10 +297,65 @@ def test_the_graphics_start_by_default_and_skip_with_one_romanian_line():
         assert "grafica" in line.lower()
 
 
-def test_start_offers_no_graphics():
+def test_start_requires_graphics_opt_in_and_keeps_no_graphics_compatible():
     parser = start.build_parser()
     assert parser.parse_args(["--no-graphics"]).no_graphics is True
     assert parser.parse_args([]).no_graphics is False
+    assert parser.parse_args([]).graphics is False
+    assert parser.parse_args(["--graphics"]).graphics is True
+    with pytest.raises(SystemExit):
+        parser.parse_args(["--graphics", "--no-graphics"])
+
+
+@pytest.mark.parametrize("flags", [[], ["--no-graphics"], ["--skip-sync", "--skip-frontend"]])
+def test_without_graphics_opt_in_no_supervisor_or_machine_probe_is_created(
+    flags, monkeypatch, capsys
+):
+    def unexpected(*args, **kwargs):
+        pytest.fail("Graphics disabled: no machine probe or supervisor is allowed")
+
+    monkeypatch.setattr(start.win_processes, "session_id", unexpected)
+    monkeypatch.setattr(lg, "stream_setup", unexpected)
+    monkeypatch.setattr(lg, "WindowsSystem", unexpected)
+    monkeypatch.setattr(lg, "Supervisor", unexpected)
+    args = start.build_parser().parse_args(flags)
+    assert start.prepare_graphics(args, object(), object()) is None
+    out = capsys.readouterr().out
+    assert "Grafica live nu pornește" in out
+    assert "--no-graphics" in out if args.no_graphics else "--graphics" in out
+
+
+def test_explicit_graphics_opt_in_creates_the_existing_supervisor(monkeypatch, settings, tmp_path):
+    setup = setup_for(tmp_path)
+    system = object()
+    job = object()
+    calls = []
+    monkeypatch.setattr(start.sys, "platform", "win32")
+    monkeypatch.setattr(start.win_processes, "session_id", lambda: 1)
+    monkeypatch.setattr(lg, "stream_setup", lambda: setup)
+
+    def windows_system(**kwargs):
+        calls.append(kwargs)
+        return system
+
+    monkeypatch.setattr(lg, "WindowsSystem", windows_system)
+    settings.office_stream_signalling_url = "ws://127.0.0.1:8890"
+    args = start.build_parser().parse_args(["--graphics"])
+    supervisor = start.prepare_graphics(args, settings, job)
+    assert isinstance(supervisor, lg.Supervisor)
+    assert supervisor.setup is setup and supervisor.system is system
+    assert calls == [{"job": job, "remote_control_url": settings.office_unreal_remote_url}]
+
+
+def test_demo_still_skips_graphics_even_when_requested(monkeypatch, settings, capsys):
+    def unexpected(*args, **kwargs):
+        pytest.fail("Demo must not prepare graphics")
+
+    monkeypatch.setattr(start.win_processes, "session_id", lambda: 1)
+    monkeypatch.setattr(lg, "stream_setup", unexpected)
+    args = start.build_parser().parse_args(["--demo", "--graphics"])
+    assert start.prepare_graphics(args, settings, None) is None
+    assert "demo" in capsys.readouterr().out
 
 
 # ------------------------------------------------------------------------------- starting

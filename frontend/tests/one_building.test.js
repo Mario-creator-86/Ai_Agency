@@ -211,27 +211,25 @@ test('the engine plays over its own copy of the still, only in a replay, and com
 
 /* --------------------------------------------------------------------------- the page -- */
 
-test('the page plays the replay over the door\'s own frame, and gives the plaques the replayed moment', () => {
-  assert.match(MAIN, /liveStream\.doorway\('out'\);[\s\S]{0,300}enterReplayLook\(\);/);
-  assert.match(MAIN, /const picture = liveStream \? liveStream\.replayPicture\(\) : null;/);
-  assert.match(MAIN, /officeEngine\.setReplayStill\(picture\.image, picture\.at\)/);
-  assert.match(MAIN, /viewport\.dataset\.replayLook = over \? 'unreal' : 'page';/);
-  assert.match(MAIN, /const overStill = replaying\(\) && Boolean\(officeEngine && officeEngine\.replayStill\);/);
-  assert.match(MAIN, /facts: world \? world\.facts : worldFacts/);
-  assert.match(SCENE_CSS, /\.stream-plaques\[data-replay\] \.stream-plaque-eyebrow \{ color: var\(--replay-ink\); \}/);
+test('pixel replay stays on the illustration and never substitutes a GPU frame', async () => {
+  const { OfficeEngine } = await import('../src/pixel_office.js');
+  const engine = Object.create(OfficeEngine.prototype);
+  let draws = 0;
+  engine.draw = () => { draws++; };
+  engine.schedule = () => {};
+  engine.setReplay(true);
+  engine.setReplayMoment(1234);
+  assert.equal(engine.replay, true);
+  assert.equal(engine.replayAt, 1234);
+  assert.equal(engine.setReplayStill({ width: 1920 }, 1234), false);
+  assert.equal(draws, 2);
+  assert.match(MAIN, /dataset\.replayLook = 'pixel'/);
+  assert.match(MAIN, /Decor ilustrat; activitatea reluată vine din registru/);
+  assert.doesNotMatch(MAIN, /liveStream\.replayPicture/);
 });
 
-test('the title stands on the kept frame only with the stream configured, waits for it briefly, and loads no plates then', () => {
-  // W24: this browser's frame or the studio's, by the hour's light (studio_frame.test.js)
-  assert.match(MAIN, /if \(!liveStreamSettings\(scene\)\.enabled\) return null;\r?\n  return chooseTitleFrame\(\[browser, studio\], Date\.now\(\)\);/);
-  assert.match(MAIN, /kept: titleChoice,/);
-  assert.match(TITLE, /export const KEPT_WAIT_MS = (\d+);/);
-  assert.ok(Number(TITLE.match(/export const KEPT_WAIT_MS = (\d+);/)[1]) <= 800, 'the title never waits long for it');
-  const relight = TITLE.slice(TITLE.indexOf('  relight() {'), TITLE.indexOf('  /** @param {HTMLElement} film */'));
-  assert.ok(relight.indexOf('if (this.kept) {') > 0 && relight.indexOf('if (this.kept) {') < relight.indexOf('this.load('), 'the plates are not downloaded under a kept frame');
-  assert.match(STYLE, /\.title-kept \{ position: absolute; left: 0; top: 0; display: block; width: 1600px; height: 840px; transform-origin: 0 0;/);
-  assert.match(STYLE, /\.title-stage\[data-kept='true'\] \.title-world \{ display: none; \}/);
-});
+test('the pixel title has no old building or kept-frame reader', () => { const main = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8'); assert.match(main, /new PixelTitle/); assert.doesNotMatch(main, /readKeptFrame\(|readStudioKept\(|readScene\(/); });
+
 
 /* ------------------------------------------------------------------------- the landing -- */
 
@@ -292,8 +290,7 @@ test('a replayed caption over the still is not covered by a plaque: its box is h
   assert.ok(r.captionKey.length > 0);
   // the plates' own replay keeps no boxes (nothing grows there)
   assert.match(WORLD_JS, /draw\(ctx, state\) \{\s+const w = this\.world;\s+\/\/[^\n]*\n\s+this\.captionBoxes = null;/);
-  assert.match(MAIN, /for \(const c of officeEngine\.renderer\.captionBoxes \|\| \[\]\)/);
-  assert.match(MAIN, /onCaptions: \(\) => layoutPlaques\(\),/);
+  assert.doesNotMatch(MAIN, /layoutPlaques|streamPlaques/, 'the pixel page has no stream plaques to cover its agents');
 });
 
 test('under the landing frame the render\'s panel does not rise: it appears where the frame lands', () => {

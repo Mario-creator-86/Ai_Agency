@@ -1,5 +1,5 @@
 {
-  "version": 5,
+  "version": 6,
   "roles": {
     "Director": {
       "reports_to": "Owner",
@@ -380,7 +380,7 @@
         "the active budgets: how much of each is spent, and whether the day would cross the warning line or the limit",
         "usage the books cannot price: a model or a render with no stored price is a cost nobody has measured, not a free one",
         "a cost recorded twice, or a bill that never became an estimate first",
-        "the treasury's spendable balance against what is committed but not yet billed",
+        "the daily USD budget remaining after actual spend and reserved production costs",
         "budget requests from the Director: each one is answered from the books, in writing"
       ],
       "investigate": [

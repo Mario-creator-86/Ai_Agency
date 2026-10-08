@@ -147,6 +147,7 @@ from app.media.stills_stage import (
     stills_plan,
 )
 from app.media.toolchain import find_ffmpeg
+from app.providers.runpod.batch import OVERHEAD_LINE_RO
 from app.wording import count as count_ro
 
 logger = logging.getLogger("studio.media.sheet")
@@ -312,12 +313,14 @@ def sheet_url(storyboard_id: str) -> str:
 
 def price_table_for(engine: Engine, integration_id: str | None) -> PriceTable:
     """The published table, with this Runway connection's MEASURED prices laid over it."""
-    if not integration_id:
-        return load_price_table()
     from app.economy.credits import measured_price_table  # noqa: PLC0415 - economy imports media
+    from app.media.local_media import local_prices  # noqa: PLC0415
+    from app.providers.runpod.pricing import estimated_prices  # noqa: PLC0415
 
-    table: PriceTable = measured_price_table(engine, integration_id)
-    return table
+    table: PriceTable = (
+        measured_price_table(engine, integration_id) if integration_id else load_price_table()
+    )
+    return estimated_prices(engine, local_prices(engine, table))
 
 
 def _context(
@@ -567,6 +570,25 @@ def decide_sheet_take(
 
 
 def _read_balance(account: Any) -> dict[str, Any]:
+    from app.media.local_media import is_local  # noqa: PLC0415
+
+    if getattr(account, "billing_mode", None) == "gpu":
+        return {
+            "credits": None,
+            "read": False,
+            "problem": None,
+            "applicable": False,
+            "billing_mode": "gpu",
+            "note": "Cost GPU estimat; bugetul Agency se aplică.",
+        }
+    if is_local(account):
+        return {
+            "credits": None,
+            "read": False,
+            "problem": None,
+            "applicable": False,
+            "billing_mode": "local",
+        }
     """The live Runway balance: one free GET. Never raises; a failure is named."""
     reader = getattr(account, "credit_balance", None)
     if not callable(reader):
@@ -741,7 +763,9 @@ def _alternatives(
     if not any(scene.get("kind") == "LIVE" for scene in scenes):
         return []
     try:
-        priced = plan_film(scenes, table=ctx.table, today=ctx.today)
+        priced = plan_film(
+            scenes, table=ctx.table, today=ctx.today, stills_model=ctx.table.stills_model
+        )
     except UnpricedError as exc:
         logger.info("sheet_alternatives_unpriced", extra={"reason": str(exc)[:160]})
         return []
@@ -1177,12 +1201,6 @@ def _sheet(
         table=ctx.table,
     )
     moving_view = {int(item["scene_index"]): item for item in moving["scenes"]}
-    # Whether the rest of the motion may follow the hero test shot: the Owner's look, or its
-    # clip QC under his paid-media rule (HERO_AUTO_ACCEPT). Read only; the step records it.
-    with Session(engine) as session:
-        hero = hero_gate(
-            session, moving, storyboard_id=storyboard_id, plan_hash=moving["plan_hash"]
-        )
     bought = {
         index: str(item["model_id"])
         for index, item in moving_view.items()
@@ -1207,6 +1225,24 @@ def _sheet(
         today=ctx.today,
     )
     chosen = {int(entry["scene_index"]): entry for entry in policy["scenes"]}
+    # The ready-to-buy plan clears prices while stills are missing. The read-only hero
+    # preview needs the same future quotes shown on this sheet, without making shots ready.
+    hero_preview = {
+        **moving,
+        "hero_scene": moving["hero_scene"]
+        if moving["hero_scene"] is not None
+        else policy["hero_scene"],
+        "scenes": [
+            {**item, "credits": int(chosen[item["scene_index"]].get("credits") or 0)}
+            if item["status"] == "NEEDS_STILL"
+            else item
+            for item in moving["scenes"]
+        ],
+    }
+    with Session(engine) as session:
+        hero = hero_gate(
+            session, hero_preview, storyboard_id=storyboard_id, plan_hash=moving["plan_hash"]
+        )
     try:
         stills_row: PriceRow | None = ctx.table.row(ctx.stills_model, STILLS_RESOLUTION)
     except UnpricedError:
@@ -1411,6 +1447,14 @@ def _sheet(
             # he decides on the sheet (assembler.scene_memory).
             "held": [int(index) for index in plan.get("held") or []],
             "in_progress": bool(lease and lease["step"] in (name, "staircase")),
+            # RunPod Serverless: what one GPU start of a round adds (cold start + idle tail),
+            # already inside the cost and the cap; the Owner reads it as its own line.
+            "gpu_start_credits": int(plan.get("round_overhead_credits") or 0),
+            "gpu_start_ro": (
+                f"{OVERHEAD_LINE_RO}: {_ro_credits(int(plan['round_overhead_credits']))} pe rundă"
+                if plan.get("round_overhead_credits")
+                else ""
+            ),
         }
 
     needs_reference = list(stills_step.get("needs_reference") or [])
@@ -1585,6 +1629,7 @@ def _sheet(
         "summary_ro": policy.get("summary_ro"),
         "alternatives": _alternatives(policy, ctx, stills_row),
         "balance": balance,
+        "runpod_metrics": _runpod_metrics(engine, storyboard_id),
         # What the balance must hold to START each paid step: its next round x the margin
         # (the Owner's rule of 2026-10-03); its cap stays the ceiling, said beside it.
         "balance_needed_credits": {
@@ -1645,6 +1690,20 @@ def _sheet(
         "footer": footer,
         "in_progress": ({**lease, "reason_ro": _busy_reason(lease)} if lease is not None else None),
     }
+
+
+def _runpod_metrics(engine: Engine, storyboard_id: str) -> dict[str, Any] | None:
+    from app.media.models import VideoRenderJob  # noqa: PLC0415
+    from app.providers.runpod.telemetry import generation_metrics  # noqa: PLC0415
+
+    with Session(engine) as session:
+        finished = session.scalar(
+            select(VideoRenderJob.id).where(
+                VideoRenderJob.storyboard_id == storyboard_id, VideoRenderJob.status == "COMPLETED"
+            )
+        )
+    result = generation_metrics(engine, storyboard_id, finished=finished is not None)
+    return result if result["jobs"] else None
 
 
 def _reference_verified() -> bool:
@@ -2725,6 +2784,7 @@ def book_purchase(
     credit_usd: float,
     correlation_id: str,
     attribution: dict[str, Any] | None = None,
+    billing_provider: str = "runway",
 ) -> dict[str, Any] | None:
     """One purchase of a film's paid step into the books, under its own reference.
 
@@ -2745,7 +2805,7 @@ def book_purchase(
     try:
         record_provider_cost(
             engine,
-            provider="runway",
+            provider=billing_provider,
             external_reference=reference,
             status="ESTIMATED",
             amount=f"{usd:.6f}",
@@ -2827,6 +2887,7 @@ def book_step_cost(
         credit_usd=credit_usd,
         correlation_id=correlation_id,
         attribution={"plan_hash": plan_hash},
+        billing_provider=str(result.get("billing_provider") or "runway"),
     )
 
 
@@ -2851,6 +2912,7 @@ def book_interrupted_step(
     error: BaseException,
     correlation_id: str,
     attribution: dict[str, Any] | None = None,
+    billing_provider: str = "runway",
 ) -> dict[str, Any] | None:
     """A paid step that raised after it had paid: booked, a WARNING event and the Owner's
     letter. Returns the booking (None when the books refused it, which is its own letter)."""
@@ -2868,6 +2930,7 @@ def book_interrupted_step(
         credit_usd=credit_usd,
         correlation_id=correlation_id,
         attribution={**(attribution or {}), "interrupted": True},
+        billing_provider=billing_provider,
     )
     reason = error_words(error)
     usd_micros = round(float(credits) * float(credit_usd) * 1_000_000)
@@ -3025,11 +3088,18 @@ def run_sheet_step(
     storage_root: Path | None = None,
     ffmpeg_path: str | None = None,
     today: date | None = None,
+    unasked: bool = False,
 ) -> dict[str, Any]:
     """One paid step of the sheet, bought only under the Owner's yes for THIS sheet.
 
     Raises `SheetStepRefused` (202 NEEDS_APPROVAL with his question, or 409 with the reason)
     when nothing may be bought; otherwise returns what the stage bought.
+
+    ``unasked`` is a step nobody pressed (the day's staircase, FILM_CONTINUE). Its Owner's mode
+    is asked before his balance (2026-10-04: under MANUAL the day raised a «top up» card for a
+    step the mode refuses anyway), and the stage reads his policy again before every vendor
+    request (`mode_guard`, spec 51). False, the default, is his own press on the sheet: the
+    balance first, as before, and his press goes on through BLOCKED_MODE and NEEDS_APPROVAL.
 
     The whole step runs under the film's purchase lease (holder: ``correlation_id``): a second
     buyer of the same film is refused FILM_BUSY («Filmul este deja în lucru») before anything
@@ -3068,6 +3138,7 @@ def run_sheet_step(
                 storage_root=storage_root,
                 ffmpeg_path=ffmpeg_path,
                 today=today,
+                unasked=unasked,
             )
     except FilmBusy as exc:
         raise SheetStepRefused(FILM_BUSY, exc.reason_ro) from exc
@@ -3095,6 +3166,7 @@ def _run_sheet_step(
     storage_root: Path | None,
     ffmpeg_path: str | None,
     today: date | None,
+    unasked: bool = False,
 ) -> dict[str, Any]:
     """`run_sheet_step` inside the film's purchase lease."""
     from app.services import studio_environment  # noqa: PLC0415
@@ -3145,6 +3217,22 @@ def _run_sheet_step(
 
     cap = int(info["cap_credits"])
     margin = margin_of(settings)
+    if unasked:
+        # Nobody pressed this step: the Owner's mode before his balance. A step the Policy
+        # Kernel refuses outright (MANUAL, safe mode, no daily budget in PRODUCTION) reads no
+        # balance and raises no low-balance card; a question (NEEDS_APPROVAL) still waits for
+        # the balance, so he is never asked to buy what the account cannot pay for.
+        from app.media.mode_guard import unasked_refusal  # noqa: PLC0415
+
+        refused = unasked_refusal(
+            engine,
+            SHEET_STEP_ACTIONS[step],
+            subject=storyboard_id,
+            context={"plan_hash": plan_hash, "cap_credits": cap},
+            cost_usd=float(info["cap_usd"]),
+        )
+        if refused is not None:
+            raise SheetStepRefused(str(refused["status"]), str(refused["reason"]))
     source = account
     if source is None:
         if step == STILLS_STEP:
@@ -3156,7 +3244,10 @@ def _run_sheet_step(
             model = (first or {}).get("motion", {}).get("model_id")
             source = adapter_for_model(str(model)) if model else None
     balance = _read_balance(source)
-    if balance["credits"] is None:
+    local_step = balance.get("applicable") is False and (
+        cap == 0 or balance.get("billing_mode") == "gpu"
+    )
+    if balance["credits"] is None and not local_step:
         raise SheetStepRefused(
             "LOW_BALANCE",
             f"Nu se cumpără nimic: {balance['problem']}; soldul trebuie citit înainte de "
@@ -3167,15 +3258,16 @@ def _run_sheet_step(
     # stage reads the balance again before every purchase after the first.
     round_credits = int(info["cost_credits"])
     needed = needed_credits(round_credits, margin)
-    record_balance_reading(
-        engine,
-        balance["credits"],
-        storyboard_id=storyboard_id,
-        step=step,
-        needed=needed,
-        correlation_id=correlation_id,
-    )
-    if balance["credits"] < needed:
+    if not local_step:
+        record_balance_reading(
+            engine,
+            balance["credits"],
+            storyboard_id=storyboard_id,
+            step=step,
+            needed=needed,
+            correlation_id=correlation_id,
+        )
+    if not local_step and balance["credits"] < needed:
         reason = start_refusal_ro(
             balance["credits"], round_credits, cap, margin, ROUND_WORDS_RO[step]
         )
@@ -3194,7 +3286,8 @@ def _run_sheet_step(
             },
         )
         raise SheetStepRefused(LOW_BALANCE, reason)
-    _balance_covered(engine, storyboard_id, float(balance["credits"]))
+    if not local_step:
+        _balance_covered(engine, storyboard_id, float(balance["credits"]))
     cap_micros = credits_to_micros(cap, ctx.table.credit_usd)
     try:
         check_film_ceiling(
@@ -3249,6 +3342,8 @@ def _run_sheet_step(
                 table=ctx.table,
                 meter=meter,
                 margin=margin,
+                unasked=unasked,
+                timezone=getattr(settings, "timezone", None),
             )
         else:
             if adapter_for_model is None:
@@ -3279,6 +3374,8 @@ def _run_sheet_step(
                 # here would wait, unchecked, for the Owner's look.
                 registry=registry,
                 meter=meter,
+                unasked=unasked,
+                timezone=getattr(settings, "timezone", None),
             )
     except SheetStepRefused:
         release_step_hold(engine, reservation_id, f"pasul {step} refuzat", correlation_id)
@@ -3301,6 +3398,8 @@ def _run_sheet_step(
         if credits <= 0:
             release_step_hold(engine, reservation_id, f"pasul {step} a căzut", correlation_id)
             raise  # sent, and refused before anything was made: nothing was charged
+        from app.providers.runpod.wiring import billing_name  # noqa: PLC0415
+
         booked = book_interrupted_step(
             engine,
             storyboard_id,
@@ -3312,6 +3411,7 @@ def _run_sheet_step(
             error=exc,
             correlation_id=correlation_id,
             attribution={"plan_hash": plan_hash, "attempts": meter.attempts},
+            billing_provider=billing_name(image_adapter if step == STILLS_STEP else source),
         )
         close_step_hold(
             engine,
@@ -3329,6 +3429,9 @@ def _run_sheet_step(
             credits=credits,
             booked=booked,
         ) from exc
+    from app.providers.runpod.wiring import billing_name  # noqa: PLC0415
+
+    result["billing_provider"] = billing_name(image_adapter if step == STILLS_STEP else source)
     bought = _step_bought(engine, storyboard_id, step, plan_hash, ctx, result, correlation_id)
     spent = bought.get("spent_credits_measured")
     close_step_hold(
@@ -3853,8 +3956,10 @@ def runway_connection_id(engine: Engine) -> str | None:
             if selection is None or not selection.integration_id:
                 continue
             row = session.get(Integration, selection.integration_id)
-            if row is not None and row.kind == "runway" and row.status in _VERIFIED:
-                return str(row.id)
+            if row is not None and row.kind in ("runway", "comfyui", "runpod"):
+                return str(row.id) if row.status in _VERIFIED else None
+            if purpose == "video":
+                return None
         rows = session.scalars(
             select(Integration)
             .where(Integration.kind == "runway", Integration.status.in_(_VERIFIED))
@@ -3885,6 +3990,14 @@ def connection_account(engine: Engine, vault: Any, integration_id: str | None) -
         row = session.get(Integration, integration_id)
         if row is None or row.status not in _VERIFIED:
             return None
+        if row.kind == "runpod":
+            from app.providers.runpod.wiring import connection  # noqa: PLC0415
+
+            return connection(engine, vault, row)
+        if row.kind == "comfyui":
+            from app.providers.comfyui import ComfyConnection  # noqa: PLC0415
+
+            return ComfyConnection(dict(row.config))
         try:
             key = str((vault.decrypt(row.encrypted_secrets) or {}).get("api_key") or "")
         except Exception:  # noqa: BLE001 - an unreadable secret is simply no account

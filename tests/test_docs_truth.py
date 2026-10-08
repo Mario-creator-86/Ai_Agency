@@ -178,7 +178,8 @@ def test_the_status_header_is_dated_and_separates_proof_from_fakes():
     assert "Last verified: 2026-09-09" not in head
     assert "Active edit claim: Codex" not in head
     assert "proven on fakes only" in head
-    assert "2,550 passed, 4 failed, 6 skipped" in head
+    assert "AGENT_SCENARIO_ACCEPTANCE" in head
+    assert "2,550 passed, 4 failed, 6 skipped" in text  # retain the historical audit evidence
     for item in ITEMS:
         assert item in text, item
 

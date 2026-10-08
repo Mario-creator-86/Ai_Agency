@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "poll_seconds": 2,
+  "timeout_seconds": 21600,
+  "default_image": "SDXL_LOCAL",
+  "default_video": "I2V_HERO_RX9070",
+  "models": [
+    {
+      "model_id": "SDXL_LOCAL",
+      "name": "SDXL local",
+      "purpose": "image",
+      "workflow": "local_workflows/IMAGE_SDXL_RX9070_API.json",
+      "workflow_sha256": "d186898575306cf152680fc961e08ac268c7b0cb4414bdb15d56902b87ebc187",
+      "width": 768,
+      "height": 1344,
+      "max_seconds": 4,
+      "source": "https://github.com/Comfy-Org/ComfyUI"
+    },
+    {
+      "model_id": "I2V_FAST_RX9070",
+      "name": "FAST · LTX 13B",
+      "purpose": "video",
+      "workflow": "local_workflows/I2V_FAST_RX9070_API.json",
+      "workflow_sha256": "93f9b890869b8cf0da8bd08a1431a7e6b5336ca41a7018d485cfd6aa78b2c402",
+      "width": 512,
+      "height": 896,
+      "max_seconds": 4,
+      "source": "https://github.com/Comfy-Org/ComfyUI"
+    },
+    {
+      "model_id": "I2V_QUALITY_RX9070",
+      "name": "QUALITY · Wan 2.2 A14B",
+      "purpose": "video",
+      "workflow": "local_workflows/I2V_QUALITY_RX9070_API.json",
+      "workflow_sha256": "4a0db2aef59faf90badedcbf918379934c8d890c56ff613bc9ec00b2a918b495",
+      "width": 512,
+      "height": 896,
+      "max_seconds": 4,
+      "source": "https://github.com/Comfy-Org/ComfyUI"
+    },
+    {
+      "model_id": "I2V_HERO_RX9070",
+      "name": "HERO · LTX-2.5 22B INT8",
+      "purpose": "video",
+      "workflow": "local_workflows/I2V_HERO_RX9070_API.json",
+      "workflow_sha256": "e0560e22c758b9493c7027e5a7cb98d345beb78931bbf902c0cf6be21375f565",
+      "width": 704,
+      "height": 1216,
+      "max_seconds": 4,
+      "source": "https://github.com/Comfy-Org/ComfyUI"
+    }
+  ]
+}

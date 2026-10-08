@@ -116,6 +116,16 @@ def low_balance_key(storyboard_id: str) -> str:
     return f"low_balance:film:{storyboard_id}"
 
 
+def runpod_infra_key(integration_id: str) -> str:
+    return f"runpod_infra_actions:{integration_id}"
+
+
+#: The LTX-2.5 licence gate on Hugging Face is his account's, once for the studio.
+RUNPOD_LTX_KEY = "runpod_ltx_licence"
+#: The option type his accept of the RunPod card applies (`apply_runpod_infra`).
+RUNPOD_INFRA = "runpod_infra"
+
+
 # ------------------------------------------------------------------------- the common rule
 
 
@@ -290,6 +300,90 @@ def commercial_use_card(integration: Any, *, why_ro: str | None = None) -> dict[
             }
         ],
         "clears_when": {"type": "commercial_use", "integration_id": integration.id},
+    }
+
+
+def runpod_infra_card(integration: Any) -> dict[str, Any]:
+    """May agents switch the RunPod GPU on inside the paid steps he already approved?
+    (2026-10-08, the Owner's cards: at most 1 GPU, budgeted at 4 USD/h, off right after.)"""
+    return {
+        "kind": "runpod_infra_actions",
+        "dedupe_key": runpod_infra_key(integration.id),
+        "title_ro": "Agenții pot porni singuri GPU-ul RunPod în pașii plătiți aprobați?",
+        "why_ro": (
+            f"Conexiunea RunPod «{integration.name}» are GPU Serverless. Fără acordul tău, "
+            "niciun pas plătit nu poate porni GPU-ul, așa că imaginile și mișcarea pe RunPod "
+            "nu se pot face."
+        ),
+        "effect_ro": (
+            "Pornesc GPU-ul (cel mult 1, buget 4 USD/oră) doar în pașii foii de filmare deja "
+            "aprobați, sub plafonul lor, și îl opresc imediat după ultimul rezultat. Oprirea "
+            "este mereu permisă, inclusiv la STOP AUTONOMIE."
+        ),
+        "subject_type": "connection",
+        "subject_id": integration.id,
+        "options": [
+            {
+                "key": "yes",
+                "label_ro": "Da, doar în pașii aprobați",
+                "effect_ro": "Agenții pot porni GPU-ul RunPod numai în interiorul unui pas "
+                "plătit aprobat și îl opresc imediat după.",
+                "recommended": True,
+                "apply": {"type": RUNPOD_INFRA, "to": True, "integration_id": integration.id},
+            },
+            {
+                "key": "not_yet",
+                "label_ro": "Nu încă",
+                "effect_ro": "GPU-ul RunPod rămâne oprit; pașii pe RunPod nu pornesc.",
+                "apply": {"type": "none"},
+            },
+        ],
+        "clears_when": {"type": "runpod_infra_enabled", "integration_id": integration.id},
+    }
+
+
+def runpod_ltx_licence_card() -> dict[str, Any]:
+    """The LTX-2.5 weights are gated on Hugging Face: only he can accept their licence."""
+    return {
+        "kind": "runpod_ltx_licence",
+        "dedupe_key": RUNPOD_LTX_KEY,
+        "title_ro": (
+            "Acceptă licența LTX-2.5 pe Hugging Face (contul tău) și pune tokenul HF pentru "
+            "construirea imaginii"
+        ),
+        "why_ro": (
+            "Modelul de mișcare LTX-2.5 este „închis” pe Hugging Face: condițiile le acceptă "
+            "titularul contului (inclusiv acordul pentru e-mailuri de marketing). Licența e "
+            "gratuită sub 10 milioane USD venit pe an, cere eticheta de conținut AI și interzice "
+            "ștergerea marcajelor de proveniență."
+        ),
+        "effect_ro": (
+            "Imaginea GPU pentru mișcare se poate construi cu LTX-2.5; fără ea rămâne doar "
+            "Wan 2.2 (Apache-2.0)."
+        ),
+        "options": [
+            {
+                "key": "accept",
+                "label_ro": "Accept eu licența",
+                "effect_ro": "Accepți condițiile pe Hugging Face și creezi un token de citire.",
+                "recommended": True,
+                "apply": {
+                    "type": "guided",
+                    "place_ro": "huggingface.co → Lightricks LTX-2.5 (contul tău) și secretul "
+                    "hf_token al construcției (backend/runpod_worker/README.md)",
+                    "steps_ro": "Deschide pagina modelului LTX-2.5 pe Hugging Face, apasă "
+                    "«Agree and access», apoi creează un token de citire și păstrează-l pentru "
+                    "construirea imaginii (secretul hf_token, niciodată în cod).",
+                },
+            },
+            {
+                "key": "without",
+                "label_ro": "Mișcarea merge doar pe Wan 2.2",
+                "effect_ro": "Nimic nu se schimbă; LTX-2.5 nu se folosește.",
+                "apply": {"type": "none"},
+            },
+        ],
+        "clears_when": {"type": "never"},
     }
 
 
@@ -944,7 +1038,73 @@ def apply_sheet_local_move(
     }
 
 
+def apply_runpod_infra(
+    engine: Engine, spec: Mapping[str, Any], inner: str, words: Mapping[str, Any]
+) -> dict[str, Any]:
+    """His accept of the RunPod card: the connection's ``allow_infra_actions`` becomes true
+    (version bump, event ``runpod.infra_actions_enabled``). Idempotent by the inner command id.
+    It lets agents switch the GPU on only inside paid steps the kernel already lets run
+    (`services._gpu_on_verdict`); it buys nothing."""
+    from app.db import lock_for_write  # noqa: PLC0415
+    from app.integrations.models import Integration  # noqa: PLC0415
+    from app.models import CommandRecord  # noqa: PLC0415
+    from app.services import append_event, command_hash, remember_command  # noqa: PLC0415
+
+    name = "EnableRunPodInfra"
+    if spec.get("to") is not True:
+        raise DecisionApplyFailed("Cardul nu cere pornirea de către agenți; nu s-a aplicat nimic.")
+    identifier = str(spec.get("integration_id") or "")
+    with Session(engine) as session, session.begin():
+        lock_for_write(session)
+        previous = session.get(CommandRecord, inner)
+        if previous is not None:
+            done = dict(previous.response)
+            return {"command": name, "result": done, "event_id": done.get("event_id")}
+        row = session.get(Integration, identifier)
+        if row is None or row.kind != "runpod":
+            raise DecisionApplyFailed(
+                "Conexiunea RunPod din card nu mai există; nu s-a aplicat nimic."
+            )
+        config = dict(row.config or {})
+        already = str(config.get("allow_infra_actions", "")).strip().lower() == "true"
+        if not already:
+            row.config = {**config, "allow_infra_actions": "true"}
+            row.version += 1
+        event = append_event(
+            session,
+            "runpod.infra_actions_enabled",
+            "integration",
+            row.id,
+            row.version,
+            {"integration_id": row.id, "already": already, "by": OWNER},
+            inner,
+        )
+        if not already:
+            row.event_id = event.event_id
+        result = {
+            "integration_id": row.id,
+            "allow_infra_actions": True,
+            "version": row.version,
+            "event_id": event.event_id,
+        }
+        remember_command(session, inner, name, command_hash(dict(spec)), result)
+    return {"command": name, "result": result, "event_id": result["event_id"]}
+
+
 # --------------------------------------------------------------- the conditions they clear on
+
+
+def runpod_infra_enabled(
+    session: Session, row: OwnerDecision, params: Mapping[str, Any], settings: Any
+) -> bool:
+    """The RunPod connection lets agents switch its GPU on (or no longer exists)."""
+    from app.integrations.models import Integration  # noqa: PLC0415
+
+    integration = session.get(Integration, str(params.get("integration_id") or ""))
+    if integration is None:
+        return True
+    config = integration.config if isinstance(integration.config, dict) else {}
+    return str(config.get("allow_infra_actions", "")).strip().lower() == "true"
 
 
 def youtube_channel_connected(

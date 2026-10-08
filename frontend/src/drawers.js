@@ -136,6 +136,7 @@ export class Drawers {
 
   /** Which drawers fit beside the building on this screen. */
   defaults() {
+    if (document.body.classList.contains('pixel-studio')) return { register: false, side: false };
     const box = this._frameBox();
     const widths = this._widths();
     const { worldW, worldH, focus } = this.world();

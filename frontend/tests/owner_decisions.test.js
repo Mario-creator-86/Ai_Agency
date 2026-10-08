@@ -419,3 +419,31 @@ test('the window is styled from the page\'s tokens, with no colour literal', () 
   assert.match(STYLE, /\.decision-option\[data-recommended="true"\][^{]*\{[^}]*var\(--/);
   assert.match(STYLE, /prefers-reduced-motion/);
 });
+
+// ------------------------------------------- his «Am făcut-o» the studio cannot confirm (2026-10-04)
+
+const MISSING = 'Studioul nu vede încă pasul făcut, așa că cardul rămâne deschis. Lipsește: în rădăcina proiectului nu există niciun fișier LICENSE sau EULA.';
+
+test('a DONE the studio cannot confirm says what is missing and keeps him in the window', async () => {
+  const reconnect = RECONNECT();
+  const waiting = { ...reconnect, status: 'WAITING_FOR_OWNER_ACTION', version: 2, chosen_option: 'reconnect', applied: { type: 'guided', place: 'llm', place_ro: 'Setări → Furnizori AI', steps_ro: 'Pune cheia nouă.' }, answer: { ...reconnect.answer, done: 'DONE' } };
+  const answer = { command_id: 'c', status: 'COMMITTED', decision: { ...waiting, version: 3, apply_error_ro: MISSING } };
+  const result = await answerCard(fakeApi([answer]).api, waiting, { decision: 'DONE', commandId: 'c' });
+  assert.equal(result.status, 'WAITING');
+  assert.equal(result.reload, true);
+  assert.ok(result.message.startsWith(MISSING), result.message);
+  assert.doesNotMatch(result.message, /^Cardul așteaptă acțiunea ta/);
+  assert.equal(result.place, null, 'the window stays open on the card that says what is missing');
+});
+
+test('a re-opened card says why it came back, and the history tells a confirmed DONE apart', () => {
+  const sale = SALE();
+  const reopened = { ...sale, apply_error_ro: MISSING, applied: { ...(sale.applied || {}), reopened_at: '2026-10-04T09:00:00Z', reopened_reason_ro: 'Cardul s-a redeschis: l-ai marcat făcut, dar studioul nu vede pasul făcut.' } };
+  const html = cardHtml(reopened, o());
+  assert.match(html, /class="decision-reopened"[^>]*>Cardul s-a redeschis: l-ai marcat făcut/);
+  assert.ok(html.includes('Lipsește: în rădăcina proiectului'));
+  const done = (/** @type {any} */ applied) => appliedWords({ source_type: 'decision', status: 'ACCEPTED', chosen_option: 'x', options: [], applied: { type: 'guided', completed_by: 'owner', ...applied } });
+  assert.equal(done({ done_reading: 'MET' }), 'Ai marcat-o făcută, iar studioul a văzut pasul făcut.');
+  assert.equal(done({ done_reading: 'ONLY_OWNER' }), 'Ai marcat-o făcută; doar tu o poți confirma.');
+  assert.equal(done({}), 'Ai marcat-o făcută.');
+});

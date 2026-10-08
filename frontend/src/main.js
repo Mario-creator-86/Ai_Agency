@@ -13,13 +13,16 @@ import {
 import { runClassName, runHeadline, stageClassName, stageProducedWord } from './day_outcome.js';
 import { attachRail } from './dialog_rail.js';
 import './style.css';
+import './office_scene.css';
 import './serial_room.css';
 import './owner_decisions.css';
 import { approvalMessage, daysClosedNote, episodeHtml, journalCoverHtml, serialBoardHtml, serialStageNotes } from './serial_room.js';
 import { initSettings } from './settings.js';
+import { mountGpuSwitch } from './gpu_switch.js';
 import { acceptSnapshot } from './projection.js';
-import { OfficeEngine, BUILDING, WORLD_W, WORLD_H } from './office_engine.js';
-import { streamTransform } from './game_frame.js';
+import { OfficeEngine, PixelTitle, BUILDING, WORLD_W, WORLD_H } from './pixel_office.js';
+import './pixel_studio.css';
+import { autonomyOverview } from './autonomy_overview.js';
 import { Drawers } from './drawers.js';
 import { OfficeState } from './office_state.js';
 import { Ledger, entryCountLabel, mailIntentLabel, productionStatus, runtimeLabel, taskLabel } from './ledger.js';
@@ -60,18 +63,14 @@ import { DecisionsWindow } from './decisions_window.js';
 import { OWNER_LETTERS_PATH, inboxHtml, lettersWord, ownerMarkWords, readLetters, resolveCommand, resolvePath } from './owner_inbox.js';
 import { LiveWindows, eventMatchesAgent } from './live_window.js';
 import { MailThread } from './mail_thread.js';
-import { STREAM_NO_SAFE_AUTH, authMessage, eventsUrl, liveStreamSettings, relayUrl, socketAuth, warmVideoCodecs } from './hq_stream_config.js';
-import { browserStore, keptCaption, keptUsable, readKept, writeKept } from './stream_keep.js';
-import { chooseTitleFrame, lightMatches, readStudioFrame, sendStudioFrame, studioSendDue } from './studio_frame.js';
-import { StreamPlaques } from './stream_plaques.js';
+import { authMessage, eventsUrl } from './hq_stream_config.js';
 import { EventsLink, connectionLabel, liveScope, roomCaption, roomCaptionShort, sceneReadout } from './live_claims.js';
-import { TitleScreen } from './title_screen.js';
 import { ENTRY, entryPlays, landingPlacement } from './title_frame.js';
 import { setStudioPlace } from './office_clock.js';
-import { STREAM_ROOMS, stillLine, stillSentence } from './replay_still.js';
+import { askLocalKey, LocalEntry } from './local_entry.js';
+import { STREAM_ROOMS } from './replay_still.js';
 import { attachDoor, doorLanded, doorNeedsRead, doorTiming, doorWorldRect, revealInSteps, roomOnScreen } from './dialog_doors.js';
-import { applyMeters, portraitWindow, requesterPerson, rosterCards, rosterHtml, rosterKey, stillFrame, streamPortraitSource } from './roster.js';
-import { KeyLight } from './key_light.js';
+import { applyMeters, requesterPerson, rosterCards, rosterHtml, rosterKey } from './roster.js';
 import {
   APPROVALS_PATH,
   APPROVAL_DECISION_PATH,
@@ -125,11 +124,11 @@ let replayInvite = null;
 
 /**
  * What the page knows is happening, from which every «live» it prints is decided
- * (live_claims.js): the Unreal stream, the events socket, the last snapshot read, and the two
- * frame rates, each under its own name.
+ * (live_claims.js): the events socket and the last snapshot read. Legacy stream fields remain
+ * inert for the shared freshness helper; this illustrated scene reports no frame rate.
  * @type {import('./live_claims.js').LiveSignals}
  */
-const liveSignals = { stream: 'pending', hasStill: false, socket: 'closed', data: 'fresh', streamFps: null, pageFps: null, streamHeld: false };
+const liveSignals = { stream: 'off', hasStill: false, socket: 'closed', data: 'fresh', streamFps: null, pageFps: null, streamHeld: false };
 let liveReadoutKey = '';
 
 /** Writes the corner readout, the masthead chip and the slate caption from liveSignals. */
@@ -159,51 +158,22 @@ function renderLiveSignals() {
     brief.textContent = words.captionShort;
     element('room-caption').replaceChildren(long, brief);
     element('room-caption').title = words.title;
-    officeCanvas.setAttribute('aria-label', `Sediul AMN-AI în reluare, nu live: ${words.caption}. Săgețile trec de la un angajat la altul, apoi prin ecranele clădirii; Enter deschide ce ai ales. Esc iese din reluare.`);
+    officeCanvas.setAttribute('aria-label', `Studioul AMN-AI în reluare: ${words.caption}. Săgețile selectează angajații, Enter deschide conversația. Esc iese din reluare.`);
     return;
   }
-  const readout = sceneReadout(liveSignals);
-  const staff = officeState.agents.length;
-  // «live» on the slate only while the picture and the data both are; otherwise which one is (W19)
-  const scope = liveScope(liveSignals);
-  const caption = roomCaption(staff, scope);
-  const chip = connectionLabel(liveSignals);
-  const key = JSON.stringify([readout.state, readout.parts, caption, chip]);
-  if (key === liveReadoutKey) return;
-  liveReadoutKey = key;
+  const fresh = liveSignals.data === 'fresh';
+  const live = fresh && liveSignals.socket === 'open';
+  const label = !fresh ? 'Date vechi' : live ? 'Date live' : 'Reconectare';
   const pill = element('office-status');
-  pill.dataset.state = readout.state;
-  pill.title = readout.title;
-  pill.setAttribute('aria-hidden', readout.hidden ? 'true' : 'false');
-  element('office-fps').replaceChildren(...readout.parts.map(([name, text]) => {
-    const span = document.createElement('span');
-    span.className = name;
-    span.textContent = text;
-    return span;
-  }));
-  // Two forms of the caption; the slate's own room chooses which one shows (office_scene.css).
-  const long = document.createElement('span');
-  long.className = 'room-caption-long';
-  long.textContent = caption;
-  const brief = document.createElement('span');
-  brief.className = 'room-caption-short';
-  brief.textContent = roomCaptionShort(staff, scope);
-  element('room-caption').replaceChildren(long, brief);
-  element('room-caption').title = caption;
-  officeCanvas.setAttribute('aria-label', canvasLabel(scope === 'all'));
-  if (ownerToken) element('connection').textContent = chip;
-}
+  pill.dataset.state = !fresh ? 'stale' : live ? 'live' : 'reconnecting';
+  pill.setAttribute('aria-hidden', 'false');
+  pill.title = 'Decor ilustrat. Stările angajaților vin din studioul conectat.';
+  element('office-fps').textContent = label;
+  const caption = `${officeState.agents.length} angajați · studio pixelat`;
+  element('room-caption').textContent = caption;
+  officeCanvas.setAttribute('aria-label', 'Studioul AMN-AI. Săgețile selectează angajații, Enter deschide conversația. ' + label);
+  if (ownerToken) element('connection').textContent = label;
 
-/**
- * THE KEY OUT OF THE URL (2026-09-25). GET /office/stream, read once per sign-in, says whether the
- * backend takes the Owner's key as each socket's first message (`auth: 'first_message'`); the
- * Owner's running studio keeps its older backend until he restarts it, and is spoken to as before.
- * @type {Promise<any>|null}
- */
-let streamRoute = null;
-function officeStreamRoute() {
-  if (!streamRoute) streamRoute = api('/office/stream').catch(() => null);
-  return streamRoute;
 }
 
 /** The backend's events, reconnected after a drop; see EventsLink. */
@@ -218,6 +188,7 @@ const eventsLink = new EventsLink({
   onEvent: (eventData, live) => {
     officeState.handleDomainEvent(eventData, live);
     updateOfficeCanvas();
+    if (['agent.hired', 'agent.terminated', 'agent.suspended', 'agent.reactivated'].includes(eventData.event_type)) void loadOfficeLayout();
     // A live arrival says itself from across the room for a few seconds (hq_arrivals.js): the
     // same socket, the same event, nothing fetched; never a replay, never under reduced motion.
     // a live event takes the invitation away: the building is live news now (W15)
@@ -238,10 +209,12 @@ const eventsLink = new EventsLink({
   onState: (socketState) => {
     liveSignals.socket = socketState;
     renderLiveSignals();
+    officeEngine?.draw();
+    officeEngine?.schedule();
   },
   // Back after a drop: read the studio again, so the switches and the panels are not the ones
   // from before the gap. The register has its replay already.
-  onReconnected: () => { if (ownerToken) refresh(); },
+  onReconnected: () => { if (ownerToken) { refresh(); void loadOfficeLayout(); } },
 });
 
 // 2D Office Engine & State
@@ -268,102 +241,15 @@ function reducedMotion() {
  * starting plate can show it the moment the key enters. Null when none is kept or storage refuses.
  * @returns {Promise<{image: ImageBitmap, at: number}|null>}
  */
-async function readKeptFrame() {
-  try {
-    const record = await readKept(browserStore());
-    if (!keptUsable(record, Date.now()) || typeof createImageBitmap !== 'function') return null;
-    return { image: await createImageBitmap(record.blob), at: Number(record.at) };
-  } catch {
-    return null;
-  }
-}
-/** @type {Promise<{image: ImageBitmap, at: number}|null>} */
-let keptFrame = readKeptFrame();
-
-/** The scene's own settings (scene.json, a file of the page's own origin), read once; again after a failure. */
-let sceneRead = /** @type {Promise<any>|null} */ (null);
-function readScene() {
-  if (!sceneRead) {
-    sceneRead = fetch('/assets/hq/scene.json').then((r) => (r.ok ? r.json() : null)).catch(() => null);
-    sceneRead.then((scene) => { if (!scene) sceneRead = null; });
-  }
-  return sceneRead;
-}
-
-/**
- * W24, THE STUDIO'S KEPT FRAME (studio_frame.js): the newest real frame of the Unreal building the
- * Owner's page sent the studio, read before any key (a public, read-only GET of the page's own
- * origin), only when scene.json configures the stream. Null when nothing is kept, or the studio does
- * not have the route (his running backend before a restart answers 404; a new one with nothing kept, 204).
- * @returns {Promise<{image: ImageBitmap, at: number}|null>}
- */
-async function readStudioKept() {
-  try {
-    if (!liveStreamSettings(await readScene()).enabled || typeof createImageBitmap !== 'function') return null;
-    const record = await readStudioFrame((url, init) => fetch(url, init));
-    return record ? { image: await createImageBitmap(record.blob), at: record.at } : null;
-  } catch {
-    return null;
-  }
-}
-/** @type {Promise<{image: ImageBitmap, at: number}|null>} */
-let studioKept = readStudioKept();
-
-/**
- * W22, ONE BUILDING FROM THE TITLE: the title stands on a kept real frame of the Unreal building
- * when the stream is configured (the Owner's chosen face, 2026-09-15: «Încă apare vechiul
- * format!»); otherwise on the plates, as before. W24: of this browser's frame and the studio's,
- * the newest whose light is the light outside now (the same solar state over Bucharest, not older
- * than a day), so a stranger's first visit opens on the Unreal building too, and no visit's title
- * shows a noon frame at midnight.
- */
-async function titleKept() {
-  const [browser, studio, scene] = await Promise.all([keptFrame, studioKept, readScene()]);
-  if (!liveStreamSettings(scene).enabled) return null;
-  return chooseTitleFrame([browser, studio], Date.now());
-}
-/** The frame the title stands on, if any: the plate shows the same one after the key (W24). */
-let titleChoice = titleKept();
-
-/**
- * The title screen: the sign-in standing in the studio's own world, lit by the real sun
- * (title_screen.js). It is the first thing on screen, before any key.
- */
-const titleScreen = new TitleScreen({
-  stage: element('title-stage'),
-  caption: element('title-caption'),
-  reducedMotion,
-  kept: titleChoice,
-  keptCaption: (at) => keptCaption(at, Date.now(), state && state.studio ? state.studio.timezone : undefined),
-  // W24: read again with the light each minute; a frame whose light is no longer the hour's gives way
-  keptStillTrue: (at) => lightMatches(at, Date.now()),
-});
+const titleScreen = new PixelTitle({ stage: element('title-stage'), caption: element('title-caption') });
 titleScreen.start();
-
-/**
- * The page's key light, taken from the frame the visitor is looking at: the stream's kept frame
- * while the stream has one, the page's own renderer otherwise (key_light.js).
- */
-const keyLight = new KeyLight({
-  target: document.documentElement,
-  source: () => (liveStream && liveStream.hasStill ? liveStream.still : officeCanvas),
-});
-/** Whether a kept frame is being written, so two are never written at once. */
-let keeping = false;
-/**
- * W24: the kept frame sent to the studio for a stranger's title, at most every five minutes, while
- * the backend has the route (`supported` falls on a 404 or 405 and rises again at the next key).
- */
-const studioSend = { supported: true, lastSent: 0 };
 
 const officeState = new OfficeState();
 let officeEngine = null;
 /** Whether the camera keys, fullscreen and the stream have been wired (once per page). */
 let officeWired = false;
-/** @type {import('./hq_stream.js').LiveStream|null} the Unreal headquarters over the renderer, when scene.json turns it on */
-let liveStream = null;
-/** @type {StreamPlaques|null} the studio's numbers over the live video (W19) */
-let streamPlaques = null;
+/** @type {any} */
+/** Legacy replay compatibility; the pixel scene needs no video overlays. @type {any} */
 let currentSelectedAgent = null;
 let inspectorRequest = 0;
 
@@ -482,7 +368,7 @@ let dayRecord = null;
 
 /* ---------------------------------------------------------------------------
  * THE BUILDING'S SCREENS (hq_screens.js): what the page already reads, handed to the renderer.
- * Nothing is fetched per frame. The newest run comes with the day record; the treasury and the
+ * Nothing is fetched per frame. The newest run comes with the day record; the budget and the
  * budget are read once at the key and again only when the register says money moved or a run
  * ended (at most every 15 s); the serial once at the key and when a story event arrives; the
  * newest film's frame once per film. A value the page does not hold stays null, and its screen
@@ -498,8 +384,8 @@ let dayRecord = null;
  */
 /** @returns {WorldReads} */
 const freshReads = () => ({ runs: 'pending', episodes: 'pending', figures: 'pending', ledger: 'pending', film: 'none' });
-/** @type {{run: any, track: any, today: string|null, live: boolean, treasury: any, budget: any, episodes: any, topics: {titles: string[], key: string}, film: any, jobs: any[]|null, tasks: {tasks: Record<string, any>, key: string}, nextRun: string, stopped: boolean|null, timeZone: string|undefined, reads: WorldReads, replayOffer: boolean}} */
-const worldFacts = { run: null, track: null, today: null, live: true, treasury: null, budget: null, episodes: null, topics: { titles: [], key: '' }, film: null, jobs: null, tasks: { tasks: {}, key: '' }, nextRun: '', stopped: null, timeZone: undefined, reads: freshReads(), replayOffer: false };
+/** @type {{run: any, track: any, today: string|null, live: boolean, budget: any, episodes: any, topics: {titles: string[], key: string}, film: any, jobs: any[]|null, tasks: {tasks: Record<string, any>, key: string}, nextRun: string, stopped: boolean|null, timeZone: string|undefined, reads: WorldReads, replayOffer: boolean}} */
+const worldFacts = { run: null, track: null, today: null, live: true, budget: null, episodes: null, topics: { titles: [], key: '' }, film: null, jobs: null, tasks: { tasks: {}, key: '' }, nextRun: '', stopped: null, timeZone: undefined, reads: freshReads(), replayOffer: false };
 
 /** A read that failed: 'failed', unless an earlier read of the same list succeeded. @param {keyof WorldReads} list */
 function readFailed(list) {
@@ -531,7 +417,6 @@ function pushWorldFacts() {
   renderDayWill();
   refreshSceneReadout();
   considerInvite();
-  layoutPlaques();
 }
 
 /**
@@ -539,38 +424,6 @@ function pushWorldFacts() {
  * what the visitor sees (not a frozen or kept frame, not the replay), laid where the camera shows
  * their objects, off the employees' desks. From the same facts store; nothing fetched.
  */
-function layoutPlaques(planned = null) {
-  if (!streamPlaques) return;
-  const viewport = element('scene-viewport');
-  // W22: also over the replay played in the Unreal building, with the replayed moment's words
-  const overStill = replaying() && Boolean(officeEngine && officeEngine.replayStill);
-  const on = Boolean(officeEngine && officeEngine.renderer) && ((viewport.dataset.stream === 'live' && !replaying()) || overStill);
-  streamPlaques.setOn(on);
-  if (!on || !officeEngine) return;
-  // W21: after a resize, the camera the engine is about to stand at, said in the frame the box changed
-  const view = planned || officeEngine.view();
-  const dpr = view.dpr || 1;
-  const ox = officeCanvas.offsetLeft;
-  const oy = officeCanvas.offsetTop;
-  const toScreen = (/** @type {number} */ x, /** @type {number} */ y) => ({ x: (x * view.zoom + view.panX) / dpr + ox, y: (y * view.zoom + view.panY) / dpr + oy });
-  const box = planned && planned.room ? { room: planned.room } : officeEngine.frameBox();
-  const room = { left: box.room.left + ox + 4, top: box.room.top + oy + 4, right: box.room.right + ox - 4, bottom: box.room.bottom + oy - 4 };
-  const desks = officeEngine.renderer.hits.filter((/** @type {any} */ h) => h.desk).map((/** @type {any} */ h) => {
-    const a = toScreen(h.x0, h.y0);
-    const b = toScreen(h.x1, h.y1);
-    return { x: a.x, y: a.y, w: b.x - a.x, h: b.y - a.y };
-  });
-  // W22: over the replay, the employees' captions are not covered either
-  if (overStill) {
-    for (const c of officeEngine.renderer.captionBoxes || []) {
-      const a = toScreen(c.x, c.y);
-      const b = toScreen(c.x + c.w, c.y + c.h);
-      desks.push({ x: a.x, y: a.y, w: b.x - a.x, h: b.y - a.y });
-    }
-  }
-  const world = overStill && replay ? replay.world() : null;
-  streamPlaques.update({ facts: world ? world.facts : worldFacts, agents: world ? world.agents : officeState.agents, k: view.zoom / dpr, toScreen, room, desks });
-}
 
 /* ---------------------------------------------------------------------------
  * THE FACES MADE LEGIBLE (W10): the glass readout beside the face the pointer or the keyboard
@@ -612,7 +465,7 @@ function refreshSceneReadout() {
 }
 
 /**
- * The foot of the side drawer on a tall screen (side_readout.js): the day's run, the treasury and
+ * The foot of the side drawer on a tall screen (side_readout.js): the day's run, the budget and
  * the next scheduled run, from the same facts the building's screens show. Written only when a
  * line changes.
  */
@@ -625,7 +478,6 @@ function renderStudioReadout() {
     track: worldFacts.track,
     today: worldFacts.today,
     live: worldFacts.live,
-    treasury: worldFacts.treasury,
     budget: worldFacts.budget,
     jobs: worldFacts.jobs,
     reads: worldFacts.reads,
@@ -668,20 +520,16 @@ replay = new DayReplayPlayer({
   poster: (assetId) => posters.get(assetId),
   onEnter: () => {
     // the live picture fades into the replay (W19); a cut under reduced motion
-    if (liveStream) liveStream.doorway('out');
     // W22: while a stream is configured, the replay plays over the real building's still, the frame
     // the door just copied (else the frozen or kept one), graded; without one, the page's renderer
     enterReplayLook();
-    layoutPlaques();
     renderLiveSignals();
     refreshSceneReadout();
     scheduleDayTrack();
   },
   onExit: (liveEvents) => {
     // and back: the live video fades in over the replay's last graded frame (W19)
-    if (liveStream) liveStream.doorway('in');
     leaveReplayLook();
-    layoutPlaques();
     // the world is the live one again, and a live arrival that ended the replay is still seen
     updateOfficeCanvas();
     pushWorldFacts();
@@ -694,7 +542,6 @@ replay = new DayReplayPlayer({
     scheduleDayTrack();
     if (readoutTarget) refreshSceneReadout();
     // W22: over the Unreal still, the plaques carry the replayed moment's words
-    layoutPlaques();
   },
   lookNote: () => replayLookNote,
   onOffer: (offered) => {
@@ -715,22 +562,14 @@ let replayLookNote = '';
  * what the picture is and that its light and weather are not those of then.
  */
 function enterReplayLook() {
-  const viewport = element('scene-viewport');
-  const picture = liveStream ? liveStream.replayPicture() : null;
-  const over = Boolean(officeEngine && picture && officeEngine.setReplayStill(picture.image, picture.at));
-  viewport.dataset.replayLook = over ? 'unreal' : 'page';
-  const zone = state && state.studio ? state.studio.timezone : undefined;
-  const at = over && officeEngine && officeEngine.replayStill ? officeEngine.replayStill.at : NaN;
-  element('replay-weather').textContent = over ? stillLine(at, Date.now(), zone) || REPLAY_WEATHER_WORDS : REPLAY_WEATHER_WORDS;
-  replayLookNote = over ? stillSentence(at, Date.now(), zone) : '';
-  if (streamPlaques) streamPlaques.setReplay(over);
+  element('scene-viewport').dataset.replayLook = 'pixel';
+  replayLookNote = 'Decor ilustrat; activitatea reluată vine din registru.';
 }
 
 function leaveReplayLook() {
   delete element('scene-viewport').dataset.replayLook;
   element('replay-weather').textContent = REPLAY_WEATHER_WORDS;
   replayLookNote = '';
-  if (streamPlaques) streamPlaques.setReplay(false);
 }
 
 /*
@@ -785,7 +624,7 @@ function considerInvite() {
 }
 
 function resetWorldFacts() {
-  Object.assign(worldFacts, { run: null, track: null, today: null, live: true, treasury: null, budget: null, episodes: null, topics: { titles: [], key: '' }, film: null, jobs: null, tasks: { tasks: {}, key: '' }, nextRun: '', reads: freshReads() });
+  Object.assign(worldFacts, { run: null, track: null, today: null, live: true, budget: null, episodes: null, topics: { titles: [], key: '' }, film: null, jobs: null, tasks: { tasks: {}, key: '' }, nextRun: '', reads: freshReads() });
   filmAsset = '';
   posters.clear();
   pushWorldFacts();
@@ -822,13 +661,12 @@ let figuresTimer = 0;
 async function loadWorldFigures() {
   if (!ownerToken) return;
   const session = epoch;
-  const [treasury, budget, jobs] = await Promise.all([api('/economy/treasury').catch(() => null), api('/economy/budget').catch(() => null), api('/scheduler/jobs').catch(() => null)]);
+  const [budget, jobs] = await Promise.all([api('/economy/budget').catch(() => null), api('/scheduler/jobs').catch(() => null)]);
   if (session !== epoch) return;
   // A failed read keeps the last figures read; the corner already says the data is not fresh.
-  if (treasury) worldFacts.treasury = treasury;
   if (budget) worldFacts.budget = budget;
   if (Array.isArray(jobs)) worldFacts.jobs = jobs;
-  if (treasury || budget) worldFacts.reads.figures = 'ok';
+  if (budget) worldFacts.reads.figures = 'ok';
   else readFailed('figures');
   pushWorldFacts();
 }
@@ -1101,11 +939,13 @@ async function api(path, options = {}) {
 // layout is reloaded whenever Settings changes something.
 /** W34: the module list the server reports, shown in Setări → Despre studio (not on the main screen). */
 let latestModules = /** @type {Record<string, string>|null} */ (null);
+mountGpuSwitch(element('gpu-switch'), { api, notify });
 const settingsUI = initSettings(api, {
   onChange: async () => {
     await loadOfficeLayout();
     if (inspector.open && currentSelectedAgent) await showInspector(currentSelectedAgent);
   },
+  onAutonomy: () => element('open-autonomy-btn').click(),
   modules: () => latestModules,
 });
 document.getElementById('studio-about-btn')?.addEventListener('click', () => { void settingsUI.open('about'); });
@@ -1140,125 +980,6 @@ const decisions = new DecisionsWindow({
  * The Unreal headquarters, streamed over the page's own renderer while it runs. The viewport's
  * data-stream attribute says which one the Owner is looking at.
  */
-async function startLiveStream() {
-  if (liveStream) return;
-  const viewport = element('scene-viewport');
-  let scene = null;
-  let relay = null;
-  try {
-    scene = await readScene();
-    if (liveStreamSettings(scene).enabled) relay = await officeStreamRoute();
-  } catch {
-    relay = null;
-  }
-  const settings = liveStreamSettings(scene);
-  if (!settings.enabled || !relay || relay.available !== true) {
-    viewport.dataset.stream = 'off';
-    liveSignals.stream = 'off';
-    renderLiveSignals();
-    return;
-  }
-  // the Owner's key goes only as the signalling socket's first message, never in its URL (SEC-02):
-  // a backend that cannot take it so gets no stream, and the page keeps its own renderer
-  const streamOff = () => {
-    viewport.dataset.stream = 'off';
-    viewport.title = STREAM_NO_SAFE_AUTH;
-    liveSignals.stream = 'off';
-    renderLiveSignals();
-    console.warn(STREAM_NO_SAFE_AUTH);
-  };
-  if (socketAuth(relay) !== 'first_message') {
-    streamOff();
-    return;
-  }
-  const signallingUrl = relayUrl(window.location, String(relay.relay));
-  // PAGE-20: the stream module and Epic's client are fetched only now, for a studio whose scene
-  // switched the stream on; a studio without Unreal never downloads them.
-  let LiveStream;
-  try {
-    const streamModule = await import('./hq_stream.js');
-    await streamModule.loadStreamClient();
-    LiveStream = streamModule.LiveStream;
-  } catch (err) {
-    viewport.dataset.stream = 'off';
-    liveSignals.stream = 'off';
-    renderLiveSignals();
-    console.warn('Clientul fluxului live nu s-a putut încărca.', err);
-    return;
-  }
-  if (liveStream) return;
-  streamPlaques = new StreamPlaques(viewport);
-  liveStream = new LiveStream(viewport, {
-    ...settings,
-    signallingUrl,
-    authMessage: () => authMessage(ownerToken),
-  }, {
-    onStatus: (status) => {
-      viewport.dataset.stream = status;
-      layoutPlaques();
-      // Once a stream is configured its layer covers the canvas in every state -- the video, the
-      // frozen frame or the "starting" plate -- so the canvas keeps only its hit boxes.
-      if (officeEngine) officeEngine.setCovered(true);
-      liveSignals.stream = status;
-      liveSignals.hasStill = Boolean(liveStream && liveStream.hasStill);
-      liveSignals.streamHeld = Boolean(liveStream && liveStream.held);
-      renderLiveSignals();
-    },
-    // Unreal's frames, as the page receives them: the figure beside «Live» while the stream plays.
-    onFrameRate: (fps) => {
-      liveSignals.streamFps = fps;
-      renderLiveSignals();
-    },
-    // Reduced motion: the street's traffic does not drive past; one real frame at a time (W18).
-    held: () => reducedMotion(),
-    reduced: () => reducedMotion(),
-    // one small real frame, now and then, kept in this browser for the next entry (W19)
-    onKeep: (record) => {
-      if (!keeping) {
-        keeping = true;
-        writeKept(browserStore(), record).finally(() => { keeping = false; });
-      }
-      // W24: and, rarely, to the studio, so a stranger's title stands on the same building
-      const now = Date.now();
-      if (ownerToken && studioSendDue(studioSend, now)) {
-        studioSend.lastSent = now;
-        sendStudioFrame((url, init) => fetch(url, init), ownerToken, record)
-          .then((outcome) => { if (outcome === 'unsupported') studioSend.supported = false; });
-      }
-    },
-  });
-  if (!liveStream.firstMessageAuth) {
-    // the library's transport could not be given the key as a first message: no stream at all
-    liveStream.layer.remove();
-    liveStream = null;
-    streamOff();
-    return;
-  }
-  // the starting plate shows the last live frame an earlier visit kept, dimmed and named (W19); W24:
-  // the frame the title stood on, when it stood on one (a first visit's is the studio's)
-  Promise.all([titleChoice, keptFrame]).then(([titled, browserKept]) => titled || browserKept).then((kept) => {
-    if (!kept || !liveStream) return;
-    const zone = state && state.studio ? state.studio.timezone : undefined;
-    liveStream.showKept(kept.image, keptCaption(kept.at, Date.now(), zone), kept.at);
-  });
-  if (typeof window.matchMedia === 'function') {
-    window.matchMedia('(prefers-reduced-motion: reduce)').addEventListener('change', () => {
-      if (liveStream) liveStream.setHeld(reducedMotion());
-    });
-  }
-  if (officeEngine) {
-    const view = officeEngine.view();
-    const t = streamTransform(view);
-    liveStream.setView({ k: t.k, tx: t.tx / view.dpr, ty: t.ty / view.dpr });
-  }
-  liveStream.start();
-}
-
-/**
- * THE GAME FRAME'S DRAWERS (drawers.js): the register on the left, governance on the right, each
- * open where the building still fits beside it. Whatever they cover, the camera is told, and it
- * centres the building in the room they leave.
- */
 const drawers = new Drawers({
   onInsets: (insets, options) => {
     if (officeEngine) officeEngine.setInsets(insets, options);
@@ -1282,8 +1003,8 @@ function buildOfficeEngine() {
   officeEngine = new OfficeEngine(officeCanvas, {
     parked: true,
     // The page may only call its own origin; the backend reads the live weather for the scene.
-    fetchWeather: () => api('/office/weather'),
     infoElement: element('scene-info'),
+    fetchWeather: () => api('/office/weather', { timeoutMs: 12000 }),
     // Reduced motion holds the street, the sky's drift and the employees' loops still.
     reducedMotion: () => reducedMotion(),
     // So does a page that has lost the studio's data: nothing outside lives on while the corner
@@ -1298,18 +1019,12 @@ function buildOfficeEngine() {
     // out for the new size before the camera is planned for it
     beforePlan: () => drawers.syncToWindow(),
     // W22: a replay over the Unreal still composes no plates for the replayed hour
-    stillAhead: () => Boolean(liveStream && liveStream.replayPicture()),
     // W22: a replayed caption over the still takes its room; a plaque in its way steps aside
-    onCaptions: () => layoutPlaques(),
     // The streamed picture follows the page's camera, so zoom and pan act on what is seen.
     onView: (view) => {
       // the visitor's zoom and drag move the building: the invitation follows it once the camera
       // rests, or steps aside when the zoomed building leaves no free room under it (W18)
       if (replayInvite && replayInvite.shown) relayoutInviteSoon();
-      if (!liveStream) return;
-      const t = streamTransform(view);
-      liveStream.setView({ k: t.k, tx: t.tx / view.dpr, ty: t.ty / view.dpr });
-      layoutPlaques(view.room ? view : null);
     },
     onSelectAgent: (agent) => {
       currentSelectedAgent = agent;
@@ -1341,10 +1056,6 @@ function buildOfficeEngine() {
         if (door) readDoorAhead(door);
       }
       refreshSceneReadout();
-      if (streamPlaques) {
-        streamPlaques.suppress(target && target.kind !== 'agent' ? String(target.id || '') : '');
-        layoutPlaques();
-      }
     },
   });
   publishSceneHandle();
@@ -1376,7 +1087,6 @@ async function warmOffice() {
   engine.prewarm(box.width, box.height);
   // The drawers' widths are measured now too, so the key does not wait for that layout either.
   drawers.prime();
-  warmWorkspacePaint();
 }
 
 /**
@@ -1392,81 +1102,6 @@ async function warmOffice() {
  * those frames, the samples are taken out again, and the workspace is hidden as it was. An
  * accepted key ends it at once (endWorkspacePaintWarm).
  */
-let paintWarm = /** @type {{done: boolean, added: Element[], chrome?: HTMLElement[]}|null} */ (null);
-function warmWorkspacePaint() {
-  if (paintWarm || !workspace.hidden || ownerToken || busy) return;
-  const warm = { done: false, added: /** @type {Element[]} */ ([]), chrome: /** @type {HTMLElement[]} */ ([]) };
-  paintWarm = warm;
-  const fill = (/** @type {string} */ id, /** @type {string} */ markup) => {
-    const host = document.getElementById(id);
-    if (!host || host.children.length) return;
-    const holder = document.createElement('template');
-    holder.innerHTML = markup;
-    for (const node of Array.from(holder.content.children)) {
-      host.append(node);
-      warm.added.push(node);
-    }
-  };
-  const item = (/** @type {string} */ kind, /** @type {string} */ extra) => `<li class="ledger-item ledger-${kind}"><time>00:00:00</time><div><div class="ledger-head"><strong>Aaaa</strong> <span class="ledger-arrow">→</span> <strong>Aaaa</strong> · aaaa${extra}</div><div class="ledger-text">aaaa aaaa</div><div class="ledger-open">Aaaa ↗</div></div></li>`;
-  fill('ledger-filters', '<button type="button" class="ledger-chip is-active" tabindex="-1">Aaaa</button><button type="button" class="ledger-chip" tabindex="-1">Aaaa</button>');
-  fill('ledger-list', `<li class="ledger-day">aaaa</li>${item('system', '<span class="ledger-repeat">×2</span>')}${item('owner', '')}${item('talk', '')}<li class="ledger-item ledger-system is-repeat"><time>00:00:00</time><div><div class="ledger-head">aaaa</div><span class="ledger-span">00:00:00 – 00:00:00</span></div></li>`);
-  fill('studio-readout-list', '<div class="readout-row" data-tone="ok"><dt>Aaaa</dt><dd><span class="readout-value">Aaaa</span><span class="readout-note">aaaa</span></dd></div><div class="readout-row" data-tone="warn"><dt>Aaaa</dt><dd><span class="readout-value">Aaaa</span></dd></div>');
-  const bar = document.querySelector('#day-track .day-track-bar');
-  if (bar && !bar.children.length) {
-    const ns = 'http://www.w3.org/2000/svg';
-    for (const [x, seg] of /** @type {Array<[number, string]>} */ ([[0, 'seg-done'], [17, 'seg-running'], [34, 'seg-pending']])) {
-      const rect = document.createElementNS(ns, 'rect');
-      for (const [k, v] of Object.entries({ x: String(x), y: '0', width: '14', height: '6', rx: '1', class: `track-seg ${seg}` })) rect.setAttribute(k, v);
-      bar.append(rect);
-      warm.added.push(rect);
-    }
-  }
-  // The masthead and the footer strip are the frame's too (the rooms' menu, the Owner's keys):
-  // they are painted with it. The drawers are laid out as the key will find them, so the rails,
-  // the menu in the masthead and the drawers' own state are among what is painted.
-  const chrome = /** @type {HTMLElement[]} */ (Array.from(document.querySelectorAll('.topbar, .site-footer')));
-  for (const el of chrome) {
-    el.inert = true;
-    el.setAttribute('aria-hidden', 'true');
-  }
-  warm.chrome = chrome;
-  workspace.inert = true;
-  workspace.setAttribute('aria-hidden', 'true');
-  workspace.classList.add('is-warming');
-  document.body.classList.add('is-paint-warm');
-  workspace.hidden = false;
-  if (!drawers.started && drawers.isFramed()) drawers.start();
-  let frames = 0;
-  const tick = () => {
-    if (warm.done) return;
-    frames += 1;
-    if (frames < 4) {
-      requestAnimationFrame(tick);
-      return;
-    }
-    endWorkspacePaintWarm({ hide: true });
-  };
-  requestAnimationFrame(tick);
-}
-
-/** Take the warm-up away: its samples, its class, and (unless a key is entering) the workspace. @param {{hide: boolean}} options */
-function endWorkspacePaintWarm(options) {
-  const warm = paintWarm;
-  if (!warm || warm.done) return;
-  warm.done = true;
-  for (const node of warm.added) node.remove();
-  warm.added = [];
-  workspace.classList.remove('is-warming');
-  document.body.classList.remove('is-paint-warm');
-  for (const el of warm.chrome || []) {
-    el.inert = false;
-    el.removeAttribute('aria-hidden');
-  }
-  workspace.inert = false;
-  workspace.removeAttribute('aria-hidden');
-  if (options.hide) workspace.hidden = true;
-}
-
 function whenIdle(/** @type {() => void} */ run) {
   const idle = /** @type {any} */ (window).requestIdleCallback;
   if (typeof idle === 'function') idle(run, { timeout: 1500 });
@@ -1477,20 +1112,14 @@ function whenIdle(/** @type {() => void} */ run) {
  * first visit, spent while the title stands idle instead of in the middle of the entry; only when
  * the stream is configured and no key has been given yet.
  */
-function warmStreamCodecs() {
-  readScene().then((scene) => {
-    if (!ownerToken && liveStreamSettings(scene).enabled) warmVideoCodecs(window);
-  });
-}
-// After the title has had its first frames, not in their way.
-window.addEventListener('load', () => whenIdle(() => { warmOffice().catch(() => {}).finally(() => whenIdle(warmStreamCodecs)); }), { once: true });
+window.addEventListener('load', () => whenIdle(() => { warmOffice().catch(() => {}); }), { once: true });
 
 function initOffice() {
   buildOfficeEngine();
+  drawers.layout({ glide: false });
   officeEngine.unpark();
   if (!officeWired) {
     officeWired = true;
-    startLiveStream();
 
     // The camera keys zoom about the middle of the room the drawers leave; «Încadrează» stands
     // the camera where the frame puts it, with the building whole.
@@ -1619,16 +1248,20 @@ function initOffice() {
   }
 }
 
-async function loadOfficeLayout() {
+let officeLastRead = 0;
+async function loadOfficeLayout({ characters = true } = {}) {
+  const session = epoch;
   try {
     const layout = await api('/office/layout');
+    if (session !== epoch || !ownerToken) return;
     officeState.initFromLayout(layout);
+    officeLastRead = Date.now();
     // a request's asker becomes a person of the building once the office is known (W30)
     if (approvalsShown.length) renderApprovals();
     if (officeEngine) {
       officeEngine.setLayout(layout);
       updateOfficeCanvas();
-      await loadOfficeCharacterBible();
+      if (characters) await loadOfficeCharacterBible();
     }
   } catch (err) {
     console.error('Failed to load office layout', err);
@@ -1652,9 +1285,8 @@ async function loadOfficeCharacterBible() {
 /**
  * The office scene, exposed for automated verification.
  *
- * The scene is driven entirely by backend events, so the only way to check that the lift
- * moves when — and only when — the backend says work changed floor is to read the engine's
- * own state back. Read-only inspection handle; nothing in the app reads it.
+ * The scene projects backend state; this handle lets browser checks inspect positions
+ * and selection without writing production data. Read-only inspection handle; nothing in the app reads it.
  */
 function publishSceneHandle() {
   /** @type {any} */ (window).__studio = {
@@ -1672,8 +1304,8 @@ function updateOfficeCanvas() {
   if (replaying()) return;
   considerInvite();
   officeEngine.setAgents(officeState.agents);
+  syncInspectorState();
   rosterMayChange();
-  layoutPlaques();
   officeEngine.setSpeechBubbles(officeState.speechBubbles);
   officeEngine.setProjectTokens(officeState.projectTokens);
 }
@@ -1702,9 +1334,10 @@ async function showInspector(agent) {
   try {
     const details=await loadAgentDetails(api,id);
     if(request!==inspectorRequest||session!==epoch||!inspector.open) return;
-    currentSelectedAgent={...agent,...details,model_loading:false,model_error:null};
     officeState.setAgents([details]);
+    currentSelectedAgent={...agent,...details,model_loading:false,model_error:null};
     renderInspector(currentSelectedAgent);
+    syncInspectorState();
   } catch(error) {
     if(request!==inspectorRequest||session!==epoch||!inspector.open) return;
     renderInspector({...agent,model_error:error instanceof Error?error.message:'Detaliile modelului nu au putut fi încărcate.',model_is_available:false});
@@ -1813,7 +1446,7 @@ function timelineItem(item) {
     const answer = item.answered
       ? `<div class="chat-answer">${friendlyAnswer(item.answered)}</div>`
       : `<div class="chat-answer text-error">${escapeHtml(item.error || RUN_STATUS[item.status] || item.status)}</div>`;
-    const meta = [item.model, item.memory_used ? `${item.memory_used} amintiri folosite` : '', item.cost_vr ? `${item.cost_vr} VR$` : '']
+    const meta = [item.model, item.memory_used ? `${item.memory_used} amintiri folosite` : '']
       .filter(Boolean).join(' · ');
     const summarised = Boolean(item.prompt) && item.prompt !== item.asked;
     const line = isChat || summarised ? item.asked || '' : '';
@@ -1894,6 +1527,21 @@ function showInspectorStates(work, standing) {
     const acts = lifecycleActs(standing);
     /** @type {HTMLButtonElement} */ (element('agent-pause-btn')).disabled = !acts.pause;
     /** @type {HTMLButtonElement} */ (element('agent-resume-btn')).disabled = !acts.resume;
+  }
+}
+
+/** Keep an open inspector on the same versioned state as the employee at the desk. */
+function syncInspectorState() {
+  if (!inspector.open || !currentSelectedAgent) return;
+  const id = currentSelectedAgent.id || currentSelectedAgent.agent_id;
+  const agent = officeState.agents.find(a => a.id === id);
+  if (!agent) return;
+  Object.assign(currentSelectedAgent, { runtime_state: agent.runtime_state, lifecycle: agent.lifecycle, version: agent.version });
+  showInspectorStates(agent.runtime_state, agent.lifecycle);
+  const key = `${id}:${agent.runtime_state}:${agent.lifecycle}`;
+  if (element('inspector-portrait').dataset.pose !== key) {
+    element('inspector-portrait').dataset.pose = key;
+    paintPortrait(element('inspector-portrait'), agent);
   }
 }
 
@@ -4649,6 +4297,8 @@ async function refresh() {
     liveSignals.data = 'fresh';
     render(state);
     stopButton.disabled = busy;
+    // A periodic authoritative read repairs missed events and discovers staff hired elsewhere.
+    if (officeEngine && Date.now() - officeLastRead > 15000) await loadOfficeLayout({ characters: false });
     // Everything recorded since the ledger last looked, not only the twenty in the snapshot.
     // the name tags' last tasks: the studio's own record of runs rides this snapshot (W12)
     refreshLastTasks();
@@ -4678,15 +4328,63 @@ async function refresh() {
     renderLiveSignals();
     stopButton.disabled = true;
     notify(error.message);
+    // LOCAL_AUTO_LOGIN: a key the studio no longer accepts (a new key in .env, then a restart)
+    // takes the page back to the title, and this machine may hand the new key over: once per
+    // page load (local_entry.js), never in a loop.
+    if (error && /** @type {any} */ (error).status === 401 && !workspace.hidden) {
+      signOut();
+      notify(error.message);
+      void localEntry.afterRefusal();
+    }
     return false;
   }
 }
 
+/**
+ * LOCAL_AUTO_LOGIN (2026-10-08, the Owner: «Te rog sa elimini pagina de logare, nu trebuie
+ * momentan»). On his own machine the studio hands the page his key and it enters without the form;
+ * from anywhere else the form shows as before. The key stays only in this page's memory.
+ */
+const loginForm = element('login-form');
+const loginWait = element('login-wait');
+const loginLocal = element('login-local');
+const localEntry = new LocalEntry({
+  ask: () => askLocalKey(),
+  enter: (key) => enterStudio(key),
+  view: {
+    waiting: () => {
+      loginForm.hidden = true;
+      loginWait.hidden = false;
+    },
+    form: (offer) => {
+      loginWait.hidden = true;
+      loginForm.hidden = false;
+      // offered: an empty field and «Intră în studio» enter with the key this machine hands over
+      loginLocal.hidden = !offer;
+      input.required = !offer;
+    },
+  },
+});
+
 element('login-form').addEventListener('submit', async (event) => {
   event.preventDefault();
-  if (busy) return;
+  if (!input.value && localEntry.available) {
+    await localEntry.again();
+    return;
+  }
+  await enterStudio(input.value);
+});
+
+/**
+ * The page's one way in: the key typed in the form, or the one this machine handed over
+ * (local_entry.js). Resolves true when the studio accepted it and the workspace is up.
+ * @param {string} key
+ * @returns {Promise<boolean>}
+ */
+async function enterStudio(key) {
+  if (busy) return false;
   busy = true;
-  ownerToken = input.value;
+  ownerToken = key;
   epoch++;
   state = null;
   notify('');
@@ -4697,8 +4395,7 @@ element('login-form').addEventListener('submit', async (event) => {
   if (success) {
     // The camera goes into the building only here, on a key the backend has just accepted, and
     // never for a visitor who asked for less motion: they get the same workspace at once.
-    const plays = entryPlays({ accepted: true, reducedMotion: reducedMotion(), titleShown: titleScreen.visible });
-    endWorkspacePaintWarm({ hide: false });
+    const plays = false;
     workspace.hidden = false;
     element('logout').hidden = false;
     decisions.signedIn();
@@ -4733,8 +4430,6 @@ element('login-form').addEventListener('submit', async (event) => {
     initOffice();
     // The key light's first reading copies a frame back from the GPU (18ms measured at the key);
     // it waits until the building has been entered, and then reads the frame the visitor sees.
-    if (plays) window.setTimeout(() => { if (ownerToken) keyLight.start(); }, ENTRY.totalMs + 80);
-    else keyLight.start();
     // W15: the invitation to the replay waits for the entry to settle
     if (replayInvite) replayInvite.entered(plays ? ENTRY.totalMs : 0);
     // The faces' first values are the page arriving, not news: no glint for them (hq_readouts.js).
@@ -4749,7 +4444,8 @@ element('login-form').addEventListener('submit', async (event) => {
   }
   busy = false;
   stopButton.disabled = !connected;
-});
+  return success;
+}
 
 /**
  * W22: where the workspace shows the world (and the stream's video, to the pixel), for the title's
@@ -4765,6 +4461,13 @@ function titleLanding() {
 }
 
 element('logout').addEventListener('click', () => {
+  signOut();
+  // LOCAL_AUTO_LOGIN: the form shows, offering to enter again without the key on this machine
+  localEntry.offer();
+});
+
+/** Leaves the studio: the workspace closes and the title (with the form) is shown again. */
+function signOut() {
   inspectorRequest++;
   inspector.close();
   currentSelectedAgent=null;
@@ -4779,24 +4482,13 @@ element('logout').addEventListener('click', () => {
   busy = false;
   eventsLink.stop();
   // the next key may meet another backend: it is asked again how its sockets take the key
-  streamRoute = null;
   liveSignals.data = 'fresh';
-  keyLight.stop();
   if (officeEngine) officeEngine.park();
   document.body.classList.remove('is-arming');
   workspace.hidden = true;
   login.hidden = false;
   titleScreen.show();
   // W22: the frame kept during this visit is the title's now; W24: or the studio's, by the hour's light
-  keptFrame = readKeptFrame();
-  studioKept = readStudioKept();
-  titleChoice = titleKept();
-  studioSend.supported = true;
-  titleChoice.then((kept) => {
-    if (ownerToken) return;
-    if (kept) titleScreen.useKept(kept);
-    else titleScreen.dropKept();
-  });
   input.value = '';
   notify('');
   ledger.clear();
@@ -4826,7 +4518,7 @@ element('logout').addEventListener('click', () => {
   element('connection').textContent = 'Neconectat';
   element('logout').hidden = true;
   decisions.reset();
-});
+}
 
 environmentButton.addEventListener('click', async () => {
   if (busy || !connected || !state) return;
@@ -5184,39 +4876,19 @@ function drawPortraits(root) {
  * the starting plate); null while the page's own renderer is what is seen.
  * @returns {{image: HTMLCanvasElement, at: number}|null}
  */
-function streamPortraitPicture() {
-  if (!liveStream || !officeEngine || !officeEngine.hitsOnly) return null;
-  return liveStream.replayPicture();
-}
-
-/**
- * One employee's portrait in a slot (.person-portrait with its canvas): over the stream, the real
- * Unreal frame cut at their desk (roster.js streamPortraitSource), so the roster and the building are
- * one picture; otherwise the page renderer's plates and figure. Dark with «—» when neither has them.
- * @param {HTMLElement} slot @param {any} agent the office record
- */
+/** @param {HTMLElement} slot @param {any} agent */
 function paintPortrait(slot, agent) {
   const renderer = officeEngine && officeEngine.renderer;
   const canvas = /** @type {HTMLCanvasElement|null} */ (slot.querySelector('canvas'));
-  const win = renderer && agent ? portraitWindow(renderer.m && renderer.m.seats ? renderer.m.seats[agent.desk_id] : null) : null;
-  let drawn = '';
-  if (renderer && agent && win && canvas) {
+  let drawn = false;
+  if (renderer && agent && canvas) {
     canvas.width = PORTRAIT_PX.w;
     canvas.height = PORTRAIT_PX.h;
     const ctx = canvas.getContext('2d');
-    const picture = streamPortraitPicture();
-    const src = picture && officeEngine ? streamPortraitSource(win, picture.image, { w: officeEngine.worldW, h: officeEngine.worldH }) : null;
-    if (ctx && picture && src) {
-      ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = 'high';
-      ctx.drawImage(picture.image, src.sx, src.sy, src.sw, src.sh, 0, 0, canvas.width, canvas.height);
-      drawn = 'stream';
-    } else if (ctx && renderer.drawPortrait(ctx, agent, win, stillFrame)) {
-      drawn = 'page';
-    }
+    if (ctx) drawn = renderer.drawPortrait(ctx, agent);
   }
   slot.classList.toggle('is-empty', !drawn);
-  slot.dataset.source = drawn;
+  slot.dataset.source = drawn ? 'pixel' : '';
 }
 
 /** The roster follows the office's record while its door is open. */
@@ -5398,66 +5070,10 @@ bindPanelToggle('open-workforce-btn', workforceModal);
  * a serial about an imaginary one.
  * ------------------------------------------------------------------------- */
 
-/* ---------------------------------------------------------------------------
- * Phase 11: the VR$ treasury.
- *
- * The panel's whole job is to keep four kinds of number apart, because adding them together is
- * exactly how a virtual company starts believing it is richer than it is:
- *
- *   VR VIRTUAL   what the ledger actually holds, and the only thing that could ever be spent
- *   PENDING      earned outside, not settled — reported, never spendable
- *   FORECAST     an estimate — reported, never spendable
- *   ESTIMAT      a provider cost that has not become an invoice yet
- *
- * Every figure below is rendered from the backend's own labels rather than from a guess made
- * here, so the page cannot quietly promote a forecast into cash.
- * ------------------------------------------------------------------------- */
+/** Real USD cost limits and autonomy configuration. */
 
-const treasuryModal = /** @type {HTMLDialogElement} */ (element('treasury-modal'));
-const openTreasuryBtn = element('open-treasury-btn');
+const autonomyModal = /** @type {HTMLDialogElement} */ (element('autonomy-modal'));
 
-const MONEY_CLASS_LABEL = {
-  VR_CASH: 'Numerar VR$ (cheltuibil)',
-  VR_RESTRICTED: 'Rezervat',
-  VR_RECEIVABLE: 'De încasat',
-  VR_DEBT: 'Datorie',
-  PENDING_EXTERNAL: 'Încasat, nedecontat',
-  FORECAST: 'Estimare',
-};
-
-const LEDGER_KIND_LABEL = {
-  MINT: 'Emisiune VR$',
-  REVERSAL: 'Stornare',
-  OWNER_CAPITAL: 'Aport al Proprietarului',
-  OWNER_LOAN: 'Împrumut de la Proprietar',
-  PROVIDER_COST: 'Cost de furnizor',
-  ADJUSTMENT: 'Ajustare',
-};
-
-/** One figure with the label the backend gave it, so nothing is re-classified on the way out. */
-function treasuryTile(row, extraClass = '') {
-  const tile = document.createElement('div');
-  tile.className = `wf-stat treasury-tile ${extraClass}`.trim();
-  const value = document.createElement('span');
-  value.className = 'wf-stat-value';
-  value.textContent = `${amount(row.amount)} VR$`;
-  const label = document.createElement('span');
-  label.className = 'wf-stat-label';
-  label.textContent = MONEY_CLASS_LABEL[row.money_class] || row.money_class;
-  const badge = document.createElement('span');
-  badge.className = row.spendable ? 'tag live-badge' : 'tag';
-  badge.textContent = row.spendable ? `${moneyTagWord(row.label)} · CHELTUIBIL` : `${moneyTagWord(row.label)} · NECHELTUIBIL`;
-  badge.title = String(row.label || '');
-  tile.append(value, label, badge);
-  return tile;
-}
-
-/**
- * One budget against its period. The percentage is of spent plus held, not of spent alone,
- * which is why the held sum is printed beside it: a film in production has taken that money
- * out of what is still free to spend, and a card that showed only what was paid would tell
- * the Owner the day has room it does not have.
- */
 function budgetCard(period) {
   const label = period.period === 'DAILY' ? 'Zilnic' : 'Lunar';
   const reserved = period.reserved_usd_micros
@@ -5494,14 +5110,14 @@ async function loadBudget() {
       : '';
     const spend = `<div class="budget-card"><span class="stat-label">Cheltuit</span><strong>azi ${escapeHtml(amount(today.spent_usd))} USD</strong><span>luna asta ${escapeHtml(amount(data.month.spent_usd))} USD · ${data.month.agent_runs} rulări de angajați, ${data.month.unpriced_agent_runs} fără preț</span>${held}${wasted}${unpriced}</div>`;
     const providers = data.month.by_provider.map((p) => `<div class="budget-card"><span class="stat-label budget-vendor">${escapeHtml(providerName(p.provider))}</span><strong>${escapeHtml(amount(((p.estimated_usd_micros + p.billed_usd_micros) / 1e6).toFixed(2)))} USD</strong><span>${countLabel(p.records, 'înregistrare', 'înregistrări')} · facturat ${escapeHtml(amount((p.billed_usd_micros / 1e6).toFixed(2)))}</span></div>`).join('');
-    cards.innerHTML = spend + (data.budgets.length ? data.budgets.map(budgetCard).join('') : '<div class="budget-card"><span class="stat-label">Buget</span><strong>nesetat</strong><span>fără limită, nimic nu oprește cheltuiala</span></div>') + providers;
+    cards.innerHTML = spend + (data.budgets.length ? data.budgets.map(budgetCard).join('') : '<div class="budget-card"><span class="stat-label">Buget</span><strong>nesetat</strong><span>Setează limita zilnică; pașii plătiți urmează politica și plafoanele tale.</span></div>') + providers;
   } catch (error) {
     cards.innerHTML = `<div class="text-error">${escapeHtml(error instanceof Error ? error.message : 'Bugetul nu a putut fi citit.')}</div>`;
   }
 }
 
 /**
- * W34, Trezorerie → Prețurile modelelor: a price per million tokens, read and written, for each
+ * W34, Autonomie → Prețurile modelelor: a price per million tokens, read and written, for each
  * model the preflight found without one and each the books price per token (owner_controls.js).
  * The Owner types it; the page never proposes a figure.
  * W36: one plate per model, with its provider's mark, its state, the two fields and its key; a plate
@@ -5531,10 +5147,10 @@ function providerMarkHtml(kind) {
   return `<span class="provider-mark" data-tone="${m.tone}" aria-hidden="true">${icon('hexagon')}<span class="provider-mark-letter">${escapeHtml(m.letter)}</span></span>`;
 }
 
-async function loadPrices() {
+async function loadPrices(preflightRead = null) {
   const list = element('prices-list');
   element('prices-meaning').textContent = PRICES_MEANING;
-  const [preflight, prices, settings] = await Promise.allSettled([api('/runbook/preflight'), api('/economy/prices'), api('/settings')]);
+  const [preflight, prices, settings] = await Promise.allSettled([preflightRead || api('/runbook/preflight'), api('/economy/prices'), api('/settings')]);
   if (prices.status === 'rejected') {
     list.innerHTML = `<div class="text-error">${escapeHtml(prices.reason instanceof Error ? prices.reason.message : 'Prețurile nu au putut fi citite.')}</div>`;
     return;
@@ -5702,390 +5318,26 @@ element('prices-list').addEventListener('submit', async (event) => {
   /** @type {HTMLElement|null} */ (element('prices-list').querySelector('.price-answer'))?.scrollIntoView({ block: 'nearest' });
 });
 
-async function loadTreasury() {
-  loadBudget();
-  const summary = element('treasury-summary');
-  const accountsBox = element('treasury-accounts');
-  const ledgerBox = element('treasury-ledger');
+async function loadAutonomy() {
+  const preflight = api('/runbook/preflight');
+  await Promise.all([loadBudget(), loadPrices(preflight), loadAutonomyOverview(preflight)]);
+}
+async function loadAutonomyOverview(preflightRead) {
+  const host = element('autonomy-overview');
   try {
-    const [treasury, ledger] = await Promise.all([
-      api('/economy/treasury'),
-      api('/economy/ledger?limit=25'),
-    ]);
-    worldFacts.treasury = treasury;
-    pushWorldFacts();
-
-    summary.replaceChildren();
-    summary.append(treasuryTile(treasury.spendable, 'treasury-tile-primary'));
-    for (const row of treasury.positions) {
-      if (row.money_class === 'VR_CASH') continue;
-      summary.append(treasuryTile(row));
-    }
-    for (const row of treasury.not_spendable) summary.append(treasuryTile(row));
-
-    const unbilled = treasury.unbilled_provider_costs;
-    if (unbilled) {
-      summary.append(
-        treasuryTile({
-          amount: unbilled.amount,
-          money_class: 'Costuri de furnizor nefacturate',
-          label: unbilled.label,
-          spendable: false,
-        }),
-      );
-    }
-
-    // The trial balance is the one number that says whether any of the rest can be trusted.
-    const balance = document.createElement('div');
-    const tb = treasury.trial_balance;
-    balance.className = `runbook-verdict ${tb.balanced ? 'rb-ready' : 'rb-blocked'}`;
-    const verdict = document.createElement('strong');
-    verdict.textContent = tb.balanced ? 'REGISTRU ECHILIBRAT' : 'REGISTRU NEECHILIBRAT';
-    const detail = document.createElement('span');
-    detail.textContent = tb.balanced
-      ? `Debite ${amount(tb.total_debits)} = credite ${amount(tb.total_credits)}.${treasury.in_deficit ? ' Numerarul VR$ este negativ: trezoreria este în deficit.' : ''}`
-      : `Diferență ${amount(tb.difference)}. Nicio cifră de mai sus nu poate fi crezută până nu se rezolvă.`;
-    balance.append(verdict, detail);
-    summary.append(balance);
-
-    element('treasury-disclaimer').textContent = treasury.disclaimer;
-
-    accountsBox.replaceChildren();
-    if (!treasury.accounts.length) {
-      const empty = document.createElement('div');
-      empty.className = 'topics-loading';
-      empty.textContent = 'Niciun cont nu are saldo. Registrul este gol.';
-      accountsBox.append(empty);
-    }
-    for (const account of treasury.accounts) {
-      const row = document.createElement('div');
-      row.className = 'topic-card';
-      const head = document.createElement('div');
-      head.className = 'topic-card-header';
-      const name = document.createElement('span');
-      name.className = 'topic-card-title';
-      name.textContent = `${account.code} · ${account.name}`;
-      const value = document.createElement('span');
-      value.className = 'topic-card-novelty';
-      value.textContent = `${amount(account.balance)} VR$`;
-      head.append(name, value);
-      const meta = document.createElement('div');
-      meta.className = 'topic-card-meta';
-      meta.textContent = account.money_class
-        ? accountLine(account.type, MONEY_CLASS_LABEL[account.money_class] || account.money_class)
-        : accountTypeWord(account.type);
-      row.append(head, meta);
-      accountsBox.append(row);
-    }
-
-    ledgerBox.replaceChildren();
-    if (!ledger.transactions.length) {
-      const empty = document.createElement('div');
-      empty.className = 'topics-loading';
-      empty.textContent = 'Nicio înregistrare. Nimic emis, nimic cheltuit.';
-      ledgerBox.append(empty);
-    }
-    for (const item of ledger.transactions) {
-      const card = document.createElement('div');
-      card.className = `topic-card ${item.kind === 'REVERSAL' ? 'topic-card-low' : ''}`.trim();
-      const head = document.createElement('div');
-      head.className = 'topic-card-header';
-      const title = document.createElement('span');
-      title.className = 'topic-card-title';
-      title.textContent = LEDGER_KIND_LABEL[item.kind] || item.kind;
-      const figure = document.createElement('span');
-      figure.className = 'topic-card-novelty';
-      figure.textContent = `${amount(item.amount)} VR$`;
-      head.append(title, figure);
-      const memo = document.createElement('p');
-      memo.className = 'topic-card-subject';
-      memo.textContent = item.memo;
-      const meta = document.createElement('div');
-      meta.className = 'topic-card-meta';
-      meta.textContent = item.lines
-        .map((line) =>
-          Number(line.debit) ? `D ${line.account} ${amount(line.debit)}` : `C ${line.account} ${amount(line.credit)}`,
-        )
-        .join(' · ');
-      card.append(head, memo, meta);
-      ledgerBox.append(card);
-    }
-  } catch (err) {
-    summary.replaceChildren();
-    const failure = document.createElement('div');
-    failure.className = 'dialog-status-msg text-error';
-    failure.textContent = `Trezoreria nu a putut fi citită: ${err.message}`;
-    summary.append(failure);
+    const data = await preflightRead;
+    const checks = checklistHtml(preflightChecklist(data), escapeHtml);
+    host.innerHTML = autonomyOverview(state, worldFacts.jobs, escapeHtml)
+      + `<details class="autonomy-checks"><summary>Verificări și ce mai trebuie configurat</summary>${checks}</details>`;
+  } catch (error) {
+    host.textContent = error instanceof Error ? error.message : 'Setările nu au putut fi citite.';
   }
 }
-
-/* ---------------------------------------------------------------------------
- * Owner funding.
- *
- * Two kinds of money that must not blur into each other: a contribution is equity and is never
- * repaid, a loan is a liability with a rate and a maturity. The backend refuses the wrong
- * combination, and the form mirrors that by only showing the fields the chosen kind allows.
- *
- * Amounts are typed, not parsed loosely. A comma is refused rather than guessed at: "1,000" is a
- * thousand to one reader and one to another, and money is the last place to be accommodating
- * about ambiguity. A rate is entered as a percentage because that is how people think about it,
- * and converted to the basis points the API stores.
- * ------------------------------------------------------------------------- */
-
-const AMOUNT_PATTERN = /^\d{1,12}(\.\d{1,6})?$/;
-const MICROS = 1000000n;
-
-/**
- * Decimal text -> integer micros, rounding half away from zero.
- *
- * Deliberately the same arithmetic as `to_micros` in the backend, in BigInt rather than floats:
- * 500 * 1.08 is 540.0000000000001 in IEEE doubles, and a preview that disagrees with the ledger
- * by a fraction teaches the Owner to distrust both.
- */
-function amountToMicros(text) {
-  const [whole, frac = ''] = String(text).split('.');
-  const padded = (frac + '0000000').slice(0, 7);
-  let micros = BigInt(whole || '0') * MICROS + BigInt(padded.slice(0, 6));
-  if (Number(padded[6]) >= 5) micros += 1n;
-  return micros;
-}
-
-function microsToAmount(micros) {
-  const text = `${micros / MICROS}.${(micros % MICROS).toString().padStart(6, '0')}`;
-  return text.replace(/\.?0+$/, '') || '0';
-}
-
-/**
- * Say, before anything is written, exactly how many VR$ the entry will create.
- *
- * The ledger has no currency column: everything posted is VR$. The currency on this form belongs
- * to the real money that justifies the entry, and this line is where the two are reconciled in
- * front of the Owner instead of behind them.
- */
-function updateFundingPreview() {
-  const box = element('funding-preview');
-  const typed = /** @type {HTMLInputElement} */ (element('funding-amount')).value.trim();
-  const currency = /** @type {HTMLInputElement} */ (element('funding-currency')).value
-    .trim()
-    .toUpperCase();
-  if (!AMOUNT_PATTERN.test(typed)) {
-    box.textContent = 'Scrie suma ca să vezi câți VR$ intră în registru.';
-    return;
-  }
-  if (currency === 'USD') {
-    box.textContent = `${amount(typed)} USD verificați → ${amount(typed)} VR$ în registru (1 USD = 1 VR$).`;
-    return;
-  }
-  if (currency.length !== 3) {
-    box.textContent = 'Moneda are trei litere, ex. USD sau EUR.';
-    return;
-  }
-  const rate = /** @type {HTMLInputElement} */ (element('funding-fx-rate')).value.trim();
-  if (!AMOUNT_PATTERN.test(rate) || Number(rate) <= 0) {
-    box.textContent = `Scrie cursul ${currency} → USD ca să vezi câți VR$ rezultă.`;
-    return;
-  }
-  const vr = (amountToMicros(typed) * amountToMicros(rate) + MICROS / 2n) / MICROS;
-  box.textContent = `${amount(typed)} ${currency} × ${amount(rate)} → ${amount(microsToAmount(vr))} VR$ în registru.`;
-}
-
-function fundingStatus(message, isError) {
-  const box = element('funding-status');
-  box.hidden = false;
-  box.className = isError ? 'dialog-status-msg text-error' : 'dialog-status-msg';
-  box.textContent = message;
-}
-
-/** Show only the fields the chosen kind of funding is allowed to carry. */
-function syncFundingFields() {
-  const isLoan = /** @type {HTMLSelectElement} */ (element('funding-type')).value === 'OWNER_LOAN';
-  const currency = /** @type {HTMLInputElement} */ (element('funding-currency')).value
-    .trim()
-    .toUpperCase();
-  element('funding-loan-fields').hidden = !isLoan;
-  element('funding-fx-fields').hidden = currency === 'USD' || currency.length !== 3;
-}
-
-/** Percentage as a person writes it -> basis points as the ledger stores them. 7.25 -> 725. */
-function percentToBasisPoints(text) {
-  const value = Number(text);
-  if (!Number.isFinite(value) || value < 0 || value > 1000) return null;
-  return Math.round(value * 100);
-}
-
-async function loadFundingHistory() {
-  const box = element('funding-history');
-  try {
-    const { funding } = await api('/economy/owner-funding');
-    box.replaceChildren();
-    if (!funding.length) {
-      const empty = document.createElement('div');
-      empty.className = 'topics-loading';
-      empty.textContent = 'Nicio finanțare înregistrată.';
-      box.append(empty);
-      return;
-    }
-    for (const item of funding) {
-      const card = document.createElement('div');
-      const isLoan = item.funding_type === 'OWNER_LOAN';
-      card.className = `topic-card ${isLoan ? 'topic-card-low' : 'topic-card-high'}`;
-      const head = document.createElement('div');
-      head.className = 'topic-card-header';
-      const title = document.createElement('span');
-      title.className = 'topic-card-title';
-      title.textContent = isLoan ? 'Împrumut de la Proprietar' : 'Aport de capital';
-      const value = document.createElement('span');
-      value.className = 'topic-card-novelty';
-      value.textContent = `${amount(item.vr)} VR$`;
-      head.append(title, value);
-      const meta = document.createElement('div');
-      meta.className = 'topic-card-meta';
-      const parts = [`${amount(item.amount)} ${item.currency}`];
-      if (isLoan) {
-        parts.push(`${amount((item.annual_rate_bps / 100).toFixed(2))}% pe an`);
-        parts.push(`scadență ${isoDay(item.maturity_date)}`);
-      } else {
-        parts.push('fără dobândă, nu se restituie');
-      }
-      meta.textContent = parts.join(' · ');
-      card.append(head, meta);
-      if (item.note) {
-        const note = document.createElement('p');
-        note.className = 'topic-card-subject';
-        note.textContent = item.note;
-        card.append(note);
-      }
-      box.append(card);
-    }
-  } catch (err) {
-    box.replaceChildren();
-    const failure = document.createElement('div');
-    failure.className = 'dialog-status-msg text-error';
-    failure.textContent = `Istoricul finanțărilor nu a putut fi citit: ${err.message}`;
-    box.append(failure);
-  }
-}
-
-element('funding-type').addEventListener('change', syncFundingFields);
-for (const id of ['funding-currency', 'funding-amount', 'funding-fx-rate']) {
-  element(id).addEventListener('input', () => {
-    syncFundingFields();
-    updateFundingPreview();
-  });
-}
-
-element('funding-form').addEventListener('submit', async (event) => {
-  event.preventDefault();
-  const type = /** @type {HTMLSelectElement} */ (element('funding-type')).value;
-  const amount = /** @type {HTMLInputElement} */ (element('funding-amount')).value.trim();
-  const currency = /** @type {HTMLInputElement} */ (element('funding-currency')).value
-    .trim()
-    .toUpperCase();
-  const note = /** @type {HTMLInputElement} */ (element('funding-note')).value.trim();
-  const isLoan = type === 'OWNER_LOAN';
-
-  if (amount.includes(',')) {
-    fundingStatus('Scrie suma cu punct pentru zecimale și fără separator de mii: 5000.50', true);
-    return;
-  }
-  if (!AMOUNT_PATTERN.test(amount)) {
-    fundingStatus('Suma trebuie să fie un număr pozitiv cu cel mult 6 zecimale.', true);
-    return;
-  }
-  if (currency.length !== 3) {
-    fundingStatus('Moneda are trei litere, ex. USD sau EUR.', true);
-    return;
-  }
-
-  const payload = {
-    command_id: crypto.randomUUID(),
-    funding_type: type,
-    amount,
-    currency,
-    note,
-  };
-
-  if (isLoan) {
-    const rate = percentToBasisPoints(
-      /** @type {HTMLInputElement} */ (element('funding-rate')).value.trim(),
-    );
-    const maturity = /** @type {HTMLInputElement} */ (element('funding-maturity')).value;
-    if (rate === null) {
-      fundingStatus('Dobânda este un procent anual între 0 și 1000, ex: 7 sau 7.25', true);
-      return;
-    }
-    if (!maturity) {
-      fundingStatus('Un împrumut are nevoie de o scadență; altfel înregistrează-l ca aport.', true);
-      return;
-    }
-    payload.annual_rate_bps = rate;
-    payload.maturity_date = maturity;
-  }
-
-  try {
-    // A non-USD amount needs a rate that was observed somewhere, not one the page invented, so
-    // the snapshot is recorded first and the funding cites it.
-    if (currency !== 'USD') {
-      const fxRate = /** @type {HTMLInputElement} */ (element('funding-fx-rate')).value.trim();
-      const fxSource = /** @type {HTMLInputElement} */ (element('funding-fx-source')).value.trim();
-      if (!AMOUNT_PATTERN.test(fxRate) || Number(fxRate) <= 0) {
-        fundingStatus(`Scrie cursul ${currency} → USD, ex: 1.08`, true);
-        return;
-      }
-      if (!fxSource) {
-        fundingStatus('Scrie de unde ai luat cursul; studioul nu inventează niciodată cursuri.', true);
-        return;
-      }
-      fundingStatus('Se înregistrează cursul…', false);
-      const snapshot = await api('/economy/fx', {
-        method: 'POST',
-        body: JSON.stringify({
-          command_id: crypto.randomUUID(),
-          base_currency: currency,
-          quote_currency: 'USD',
-          rate: fxRate,
-          source: fxSource,
-          observed_at: new Date().toISOString(),
-        }),
-      });
-      payload.fx_snapshot_id = snapshot.id;
-    }
-
-    fundingStatus('Se înregistrează finanțarea…', false);
-    const result = await api('/economy/owner-funding', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
-    fundingStatus(
-      `Înregistrat: ${result.vr} VR$ ${isLoan ? 'ca datorie' : 'în capital'}. ` +
-        'Nu s-au mișcat bani reali.',
-      false,
-    );
-    /** @type {HTMLFormElement} */ (element('funding-form')).reset();
-    /** @type {HTMLInputElement} */ (element('funding-currency')).value = 'USD';
-    syncFundingFields();
-    updateFundingPreview();
-    await Promise.all([loadTreasury(), loadFundingHistory()]);
-  } catch (err) {
-    fundingStatus(err.message, true);
-  }
-});
-
-doorReads.set('treasury-modal', () => { loadTreasury(); loadFundingHistory(); loadPrices(); });
-if (openTreasuryBtn) {
-  openTreasuryBtn.addEventListener('click', () => {
-    syncFundingFields();
-    updateFundingPreview();
-    openDoor(treasuryModal);
-  });
-}
-element('close-treasury-btn').addEventListener('click', () => treasuryModal.close());
-element('refresh-treasury-btn').addEventListener('click', () => {
-  loadTreasury();
-  loadFundingHistory();
-  loadPrices();
-});
-bindPanelToggle('open-treasury-btn', treasuryModal);
+doorReads.set('autonomy-modal', () => { void loadAutonomy(); });
+element('open-autonomy-btn').addEventListener('click', () => { openDoor(autonomyModal); });
+element('close-autonomy-btn').addEventListener('click', () => autonomyModal.close());
+element('refresh-autonomy-btn').addEventListener('click', () => { void loadAutonomy(); });
+bindPanelToggle('open-autonomy-btn', autonomyModal);
 
 const storyModal = /** @type {HTMLDialogElement} */ (element('story-modal'));
 
@@ -6625,7 +5877,7 @@ async function loadRunbookSchedule() {
 // the longest body in the product — 6284px against the daily run's 2197 — so it carries
 // one too; it had none because the specification only named the other three.
 attachRail(runbookModal.querySelector('.dialog-body'));
-attachRail(treasuryModal.querySelector('.dialog-body'));
+attachRail(autonomyModal.querySelector('.dialog-body'));
 attachRail(researchModal.querySelector('.dialog-body'));
 attachRail(storyModal.querySelector('.dialog-body'));
 
@@ -6757,13 +6009,14 @@ element('refresh-preflight-btn').addEventListener('click', () => loadPreflight()
 /**
  * W32: a checklist line's key opens the place that fixes it, through that place's own door: the
  * daily run's door goes back into the façade and the other grows out of its room (Settings from the
- * servers on S1, the Treasury from S2 …), opened at the tab or brought to the section that fixes it.
+ * opened at the tab or brought to the section that fixes it.
  * The dock's AUTONOMIE switch is not a door: it is brought into view and given the focus.
  * @param {{door?: string, tab?: string, section?: string}} place (readiness.js fixPlaceOf, as the key's data)
  */
 function openFixPlace(place) {
   if (!place.door) return;
   runbookModal.close();
+  if (autonomyModal.open && place.door !== 'autonomy-modal') autonomyModal.close();
   if (place.door === 'settings') {
     settingsUI.open(place.tab || 'llm');
     return;
@@ -6782,12 +6035,12 @@ function openFixPlace(place) {
     'publishing-modal': 'open-publishing-btn',
     'workforce-modal': 'open-workforce-btn',
     'story-modal': 'open-story-btn',
-    'treasury-modal': 'open-treasury-btn',
+    'autonomy-modal': 'open-autonomy-btn',
   })[place.door];
   const button = opener ? document.getElementById(opener) : null;
   const dialog = /** @type {HTMLDialogElement|null} */ (document.getElementById(place.door));
   if (!button || !dialog) return;
-  button.click();
+  if (!dialog.open) button.click();
   if (place.tab === 'characters') tabCharactersBtn.click();
   const section = place.section ? document.getElementById(place.section) : null;
   if (section && place.tab !== 'characters') {
@@ -6811,6 +6064,23 @@ function openFixPlace(place) {
 }
 element('runbook-checks').addEventListener('click', (event) => {
   const key = /** @type {HTMLElement} */ (event.target).closest('.pf-fix');
+  if (key instanceof HTMLElement) openFixPlace({ door: key.dataset.door, tab: key.dataset.tab, section: key.dataset.section });
+});
+
+element('autonomy-overview').addEventListener('click', async (event) => {
+  const action = event.target instanceof HTMLElement ? event.target.closest('[data-autonomy-go]') : null;
+  if (action instanceof HTMLElement) {
+    const closed = new Promise((resolve) => autonomyModal.addEventListener('close', resolve, { once: true }));
+    autonomyModal.close();
+    await closed;
+    if (action.dataset.autonomyGo === 'providers') { void settingsUI.open('llm'); return; }
+    if (action.dataset.autonomyGo === 'schedule') { element('open-runbook-btn').click(); return; }
+    drawers.set('side', true);
+    element('autonomy-mode-buttons').scrollIntoView({ block: 'center' });
+    element('autonomy-mode-buttons').querySelector('button')?.focus();
+    return;
+  }
+  const key = event.target instanceof HTMLElement ? event.target.closest('.pf-fix') : null;
   if (key instanceof HTMLElement) openFixPlace({ door: key.dataset.door, tab: key.dataset.tab, section: key.dataset.section });
 });
 
@@ -6918,7 +6188,7 @@ const DOOR_KEYS = {
   'open-workforce-btn': 'workforce-modal',
   'open-story-btn': 'story-modal',
   'open-runbook-btn': 'runbook-modal',
-  'open-treasury-btn': 'treasury-modal',
+  'open-autonomy-btn': 'autonomy-modal',
 };
 
 /** Read a door's content now (the studio's own API), and remember when. @param {string} id */
@@ -7233,3 +6503,7 @@ document.addEventListener('click', (event) => {
   event.preventDefault();
   void openShootingSheet(id);
 });
+
+// LOCAL_AUTO_LOGIN: once the page is wired, ask this machine for the Owner's key; the form shows
+// only when it is not handed over (local_entry.js).
+void localEntry.start();

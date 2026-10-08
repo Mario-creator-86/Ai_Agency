@@ -36,6 +36,7 @@ from app.integrations.discovery import refresh_due_catalogs
 from app.integrations.router import create_settings_router
 from app.integrations.services import check_vault_at_startup, load_registry, vault_health
 from app.integrations.vault import CredentialVault
+from app.local_session import create_local_session_router
 from app.logging import configure_logging, log_directory
 from app.media.router import create_media_router
 from app.office.kept_frame import create_kept_frame_router
@@ -53,6 +54,9 @@ from app.operations import (
 from app.page_build import page_build
 from app.providers.ollama import OllamaProvider
 from app.providers.registry import ProviderRegistry
+from app.providers.runpod.gpu_guard import guard_intervals, next_interval, run_gpu_guard
+from app.providers.runpod.gpu_session import force_off
+from app.providers.runpod.router import create_runpod_router
 from app.publishing.router import create_publishing_router
 from app.runbook.router import create_runbook_router
 from app.runbook.services import clear_shutdown, request_shutdown
@@ -387,6 +391,8 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
         # work, so it runs in a thread and the request loop stays responsive. Nothing fires
         # while the Owner's autonomy stop is set — the scheduler and the queue both refuse.
         worker: asyncio.Task[None] | None = None
+        gpu_guard_task: asyncio.Task[None] | None = None
+        gpu_guard_started = False
         worker_lock: WorkerLock | None = None
         lock_path = worker_lock_path(engine) if settings.worker_enabled else None
         if lock_path is not None:
@@ -421,6 +427,48 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
                 )
             except Exception as exc:  # noqa: BLE001 - logged; the studio still starts
                 logger.warning("film_lease_reclaim_failed", extra={"error": type(exc).__name__})
+            # The RunPod GPU guard (2026-10-08): the sessions an earlier process left open are
+            # forced off and a GPU found on with no paid step open is switched off. Not the
+            # watchdog and not a scheduled job: it runs under STOP AUTONOMIE, because it only
+            # ever stops spending (ADR-GPU-OFF-ALWAYS).
+            if settings.runpod_guard_enabled:
+                gpu_guard_started = True
+                try:
+                    await asyncio.wait_for(
+                        asyncio.to_thread(
+                            run_gpu_guard, engine, app.state.credential_vault, reason="BOOT"
+                        ),
+                        timeout=60,
+                    )
+                except Exception as exc:  # noqa: BLE001 - logged; the studio still starts
+                    logger.warning(
+                        "runpod_gpu_guard_boot_failed", extra={"error": type(exc).__name__}
+                    )
+
+                async def guard_gpu() -> None:
+                    while not stop_dispatcher.is_set():
+                        try:
+                            intervals = await asyncio.to_thread(
+                                guard_intervals, engine, app.state.credential_vault
+                            )
+                            wait = await asyncio.to_thread(next_interval, engine, intervals)
+                        except Exception:  # noqa: BLE001
+                            wait = 60
+                        try:
+                            await asyncio.wait_for(stop_dispatcher.wait(), timeout=wait)
+                            break
+                        except TimeoutError:
+                            pass
+                        try:
+                            await asyncio.to_thread(
+                                run_gpu_guard, engine, app.state.credential_vault, reason="TICK"
+                            )
+                        except Exception as exc:  # noqa: BLE001 - the loop goes on
+                            logger.warning(
+                                "runpod_gpu_guard_failed", extra={"error": type(exc).__name__}
+                            )
+
+                gpu_guard_task = asyncio.create_task(guard_gpu())
             # The day is on the studio's wall clock — STUDIO_DAILY_RUN_HOUR_LOCAL in
             # STUDIO_TIMEZONE — not on the moment the process started; the hour follows the
             # setting on every start-up.
@@ -587,6 +635,26 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
                 if unreal_bridge is not None:
                     with suppress(asyncio.CancelledError):
                         await unreal_bridge
+                if gpu_guard_task is not None:
+                    with suppress(asyncio.CancelledError):
+                        await gpu_guard_task
+                if gpu_guard_started:
+                    # The worker's steps have closed their GPU sessions; whatever is still on
+                    # (a close that could not verify) is switched off before the studio goes.
+                    try:
+                        await asyncio.wait_for(
+                            asyncio.to_thread(
+                                force_off,
+                                engine,
+                                app.state.credential_vault,
+                                reason="SHUTDOWN",
+                            ),
+                            timeout=20,
+                        )
+                    except Exception as exc:  # noqa: BLE001 - the launcher's off follows
+                        logger.warning(
+                            "runpod_gpu_shutdown_off_failed", extra={"error": type(exc).__name__}
+                        )
             finally:
                 # The worker has been awaited: the shutdown it was told of is over, and the
                 # worker's lock is the next start's.
@@ -920,6 +988,11 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
     app.include_router(create_runbook_router(), prefix="/api/v1", tags=["runbook"])
     # The Owner's decisions window (2026-10-03): his cards, and his answers to them.
     app.include_router(create_decisions_router(), prefix="/api/v1", tags=["owner"])
+    # The RunPod GPU switch (2026-10-08): its state, and the Owner's «Oprește GPU acum».
+    app.include_router(create_runpod_router(), prefix="/api/v1", tags=["runpod"])
+    # LOCAL_AUTO_LOGIN (2026-10-08): the Owner's key for his own page on this machine, without
+    # the sign-in form; everyone else gets the 404 of an unknown path (app/local_session.py).
+    app.include_router(create_local_session_router(), prefix="/api/v1")
 
     if (ROOT / "frontend/dist").is_dir():
         app.mount("/", PageFiles(directory=ROOT / "frontend/dist", html=True), name="frontend")

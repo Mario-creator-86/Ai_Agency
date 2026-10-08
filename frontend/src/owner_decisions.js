@@ -309,7 +309,12 @@ export function appliedWords(card) {
   if (card.status === 'WAITING_FOR_OWNER_ACTION') {
     return `Așteaptă acțiunea ta: ${applied.place_ro || (option && option.place_ro) || ''}`.trim();
   }
-  if (applied.completed_by === 'owner') return 'Ai marcat-o făcută.';
+  if (applied.completed_by === 'owner') {
+    // since 2026-10-04 his DONE closes a card only when the studio reads it done, or when only he can confirm it
+    if (applied.done_reading === 'MET') return 'Ai marcat-o făcută, iar studioul a văzut pasul făcut.';
+    if (applied.done_reading === 'ONLY_OWNER') return 'Ai marcat-o făcută; doar tu o poți confirma.';
+    return 'Ai marcat-o făcută.';
+  }
   if (applied.completed_by === 'condition') return 'S-a rezolvat: studioul a văzut că nu mai trebuie nimic.';
   const type = text(applied.type);
   const command = COMMAND_WORDS[text(applied.command)] || TYPE_WORDS[type];
@@ -360,6 +365,11 @@ export async function answerCard(api, card, answer) {
         const option = optionNamed(view, view.chosen_option);
         const where = applied.place_ro || (option && option.place_ro) || '';
         const steps = applied.steps_ro || (option && option.steps_ro) || '';
+        if (answer.decision === 'DONE') {
+          // the studio did not see the step done: it says what is missing, and he stays on the card
+          const missing = view.apply_error_ro || 'Studioul nu vede încă pasul făcut, așa că cardul rămâne deschis.';
+          return { status: 'WAITING', reload: true, message: `${missing}${where ? ` Unde: ${where}.` : ''}`, place: null };
+        }
         return {
           status: 'WAITING',
           reload: true,
@@ -542,6 +552,9 @@ export function cardHtml(card, o) {
     ? `<ul class="decision-outcomes">${card.options.map((option) => `<li><strong>${e(option.label_ro)}</strong> — ${e(option.effect_ro)}</li>`).join('')}</ul>`
     : '';
   const error = card.apply_error_ro ? `<p class="decision-error" role="alert">${e(card.apply_error_ro)}</p>` : '';
+  const reopenedWhy = waiting && card.source_type === 'decision' && card.applied && card.applied.reopened_reason_ro
+    ? `<p class="decision-reopened">${e(card.applied.reopened_reason_ro)}</p>`
+    : '';
   return `<article class="decision-card" data-card="${e(card.card_id)}" data-source-type="${e(card.source_type)}" data-status="${e(card.status)}" aria-labelledby="dc-${e(card.id)}">`
     + '<header class="dcard-head">'
     + `<span class="decision-kind">${e(kindWords(card))}</span>`
@@ -553,6 +566,7 @@ export function cardHtml(card, o) {
     + filmLine(card, o)
     + cost
     + approvalOptions
+    + reopenedWhy
     + error
     + answerHtml(card, o)
     + '</article>';

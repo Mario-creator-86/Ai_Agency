@@ -276,12 +276,14 @@ def test_every_section_a_line_names_is_an_element_of_the_page(engine, settings, 
 # ------------------------------------------------------------------ line by line
 
 
-def test_the_budget_is_set_in_the_treasury_and_the_route_is_data(engine, settings, vault, studio):
+def test_the_budget_is_set_in_autonomy_settings_and_the_route_is_data(
+    engine, settings, vault, studio
+):
     budget = line(run_preflight(engine, settings, vault), "spending_budget")
     assert budget["code"] == "spending_budget.none" and budget["impact"] == "degrades"
-    assert "Trezorerie → Buget și cheltuieli" in budget["message"]
-    assert budget["place"] == "treasury" and budget["place_section"] == "tr-budget"
-    assert budget["place_label"] == "Trezorerie → Buget și cheltuieli"
+    assert "Autonomie → Buget și cheltuieli" in budget["message"]
+    assert budget["place"] == "autonomy" and budget["place_section"] == "autonomy-budget"
+    assert budget["place_label"] == "Autonomie → Buget și cheltuieli"
     assert budget["technical"]["routes"] == ["PUT /economy/budget"]
 
     set_budget(engine, BudgetCommand(period="DAILY", limit_usd="25"))
@@ -289,7 +291,7 @@ def test_the_budget_is_set_in_the_treasury_and_the_route_is_data(engine, setting
     assert set_now["code"] == "spending_budget.set" and set_now["impact"] == "ok"
 
 
-def test_the_films_the_budget_refuses_name_the_treasury_and_keep_the_knobs(
+def test_the_films_the_budget_refuses_name_autonomy_settings_and_keep_the_knobs(
     engine, settings, vault, studio
 ):
     seed_default_channels(engine)
@@ -300,9 +302,9 @@ def test_the_films_the_budget_refuses_name_the_treasury_and_keep_the_knobs(
     settings.film_budget_usd = 12.0
     films = line(run_preflight(engine, settings, vault), "daily_budget_films")
     assert films["code"] == "daily_budget_films.second_film_refused"
-    assert "Trezorerie → Buget și cheltuieli" in films["message"]
+    assert "Autonomie → Buget și cheltuieli" in films["message"]
     assert "plafonul unui film" in films["message"]
-    assert films["place"] == "treasury"
+    assert films["place"] == "autonomy"
     assert "PUT /economy/budget" in films["technical"]["routes"]
     assert "STUDIO_MOTION_BUDGET_USD" in films["technical"]["settings"]
     assert "motion_budget_usd" in films["technical"]["fields"]
@@ -394,18 +396,18 @@ def test_a_refused_token_keeps_googles_answer_and_the_scopes_as_data(
     assert "yt-analytics.readonly" in statistics["technical"]["scopes"]
 
 
-def test_the_price_line_sends_the_owner_to_the_treasurys_price_form(
+def test_the_price_line_sends_the_owner_to_autonomy_settingss_price_form(
     engine, settings, vault, studio
 ):
-    """W34: the prices are typed in Trezorerie → Prețurile modelelor (section ``tr-prices``);
+    """W34: the prices are typed in Autonomie → Prețurile modelelor (section ``autonomy-prices``);
     until W33 the line said the page had no place for them. The models still unpriced, and
     which of their two token prices each lacks, are data the form reads."""
     prices = line(run_preflight(engine, settings, vault), "model_prices")
     assert prices["code"] == "model_prices.unpriced"
-    assert prices["place"] == "treasury"
-    assert prices["place_section"] == "tr-prices"
-    assert prices["place_label"] == "Trezorerie → Prețurile modelelor"
-    assert "Trezorerie → Prețurile modelelor" in prices["message"]
+    assert prices["place"] == "autonomy"
+    assert prices["place_section"] == "autonomy-prices"
+    assert prices["place_label"] == "Autonomie → Prețurile modelelor"
+    assert "Autonomie → Prețurile modelelor" in prices["message"]
     assert "pagina nu are" not in prices["message"] and "API" not in prices["message"]
     assert "tokenuri" in prices["message"]
     assert prices["technical"]["routes"] == ["PUT /economy/prices"]
@@ -463,7 +465,7 @@ def test_every_model_priced_leaves_the_line_passing_with_no_place(engine, settin
 
 def test_the_two_new_places_are_in_the_vocabulary():
     assert PLACES["settings:channels"] == "Setări → Canale"
-    assert PRICES_PLACE == ("treasury", "tr-prices", "Trezorerie → Prețurile modelelor")
+    assert PRICES_PLACE == ("autonomy", "autonomy-prices", "Autonomie → Prețurile modelelor")
     # The Settings tabs are said the way `app.wording` says them for every other sentence.
     for place, label in PLACES.items():
         if place.startswith("settings:"):

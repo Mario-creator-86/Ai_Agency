@@ -1,143 +1,153 @@
 {
   "models_data": [
     [
-      "glm-5.2:cloud",
+      "kimi-k3:cloud",
       null,
-      "General reasoning & direction"
+      "Ollama Cloud role proposal; API identifier: kimi-k3"
     ],
     [
-      "kimi-k2.6:cloud",
+      "minimax-m3:cloud",
       null,
-      "Long-context research & fact-checking"
+      "Ollama Cloud role proposal; API identifier: minimax-m3"
     ],
     [
-      "qwen3-coder:480b-cloud",
+      "deepseek-v4-pro:0813-cloud",
       null,
-      "Code, script structure & media pipelines"
+      "Ollama Cloud role proposal; API identifier: deepseek-v4-pro:0813"
+    ],
+    [
+      "mistral-large-4:cloud",
+      null,
+      "Ollama Cloud role proposal; API identifier: mistral-large-4"
+    ],
+    [
+      "nemotron-3-ultra:cloud",
+      null,
+      "Ollama Cloud role proposal; API identifier: nemotron-3-ultra"
     ]
   ],
   "agents_def": [
     [
       "Sarah (Director)",
       "Director",
-      "glm-5.2:cloud"
+      "kimi-k3:cloud"
     ],
     [
       "Dr. Aris (Researcher)",
       "LeadResearcher",
-      "kimi-k2.6:cloud"
+      "minimax-m3:cloud"
     ],
     [
       "Elena (Fact Checker)",
       "FactChecker",
-      "glm-5.2:cloud"
+      "deepseek-v4-pro:0813-cloud"
     ],
     [
       "Marcus (Script Writer)",
       "ScriptWriter",
-      "qwen3-coder:480b-cloud"
+      "kimi-k3:cloud"
     ],
     [
       "Lyra (Voice Artist)",
       "VoiceArtist",
-      "glm-5.2:cloud"
+      "mistral-large-4:cloud"
     ],
     [
       "Kael (Video Editor)",
       "VideoEditor",
-      "qwen3-coder:480b-cloud"
+      "kimi-k3:cloud"
     ],
     [
       "Vera (Publisher)",
       "Publisher",
-      "glm-5.2:cloud"
+      "nemotron-3-ultra:cloud"
     ],
     [
       "Nadia (Accountant)",
       "Accountant",
-      "glm-5.2:cloud"
+      "mistral-large-4:cloud"
     ]
   ],
   "llm_allocation": [
     {
       "role": "Director",
-      "primary": "kimi-k3:cloud",
-      "secondary": "nemotron-3-ultra:cloud",
+      "primary": "kimi-k3",
+      "secondary": "nemotron-3-ultra",
       "tertiary": null,
       "strategy": "REVIEW",
       "policy": "IMPORTANT_ONLY",
       "min_importance": "STRATEGIC",
-      "note": "Strategic decisions are challenged before they are taken; routine work is not."
+      "note": "Multimodal strategy and editorial review; independent Nemotron critic on important decisions only."
     },
     {
       "role": "LeadResearcher",
-      "primary": "minimax-m3:cloud",
+      "primary": "minimax-m3",
       "secondary": null,
       "tertiary": null,
       "strategy": "SINGLE",
       "policy": "IMPORTANT_ONLY",
       "min_importance": "STRATEGIC",
-      "note": ""
+      "note": "Information retrieval, long evidence trails and cross-source research."
     },
     {
       "role": "FactChecker",
-      "primary": "qwen3.5:397b-cloud",
+      "primary": "deepseek-v4-pro:0813",
       "secondary": null,
       "tertiary": null,
       "strategy": "SINGLE",
       "policy": "IMPORTANT_ONLY",
       "min_importance": "STRATEGIC",
-      "note": "Verification stays strict: an unsupported claim is never approved."
+      "note": "Independent logical verification against cited evidence; unsupported claims stay blocked."
     },
     {
       "role": "ScriptWriter",
-      "primary": "kimi-k3:cloud",
+      "primary": "kimi-k3",
       "secondary": null,
       "tertiary": null,
       "strategy": "SINGLE",
       "policy": "IMPORTANT_ONLY",
       "min_importance": "STRATEGIC",
-      "note": ""
+      "note": "Narrative structure, grounded scripts and long-context character/story continuity."
     },
     {
       "role": "VoiceArtist",
-      "primary": "mistral-large-3:675b-cloud",
+      "primary": "mistral-large-4",
       "secondary": null,
       "tertiary": null,
       "strategy": "SINGLE",
       "policy": "IMPORTANT_ONLY",
       "min_importance": "STRATEGIC",
-      "note": ""
+      "note": "Multilingual text adaptation and voice direction; actual synthesis remains on the voice provider."
     },
     {
       "role": "VideoEditor",
-      "primary": "glm-5.3-flash:cloud",
+      "primary": "kimi-k3",
       "secondary": null,
       "tertiary": null,
       "strategy": "SINGLE",
       "policy": "IMPORTANT_ONLY",
       "min_importance": "STRATEGIC",
-      "note": ""
+      "note": "Visual/frame understanding, editing plans and continuity; media tools execute the work."
     },
     {
       "role": "Publisher",
-      "primary": "nemotron-3-ultra:cloud",
+      "primary": "nemotron-3-ultra",
       "secondary": null,
       "tertiary": null,
       "strategy": "SINGLE",
       "policy": "IMPORTANT_ONLY",
       "min_importance": "STRATEGIC",
-      "note": "Fallback once a second model is chosen for it; single until then."
+      "note": "Reliable procedural reasoning and quality/provenance gates; publication permissions stay authoritative."
     },
     {
       "role": "Accountant",
-      "primary": "glm-5.3-flash:cloud",
+      "primary": "mistral-large-4",
       "secondary": null,
       "tertiary": null,
       "strategy": "SINGLE",
       "policy": "IMPORTANT_ONLY",
       "min_importance": "STRATEGIC",
-      "note": "Interprets figures; the totals themselves come from the books, not from a model."
+      "note": "Financial document interpretation and budget reasoning; authoritative totals still come from the backend."
     }
   ]
 }

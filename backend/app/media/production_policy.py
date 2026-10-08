@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field, fields
@@ -259,6 +260,37 @@ PRIORITY_WEIGHTS: dict[str, dict[str, float]] = {
 STUDIO_FRAME = "1080:1920"
 
 
+def _ratio(value: str) -> tuple[int, int] | None:
+    """A ratio "a:b" reduced by its gcd ("1080:1920" -> (9, 16)); None when it is not one."""
+    left, sep, right = str(value).partition(":")
+    if not sep or not left.isdigit() or not right.isdigit() or not int(left) or not int(right):
+        return None
+    divisor = math.gcd(int(left), int(right))
+    return int(left) // divisor, int(right) // divisor
+
+
+def same_ratio(left: str, right: str) -> bool:
+    """Whether two ratios are the same frame shape: "9:16" == "1080:1920" == "720:1280"."""
+    a, b = _ratio(left), _ratio(right)
+    return a is not None and a == b
+
+
+def reaches_frame(listed: Sequence[str], output: Any, frame: str) -> bool:
+    """The frame is delivered: listed as such, or listed as its reduced ratio by a model whose
+    declared output is at least the frame (RunPod lists "9:16" and outputs 1080x1920)."""
+    if frame in listed:
+        return True
+    width, _sep, height = frame.partition(":")
+    if not any(same_ratio(r, frame) for r in listed):
+        return False
+    if not isinstance(output, list | tuple) or len(output) != 2:
+        return False
+    try:
+        return int(output[0]) >= int(width) and int(output[1]) >= int(height)
+    except (TypeError, ValueError):
+        return False
+
+
 def delivers_studio_frame(metadata: Any, purpose: str | None, frame: str = STUDIO_FRAME) -> bool:
     """Whether the contract says this model can produce the studio's frame for this purpose.
 
@@ -273,7 +305,7 @@ def delivers_studio_frame(metadata: Any, purpose: str | None, frame: str = STUDI
     if not wanted or not isinstance(ratios, dict):
         return True
     listed = [r for task in wanted if isinstance(ratios.get(task), list) for r in ratios[task]]
-    return frame in listed if listed else True
+    return reaches_frame(listed, meta.get("output"), frame) if listed else True
 
 
 #: The task the studio actually calls for each purpose. A model may serve a purpose through
@@ -2062,6 +2094,25 @@ _INSUFFICIENT = re.compile(
 )
 _CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 
+#: A refusal that names a parameter of OUR request and how it must be sent: the studio's
+#: defect, not the model's (2026-10-04). Runway's keyframe ratio (the Nepal test shot on wan3,
+#: 2026-10-03; fixed in `runway.pick_ratio`) and its 5 MB data-URI limit on a picture sent
+#: inside the request (the Nepal stills, 2026-10-03; fixed in 626b59d). A generic «Validation
+#: of body failed» names no such rule and stays CONTRACT. Kept as data so the next one is a line.
+STUDIO_DEFECT_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"must use\s*`?auto_\d+p", re.IGNORECASE),
+    re.compile(r"Data URI is too large", re.IGNORECASE),
+)
+#: The failure kind of such a refusal: it never holds the scene and never drops its model.
+STUDIO_DEFECT = "STUDIO_DEFECT"
+
+
+def names_our_request(detail: str | None) -> bool:
+    """Whether a vendor's refusal text names a rule our own request broke."""
+    text = str(detail or "")
+    return bool(text) and any(pattern.search(text) for pattern in STUDIO_DEFECT_PATTERNS)
+
+
 _PEOPLE_WORDS = re.compile(
     r"\b(person|people|man|men|woman|women|child|children|kid|kids|farmer|farmers|villager|"
     r"villagers|worker|workers|crowd|crowds|figure|figures|family|families|hand|hands|"
@@ -2143,6 +2194,11 @@ class ModelCapability:
     #: In the Owner's allowed set (config/film_models.json). The planner never buys a model
     #: outside it; his own per-scene choice on the sheet still may.
     owner_allowed: bool = True
+    local_generation: bool = False
+    selected_default: bool = False
+    native_resolution: str | None = None
+    #: The (width, height) the model delivers, when its contract declares it (RunPod).
+    output: tuple[int, int] | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {item.name: getattr(self, item.name) for item in fields(self)}
@@ -2169,7 +2225,8 @@ class FailureRecord:
 class FailureVerdict:
     """What a failure is, and what it does to the scene and the step."""
 
-    kind: str  # SAFETY | CONTRACT | TRANSIENT | BAD_OUTPUT | QUALITY | ACCOUNT | UNKNOWN
+    #: SAFETY | CONTRACT | STUDIO_DEFECT | TRANSIENT | BAD_OUTPUT | QUALITY | ACCOUNT | UNKNOWN
+    kind: str
     action: str  # move_scene | retry_same | stop_step | needs_owner
     reason_ro: str
     blame_model: bool
@@ -2266,6 +2323,22 @@ def classify_failure(
             action="retry_same",
             reason_ro="Clipul a picat controlul; se reîncearcă o dată pe același model.",
             blame_model=True,
+            **common,
+        )
+    if http_status in (400, 422) and names_our_request(text):
+        # Our request was malformed for the vendor (it says which parameter and how): neither
+        # the model's fault nor the Owner's decision. The step stops, because the next request
+        # would carry the same defect; the scene is not held and its model is not dropped.
+        return FailureVerdict(
+            kind=STUDIO_DEFECT,
+            action="stop_step",
+            reason_ro=(
+                "Furnizorul a refuzat cererea studioului (un parametru trimis greșit de studio, "
+                "nu o limită a modelului): modelul rămâne, scena nu așteaptă decizia "
+                "Proprietarului și nu s-a cumpărat nimic; pasul se oprește până se repară "
+                "cererea."
+            ),
+            blame_model=False,
             **common,
         )
     if http_status in (400, 422) or upper.startswith(("INPUT_PREPROCESSING", "ASSET", "INVALID")):
@@ -2427,8 +2500,10 @@ def _shortfalls(
         if "image_to_video" not in capability.tasks:
             blocking.append("nu pornește dintr-o imagine aprobată")
     frame = FRAME_FOR_RESOLUTION.get(resolution)
-    if frame and capability.ratios is not None:
-        if frame not in capability.ratios and f"auto_{resolution}" not in capability.ratios:
+    if frame and capability.ratios is not None and not capability.local_generation:
+        if f"auto_{resolution}" not in capability.ratios and not reaches_frame(
+            capability.ratios, capability.output, frame
+        ):
             blocking.append(f"nu livrează {frame.replace(':', '×')}")
     move = need.camera_move or "static"
     if capability.camera_moves is not None and move != "static":
@@ -2506,7 +2581,7 @@ def _choose_scene(
     today: date | None,
 ) -> dict[str, Any]:
     stills = cost_plan.price_still(
-        cost_plan.STILLS_MODEL,
+        table.stills_model,
         cost_plan.STILLS_RESOLUTION,
         cost_plan.STILL_CANDIDATES,
         table=table,
@@ -2694,6 +2769,48 @@ def _choose_scene(
         take(chosen, who, reason)
         if chosen["why"] and not bought:
             entry["warnings_ro"] = [f"{named}: {'; '.join(chosen['why'])}"]
+    elif any(c.selected_default and not c.local_generation for c in capabilities.values()):
+        # «Totul pe RunPod oricum» (Owner, 2026-10-08): the cloud model he selected is taken
+        # unasked by quality, whose score is unmeasured until the paid test; every clip is
+        # still checked by clip QC.
+        cloud = next(
+            c for c in capabilities.values() if c.selected_default and not c.local_generation
+        )
+        chosen = by_id.get(cloud.model_id)
+        if chosen is None or not chosen["priced"] or (chosen["why"] and not chosen["near"]):
+            hold(
+                "NEEDS_OWNER",
+                "Profilul RunPod selectat nu poate filma această scenă: "
+                + "; ".join(chosen["why"] if chosen else ["indisponibil"]),
+            )
+            return entry
+        take(
+            chosen,
+            "runpod_default",
+            f"Profil RunPod selectat de Proprietar: {cloud.model_id}, "
+            f"{_ro_seconds(chosen['billed_seconds'])}, {_ro_credits(chosen['credits'])}; "
+            "calitatea se verifică pe clip.",
+        )
+    elif any(c.local_generation and c.selected_default for c in capabilities.values()):
+        local = next(c for c in capabilities.values() if c.local_generation and c.selected_default)
+        chosen = by_id.get(local.model_id)
+        if chosen is None or not chosen["priced"] or (chosen["why"] and not chosen["near"]):
+            hold(
+                "NEEDS_OWNER",
+                "Profilul local selectat nu poate filma această scenă: "
+                + "; ".join(chosen["why"] if chosen else ["indisponibil"]),
+            )
+            return entry
+        take(
+            chosen,
+            "local_default",
+            f"Profil local selectat: {local.model_id}. "
+            f"Nativ {local.native_resolution}; montaj la {resolution}. Cost API zero. "
+            "Calitatea se verifică pe clipul rezultat.",
+        )
+        entry["quality"] = None
+        entry["native_resolution"] = local.native_resolution
+        entry["local_generation"] = True
     elif capable:
         chosen = capable[0]
         needs = ", ".join(NEED_LABELS_RO[n] for n in need.needs())
@@ -3147,6 +3264,16 @@ def scene_model_capabilities(
     integration = session.get(Integration, integration_id)
     kind = integration.kind if integration else ""
     catalogue = load_film_models()
+    local_config = (
+        session.get(MediaProductionConfig, integration_id)
+        if kind in ("comfyui", "runpod")
+        else None
+    )
+    cloud_routes: set[str] = set()
+    if kind == "runpod" and integration is not None:
+        from app.providers.runpod.config import RunPodConfig  # noqa: PLC0415
+
+        cloud_routes = set(RunPodConfig.connection(dict(integration.config)).model_routes.values())
     outcomes: dict[str, dict[str, list[int]]] = {}
     for outcome in session.scalars(
         select(ModelOutcome).where(
@@ -3194,6 +3321,23 @@ def scene_model_capabilities(
         record = model_record(session, integration_id, purpose, remote_id)
         # Nothing known: 0.5, below every tier, so the planner never trusts it unasked.
         annotated = research.quality if research.quality is not None else 0.5
+        pinned_score = meta.get("quality_score")
+        if kind == "runpod" and research.quality is None and _score(pinned_score):
+            # config/runpod_models.json: null until the paid test measures it.
+            annotated = float(pinned_score)
+        declared = meta.get("output")
+        output = (
+            (int(declared[0]), int(declared[1]))
+            if isinstance(declared, list | tuple)
+            and len(declared) == 2
+            and all(isinstance(v, int) and not isinstance(v, bool) for v in declared)
+            else None
+        )
+        default_id = (
+            (local_config.image_model_id if purpose == "image" else local_config.model_id)
+            if local_config is not None
+            else None
+        )
         judged = int(record.get("judged") or 0)
         found.append(
             ModelCapability(
@@ -3212,7 +3356,13 @@ def scene_model_capabilities(
                 },
                 admitted=str(row.production_status or "PRODUCTION") in PRODUCTION_READY,
                 quality_source="măsurat" if judged >= 3 else research.source,
-                owner_allowed=catalogue.allows(remote_id),
+                owner_allowed=kind == "comfyui"
+                or remote_id in cloud_routes
+                or catalogue.allows(remote_id),
+                local_generation=kind == "comfyui",
+                selected_default=bool(default_id and default_id == remote_id),
+                native_resolution="×".join(map(str, meta.get("native_resolution", []))) or None,
+                output=output,
             )
         )
     return found

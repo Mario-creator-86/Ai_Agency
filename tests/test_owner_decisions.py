@@ -373,6 +373,8 @@ def test_he_marks_a_waiting_card_done_and_an_agent_withdraws_a_pending_one(engin
     integration_id = _runway(engine)
     decision_id, version = _commercial_card(engine, integration_id)
     _decide(engine, decision_id, version)
+    # His DONE closes it once the studio sees it done (2026-10-04): the connection says «da».
+    _set_commercial(engine, integration_id)
     _decide(engine, decision_id, version + 1, decision="DONE")
     row = _row(engine, decision_id)
     assert row.status == "ACCEPTED" and row.applied["completed_by"] == "owner"
@@ -595,7 +597,6 @@ def test_migration_0054_adds_the_table_with_one_open_card_per_key_and_takes_it_b
     import sqlite3
 
     from app.db import create_db_engine, migrate
-    from app.main import expected_revision
     from sqlalchemy import inspect
     from test_migrations_0049 import _downgrade
 
@@ -603,8 +604,7 @@ def test_migration_0054_adds_the_table_with_one_open_card_per_key_and_takes_it_b
     engine = create_db_engine(f"sqlite:///{path.as_posix()}")
     migrate(engine, "0053_channel_upload_settings")
     assert "owner_decision" not in inspect(engine).get_table_names()
-    migrate(engine)
-    assert expected_revision() == "0054_owner_decisions"
+    migrate(engine, "0054_owner_decisions")
     assert "owner_decision" in inspect(engine).get_table_names()
 
     raw = sqlite3.connect(path)

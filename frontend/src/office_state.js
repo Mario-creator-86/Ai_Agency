@@ -46,13 +46,14 @@ export class OfficeState {
   }
 
   initFromLayout(layout) {
+    const previous = new Map(this.agents.map(a => [a.id, a]));
     this.layout = layout;
-    this.agents = (layout.assignments || []).map(a => ({
-      ...a,
-      id: a.agent_id,
-      runtime_state: a.runtime_state || 'IDLE',
-      lifecycle: a.lifecycle || 'ACTIVE',
-    }));
+    this.agents = (layout.assignments || []).map(a => {
+      const existing = previous.get(a.agent_id);
+      // A layout request may finish after a newer socket event. Keep the newer agent state.
+      const current = existing && Number.isSafeInteger(a.version) && existing.version > a.version ? existing : a;
+      return { ...a, ...current, id: a.agent_id, runtime_state: current.runtime_state || 'UNKNOWN', lifecycle: current.lifecycle || 'UNKNOWN' };
+    });
   }
 
   setAgents(agentsList) {
@@ -60,7 +61,8 @@ export class OfficeState {
     for (const a of agentsList) {
       const id = a.id || a.agent_id;
       if (byId.has(id)) {
-        Object.assign(byId.get(id), a);
+        const existing = byId.get(id);
+        if (!Number.isSafeInteger(a.version) || !(existing.version > a.version)) Object.assign(existing, a);
       }
     }
   }
@@ -139,6 +141,13 @@ export class OfficeState {
   handleDomainEvent(event, live = true) {
     const type = event.event_type;
     const payload = event.payload || {};
+    if (['agent.state_changed', 'agent.paused', 'agent.resumed'].includes(type)) {
+      const agent = this.agents.find(a => a.id === event.aggregate_id);
+      if (agent && Number.isSafeInteger(event.aggregate_version)) {
+        if (agent.version > event.aggregate_version) return;
+        agent.version = event.aggregate_version;
+      }
+    }
 
     if (type === 'agent.state_changed') {
       const agent = this.agents.find(a => (a.id || a.agent_id) === event.aggregate_id);
@@ -166,7 +175,7 @@ export class OfficeState {
     } else if (type === 'agent.run_completed') {
       const agent = this.agents.find(a => (a.id || a.agent_id) === payload.agent_id);
       if (agent) {
-        agent.runtime_state = 'IDLE';
+        // A finished run may overlap newer work. Only the agent's state event/read sets its pose.
         if (payload.status === 'SUCCEEDED' && live) {
           this.addSpeechBubble(agent.id, `${runDoneLine(payload)} ✓`, 4000);
         }

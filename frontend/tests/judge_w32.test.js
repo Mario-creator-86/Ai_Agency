@@ -62,14 +62,14 @@ test('the place that fixes a line is read from its code, and only a failing line
   // an older backend (no `place` field) is read by the check's code
   assert.equal(fixPlaceOf({ name: 'image_provider', ok: false }), FIX_PLACES['settings:media']);
   assert.equal(fixPlaceOf({ name: 'llm_provider', ok: false }).label, 'Setări · Furnizori AI');
-  assert.equal(fixPlaceOf({ name: 'spending_budget', ok: false }).door, 'treasury-modal');
+  assert.equal(fixPlaceOf({ name: 'spending_budget', ok: false }).door, 'autonomy-modal');
   assert.equal(fixPlaceOf({ name: 'image_provider', ok: true }), null);
   // nothing in the page fixes FFmpeg or FFprobe, nor a serial line whose condition is unknown
   for (const name of ['render_engine', 'media_inspection', 'serial_channel']) {
     assert.equal(fixPlaceOf({ name, ok: false }), null, name);
   }
   // W34 (updated on purpose): the model prices have their place in the Treasury now
-  assert.equal(fixPlaceOf({ name: 'model_prices', ok: false })?.section, 'tr-prices');
+  assert.equal(fixPlaceOf({ name: 'model_prices', ok: false })?.section, 'autonomy-prices');
   // every place named is one the page has
   for (const key of Object.values(CHECK_FIX)) assert.ok(FIX_PLACES[key], key);
   for (const place of Object.values(FIX_PLACES)) {
@@ -81,13 +81,13 @@ test('the place that fixes a line is read from its code, and only a failing line
 
 test("the backend's own place is read first; the computer and the API alone are no place in the page", () => {
   // backend/app/runbook/preflight.py (W32): place, place_label, place_section beside each line
-  const budget = { name: 'daily_budget_films', ok: false, place: 'treasury', place_label: 'Trezorerie → Buget și cheltuieli', place_section: 'tr-budget' };
-  assert.deepEqual(fixPlaceOf(budget), { label: 'Trezorerie → Buget și cheltuieli', door: 'treasury-modal', section: 'tr-budget' });
+  const budget = { name: 'daily_budget_films', ok: false, place: 'autonomy', place_label: 'Autonomie → Buget și cheltuieli', place_section: 'autonomy-budget' };
+  assert.deepEqual(fixPlaceOf(budget), { label: 'Autonomie → Buget și cheltuieli', door: 'autonomy-modal', section: 'autonomy-budget' });
   assert.deepEqual(fixPlaceOf({ name: 'image_provider', ok: false, place: 'settings:media', place_label: 'Setări → Video și sunet', place_section: null }), { label: 'Setări → Video și sunet', door: 'settings', tab: 'media' });
   assert.deepEqual(fixPlaceOf({ name: 'character_references', ok: false, place: 'media', place_label: 'Producție media → Character Bible', place_section: 'media-characters-section' }), { label: 'Producție media → Character Bible', door: 'media-modal', tab: 'characters', section: 'media-characters-section' });
   assert.equal(fixPlaceOf({ name: 'render_engine', ok: false, place: 'machine', place_label: 'calculatorul studioului' }), null);
   // W34 (updated on purpose): a line the W32 backend still calls `not_on_page` opens the page's new control
-  assert.equal(fixPlaceOf({ name: 'model_prices', ok: false, place: 'not_on_page', place_label: 'API-ul studioului' })?.door, 'treasury-modal');
+  assert.equal(fixPlaceOf({ name: 'model_prices', ok: false, place: 'not_on_page', place_label: 'API-ul studioului' })?.door, 'autonomy-modal');
   assert.equal(fixPlaceOf({ name: 'serial_channel', ok: false, code: 'serial_channel.missing', place: 'not_on_page', place_label: 'API-ul studioului' }), null);
   // a line the backend gives no place, even one the page would have guessed a place for
   assert.equal(fixPlaceOf({ name: 'image_provider', ok: false, place: null }), null);
@@ -95,7 +95,7 @@ test("the backend's own place is read first; the computer and the API alone are 
     { ...budget, severity: 'INFORMATIONAL', message: 'x', technical: { routes: ['PUT /economy/budget'], settings: ['STUDIO_MOTION_BUDGET_USD'], scopes: [], fields: [], answers: [], paths: [] } },
     { name: 'stop_autonomy', ok: false, severity: 'BLOCKING', message: 'y', place: 'autonomy_switch', place_label: 'comutatorul AUTONOMIE' },
   ] }), escape);
-  assert.match(html, /data-door="treasury-modal" data-section="tr-budget">Deschide Trezorerie → Buget și cheltuieli</);
+  assert.match(html, /data-door="autonomy-modal" data-section="autonomy-budget">Deschide Autonomie → Buget și cheltuieli</);
   assert.match(html, /data-door="autonomy_switch">Arată comutatorul AUTONOMIE</);
   // what the sentence no longer says is the line's tooltip, never printed
   assert.match(html, /title="PUT \/economy\/budget · STUDIO_MOTION_BUDGET_USD"/);

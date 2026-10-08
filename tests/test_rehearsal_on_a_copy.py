@@ -202,8 +202,14 @@ def test_a_whole_day_on_a_copy_of_the_owners_studio(
     headers = {"Authorization": f"Bearer {settings.owner_token.get_secret_value()}"}
     with TestClient(create_app(settings)) as client:
         ready = client.get("/health/ready")
-        assert ready.status_code == 200, ready.text
-        report["credentials"] = ready.json().get("credentials")
+        health = ready.json()
+        # A keyless DB copy has no backup archive. Foundation reads still work while
+        # readiness correctly reports that missing operational prerequisite.
+        assert set(health.get("problems") or []) <= {"BACKUP_MISSING"}, ready.text
+        assert ready.status_code == (503 if health.get("problems") else 200), ready.text
+        assert health["database"] == "HEALTHY", ready.text
+        report["readiness"] = health
+        report["credentials"] = health.get("credentials")
         preflight = client.get("/api/v1/runbook/preflight", headers=headers)
         assert preflight.status_code == 200, preflight.text
         body = preflight.json()

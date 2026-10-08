@@ -1,0 +1,16 @@
+__pycache__
+*.pyc
+*.pyo
+.mypy_cache
+.pytest_cache
+*.part
+*.safetensors
+*.pth
+README.md
+Dockerfile
+.dockerignore
+.env
+.env.*
+*.key
+*.pem
+hf_token

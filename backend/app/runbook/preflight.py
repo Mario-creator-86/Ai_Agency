@@ -142,7 +142,7 @@ def paid_rule_means(
     if daily_budget_usd is None:
         return (
             "Rularea nu cumpără nimic singură: fără un buget zilnic activ, un pas plătit nu "
-            "trece neîntrebat. Bugetul se pune în Trezorerie → Buget și cheltuieli."
+            "trece neîntrebat. Bugetul se pune în Autonomie → Buget și cheltuieli."
         )
     budget = _usd_cents(daily_budget_usd)
     if rule == "OVER_USD" and over_usd is not None:
@@ -195,14 +195,14 @@ TOKEN_UNITS = ("per_1m_input_tokens", "per_1m_output_tokens")
 #: never dressed as a place.
 #:
 #: A part of a door is not a place of its own: it is the door's id with a ``place_section``
-#: (the element's id in index.html) and the words for it — the tuples below. So the treasury's
-#: price form is ``treasury`` + ``tr-prices``, as its budget is ``treasury`` + ``tr-budget``,
+#: (the element's id in index.html) and the words for it — the tuples below.
+#: Autonomy holds ``autonomy-prices`` and ``autonomy-budget``.
 #: and a page that knows the door already opens it at the section.
 #:
 #: W34 gave two lines their places. The Director's leave to approve episodes
 #: (``serial_channel.director_may_not_approve``) is the switch in ``settings:channels``,
 #: «Setări → Canale»; the token prices (``model_prices.unpriced``) are the form in
-#: `PRICES_PLACE`, «Trezorerie → Prețurile modelelor». Only the serial's missing slot
+#: `PRICES_PLACE`, «Autonomie → Prețurile modelelor». Only the serial's missing slot
 #: (``serial_channel.missing``, `POST /publishing/channels/seed`) is still ``not_on_page``.
 PLACES: dict[str, str] = {
     "research": "Cercetare",
@@ -211,7 +211,7 @@ PLACES: dict[str, str] = {
     "workforce": "Angajați",
     "story": "Jurnal",
     "runbook": "Rularea zilei",
-    "treasury": "Trezorerie",
+    "autonomy": "Autonomie",
     **{f"settings:{tab}": label for tab, label in SETTINGS_TABS.items()},
     "autonomy_switch": "comutatorul AUTONOMIE",
     "machine": "calculatorul studioului",
@@ -224,11 +224,11 @@ TECHNICAL_KEYS = ("routes", "settings", "scopes", "fields", "answers", "paths")
 _IMPACT = {"BLOCKING": "blocks", "DEGRADING": "degrades", "INFORMATIONAL": "informs"}
 
 #: The places with a section, and the words the sentences use for them.
-BUDGET_PLACE = ("treasury", "tr-budget", "Trezorerie → Buget și cheltuieli")
+BUDGET_PLACE = ("autonomy", "autonomy-budget", "Autonomie → Buget și cheltuieli")
 SOURCES_PLACE = ("research", "rs-sources", "Cercetare → Surse și afirmații")
 CHARACTERS_PLACE = ("media", "media-characters-section", "Producție media → Character Bible")
 SLOTS_PLACE = ("publishing", "channels-list", "Distribuție → Sloturi de canal")
-PRICES_PLACE = ("treasury", "tr-prices", "Trezorerie → Prețurile modelelor")
+PRICES_PLACE = ("autonomy", "autonomy-prices", "Autonomie → Prețurile modelelor")
 
 #: The routes and settings the sentences used to name, now said in ``technical`` only.
 BUDGET_ROUTE = "PUT /economy/budget"

@@ -40,7 +40,7 @@ test('every instrument on the glass stands inside the room the drawers leave', (
 });
 
 test('the rooms, the drawers and their rails keep one id each', () => {
-  const ids = ['open-research-btn', 'open-media-btn', 'open-publishing-btn', 'open-workforce-btn', 'open-story-btn', 'open-runbook-btn', 'open-treasury-btn',
+  const ids = ['open-research-btn', 'open-media-btn', 'open-publishing-btn', 'open-workforce-btn', 'open-story-btn', 'open-runbook-btn', 'open-autonomy-btn',
     'register-panel', 'governance-panel', 'studio-readout', 'register-rail', 'side-rail', 'register-close', 'side-close', 'topbar-rooms',
     'ledger-count', 'approvals-count', 'studio-about-btn', 'office-canvas', 'scene-viewport'];
   for (const id of ids) assert.equal((HTML.match(new RegExp(`id="${id}"`, 'g')) || []).length, 1, id);

@@ -1,0 +1,305 @@
+{
+  "world": {
+    "width": 960,
+    "height": 640
+  },
+  "building": {
+    "x": 130,
+    "y": 55,
+    "width": 730,
+    "height": 480
+  },
+  "background": "/assets/pixel/studio-detailed.png",
+  "scene_mode": "illustrated_furniture",
+  "floor_count": 3,
+  "desk_width": 106,
+  "life": {
+    "frame_rate": 12,
+    "gesture_cycle_ms": 34000,
+    "work_cycle_ms": 16000,
+    "breath_cycle_ms": 4200,
+    "cloud_cycle_ms": 64000,
+    "cloud_drift_px": 7,
+    "sidewalk_y": 572,
+    "road_y": 590,
+    "pedestrian_count": 4,
+    "pedestrian_cycle_ms": 78000,
+    "cycle_cycle_ms": 46000,
+    "car_cycle_ms": 62000,
+    "bird_cycle_ms": 37000,
+    "bird_y": 14,
+    "cat": {
+      "x": 92,
+      "y": 523
+    },
+    "windows": [
+      {
+        "x": 17,
+        "y": 350
+      },
+      {
+        "x": 924,
+        "y": 353
+      },
+      {
+        "x": 946,
+        "y": 409
+      }
+    ],
+    "palette": {
+      "coat": [
+        "#ac7972",
+        "#688d99",
+        "#b3a17a",
+        "#9481a5"
+      ],
+      "skin": "#e0b58a",
+      "ink": "#272b3c",
+      "car": "#587780",
+      "light": "#ffe5ac"
+    },
+    "extra_cats": [
+      {
+        "x": 788,
+        "y": 557
+      }
+    ]
+  },
+  "outdoors": {
+    "clock": {
+      "x": 902,
+      "y": 477,
+      "radius": 21,
+      "base_y": 581
+    },
+    "interiors": [
+      {
+        "x": 151,
+        "y": 126,
+        "width": 649,
+        "height": 115
+      },
+      {
+        "x": 137,
+        "y": 250,
+        "width": 676,
+        "height": 139
+      },
+      {
+        "x": 137,
+        "y": 400,
+        "width": 676,
+        "height": 138
+      }
+    ],
+    "lamps": [
+      {
+        "x": 87,
+        "y": 440
+      },
+      {
+        "x": 910,
+        "y": 416
+      }
+    ],
+    "sky": {
+      "height": 195,
+      "roof_y": 66,
+      "left_edge": 205,
+      "left_horizon_edge": 148,
+      "right_edge": 770,
+      "roof_slope": 1.05,
+      "moon": {
+        "x": 867,
+        "y": 38,
+        "radius": 12
+      },
+      "sun": {
+        "x": 870,
+        "y": 152,
+        "radius": 20
+      },
+      "star_count": 38,
+      "palette": {
+        "night": [
+          "#11162f",
+          "#252649",
+          "#493653"
+        ],
+        "day": [
+          "#518bc5",
+          "#83b6dc",
+          "#c1d6e1"
+        ],
+        "dusk": [
+          "#534578",
+          "#c16a92",
+          "#f5aa75"
+        ],
+        "cloud_night": "#424164",
+        "cloud_day": "#d6e0f1",
+        "cloud_dusk": "#9f6398",
+        "moon": "#fff1ce",
+        "moon_shade": "#bdc0d4",
+        "star": "#eee4d8"
+      }
+    },
+    "clock_refresh_ms": 1000,
+    "weather_refresh_ms": 600000,
+    "weather_max_age_ms": 1800000,
+    "weather_future_tolerance_ms": 300000,
+    "max_rain_drops": 110,
+    "max_snowflakes": 74,
+    "palette": {
+      "iron": "#252e39",
+      "iron_light": "#566369",
+      "bronze": "#715040",
+      "gold": "#d6aa6a",
+      "cream": "#f7e5bf",
+      "ink": "#493b3e",
+      "night": "#263550",
+      "day": "#8fb8cd",
+      "rain": "#bed0db",
+      "snow": "#ecf0e6",
+      "fog": "#c7cece"
+    }
+  },
+  "stations": [
+    {
+      "desk_id": "desk_research_1",
+      "role": "LeadResearcher",
+      "x": 267,
+      "y": 229,
+      "row": 0,
+      "orientation": "back",
+      "scale": 1.5,
+      "foreground": [
+        {
+          "x": 247,
+          "y": 183,
+          "width": 38,
+          "height": 47
+        }
+      ]
+    },
+    {
+      "desk_id": "desk_research_2",
+      "role": "FactChecker",
+      "x": 465,
+      "y": 229,
+      "row": 0,
+      "orientation": "back",
+      "scale": 1.5,
+      "foreground": [
+        {
+          "x": 447,
+          "y": 184,
+          "width": 36,
+          "height": 45
+        }
+      ]
+    },
+    {
+      "desk_id": "desk_script",
+      "role": "ScriptWriter",
+      "x": 684,
+      "y": 229,
+      "row": 0,
+      "orientation": "back",
+      "scale": 1.5,
+      "foreground": [
+        {
+          "x": 667,
+          "y": 185,
+          "width": 38,
+          "height": 46
+        }
+      ]
+    },
+    {
+      "desk_id": "desk_director",
+      "role": "Director",
+      "x": 730,
+      "y": 375,
+      "row": 1,
+      "orientation": "back",
+      "scale": 1.5,
+      "foreground": [
+        {
+          "x": 716,
+          "y": 318,
+          "width": 33,
+          "height": 55
+        }
+      ]
+    },
+    {
+      "desk_id": "desk_audio",
+      "role": "VoiceArtist",
+      "x": 360,
+      "y": 375,
+      "row": 1,
+      "orientation": "back",
+      "scale": 1.35,
+      "foreground": [
+        {
+          "x": 344,
+          "y": 350,
+          "width": 31,
+          "height": 25
+        }
+      ]
+    },
+    {
+      "desk_id": "desk_video",
+      "role": "VideoEditor",
+      "x": 300,
+      "y": 525,
+      "row": 2,
+      "orientation": "back",
+      "scale": 1.5,
+      "foreground": [
+        {
+          "x": 282,
+          "y": 465,
+          "width": 39,
+          "height": 58
+        }
+      ]
+    },
+    {
+      "desk_id": "desk_publish",
+      "role": "Publisher",
+      "x": 453,
+      "y": 375,
+      "row": 1,
+      "orientation": "back",
+      "scale": 1.35,
+      "foreground": [
+        {
+          "x": 441,
+          "y": 354,
+          "width": 25,
+          "height": 21
+        }
+      ]
+    },
+    {
+      "desk_id": "desk_accounting",
+      "role": "Accountant",
+      "x": 482,
+      "y": 525,
+      "row": 2,
+      "orientation": "back",
+      "scale": 1.35,
+      "foreground": [
+        {
+          "x": 467,
+          "y": 501,
+          "width": 30,
+          "height": 24
+        }
+      ]
+    }
+  ]
+}

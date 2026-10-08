@@ -26,6 +26,7 @@ import logging
 import threading
 import time
 from collections.abc import Callable
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import urlencode
 
@@ -104,6 +105,7 @@ def parse_observation(data: Any, source: str) -> dict[str, Any]:
         "precipitation_mm": number("precipitation"),
         "is_day": bool(is_day) if isinstance(is_day, int) else None,
         "observed_at": observed_at,
+        "observed_at_utc": observation_utc(observed_at, data.get("utc_offset_seconds")),
         "apparent_temperature_c": number("apparent_temperature"),
         # the 15-minute block's sums, in the service's own units (mm, snowfall in cm)
         "rain_mm": number("rain"),
@@ -117,6 +119,21 @@ def parse_observation(data: Any, source: str) -> dict[str, Any]:
         "precip_last_3h_mm": precipitation_last_hours(data.get("hourly"), observed_at, 3),
         "source": source,
     }
+
+
+def observation_utc(observed_at: str | None, offset_seconds: Any) -> str | None:
+    """Make provider timestamps unambiguous for browsers in other time zones."""
+    if not observed_at:
+        return None
+    try:
+        observed = datetime.fromisoformat(observed_at)
+        if observed.tzinfo is None:
+            if not isinstance(offset_seconds, int) or isinstance(offset_seconds, bool):
+                return None
+            observed = observed.replace(tzinfo=timezone(timedelta(seconds=offset_seconds)))
+        return observed.astimezone(UTC).isoformat()
+    except (ValueError, OverflowError):
+        return None
 
 
 def precipitation_last_hours(hourly: Any, observed_at: str | None, hours: int) -> float | None:
@@ -199,7 +216,7 @@ def current_weather(
         return unavailable("not_configured")
     latitude = float(settings.office_latitude)
     longitude = float(settings.office_longitude)
-    key = (host, round(latitude, 4), round(longitude, 4))
+    key = (host, round(latitude, 4), round(longitude, 4), settings.timezone)
     now = clock()
     with _lock:
         if (

@@ -902,6 +902,7 @@ def apply_llm_allocation(
                 multi_llm_strategy=strategy,
                 additional_llm_policy=entry.get("policy", "IMPORTANT_ONLY"),
                 min_importance=entry.get("min_importance", "STRATEGIC"),
+                assignment_origin="SEED_ALLOCATION",
             )
         except ValueError as exc:
             skipped.append({"role": entry["role"], "why": str(exc)[:160]})

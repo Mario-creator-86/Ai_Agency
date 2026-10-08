@@ -265,19 +265,8 @@ test('a frame is kept rarely while the stream plays, and only then', (t) => {
   assert.equal(kept.length, 2, 'nothing is kept while the stream is not live');
 });
 
-test('the page reads the kept frame while the title is up, keeps new ones, and opens the door both ways', () => {
-  // W22: read by one function, again after a sign-out, and first by the title
-  assert.match(MAIN, /let keptFrame = readKeptFrame\(\);/);
-  assert.match(MAIN, /readKept\(browserStore\(\)\)/);
-  assert.match(MAIN, /writeKept\(browserStore\(\), record\)/);
-  assert.match(MAIN, /liveStream\.showKept\(kept\.image, keptCaption\(/);
-  assert.match(MAIN, /liveStream\.doorway\('out'\)/);
-  assert.match(MAIN, /liveStream\.doorway\('in'\)/);
-  assert.match(SCENE_CSS, /\.live-stream-layer\.kept \.live-stream-still \{ filter: var\(--kept-dim\); \}/);
-  assert.match(SCENE_CSS, /\[data-replay\] \.live-stream-layer\.door-out \{ visibility: visible;/);
-  assert.match(SCENE_CSS, /@media \(prefers-reduced-motion: reduce\) \{\r?\n  \.scene-viewport \.stream-plaque,[\s\S]*?door-in \{ animation: none; \}/);
-  assert.match(STYLE, /--dur-door:\s+620ms;/);
-});
+test('the active pixel page writes no cached video frames', () => { const main = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8'); assert.doesNotMatch(main, /writeKept\(|readKeptFrame\(/); assert.match(main, /titleScreen\.show\(\)/); });
+
 
 /* ------------------------------------------------------------------ the plaques -- */
 
@@ -397,12 +386,12 @@ test('a plaque never covers an employee, stays in the room, and gives up rather 
   assert.equal(placePlaque({ x: 960, y: 10, w: 30, h: 20 }, size, ['on', 'right'], room, []), null);
 });
 
-test('the plaques are shown only while the live stream is what is seen, and step aside for their face\'s readout', () => {
-  assert.match(MAIN, /viewport\.dataset\.stream === 'live' && !replaying\(\)/);
-  assert.match(MAIN, /streamPlaques\.suppress\(target && target\.kind !== 'agent'/);
-  // W22: hidden over the page's own replay; over the replay in the Unreal building they stay
-  assert.match(SCENE_CSS, /\.scene-viewport\[data-replay\]:not\(\[data-replay-look="unreal"\]\) \.stream-plaques \{ visibility: hidden; \}/);
-  assert.match(SCENE_CSS, /\.stream-plaques \{ position: absolute; inset: 0; z-index: 3; pointer-events: none;/);
+test('the active pixel page has no legacy plaque overlay', () => {
+  assert.doesNotMatch(MAIN, /streamPlaques|layoutPlaques|dataset\.stream/);
+  const pixel = fs.readFileSync(new URL('../src/pixel_office.js', import.meta.url), 'utf8');
+  assert.match(pixel, /selected = p\.id === this\.selected/);
+  assert.match(pixel, /this\.bubbles\.find/);
+  assert.match(pixel, /bubble && selected/);
 });
 
 /* ------------------------------------------------------------------ what is live -- */
@@ -424,6 +413,6 @@ test('«live» on the slate only while the picture and the data both are; otherw
   assert.equal(roomCaption(8, 'none'), roomCaption(8, false));
   assert.equal(roomCaptionShort(8, 'stream'), '8 angajați · imagine live');
   assert.equal(roomCaptionShort(8, 'data'), '8 angajați · date live');
-  assert.match(MAIN, /const scope = liveScope\(liveSignals\);/);
-  assert.match(MAIN, /canvasLabel\(scope === 'all'\)/);
+  assert.match(MAIN, /const live = fresh && liveSignals\.socket === 'open';/);
+  assert.match(MAIN, /Decor ilustrat\. Stările angajaților vin din studioul conectat/);
 });

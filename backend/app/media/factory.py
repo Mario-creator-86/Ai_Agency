@@ -245,6 +245,22 @@ def image_provider(engine: Engine, vault: CredentialVault) -> ImageProvider | No
         if row is None:
             return None
         kind, config = row.kind, dict(row.config)
+        if kind == "runpod":
+            from app.providers.runpod.wiring import connection  # noqa: PLC0415
+
+            production = session.get(MediaProductionConfig, row.id)
+            model = production.image_model_id if production else None
+            if production_resource(session, row.id, "MODEL", model, "image") is None:
+                return None
+            return connection(engine, vault, row, model, "image")
+        if kind == "comfyui":
+            from app.providers.comfyui import ComfyImageAdapter  # noqa: PLC0415
+
+            production = session.get(MediaProductionConfig, row.id)
+            model = production.image_model_id if production else None
+            if production_resource(session, row.id, "MODEL", model, "image") is None:
+                return None
+            return _from_connection(ComfyImageAdapter(config, model), row.id)
         metadata: dict = {}
         if kind == "runway":
             production = session.get(MediaProductionConfig, row.id)
@@ -286,6 +302,22 @@ def image_provider_for(
         if row is None or row.status not in VERIFIED_STATUSES:
             return None
         kind, config = row.kind, dict(row.config)
+        if kind == "runpod":
+            from app.providers.runpod.wiring import connection  # noqa: PLC0415
+
+            if (
+                production_resource(session, row.id, "MODEL", resolved.get("model_id"), "image")
+                is None
+            ):
+                return None
+            return connection(engine, vault, row, resolved.get("model_id"), "image")
+        if kind == "comfyui":
+            from app.providers.comfyui import ComfyImageAdapter  # noqa: PLC0415
+
+            model = resolved.get("model_id")
+            if production_resource(session, row.id, "MODEL", model, "image") is None:
+                return None
+            return _from_connection(ComfyImageAdapter(config, model), row.id)
         secrets = vault.decrypt(row.encrypted_secrets)
         metadata: dict = {}
         if kind == "runway":
@@ -478,11 +510,24 @@ def video_provider_for(
         if row is None or row.status not in VERIFIED_STATUSES:
             return None
         kind = row.kind
+        if kind == "runpod":
+            from app.providers.runpod.wiring import connection  # noqa: PLC0415
+
+            if (
+                production_resource(session, row.id, "MODEL", resolved.get("model_id"), "video")
+                is None
+            ):
+                return None
+            return connection(engine, vault, row, resolved.get("model_id"), "video")
         secrets = vault.decrypt(row.encrypted_secrets)
         resource = production_resource(session, row.id, "MODEL", resolved.get("model_id"), "video")
         if resource is None:
             # A discovered kind generates only with a model the account was seen to have.
             return None
+        if kind == "comfyui":
+            from app.providers.comfyui import ComfyVideoAdapter  # noqa: PLC0415
+
+            return _from_connection(ComfyVideoAdapter(dict(row.config), resource.remote_id), row.id)
         metadata = _runway_metadata(resource)
     try:
         if kind == "runway":
@@ -765,7 +810,7 @@ def media_readiness(engine: Engine, vault: CredentialVault) -> dict[str, dict]:
                     )
                     if not ok:
                         status, needs = "NO_DEFAULT", "un model și o voce implicită"
-                elif row.kind == "runway":
+                elif row.kind in ("runway", "comfyui"):
                     ok = production is not None and (
                         production_resource(
                             session, row.id, "MODEL", production.image_model_id, "image"
@@ -777,6 +822,24 @@ def media_readiness(engine: Engine, vault: CredentialVault) -> dict[str, dict]:
                 elif row.kind == "openai_media":
                     if not (row.config or {}).get("model"):
                         status, needs = "NO_DEFAULT", "un model configurat"
+                elif row.kind == "runpod" and purpose == "image":
+                    # RunPod Serverless: verified (endpoints read, never a /run), its model
+                    # selected, and the Owner's bucket configured (RunPod keeps a result 30 min).
+                    from app.providers.runpod.config import RunPodConfig  # noqa: PLC0415
+
+                    config = RunPodConfig.from_integration(
+                        dict(row.config or {}), vault.decrypt(row.encrypted_secrets)
+                    )
+                    selected = production is not None and (
+                        production_resource(
+                            session, row.id, "MODEL", production.image_model_id, "image"
+                        )
+                        is not None
+                    )
+                    if not selected:
+                        status, needs = "NO_DEFAULT", "un model imagine implicit"
+                    elif not config.ready_for_generation:
+                        status, needs = "NO_DEFAULT", "bucketul de rezultate (S3 / R2) configurat"
                 else:
                     status = "NO_ADAPTER"
             result[purpose] = {

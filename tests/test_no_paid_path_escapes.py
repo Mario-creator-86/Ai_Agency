@@ -60,6 +60,7 @@ FREE_PROVIDER_MODULES = frozenset(
         "app.providers.registry",
         "app.providers.retry",
         "app.providers.media_http",
+        "app.providers.runpod.config",  # settings and validation; no vendor transport
     }
 )
 
@@ -298,6 +299,28 @@ def _edges(source: _Source, qualname: str) -> list[_Edge]:
         if annotation is not None
         for inner in ast.walk(annotation)
     }
+
+    # The second argument of a builtin type check names types without constructing them.
+    # Only plain names/attributes/tuples qualify: a nested constructor still counts as paid.
+    def type_reference(value: ast.AST) -> bool:
+        return (
+            isinstance(value, ast.Name)
+            or (isinstance(value, ast.Attribute) and type_reference(value.value))
+            or (isinstance(value, ast.Tuple) and all(type_reference(v) for v in value.elts))
+        )
+
+    for holder in ast.walk(node):
+        if (
+            isinstance(holder, ast.Call)
+            and isinstance(holder.func, ast.Name)
+            and holder.func.id in {"isinstance", "issubclass"}
+            and holder.func.id not in local
+            and holder.func.id not in top
+            and holder.func.id not in source.top_defs.get(module, ())
+            and len(holder.args) == 2
+            and type_reference(holder.args[1])
+        ):
+            annotations.update(id(inner) for inner in ast.walk(holder.args[1]))
     for child in ast.walk(node):
         if id(child) in annotations:
             continue
@@ -509,6 +532,35 @@ def test_the_scan_finds_every_vendor(source):
     )
 
 
+def test_type_checks_do_not_construct_adapters_but_nested_calls_do(source):
+    module = "app.media.local_media"
+    qualname = f"{module}.is_local"
+    original = source.functions[qualname]
+    assert not any(
+        e.target == "app.providers.comfyui.ComfyConnection" for e in _edges(source, qualname)
+    )
+    source.functions[qualname] = (
+        module,
+        ast.parse(
+            "def is_local(adapter):\n"
+            "    from app.providers.comfyui import ComfyConnection\n"
+            "    return isinstance(adapter, ComfyConnection())\n"
+        ).body[0],
+    )
+    try:
+        assert any(
+            e.target == "app.providers.comfyui.ComfyConnection" for e in _edges(source, qualname)
+        )
+    finally:
+        source.functions[qualname] = original
+
+
+def test_runpod_transport_still_counts_as_paid(source):
+    assert "app.providers.runpod.client.RunPodClient" in paid_targets(source)
+    assert "app.providers.runpod.provider.RunPodGenerationProvider" in paid_targets(source)
+    assert "app.providers.runpod.config.RunPodConfig" not in paid_targets(source)
+
+
 def test_every_paid_site_the_day_can_reach_is_behind_a_fake(source):
     """Each paid call site in backend/app is faked by the end-to-end fixture or is not on
     the day's path. A sixth vendor call added to the day without a fake fails here."""
@@ -570,7 +622,16 @@ def test_every_fake_names_something_that_exists(source):
 #: The adapter methods that spend: a still, a shot, candidates, a voice, a language model's
 #: tokens; and the upload, which spends nothing but must pass the publishing gate.
 PAID_METHODS = frozenset(
-    {"create_generation", "generate_image", "generate_candidates", "synthesize", "generate"}
+    {
+        "create_generation",
+        "generate_image",
+        "generate_candidates",
+        "synthesize",
+        "generate",
+        # A RunPod Serverless round (2026-10-08): one batch job carrying every item of a paid
+        # round, sent only inside an approved paid step's GPU session (`media.gpu_batch`).
+        "submit_batch",
+    }
 )
 GATED_ONLY_METHODS = frozenset({"upload_video"})
 #: The Policy Kernel and the gates in front of money or a channel. `legacy_render_vendors` is
@@ -880,3 +941,97 @@ def test_the_scan_names_a_paid_call_when_its_door_is_taken_away(routes):
         PAID_METHODS,
     )
     assert any(method == "create_generation" for _site, method, _chain in escaped), escaped
+
+
+def test_runpod_rounds_count_as_paid_and_their_modules_as_vendors(source):
+    """2026-10-08: RunPod Serverless buys a round as one batch job (`batch.submit_batch`,
+    through `media.gpu_batch.run_rounds`), with its inputs in the Owner's bucket (`s3`) and
+    its GPU switched by `endpoint`/`gpu_session`. Each of those modules is a vendor to this
+    scan, and the round's call is a paid method the gate and booking checks follow."""
+    for module in (
+        "app.providers.runpod.batch",
+        "app.providers.runpod.s3",
+        "app.providers.runpod.endpoint",
+        "app.providers.runpod.gpu_session",
+    ):
+        assert module in source.paths, module
+        assert _paid_module(source, module), module
+    assert "submit_batch" in PAID_METHODS
+    callers = {
+        qualname
+        for qualname, (module, node) in source.functions.items()
+        if not _paid_module(source, module) and "submit_batch" in _paid_calls(node, PAID_METHODS)
+    }
+    assert callers == {"app.media.gpu_batch.run_rounds"}, callers
+
+
+def test_a_runpod_round_with_the_real_transport_never_leaves_the_machine(engine, tmp_path):
+    """The backstop: a round handed the studio's real transport in a test is refused by the
+    network guard before any byte reaches RunPod or the bucket; nothing is reserved as sent."""
+    from decimal import Decimal
+
+    from app.providers.media_http import MediaProviderError
+    from app.providers.runpod.adapters import RunPodImageAdapter
+    from app.providers.runpod.batch import BatchRequest
+    from app.providers.runpod.config import RunPodConfig
+    from app.providers.runpod.jobs import GenerationJob
+    from sqlalchemy import select
+    from sqlalchemy.orm import Session as SqlSession
+
+    adapter = RunPodImageAdapter(
+        RunPodConfig(
+            _env_file=None,
+            enabled=True,
+            mode="serverless",
+            api_key="fake-key",  # pragma: allowlist secret — synthetic test value
+            stills_endpoint_id="stills-ep",
+            s3_endpoint_url="https://account.r2.example",
+            s3_bucket="amn-films",
+            s3_access_key_id="AKIDEXAMPLE",  # pragma: allowlist secret
+            s3_secret_access_key="synthetic",  # pragma: allowlist secret
+            max_retries=0,
+        ),
+        engine,
+        storage_root=tmp_path,
+    )
+    picture = b"\x89PNG\r\n\x1a\n" + b"\0" * 32
+
+    noted: list[str] = []
+    submitted: list[object] = []
+
+    class Session:
+        id = "s"
+
+        def note_job(self, job, *, session=None):
+            noted.append(job)
+
+    # The guard refuses the lookup with an AssertionError; the adapter may wrap it.
+    with pytest.raises((MediaProviderError, AssertionError)):
+        adapter.submit_batch(
+            [
+                BatchRequest(
+                    "image",
+                    "film",
+                    "1",
+                    0,
+                    1,
+                    "Qwen-Image-2512",
+                    "words",
+                    None,
+                    1,
+                    1530,
+                    2720,
+                    None,
+                    None,
+                    (picture,),
+                    None,
+                    Decimal(0),
+                )
+            ],
+            session=Session(),
+            on_submitted=submitted.append,
+        )
+    # Refused at the bucket upload (the first byte out): no job id, no take, no RunPod call.
+    assert noted == [] and submitted == []
+    with SqlSession(engine) as s:
+        assert all(row.remote_job_id is None for row in s.scalars(select(GenerationJob)))

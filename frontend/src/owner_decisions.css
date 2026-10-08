@@ -149,6 +149,7 @@ body:has(#workspace[hidden]) #decisions-button { display: none; }
 .decision-outcomes strong { color: var(--ink); font-weight: var(--w-semi); }
 .decision-guided { display: grid; gap: var(--s1); padding: var(--s2) var(--s3); border: 1px solid var(--info-line); border-radius: var(--radius-sm); background: var(--info-bg); }
 .decision-applied { margin: 0; font-size: var(--fs-body); color: var(--ink-2); }
+.decision-reopened { margin: 0; font-size: var(--fs-meta); line-height: 1.5; color: var(--ink-2); overflow-wrap: anywhere; }
 .decision-error { margin: 0; padding: var(--s2) var(--s3); border: 1px solid var(--alert-line); border-radius: var(--radius-sm); background: var(--alert-bg); color: var(--alert-ink); font-size: var(--fs-meta); }
 
 /* The options: the recommended one lit in the warm accent; the chosen one ringed in the teal. */

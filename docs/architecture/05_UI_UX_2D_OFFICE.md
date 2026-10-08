@@ -1,5 +1,78 @@
 # UI/UX — Top-Down 2D Office v3
 
+## Current Owner scope — simple pixel studio, 2026-10-08
+
+The Owner explicitly supersedes the earlier top-down/3D headquarters and active Treasury,
+virtual financing and VendorShop product requirements. The active interface is an original
+browser-rendered, side-view pixel studio; no Blender, Unreal or GPU stream is required.
+Its agents, work states, conversations and replay facts come from backend records. The
+illustrated scenery is decorative, never evidence of a real room or live GPU. The Owner's
+2026-10-08 outdoor-clock refinement adds current local time, computed solar lighting and
+configured provider weather; unavailable/stale or historical weather is explicitly unknown.
+The original artwork remains intact. Record: ADR-PIXEL-OUTDOOR-CLOCK-WEATHER.
+
+Retain the existing media pipeline, real provider costs and USD spending limits, research
+provenance, QA, encrypted credentials, Owner policy/approvals/STOP, durable workers,
+scheduling and recovery. Public Treasury/funding/minting/FX/virtual-ledger commands and
+screens are retired. Historical data and internal accounting compatibility remain preserved.
+Existing permissions are not raised automatically by developer AUTORUN.
+
+This scope takes precedence over conflicting visual/economy requirements below and in the
+older architecture package. Record: ../project/16_DECISION_LOG.md, ADR-SIMPLE-PIXEL-STUDIO.
+Current operator entry point: ../project/SIMPLE_STUDIO_GUIDE.md.
+
+### Personal seated employees — Owner refinement, 2026-10-08
+
+Each employee sits at their own reserved desk. Pause, runtime transitions, later hiring and
+offboarding retain the other employees' places; former staff records reserve their seat.
+Additional staff have distinct desks on accessible annex pages. The shared geometry lives
+in `config/pixel_office.json`; desk ownership is backend presentation metadata, not a capability.
+Backend runtime/lifecycle events and versioned office reads drive WORKING, THINKING, REVIEWING,
+IDLE, BLOCKED, ERROR and PAUSED poses. Real Character Bible records bind looks by employee_id.
+Blinking, breathing and small idle glances are cosmetic animations requested by the Owner;
+they do not claim work or progress. Stale/disconnected data, replay and reduced motion stop
+character gestures. Paints are bounded and stop while the page is hidden. Existing menus,
+inspector/chat, policy gates and backend work execution remain authoritative.
+
+### Preserve the furnished studio — Owner refinement, 2026-10-08
+
+The Owner approves 94139.jpg and asks to keep its rich interiors, plants, warm lighting,
+roof and neighbourhood. Add one furnished floor to seat the eight existing roles without
+clearing the original library, long desk, private office, editing equipment, drawing table
+or lounge. The active scene has three floors. Retain original sources; the earlier cleared
+studio-desks scene is historical. Use the illustrated furniture itself, with back-facing
+seated employees and chair/foreground occlusion; do not cover it with generic drawn desks.
+Personal reservations and authoritative backend poses remain unchanged. Show names on
+hover/selection, and keep every employee's actual state readable in the roster/inspector.
+Record: ../project/16_DECISION_LOG.md, ADR-PRESERVE-DETAILED-STUDIO.
+
+### Outdoor clock and actual weather — Owner refinement, 2026-10-08
+
+Keep București / Europe/Bucharest and the configured latitude/longitude. Add an original
+pixel brass clock outside the house, with analog hands and a legible HH:MM plate. Both read
+the same actual local instant, including DST. Refresh time once per second; draw hands and
+solar lighting at minute precision. Solar position follows the existing real-date/location
+calculation, independently of weather availability. This tints the painting; it does not
+reconstruct a physical sky or repaint furnishings.
+
+The page reads only authenticated GET /api/v1/office/weather on its own origin. Reuse the
+existing configured Open-Meteo-compatible provider and cached backend, not a second weather
+service. Weather updates every ten minutes; provider code/intensity determines cloud tint,
+rain/drizzle/storm, fog or snow. Protect configured furnished interior rectangles from all
+outdoor lighting and weather layers. Keep particle counts bounded and render at most 12 fps.
+
+Missing or unreachable weather draws no precipitation. Expire observations and receipts
+after 30 minutes; add optional observed_at_utc from the provider offset so browser timezone
+cannot disguise stale data. Compatible responses without UTC expire by receipt. Historical
+replay weather is unknown; replay lighting may follow its stored instant. Reduced motion,
+stale/disconnected backend data and hidden/parked pages stop weather animation. Hidden/logout
+pages stop timers and polling. Clear cached weather on logout/location change and discard
+late responses from the preceding context. Clock updates still work with agents at rest.
+
+Geometry, masks, palette, refresh/age limits and particle caps live in config/pixel_office.json.
+Existing staff, menus, models, permissions, workers and spending rules remain authoritative.
+Source reference: https://open-meteo.com/en/docs. Evidence: CURRENT_STATUS.md.
+
 ## 1. Product role
 
 The 2D office is a **primary product interface**, not a decorative screensaver.

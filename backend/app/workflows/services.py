@@ -789,6 +789,11 @@ def scheduler_tick(
     triggered: list[dict] = []
 
     with Session(engine) as session, session.begin():
+        # The tick reads the policy and the jobs, then claims their leases. Without the write
+        # lock first, a write committed in between (the outbox, a start-up pass) left its read
+        # snapshot stale and SQLite refused the claim at once: «database is locked» at every
+        # start-up of 10-02 and 10-03 (`worker_pass_failed`), whatever `busy_timeout` says.
+        lock_for_write(session)
         policy = session.get(OwnerPolicy, 1)
         if policy and policy.autonomy_stopped:
             return []

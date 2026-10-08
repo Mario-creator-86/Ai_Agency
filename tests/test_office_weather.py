@@ -3,7 +3,7 @@
 from types import SimpleNamespace
 
 import pytest
-from app.office.weather import WMO, current_weather, parse_observation, reset_cache
+from app.office.weather import WMO, current_weather, observation_utc, parse_observation, reset_cache
 from app.providers.media_http import MediaProviderError
 
 
@@ -34,6 +34,67 @@ OBSERVATION = {
         "precipitation": 1.2,
     }
 }
+
+
+@pytest.mark.parametrize(
+    ("stamp", "offset", "expected"),
+    [
+        ("2026-10-08T15:15", 10800, "2026-10-08T12:15:00+00:00"),
+        ("2026-12-08T15:15", 7200, "2026-12-08T13:15:00+00:00"),
+        ("2026-10-08T00:15", 10800, "2026-10-07T21:15:00+00:00"),
+        ("2026-10-08T15:15+03:00", None, "2026-10-08T12:15:00+00:00"),
+        ("2026-10-08T15:15Z", None, "2026-10-08T15:15:00+00:00"),
+        ("2026-10-08T15:15", None, None),
+        ("2026-10-08T15:15", True, None),
+        ("2026-10-08T15:15", 999999, None),
+        ("invalid", 10800, None),
+        (None, 10800, None),
+    ],
+)
+def test_observation_timestamp_is_unambiguous(stamp, offset, expected):
+    assert observation_utc(stamp, offset) == expected
+
+
+def test_parser_retains_local_time_and_exposes_utc_age():
+    result = parse_observation({**OBSERVATION, "utc_offset_seconds": 10800}, "test")
+    assert result["observed_at"] == "2026-09-13T18:15"
+    assert result["observed_at_utc"] == "2026-09-13T15:15:00+00:00"
+
+
+def test_timezone_changes_do_not_reuse_other_zones_cached_observation():
+    calls = []
+    config = settings()
+
+    def fetch(*args):
+        calls.append(args)
+        return OBSERVATION
+
+    current_weather(config, fetch=fetch)
+    config.timezone = "UTC"
+    current_weather(config, fetch=fetch)
+    assert [args[3] for args in calls] == ["Europe/Bucharest", "UTC"]
+
+
+def test_weather_endpoint_is_owner_only_and_serves_cached_utc_metadata(
+    client, headers, settings, monkeypatch
+):
+    from app.office import weather
+
+    calls = []
+    monkeypatch.setattr(settings, "office_weather_host", "api.example-weather.test")
+
+    def transport(*args, **kwargs):
+        calls.append(args)
+        return {**OBSERVATION, "utc_offset_seconds": 10800}, 200, {}
+
+    monkeypatch.setattr(weather, "request", transport)
+    assert client.get("/api/v1/office/weather").status_code == 401
+    assert not calls
+    response = client.get("/api/v1/office/weather", headers=headers)
+    assert response.status_code == 200
+    assert response.json()["observed_at_utc"] == "2026-09-13T15:15:00+00:00"
+    assert client.get("/api/v1/office/weather", headers=headers).json() == response.json()
+    assert len(calls) == 1
 
 
 def test_without_a_configured_service_the_weather_is_unavailable():

@@ -594,6 +594,91 @@ def test_every_paid_step_asks_in_every_mode(engine, mode, action):
     assert verdict["approval_id"] is not None
 
 
+# ------------------------------------- Owner 2026-10-05: free generation never waits ------
+#
+# «Pe CEO autonom îmi cere acordul DOAR dacă generează imagini sau video cu bani; altfel
+# totul se face automat.» A paid-media step whose cap is exactly 0 — the local ComfyUI
+# selection — cannot spend anything, so under AUTONOMOUS_CEO the mode alone decides it and
+# no question is written, whatever `paid_media_approval` says. A step that can spend even a
+# cent still asks, and outside AUTONOMOUS_CEO nothing changes.
+
+
+def test_a_zero_cap_step_runs_without_asking_the_autonomous_ceo(engine):
+    a_studio_that_asks(engine, "AUTONOMOUS_CEO")
+    paid_policy(engine, "EVERY_PAID_STEP")
+
+    verdict = ask(engine, MOTION, "board-1", cost_usd=0, context=plan())
+
+    assert verdict == {
+        "action": MOTION,
+        "tier": "T3",
+        "mode": "AUTONOMOUS_CEO",
+        "allowed": True,
+        "status": "ALLOWED",
+        "reason": "",
+        "approval_id": None,
+    }
+    assert rows(engine) == [], "a free step wrote the Owner a question"
+
+
+@pytest.mark.parametrize("action", [STILLS, TEST_SHOT, REDO])
+def test_every_free_step_is_automatic_for_the_autonomous_ceo(engine, action):
+    a_studio_that_asks(engine, "AUTONOMOUS_CEO")
+    paid_policy(engine, "EVERY_PAID_STEP")
+
+    verdict = ask(engine, action, "board-1", cost_usd=0.0, context={"plan_hash": PLAN_A})
+
+    assert verdict["allowed"] is True
+    assert rows(engine) == []
+
+
+@pytest.mark.parametrize("mode", ["MANUAL", "SUPERVISED"])
+def test_a_free_step_still_asks_outside_the_autonomous_ceo(engine, mode):
+    """His rule names the CEO-autonomous mode; the modes he chose to be asked stay asking."""
+    a_studio_that_asks(engine, mode)
+    paid_policy(engine, "EVERY_PAID_STEP")
+
+    verdict = ask(engine, MOTION, "board-1", cost_usd=0, context=plan())
+
+    assert verdict["allowed"] is False
+    assert verdict["status"] == "NEEDS_APPROVAL"
+    assert len(rows(engine)) == 1
+
+
+def test_a_step_that_can_spend_still_asks_the_autonomous_ceo(engine):
+    a_studio_that_asks(engine, "AUTONOMOUS_CEO")
+    paid_policy(engine, "EVERY_PAID_STEP")
+
+    verdict = ask(engine, MOTION, "board-1", cost_usd=0.01, context=plan())
+
+    assert verdict["status"] == "NEEDS_APPROVAL"
+
+
+def test_a_free_step_without_a_plan_is_still_not_reasoned_about(engine):
+    """Free or not, the studio acts only on the plan of his it can name."""
+    a_studio_that_asks(engine, "AUTONOMOUS_CEO")
+    paid_policy(engine, "EVERY_PAID_STEP")
+
+    verdict = ask(engine, MOTION, "board-1", cost_usd=0, context=None)
+
+    assert verdict["status"] == "BLOCKED_NO_PLAN"
+    assert rows(engine) == []
+
+
+def test_a_free_step_needs_no_daily_budget_in_production(engine):
+    """MONEY-06's fail-closed guards unasked SPENDING; a 0-cap step spends nothing, so the
+    missing daily budget does not block it."""
+    a_studio_that_asks(engine, "AUTONOMOUS_CEO")
+    paid_policy(engine, "EVERY_PAID_STEP")
+    with Session(engine) as session, session.begin():
+        session.get(OwnerPolicy, 1).environment = "PRODUCTION"
+
+    verdict = ask(engine, MOTION, "board-1", cost_usd=0, context=plan())
+
+    assert verdict["allowed"] is True
+    assert rows(engine) == []
+
+
 def test_the_step_is_named_by_the_action_when_the_caller_leaves_it_out(engine):
     a_studio_that_asks(engine, "AUTONOMOUS_CEO")
 

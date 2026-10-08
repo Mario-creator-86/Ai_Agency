@@ -145,11 +145,13 @@ def request(
     expect_json: bool = True,
     public_only: bool = False,
     total_seconds: float | None = None,
+    allowed_statuses: tuple[int, ...] = (200,),
+    connect_before_send: bool = False,
 ) -> tuple[Any, bytes, str]:
     """Make one HTTPS request and return (parsed json | None, raw body, content type).
 
     Only HTTPS, only the host named by the adapter, and a hard cap on the response size. A
-    non-200 status raises rather than returning an empty result that a caller might store.
+    status outside ``allowed_statuses`` raises; its default remains HTTP 200 only.
     ``public_only`` is for a host the vendor's answer named rather than the code (an output
     URL): the name must resolve to public addresses only, and the socket is pinned to the
     one checked.
@@ -171,13 +173,23 @@ def request(
     else:
         connection = http.client.HTTPSConnection(host, timeout=timeout)
     try:
-        # Two failure phases, told apart for the retry policy. `request` connects and sends:
-        # a failure here means the vendor never saw the request. From `getresponse` on, it
-        # did, and a billed request that then goes quiet may have been served.
+        if connect_before_send:
+            try:
+                connection.connect()
+            except (OSError, http.client.HTTPException) as exc:
+                raise MediaProviderError(f"{host} could not be reached", unsent=True) from exc
+        # The optional explicit connect separates a proven unsent request from a partial
+        # send. Existing adapters retain their original request behaviour by default.
         try:
             connection.request(method, path, body, headers)
         except (OSError, http.client.HTTPException) as exc:
-            raise MediaProviderError(f"{host} could not be reached", unsent=True) from exc
+            # With an explicit connection, a send error can follow a partial POST. Treat it
+            # as possibly served; only a failure of connect itself proves nothing was sent.
+            raise MediaProviderError(
+                f"{host} could not be reached",
+                unsent=not connect_before_send,
+                unanswered=connect_before_send,
+            ) from exc
         # The overall end is enforced on the socket itself: a read blocks until it has the
         # bytes it asked for, and a vendor that sends one byte inside every socket timeout
         # (in its headers or its body) would hold a check made between reads for ever. At
@@ -203,7 +215,7 @@ def request(
             raise _past_deadline(host, total_seconds)
         if len(payload) > limit:
             raise MediaProviderError(f"{host} returned more data than the adapter accepts")
-        if response.status != 200:
+        if response.status not in allowed_statuses:
             # The message stays the status alone. The vendor's reason travels beside it,
             # sanitised and capped (`error_details`): it can echo request details, so keys,
             # inline pictures and signed URLs are cut out before anything keeps it. The

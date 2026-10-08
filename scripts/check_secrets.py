@@ -75,6 +75,10 @@ TEXT_NAMES = {".env.example", ".gitattributes", ".gitignore"}
 #: The reviewed document checksums in the documentation index are not credentials.
 _INDEX = "docs/project/DOCUMENTATION_INDEX.json"
 _INDEX_HASH = re.compile(r'\s*"(?:original_)?sha256": "[0-9a-f]{64}",?\s*')
+#: The GPU worker's weight pins (a commit and a content checksum per file) are not credentials
+#: either: only a whole line holding one of them passes, so a key elsewhere is still caught.
+_LOCK_PIN = re.compile(r'\s*"(?:sha256": "[0-9a-f]{64}|revision": "[0-9a-f]{40})",?\s*')
+_PINNED = {_INDEX: _INDEX_HASH, "backend/runpod_worker/models.lock.json": _LOCK_PIN}
 
 
 @dataclass(frozen=True)
@@ -158,9 +162,10 @@ def scan(root: Path = ROOT, files: list[Path] | None = None) -> list[Finding]:
     findings = []
     for filename, secret in collection:
         relative = Path(filename).relative_to(root).as_posix()
-        if relative == _INDEX:
+        pin = _PINNED.get(relative)
+        if pin is not None:
             lines = (root / relative).read_text(encoding="utf-8").splitlines()
-            if _INDEX_HASH.fullmatch(lines[secret.line_number - 1]):
+            if pin.fullmatch(lines[secret.line_number - 1]):
                 continue
         findings.append(Finding(relative, secret.line_number, secret.type, secret.secret_hash))
     return sorted(findings, key=lambda f: (f.path, f.line, f.type))
@@ -228,4 +233,14 @@ def main(argv: list[str] | None = None, root: Path = ROOT) -> int:
 
 
 if __name__ == "__main__":
+    # detect-secrets opens text with Python's default encoding. On Windows cp1252 it
+    # silently skips some UTF-8 files as binary, so the release gate must use UTF-8.
+    if not sys.flags.utf8_mode:
+        sys.exit(
+            subprocess.run(
+                [sys.executable, "-X", "utf8", __file__, *sys.argv[1:]],
+                stdin=subprocess.DEVNULL,
+                check=False,
+            ).returncode
+        )
     sys.exit(main())

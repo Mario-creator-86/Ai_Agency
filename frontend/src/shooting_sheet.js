@@ -253,7 +253,8 @@ export function sceneLine(scene) {
   const frame = `${head} · ${frameWord(scene)}`;
   if (m.status === 'LOCAL') return `${frame} · imagine fixă animată local · 0 credite`;
   if (!m.model_id) return `${frame} · fără model ales: ${String(m.reason_ro || 'decide Proprietarul.')}`;
-  return `${frame} · ${m.model_id} · ${m.resolution || '—'} · ${m.billed_seconds ?? '?'} s · ${creditWords(m.credits)}`;
+  const resolution = m.local_generation ? `${m.native_resolution || '—'} nativ → montaj ${m.resolution}` : (m.resolution || '—');
+  return `${frame} · ${m.model_id} · ${resolution} · ${m.billed_seconds ?? '?'} s · ${m.local_generation ? 'cost API zero' : creditWords(m.credits)}`;
 }
 
 /**
@@ -477,7 +478,9 @@ export function stepButtons(sheet) {
       const round = Number(step.cost_credits) || 0;
       const neededRaw = footer.balance_needed_credits ? footer.balance_needed_credits[name] : undefined;
       const needed = Number.isFinite(Number(neededRaw)) && neededRaw !== null ? Number(neededRaw) : Math.ceil(Math.round(round * BALANCE_MARGIN * 1e6) / 1e6);
-      if (balance.credits === null || balance.credits === undefined || !Number.isFinite(Number(balance.credits))) {
+      if (balance.applicable === false && (cap === 0 || balance.billing_mode === 'gpu')) {
+        // Local/GPU generation uses its own pricing; the approved cap and daily budget remain.
+      } else if (balance.credits === null || balance.credits === undefined || !Number.isFinite(Number(balance.credits))) {
         reasons.push(`Soldul Runway nu a putut fi citit (${balance.problem || 'necunoscut'}); nimic nu se cumpără pe un sold necunoscut.`);
       } else if (Number(balance.credits) < needed) {
         reasons.push(`Sold Runway insuficient: ${creditWords(Number(balance.credits))}; runda următoare a pasului costă ${creditWords(round)}, cu marja de 15% ${creditWords(needed)}. Plafonul aprobat rămâne ${creditWords(cap)}.`);
@@ -489,7 +492,9 @@ export function stepButtons(sheet) {
     return {
       step: name,
       label: STEP_LABELS[name],
-      price_ro: `${creditWords(step.cost_credits ?? 0)} (${usdText(micros(step.cost_usd ?? 0))})`,
+      // RunPod Serverless: a round's GPU start (cold start + idle tail) is inside the price.
+      price_ro: `${creditWords(step.cost_credits ?? 0)} (${usdText(micros(step.cost_usd ?? 0))})`
+        + (Number(step.gpu_start_credits) > 0 && step.gpu_start_ro ? `, cu ${String(step.gpu_start_ro)}` : ''),
       cap_ro: `plafon ${creditWords(cap)} (${usdText(micros(step.cap_usd ?? 0))})`,
       to_buy: toBuy,
       disabled: reasons.length > 0,
@@ -590,7 +595,8 @@ export function footerRows(sheet) {
     { key: 'cap', label: 'Plafon ferm', value: money(f.cap_credits, f.cap_usd_micros) },
     { key: 'saved', label: 'Economie', value: `${money(f.saved_credits, f.saved_usd_micros)} față de ${premium} peste tot` },
     { key: 'source', label: 'Sursa prețurilor', value: String(f.price_source || 'necunoscută') },
-    { key: 'balance', label: 'Sold Runway', value: balance.credits === null || balance.credits === undefined ? `necitit (${balance.problem || 'necunoscut'})` : creditWords(Number(balance.credits)) },
+    { key: 'balance', label: balance.billing_mode === 'gpu' ? 'RunPod GPU Cloud' : balance.applicable === false ? 'Generare locală' : 'Sold Runway', value: balance.billing_mode === 'gpu' ? 'Cost GPU estimat în USD · bugetul și plafonul se aplică' : balance.applicable === false ? 'Cost API zero · timpul și energia nu sunt incluse' : balance.credits === null || balance.credits === undefined ? `necitit (${balance.problem || 'necunoscut'})` : creditWords(Number(balance.credits)) },
+    ...runpodCostRows(f.runpod_metrics),
     { key: 'daily', label: 'Bugetul zilei', value: daily ? `${usdText(micros(daily.remaining_usd))} rămași din ${usdText(micros(daily.limit_usd))}` : 'fără buget zilnic citit' },
     ...filmBudgetRows(f.film_budget),
     { key: 'alternatives', label: 'Alternative', value: alternatives.join('; ') || 'niciuna cu preț publicat' },
@@ -610,6 +616,22 @@ export function footerRows(sheet) {
     },
     { key: 'narration', label: 'Narațiunea', value: String(f.narration?.line_ro || 'necitită') },
     { key: 'hash', label: 'Amprenta foii', value: String(f.sheet_hash || sheet?.sheet_hash || '').slice(0, 12) },
+  ];
+}
+
+/** RunPod's recorded estimates, including rejected attempts. @param {any} reading */
+function runpodCostRows(reading) {
+  if (!reading || !Number(reading.jobs)) return [];
+  const accepted = reading.acceptance_by_model || {};
+  const rates = Object.entries(accepted).map(([model, r]) => `${model}: ${r.accepted}/${r.reviewed}`);
+  const unknown = Number(reading.jobs_with_unknown_cost) || 0;
+  return [
+    { key: 'runpod_cost', label: reading.provider === 'RUNPOD_MOCK' ? 'RunPod · simulare' : 'RunPod · cost estimat', value: `${usdText(micros(reading.estimated_gpu_cost_usd))}${unknown ? ` + ${unknown} joburi cu cost necunoscut` : ''} · include încercările respinse` },
+    { key: 'runpod_scene', label: 'Cost per scenă acceptată', value: usdText(micros(reading.cost_per_accepted_scene_usd)) },
+    { key: 'runpod_short', label: 'Cost RunPod per film terminat', value: usdText(micros(reading.cost_per_finished_short_usd)) },
+    { key: 'runpod_minutes', label: 'Minute GPU per film terminat', value: reading.gpu_minutes_per_short === null || reading.gpu_minutes_per_short === undefined ? 'necunoscute' : NUMBER.format(Number(reading.gpu_minutes_per_short)) },
+    { key: 'runpod_regenerations', label: 'Regenerări RunPod', value: String(reading.regenerations ?? 0) },
+    { key: 'runpod_acceptance', label: 'Acceptate / verificate per model', value: rates.join('; ') || 'încă neverificate' },
   ];
 }
 
@@ -788,9 +810,19 @@ function redoBlockHtml(sheet, buttons, title, o) {
   return `<div class="sheet-redos"><p class="sheet-sub">${e(title)}</p>${rows}${open}</div>`;
 }
 
+/**
+ * Whether the film buys on RunPod's GPU (billed in USD by the second, no credit balance to read):
+ * the backend's run_step skips the balance rule for it (`local_step`), so the page never blocks
+ * it on, nor speaks of, a Runway balance. @param {any} sheet
+ */
+function gpuBilled(sheet) {
+  const balance = sheet?.footer?.balance || {};
+  return balance.applicable === false && balance.billing_mode === 'gpu';
+}
+
 /** A redo needs its next purchase and the same margin, never its whole cap. @param {any} sheet @param {RedoButton} b */
 function redoBalanceReason(sheet, b) {
-  if (b.free || !PAID_REDOS.includes(b.kind) || !b.round_credits) return '';
+  if (b.free || !PAID_REDOS.includes(b.kind) || !b.round_credits || gpuBilled(sheet)) return '';
   const credits = sheet?.footer?.balance?.credits;
   if (credits === null || credits === undefined || !Number.isFinite(Number(credits))) return 'Soldul Runway este necunoscut; reîncarcă foaia înainte de refacere.';
   const margin = Number(sheet?.footer?.balance_rule?.motion?.margin) || BALANCE_MARGIN;
@@ -1011,7 +1043,9 @@ function sheetSummaryHtml(sheet, o) {
     + `<div><dt>Imagini aprobate</dt><dd>${e(progress.images)} / ${e(progress.filmed)}</dd></div>`
     + `<div><dt>Clipuri disponibile</dt><dd>${e(progress.clips)} / ${e(progress.filmed - progress.local)}${progress.local ? ` <small>+ ${e(progress.local)} local</small>` : ''}</dd></div>`
     + `<div><dt>Scene compuse local</dt><dd>${e(progress.cards)}</dd></div>`
-    + `<div><dt>Sold Runway</dt><dd>${e(balanceWords)}</dd></div></dl>`
+    + (gpuBilled(sheet)
+      ? '<div><dt>RunPod GPU</dt><dd>Cost estimat în USD, plătit la secundă</dd></div></dl>'
+      : `<div><dt>Sold Runway</dt><dd>${e(balanceWords)}</dd></div></dl>`)
     + (recovery && !busy ? `<p class="sheet-summary-next">Următorul pas: <strong>Reia clipul de probă</strong> (scena ${e(recovery.scene)}) · ${e(recovery.price_ro)} · ${e(recovery.cap_ro)}${redoBalanceReason(sheet, recovery) ? ` <span class="sheet-summary-why">${e(redoBalanceReason(sheet, recovery))}</span>` : ''}</p>` : '')
     + (reviewHero && !busy ? `<p class="sheet-summary-next">Următorul pas: <strong>Vezi și aprobă clipul de probă</strong> (scena ${e(heroScene.scene_index)}).</p>` : '')
     + (next && ((!recovery && !reviewHero) || busy)
@@ -1045,7 +1079,8 @@ function workflowHtml(sheet, o) {
     if (b.step === 'motion' && b.reasons.some((/** @type {string} */ r) => /cadrul de probă/i.test(r))) reasons.push(`Întâi rezolvă clipul de probă (scena ${hero.scene}).`);
     const balance = sheet?.footer?.balance?.credits;
     const needed = sheet?.footer?.balance_needed_credits?.[b.step];
-    if (b.to_buy.length && (balance === null || balance === undefined || !Number.isFinite(Number(balance)))) reasons.push('Soldul Runway este necunoscut. Reîncarcă foaia.');
+    if (gpuBilled(sheet)) { /* RunPod: no balance to read; the cap and the daily budget apply */ }
+    else if (b.to_buy.length && (balance === null || balance === undefined || !Number.isFinite(Number(balance)))) reasons.push('Soldul Runway este necunoscut. Reîncarcă foaia.');
     else if (b.to_buy.length && needed !== null && needed !== undefined && Number.isFinite(Number(needed)) && Number(balance) < Number(needed)) reasons.push(`Pentru pornire: ${creditWords(Number(needed))}. Lipsesc ${creditWords(Number(needed) - Number(balance))}.`);
     return reasons.join(' ') || (b.disabled ? b.reasons[0] || 'Așteaptă pasul anterior.' : 'Poți porni acest pas.');
   };

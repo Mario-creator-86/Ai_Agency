@@ -21,7 +21,4 @@ test('warmVideoCodecs asks the browser for its video codecs once, and never thro
   assert.equal(warmVideoCodecs({ RTCRtpReceiver: { getCapabilities: () => { throw new Error('x'); } } }), false);
 });
 
-test('the page warms the codecs under the title, after the workspace warm-up, only with the stream configured and no key yet', () => {
-  assert.match(MAIN, /warmOffice\(\)\.catch\(\(\) => \{\}\)\.finally\(\(\) => whenIdle\(warmStreamCodecs\)\)/);
-  assert.match(MAIN, /function warmStreamCodecs\(\) \{[\s\S]{0,300}if \(!ownerToken && liveStreamSettings\(scene\)\.enabled\) warmVideoCodecs\(window\);/);
-});
+test('the pixel page requires no video codec warmup', () => { assert.doesNotMatch(MAIN, /warmVideoCodecs\(|warmStreamCodecs\(/); });

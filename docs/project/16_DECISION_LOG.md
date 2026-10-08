@@ -1,5 +1,322 @@
 # Architectural / Product Decision Log v5
 
+## ADR-PIXEL-STUDIO-LIFE — one label and truthful cosmetic movement
+
+Use one native name/effective-state tooltip, retain agent selection and remove canvas text
+and outline. Role/state-driven keyboard/mouse/paper/headset gestures never change backend
+runtime; waiting staff may breathe, look away, sip and stretch. Identity offsets avoid
+lockstep phases. Draw foreground hands after the original chair pixels for visible motion.
+Original procedural pedestrians/cyclist/car/cat/birds and clipped cached cloud drift enliven
+the city without becoming employees/events. Actual weather controls umbrellas/reflections.
+One capped cosmetic clock freezes when data/motion/lifecycle guards prohibit animation.
+Approved art and fixed personal desks are unchanged. Actual production video proves eight
+waiting staff move; fixtures test work/review/think separately. Preserve concurrent page-entry
+changes during build and rollback. Research/provenance and verification: PIXEL_STUDIO_LIFE.md.
+
+## ADR-LOCAL-AUTO-LOGIN — the key is handed to his own machine, the form stays for the rest
+
+The Owner, 2026-10-08, with a screenshot of the title's key form: «Te rog sa elimini pagina de
+logare, nu trebuie momentan». Decision: keep the Owner key on every route (require_owner and the
+sockets' first message are unchanged) and remove only the typing of it on his machine. A public
+GET /api/v1/owner/local-session answers {"token": <key>} only when all hold: the setting
+STUDIO_LOCAL_AUTO_LOGIN is on (default true); STUDIO_HOST is loopback (bound to 0.0.0.0 or a LAN
+address, a proxy or another machine could reach it with a loopback peer); the TCP peer is
+127.0.0.1, ::1 or ::ffff:127.0.0.1; no Forwarded/X-Forwarded-*/X-Real-IP header (a reverse
+proxy on this machine would make every remote visitor loopback); the Host header is exactly
+localhost, 127.0.0.1 or [::1] with the studio's port (a DNS-rebinding page keeps its own name in
+Host, so it is refused); an Origin, if sent, is http://<that Host>, and Sec-Fetch-Site, if sent,
+is same-origin or none. The answer has no CORS header (another origin cannot read it) and is
+Cache-Control: no-store; each refusal is the 404 of an unknown path; each hand-over is one INFO
+log line without the key. The page asks first (same origin, no credentials, no cache, 4 s), keeps
+the form hidden under «Se deschide studioul…», and enters through the same function as the form;
+on any failure the form shows as before, so remote access is unchanged. The key stays in page
+memory only. After a sign-out the form offers an empty-field entry; a later 401 signs out and
+retries automatically at most once per page load. Accepted risk: any program already running as
+a local user can read the key (as it could read .env); the boundary is this machine, as in
+40_THREAT_MODEL's auth and least-privilege lines, which stay unchanged. Rejected: dropping
+require_owner (any page on the LAN or a rebinding site could act as the Owner); a cookie session
+(CSRF surface for every route); storing the key in localStorage (outlives the tab, readable by
+any script on the origin). Off: STUDIO_LOCAL_AUTO_LOGIN=false.
+Adversary review, same day: the request must also carry the page's own header
+X-Studio-Local-Session: 1, so an <img>, <script>, frame, form, link, typed address, a no-cors
+load from a browser that sends no Origin/Sec-Fetch-Site, or a program's plain GET is refused
+without relying on browser metadata (a cross-origin fetch adding the header needs a CORS
+preflight the studio never answers). The proxy list also refuses Via, X-Forwarded-Proto/Port/
+Server, CF-Connecting-IP, True-Client-IP, X-Client-IP, X-Cluster-Client-IP and
+X-Original-Forwarded-For (tunnels that add no X-Forwarded-For); the answer is
+Cross-Origin-Resource-Policy: same-origin and nosniff; the route is left out of the API
+description (docs and openapi.json are already off). Sockets and require_owner are unchanged.
+
+## ADR-PIXEL-NAVIGATION-NIGHT — keep the frame, navigate the enlarged artwork
+
+Preserve the fixed desktop menu layout; repair the pixel aspect-ratio override rather than
+changing menu architecture. Fit shows all art; wheel/drag pan only when it exceeds the frame.
+Do not capture native page scroll at fit/edges. Cache a connected sky-colour mask from the
+unchanged approved illustration to retain roof/plants/cloud contours while hiding its fixed
+sun at night. Existing solar calculation and real weather remain authoritative; stylised moon
+is a night indicator, not an astronomical ephemeris. Actual signed-in UI verified separately
+from bounded fixture weather tests. No backend/policy/migration/provider change.
+Rollback and implementation evidence: PIXEL_NAVIGATION_NIGHT.md and its before/ backup.
+
+## ADR-BACKUP-STALE-RECOVERY — refresh evidence instead of hiding the alert
+
+A real stale backup is an operational recovery, not a reason to relax its 36-hour alarm.
+Use the existing online-copy tool and inspect the existing scheduled task. It was queued
+after restart and subsequently completed, so no scheduler refactor or policy override is
+needed. Verify the real latest copy by restoration on an isolated target with its saved key.
+Keep production autonomy and data in place; UI re-load reads the healthy current status.
+
+## ADR-PYTHON-RUNTIME-RECOVERY — restore the declared base before project discovery
+
+A Windows venv can remain after its managed base disappears. Probe it before uv run can
+fail, restore only the .python-version target through uv (no registry/bin changes), then
+probe again. Do not delete/recreate a healthy venv, downgrade SQLite or regenerate uv.lock.
+Missing pin or restoration failure stops; restore needs internet and current uv metadata.
+The installed uv 0.11.0 cannot download 3.14.8; upgrade its existing pip installation to
+0.12.23 with binary backup. Actual fixture recovery and isolated complete server lifecycle
+prove the fix; production data/policy and paid jobs remain unchanged. No architecture change.
+Rollback: restore start.cmd and the prior uv installation from the task evidence backup.
+
+## ADR-ROOT-START-COMPATIBILITY — one launcher, two entry paths
+
+Root python start.py was missing; keep scripts/start.py authoritative and add only a thin
+standard-library uv --locked wrapper. Avoid importing the application through the global
+Python or duplicating bootstrap/server logic. Preserve argv, cwd, exit code and graceful
+shared-console shutdown. start.cmd also uses --locked. No DB or architecture migration.
+Twelve scoped cases and help probes verify delegation; no live worker is started by testing.
+Rollback: remove the root shim and restore start.cmd from the task backup.
+
+## ADR-PIXEL-OUTDOOR-CLOCK-WEATHER — actual Bucharest conditions on the existing painting
+
+**Status:** Implemented locally, 2026-10-08; current verification limits in CURRENT_STATUS.md.
+
+Reason: the Owner requests a pixel street clock, current time and real Bucharest lighting /
+rain / fog / snow, preserving the approved furnished three-floor scene. Reuse the existing
+office weather route, provider cache, timezone and solar helpers. Original procedural clock
+and bounded particles need no external art or GPU. Mask all furnished interiors so live
+outside effects do not erase approved room pixels. Make unknown/stale/historical weather
+explicit rather than inventing a seasonal animation. Cancel timers/polling while hidden or
+signed out, and discard late responses from the old authentication/location context.
+
+Alternatives: a fixed dusk/season preset would contradict the requested current conditions;
+a new browser-direct service would duplicate caching and conflict with same-origin CSP;
+rewriting the painting would risk its approved details. No weather control or debug preset
+is added to the production UI.
+
+Migration: optional observed_at_utc metadata and timezone-inclusive cache key; no schema or
+permission migration. Existing Open-Meteo host and București settings are retained. The
+README/master/UI scope paragraphs deliberately clarify the weather exception; update only
+their current SHA-256 entries, retaining every original hash and inventory item.
+
+Validation: live read-only provider receipt, timestamp/owner-only/cache regressions, frontend
+unit/type checks and isolated actual Canvas rendering. Full owner browser flows retain their
+game guard; report any skipped run explicitly. Saved scene captures distinguish actual
+provider observations from simulated rain/fog/snow/night cases. See CURRENT_STATUS.md.
+
+Rollback: source/config/specification copies and served frontend backup are retained in
+data/pixel-weather-2026-10-08/before. Restore the corresponding current documentation hashes
+deliberately. No production DB/model/policy changes, worker, GPU or publishing job started.
+
+## ADR-AGENT-SCENARIO-ACCEPTANCE — actual model decisions and independent backend gates
+
+**Status:** Bounded live scenarios completed, 2026-10-08; external production acceptance pending.
+
+Use existing services on disposable databases, retaining the original vault key only for
+internal authenticated Ollama calls. The registry exposes LLM only, with no paid media/upload
+adapter or production worker. Treat a safe refusal as a negative scenario success, never as
+successful production. Preserve all failed attempts and harness corrections. First probes
+kept the copied PRODUCTION policy because an environment attribute was unmapped; subsequent
+probes use persisted TEST. Actual production fingerprint remains unchanged.
+
+ADR-MAIL-WRITE-LOCK: reply, forward and resolve acquire the existing SQLite write lock before
+reading. A competing commit after the read otherwise causes SQLITE_BUSY_SNAPSHOT. No provider
+call is held inside the locked transaction. An event-driven concurrent-writer test fails
+before the change and passes after it; no permission or message-schema change.
+
+ADR-DEMO-DIRECTOR-SCHEMA: the requested Director decision schema wins over vocabulary in an
+inbox report. Extract IDs from the inert inbox payload, not the JSON format example. This is
+demo correctness and proves no live Director/vendor quality by itself.
+
+ADR-SERIAL-SPOKEN-LENGTH: episode-v6 restates the measured spoken-word contract after inert
+events/refused drafts. Keep all computed gates and existing autonomous retry caps. Real Kimi
+sample finally passes at 124 spoken words after one draft and five rewrites; two last rewrites
+include explicit test clarification. This is a successful bounded sample, not proof of normal
+autonomous reliability. Track SERIAL_NORMAL_RETRY_ACCEPTANCE separately from safe refusals.
+
+ADR-HERO-COST-PREVIEW: keep the executable motion plan unchanged; read-only sheet previews
+use its existing whole-film quotes for scenes waiting on stills. Include pending quoted
+motion in the implicit hero gate cap, retaining explicit caps and genuinely free reuse.
+Five focused policy/cost cases and all four staircase dry runs pass (9/9). No approval is
+created or spent by a preview and no scene is made ready through this projection.
+
+ADR-SQLITE-RUNTIME: a temporary test DB reported corruption on SQLite 3.50.4. Its cause was
+not conclusively reproduced; production integrity is good. That version predates the
+[documented WAL concurrency fix](https://www.sqlite.org/wal.html#walreset). Use managed Python
+3.14.8/SQLite 3.53.1 for the local project, verified directly and pinned in .python-version;
+retain the prior environment and all locked packages. Repeat broad regressions after the
+runtime change. Do not silently retry database corruption or label the known bug its proven cause.
+
+ADR-SECRET-UTF8: detect-secrets opens text using the Python default encoding and silently
+skips decoding failures. Force UTF-8 in the shipped CLI on Windows; a new fake key next to
+Unicode punctuation fails the gate before any values are printed. Individually review 19
+newly visible SHA-256 fixture hashes, explicitly annotate two font hashes and error prose.
+Keep all detectors, thresholds and exclusions; do not regenerate an unreviewed baseline.
+
+ADR-OPTIONAL-ANALYTICS-VAULT: VaultUnreadable while building a statistics adapter reports the
+actual unavailable-credentials reason and skips only that channel, without API calls or
+metrics. Do not weaken the mandatory daily preflight for a missing vault key. A keyless
+two-day rehearsal proves a safe block, not completed autonomous production.
+
+The exact normal serial stage made two Kimi drafts and safely rejected both. An isolated
+Nemotron alternative timed out at the existing 600-second ceiling; no resend or promotion.
+The production Writer stays on Kimi, with normal-retry serial acceptance still pending.
+
+Correct stale tests without changing Owner authority, costs or publication protections.
+Planning may import only pure RunPod configuration, never runtime provider adapters; scans
+recognise both import forms and media constructors by their actual class name. Architecture
+inventory and hashes are unchanged. Report: AGENT_SCENARIO_REPORT.md; receipts/logs:
+data/scenario-acceptance-2026-10-08. No production GPU/media, upload, commit or push.
+
+## ADR-OLLAMA-ROLE-ALLOCATION — current Cloud models and explicit assignment origin
+
+**Status:** Saved and verified, 2026-10-08; evidence in CURRENT_STATUS.md.
+
+Choose role models from the authenticated current Cloud catalogue and official capabilities,
+then verify bounded role tasks before saving through existing policy/versioned commands.
+Use Kimi K3 for direction, scripts and visual editing; MiniMax M3 for research; independent
+DeepSeek V4 Pro for fact checking; Mistral Large 4 for multilingual voice direction and financial
+document reasoning; Nemotron 3 Ultra for procedural publishing and the Director's existing
+important-decision critic. Actual voice/media services and authoritative budgets remain separate.
+Record the catalogue, sources and limits of this role-selection judgment; do not call sixteen
+synthetic samples a comprehensive benchmark or infer all eighteen models were generation-tested.
+
+Update only workforce configuration and existing assignment handling. Events explicitly
+distinguish OWNER from SEED_ALLOCATION; an Owner choice matching the file must stay protected
+when role preferences or seed data change. Keep minimal legacy Owner events protected and
+retain the old slot comparison for legacy ensemble events with no origin. No new public
+field, schema migration, architecture-specification change or capability hardcoding is needed.
+All eight human-authorized choices are recorded explicitly and read back from actual UI services.
+Backups and receipts live in data/model-routing-2026-10-08. Product permissions, prices,
+budgets, staff, media selections and production scheduling are preserved.
+
+## ADR-PRESERVE-DETAILED-STUDIO — retain approved furniture and add one floor
+
+**Status:** Implemented locally, 2026-10-08; verification recorded in CURRENT_STATUS.md.
+
+The Owner supplies 94139.jpg, approves its rich details and explicitly permits another floor
+and back-facing employees. This supersedes clearing foreground furniture in the earlier
+personal-desk refinement. Preserve studio.png, studio-desks.png and a project-bound copy of
+the approved reference; edit the original studio through built-in image generation to add
+one furnished floor. Keep the lower library/long desk/private office and editing/drawing/
+lounge layout, plants, lamps, timber, roof, street and sunset. The active asset is
+studio-detailed.png; the full generation prompt and provenance are recorded in
+PIXEL_STUDIO_ASSETS.md and art-source/pixel/studio-detailed-prompt.md.
+
+Bind the same eight reserved slots to eight actual illustrated seats across three floors.
+Draw rear seated sprites, then restore configured chair/foreground pixels from the original
+illustration at runtime. Remove generic code-drawn desks/screens and permanent nameplates;
+hover/selection, the accessible roster and the existing inspector convey identity/state.
+Retain face portraits, actual backend poses, stable reservations, annex pages and other menus.
+No backend schema/permissions or production staff changes are required.
+
+Review only the added Owner refinement in architecture/05_UI_UX_2D_OFFICE.md and update its
+LF-normalized current SHA-256. Original inventory, original hashes and checker remain intact.
+Verify actual browser pixels in protected library/lounge/monitor regions as well as seat
+selection, committed state transitions, animation, stale/reduced-motion behavior and mobile.
+Back up before editing: data/pixel-details-backup/before-details.zip. No production worker,
+paid GPU generation, publication, commit or push is part of this local UI refinement.
+
+## ADR-PERSONAL-PIXEL-DESKS — seated characters follow actual agent state
+
+**Status:** Implemented locally, 2026-10-08; verification recorded in CURRENT_STATUS.md.
+
+The Owner requests a personal desk for every employee, seated poses, finer characters and life
+through animation. Reserve seats by immutable hiring order across all retained agent records;
+the first known role holder gets its illustrated station, later employees get annex stations.
+Pause, runtime updates and departures cannot compact this order or move surviving staff. A
+shared JSON geometry drives the browser and backend. No schema migration or role permission change.
+
+Layered original seated pixel sprites bind real Character Bible details by employee_id, with a
+deterministic fallback. Runtime/lifecycle events select typing/writing, thinking/reviewing and
+still pause/error/blocked poses. Idle blink/breath/glance is expressly cosmetic, never fabricated
+work. Reduced motion, replay, lost/stale data and hidden pages suppress character animation.
+Cache sprite frames and bound paints. Refresh authoritative versioned office rows every 15 seconds
+and on reconnection/staff changes; older reads/events cannot rewind newer state. A run-completed
+receipt does not override the employee's current runtime state, since newer work can overlap it.
+
+Original scenery edited through built-in image generation removes foreground furniture so each
+workstation is drawn with its seated owner. Previous artwork/source remains in the backup.
+Review the Owner refinement in 05_UI_UX_2D_OFFICE and update only its LF-normalized current SHA-256;
+do not change inventory count, original hashes or the checker. Existing menus and backend jobs
+are retained. Browser state probes exist only in scripts/e2e_server.py's disposable, authenticated,
+worker-disabled test server, with no external sockets; there is no production probe endpoint.
+Evidence, actual browser captures and asset provenance: CURRENT_STATUS.md and PIXEL_STUDIO_ASSETS.md.
+
+## ADR-SIMPLE-PIXEL-STUDIO — Owner scope supersedes Treasury and 3D headquarters
+
+**Status:** Implemented locally, 2026-10-08; external RunPod authentication/paid acceptance pending.
+
+The Owner explicitly requests simplification, retirement of Treasury, and replacement of
+agents/environment with a stylish pixel interface inspired by A Space for the Unbound, while
+retaining the other menus. Choose one browser Canvas, one original illustrated background and
+deterministic original pixel employees. The scene loads no old HQ plates/weather/stream and
+requires no GPU process. Backend states determine selection, portraits and working animation;
+stale data and reduced motion suppress animation. Existing inspector/chat and factual replay remain.
+
+Retire public Treasury, funding, minting, FX, virtual-ledger and financing module claims.
+Keep actual USD budgets/prices/provider costs and existing internal accounting/historical data.
+Replace its menu with Autonomie: current mode, environment, STOP, next scheduled run, links
+to existing policy/scheduler/provider controls, costs and collapsed detailed preflight. Existing
+versioned commands and permissions remain authoritative; no production policy is enabled here.
+
+The Owner's instruction deliberately supersedes conflicting visual and virtual-economy specs.
+Review/update only 00_MASTER_PROMPT, architecture README, 05_UI_UX_2D_OFFICE, 66_VIRTUAL_REAL_ECONOMY_ENGINE,
+68_TREASURY_FINANCING_CAPITAL_STRUCTURE and 72_ECONOMY_STORY_WORLD_INTEGRATION. Prepend explicit
+scope precedence, preserve historical text, and update only their LF-normalized SHA-256 index
+records. Do not relax the integrity checker or alter original_sha256/inventory count.
+
+Dirty source preserved before edits in data/simplification-backup/source-before-simple-pixel-studio.zip.
+Old integration assertions are archived there; revised tests assert the active product contract.
+Art references/origin: PIXEL_STUDIO_ASSETS.md. Operator entry point: SIMPLE_STUDIO_GUIDE.md.
+Current verification evidence: CURRENT_STATUS.md. No paid GPU, publishing, production worker,
+schema migration, permission increase or historical data deletion is part of this change.
+
+## ADR-RUNPOD-ADDITIONAL-PROVIDER — reuse the Agency media pipeline
+
+**Status:** Local implementation verified offline, 2026-10-07; real authentication/GPU tests pending.
+
+The Owner requests RunPod as an additional premium image/video engine, with credentials and
+endpoint to follow. Keep the existing provider interfaces, queued work, QA, VideoEditor,
+SceneTake/MediaAsset, watchdog and financial gates. Add only a durable provider submission and
+telemetry journal (migration 0055) and translations inside app.providers.runpod.
+
+Official Serverless does not document an idempotency-header guarantee. Persist intent before
+POST, recover saved IDs, retry only reads/proven unsent writes, and reconcile ambiguous outcomes
+using backend proof. QA rejection alone creates a new creative attempt with feedback/history.
+Forecast GPU USD feeds existing caps/accounting as ESTIMATED; never claim invoice/credit balance
+or real model availability from a mock. Infra start/stop is optional and disabled by default.
+
+The latest Owner instruction separately removes local ComfyUI/models. Preserve generated assets,
+reports, voice selection and existing provider source; remove the installed runtime and obsolete
+connection. This supersedes the earlier local-generation install/default milestone. No normative
+architecture document was changed. Evidence/remaining external validation: RUNPOD_HANDOFF.md.
+
+## ADR-GRAPHICS-OPT-IN — Ordinary startup excludes live graphics
+**Status:** Implemented, 2026-10-04; supersedes the automatic launch in ADR-START-WITH-GRAPHICS
+
+The Owner now asks for graphics to stop launching with the project. Make the launcher default
+return before graphics setup, process probes or supervisor creation. `--graphics` explicitly
+enables the existing lifecycle; retain `--no-graphics` for old commands and reject both flags
+together. This covers start.cmd and the scheduled task, which use the same launcher.
+
+A local-only --no-graphics shortcut would leave ordinary python starts unchanged; removing
+the graphics subsystem would unnecessarily discard manual use. No schema, API or normative
+architecture change. Tests cover default/explicit disabling without probes, opt-in supervisor
+creation, conflicting flags, demo exclusion and the existing lifecycle: 85 scoped tests pass.
+Rollback: restore launcher/tests from `output/graphics-opt-in-20261004/before/`, or explicitly
+use `--graphics` for the previous startup behavior. An older running launcher must be restarted
+to load edited code. No live stream was present in the read-only process inventory.
+
 ## ADR-SHEET-UI-002 — Production order and actual file state
 **Status:** Implemented and visually checked, 2026-10-04
 
@@ -3587,3 +3904,41 @@ The Owner, 2026-10-04: «cand rulez python start.py, trebuie sa porneasca si gra
 **ADR-STOP-STOPS-EVERYTHING — a stop leaves nothing running (START_WITH_GRAPHICS).** Decision: Ctrl+C reaches the server from the console and `start.py` waits for it however many Ctrl+C come (`subprocess.run` killed it 0.25 s after the first one, cutting REL-10's 30 s graceful stop), then stops Unreal, then wilbur: each asked to close (WM_CLOSE) and ended after 10 s / 3 s, naming each. wilbur runs without a console window of its own and Unreal in its own process group, so Ctrl+C reaches only the server and the order holds. `start.py` puts itself in a Windows Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` (ctypes, `scripts/win_processes.py`) before its first step, so every process it starts, and theirs, is in the job from its first instruction (nested under `uv run`'s or the terminal's job); when `start.py` ends however it ends, Windows ends them. A console control handler on CTRL_CLOSE/LOGOFF/SHUTDOWN stops the graphics within Windows' five seconds and gives the server what is left. Reason: his words. Known limits: a closed window gives the server about five seconds, not 30 (Ctrl+C is the clean stop); a process Windows refuses to nest is said and stopped explicitly, but survives a forced kill of `start.py`.
 
 **ADR-STOP-SERVER-OWN-GROUP — the server is asked once, and no other Ctrl+C reaches it (START_WITH_GRAPHICS, adversarial check 2026-10-04).** Supersedes the first sentence of ADR-STOP-STOPS-EVERYTHING. Found: with the server in `start.py`'s console group, a second Ctrl+C reached uvicorn (0.52.4) while it waited for an open connection and set its `force_exit`, so the lifespan shutdown - where the day stops at its boundary, REL-10 - never ran (seen with a real uvicorn and a request in flight). Decision: the server is started with CREATE_NEW_PROCESS_GROUP; at the first Ctrl+C (or Ctrl+Break, now a Ctrl+C for `start.py`) `start.py` stops its supervisor's starts and sends CTRL_BREAK once to the server's group (uvicorn handles SIGBREAK as its graceful stop), retrying at the next Ctrl+C only if the send failed; it waits in 0.5 s steps, because on Windows `Popen.wait()` without a timeout cannot be interrupted. An exit of 3 after that request (uvicorn re-raises SIGBREAK) or 0xC000013A (a console event) is a stop, not a failed start. Corrected limit: a closed window gives the server no clean stop at all - Windows ends it as soon as its own console handler returns (seen: no lifespan shutdown); the graphics and the rest go with the job. Ctrl+C is the only clean stop. Rejected: forwarding later Ctrl+C (uvicorn would force-exit); `subprocess.Popen.wait()` without a timeout.
+
+**ADR-DONE-READS-CONDITION — his «Am făcut-o» closes a card only when the studio sees it done (DONE_READS_CONDITION, 2026-10-04).** Decision: DONE on a decision card reads its `clears_when` (`condition_reading`). When it reads true, or when nothing the studio can read clears it (`never`, or no condition), the card closes as before (ACCEPTED, completed by him). When it reads false, or cannot be read (fail closed), the card stays WAITING_FOR_OWNER_ACTION, his press is recorded (`owner.decision_decided` with `still_missing_ro`) and `apply_error_ro` says in Romanian what is still missing. The seed re-opens, once per card (`reopened_at`), a guided card an earlier DONE closed while its condition does not read true, on its own row, with an `owner.decision_reopened` event, never while another open card holds the key; refusals and «keep it as it is» answers are never re-opened. Reason: on 2026-10-03 his DONE closed commercial use on Runway and ElevenLabs and the sale terms with nothing done; the page said done while the licence gate still refused, and «a key is never seeded twice» meant forever. ADR-GUIDED-DECISIONS says the studio may name the place and check the result; spec 31 («until its condition clears or he marks it done») is read as: his DONE asks the studio to check, and it closes the card when the check passes. Rejected: refusing the press with an error (his press would leave no trace and the card would not say what is missing); a new card beside the old one (the old one would still say «Ai marcat-o făcută»). Left open: whether spec 31's sentence should be amended to say this explicitly. Amended the same day (DONE_REOPEN_GUARD, adversarial review): the re-open repairs only DONEs taken before the fix; a DONE that closes a card records `done_reading` (MET or ONLY_OWNER) and is never re-opened when its condition changes later (a balance spent, a «da» taken back), and an old DONE is never re-opened over a newer card for the same key (his answer there stands).
+
+**ADR-POLICY-READ-PER-REQUEST — a paid step bought unasked reads his policy before every vendor request (MODE_REDUCTION_STOPS_PURCHASE, 2026-10-04).** Decision: spec 51 («Lowering autonomy. Immediate and safe: … active workflow external writes respect current policy at execution time») is applied per vendor request, not per step: before each stills request, re-roll, shot, clip-QC retry and redo re-roll, a step nobody pressed asks `may_act(..., ask_owner=False)` again (nothing written, no yes read or spent). It goes on when the answer is ALLOWED, or NEEDS_APPROVAL for a step that spent his yes for this plan (the question he already answered; `may_act` lets EVERY_PAID_STEP + his yes buy under MANUAL too); his own press goes on through `OWNER_PRESS_PASSES`. Anything else stops the step before the request; what was bought is kept and booked; `media.paid_step_stopped_by_mode` records it once with «Modul de autonomie a fost coborât la manual la HH:MM … restul nu s-a cumpărat». Unasked, a step the kernel refuses outright is refused before the balance is read (no low-balance card under MANUAL); a question still waits for the balance. Reason: on 2026-10-04 the LHC stills step bought scenes 4-9 (108 credits) after he lowered the mode to MANUAL at 05:08:27 UTC. Rejected: stopping a step bought on his yes for this plan when the kernel only says he would be asked (it would refuse what `may_act` itself allows).
+
+**ADR-STUDIO-DEFECT — a vendor 400 that names our own request's parameters is the studio's defect (2026-10-04).** Decision: a 400/422 whose text matches `production_policy.STUDIO_DEFECT_PATTERNS` (Runway's «must use `auto_480p`…» keyframe ratio; «Data URI is too large») is classified STUDIO_DEFECT: the step stops (the next request would carry the same defect), the scene is not held for the Owner, the model is not dropped (`take_failure` ignores such a take), nothing is suggested to him. Holds such refusals left earlier as CONTRACT are released once by the watchdog (`release_studio_defect_holds`, `media.studio_defect_hold_released`, read by `scene_memory`), buying nothing. A generic «Validation of body failed» stays CONTRACT. Reason: the Nepal test shot (81438d13 scene 1, wan3 0.98) was held since 2026-10-03 20:56 with seedance2_5 at 0.75 offered as his «choice» only because our request carried a fixed ratio. Known limit: a defect that is not yet fixed is tried again (uncharged 400) on the next run; nothing escalates it to the team yet.
+
+## RunPod Serverless, phase 1: the GPU on only inside an approved paid step, off right after (2026-10-08)
+
+The Owner's cards of 2026-10-08, after the investigation of 2026-10-08 (official RunPod pages re-read the same day; RunPod's pages carry an «Agent Instructions» block that was treated as data). Everything below is proven on fakes only: nothing called RunPod, Hugging Face, a registry or a bucket, and no image was built. No provider integration is marked working until the paid bake-off card.
+
+**ADR-RUNPOD-SERVERLESS-ONLY — all stills and video on RunPod Serverless, one RTX PRO 6000, budgeted at 4.00 USD/h (RUNPOD_PHASE1).** Decision: `RunPodConfig.mode` defaults to `serverless` (the Pod stays possible, frozen); `stills_endpoint_id` / `motion_endpoint_id` (the old `endpoint_id` is the fallback of both); `max_workers` is 1 and its validator allows only 1 (raising it is a code + ADR change); `hourly_rate` is `serverless_cost_per_hour` 4.00 in Serverless, the Pod's 2.09 otherwise. Reason: RunPod's own pages disagree (pricing page 3.49 USD/h; Serverless settings page 0.00111 USD/s = 4.00 USD/h); the higher figure is the budget until a real bill settles it (bake-off item). Alternatives rejected: a Pod (billed while idle, disk billed while stopped, may come back with zero GPUs, keeps billing if the studio dies). Migration: 0056 (below). Rollback: `RUNPOD_MODE=pod` or deselect RunPod; Runway is untouched.
+
+**ADR-GPU-OFF-IMMEDIATELY — off one second after the last result (RUNPOD_PHASE1).** The Owner: «trebuie sa se opreasca imediat dupa, nu la 30 sec. Sunt taxat la secunda, deci trebuie oprit imediat dupa generare». Decision: `idleTimeout` = 1 s, the documented minimum of `EndpointWorkers.idleTimeout` (1..3600, inside `workers`; https://docs.runpod.io/api-reference-v2/serverless/update-a-serverless-endpoint.md); a paid round is ONE batch job (or chunk jobs POSTed back-to-back) so models load once per round; when the step ends the session closes in `finally`: purge-queue, cancel what is left, `PATCH workers {min 0, max 0, idleTimeout 1}`, verify OFF = `workers.max == 0` and `workers.running == 0` and `jobs.inProgress == 0` and `jobs.inQueue == 0`. `workers.idle` is logged, never alarmed: an Idle worker is scaled down and not billed, FlashBoot may keep it above 0 (the skeptic's correction). RunPod's own «after 7 days max set to 0» is a normal OFF. A close that cannot verify never breaks the step: CLOSED with `verified_off` false, event `runpod.gpu_off_unverified`, one letter «Am trimis oprirea GPU-ului RunPod, dar nu a confirmat că s-a oprit; verific din nou la fiecare minut.», and the guard retries. Code: `providers/runpod/endpoint.py` (EndpointControl: GET/PATCH on api.runpod.io, health/purge/cancel on api.runpod.ai, idempotent calls retried on unsent/429/5xx, 401/403 = EndpointAccessDenied), `providers/runpod/gpu_session.py`.
+
+**ADR-GPU-ON-IN-STEP-ONLY — agents switch the GPU on only inside a paid step already approved, under its cap (RUNPOD_PHASE1).** Decision: Policy Kernel action `infra.gpu_on` (T2), read after the stop, T4 and safe mode and never by the mode's own ALLOWED: `context.step_action` must be one of `PAID_MEDIA_STEPS` (stills, test shot, motion, scene redo), the RunPod connection's `allow_infra_actions` must be true (the Owner's card), and the step itself must run now: `may_act(step_action, {plan_hash}, cost_usd, ask_owner=False)` allowed; or NEEDS_APPROVAL with `approval_id` naming his APPROVED answer of that action, film and plan (unexpired, or already spent by the step); or his own press and a status in `OWNER_PRESS_PASSES`. Else BLOCKED_NOT_IN_STEP / BLOCKED_INFRA_DISABLED. It never asks him, never spends a yes, writes nothing. `open_session` asks it; a refusal (or a failed PATCH) refuses the step before anything is sent (GpuSessionRefused, `unsent`), so nothing is bought and the journal keys stay reusable. One GPU at once: a session on another endpoint makes the step wait `gpu_busy_wait_seconds`, then GPU_BUSY; two sessions on one endpoint share it (the last close switches it off). `StepPermit` gained an optional `cost_usd` (the step's cap, default None) so the inner question is the one the step asked. The card (kind `runpod_infra_actions`, dedupe `runpod_infra_actions:<integration>`): «Agenții pot porni singuri GPU-ul RunPod în pașii plătiți aprobați?», options «Da, doar în pașii aprobați» (applies `runpod_infra`: config `allow_infra_actions` = "true", version bump, event `runpod.infra_actions_enabled`, idempotent by the inner command id) and «Nu încă»; it clears when the flag is true. A save of the connection form keeps his answer (it is not a form field, and the form refuses it). The guided card `runpod_ltx_licence`: the LTX-2.5 gate on Hugging Face is accepted on his own account, with an HF token as a build secret. Rollback: refuse the card, or set the flag false; every step then refuses BLOCKED_INFRA_DISABLED before sending.
+
+**ADR-GPU-OFF-ALWAYS — switching the GPU off is never an autonomous act (RUNPOD_PHASE1; amends 51).** Decision: `infra.gpu_off` (T0) is answered ALLOWED by `may_act` as its FIRST check, before the unclassified check, STOP AUTONOMY, T4 and safe mode: «Oprirea GPU-ului nu este o acțiune autonomă: nu cheltuie, doar oprește cheltuiala». `force_off` (the Owner's «Oprește GPU acum», the guard, the shutdown, the launcher) never consults the kernel. docs/architecture/51_AUTONOMY_MODE_SEMANTICS.md gains a dated amendment under «STOP AUTONOMY»; its index hash moves d55b7434c4502fe9dface54ca4ac8a9326bd30a0cfb952e63afbd992082bbfc5 → fd7af4e4a25bad8b9f0d94cab4e36e32337f3efe3e49e14615bb53941fbfd62f. Reason: a stop that also stopped the off would keep a per-second bill running. Alternative rejected: putting the guard in the watchdog or a scheduled job (both are behind the stop by spec: «It changes nothing while the Owner's autonomy stop is set»).
+
+**ADR-GPU-GUARD — a GPU found on with no paid step open is switched off (RUNPOD_PHASE1).** Decision: `providers/runpod/gpu_guard.py`, run only in the process that holds the worker's lock (beside `reclaim_abandoned_leases`) when `STUDIO_RUNPOD_GUARD_ENABLED` (default true): BOOT (60 s bound; every live session of another process becomes FORCED_OFF GUARD_ORPHAN), a loop every `guard_interval_seconds` (60) while a session is open or closed less than 15 minutes ago, else every `guard_idle_interval_seconds` (600): sessions not renewed for `session_stale_seconds` → GUARD_STALE, past `expires_at` (opened + 4 h) → GUARD_TTL with a letter; each endpoint with no live session is read and, if anything can bill, purged, cancelled, set to max 0 and verified, with event `runpod.gpu_guard_off` and one letter «GPU-ul RunPod a fost găsit pornit fără niciun pas plătit deschis și a fost oprit.»; a drift from the resting settings (min, idleTimeout, flashboot, timeout) is PATCHed back (`apply_baseline`, cost-reducing); three unreadable ticks in a row are one event and the letter «Nu pot verifica GPU-ul RunPod (cheie sau rețea). Verifică în consola RunPod că 0 workeri rulează.». At shutdown, after the worker has ended, `force_off(SHUTDOWN)` (20 s bound). `scripts/start.py` then runs `scripts/runpod_gpu_off.py --reason LAUNCHER_STOP` (same interpreter, 45 s; on a closing window `--fast` first: purge + PATCH only, 2 s a request, 4 s in all), which always exits 0 and prints one Romanian line, silent without RunPod. Table `gpu_session` (migration 0056) records every session and how it ended. Crash bound: a batch already sent runs at most its execution timeout (≤ 2400 s, ≤ 2.67 USD at 4 USD/h, one GPU) and then scales to zero by RunPod's own idle rule; the BOOT guard sets max 0. Balance reads are not in phase 1 (RunPod's billing API field unconfirmed): the cap, the one-GPU rule and prepaid credit without auto-pay are the backstop.
+
+**ADR-RUNPOD-ANYWAY — «Totul pe RunPod oricum» (RUNPOD_PHASE1).** Decision: if RunPod's quality is below Runway's, everything still goes to RunPod: no per-scene Runway fallback by default; Runway stays installed and selectable by the Owner; the planner takes the selected RunPod model (selected_default branch) although its quality is unmeasured until the bake-off.
+
+**ADR-RUNPOD-MODELS — the open models, licence-checked (RUNPOD_PHASE1).** Decision: stills Qwen-Image-2512 (Apache-2.0) at its native 928x1664 plus SeedVR2 (Apache-2.0) upscale to exactly 1530x2720; motion LTX-2.5 distilled image-to-video as route 1 (LTX-2.x Community Licence: free under 10M USD revenue, the AI disclosure stays on, metadata/watermark/provenance never stripped, gated on Hugging Face — the Owner accepts it himself) and Wan 2.2 I2V-A14B + LightX2V 4-step (Apache-2.0) as route 2. Excluded: FLUX dev and Qwen-Image-2.1 (non-commercial), Hunyuan* and MiniMax (licence not valid in the EU). `model_routes`: VIDEO_QUALITY and VIDEO_HERO → LTX-2.5. Worker image (backend/runpod_worker, WORKER): our own handler reads the Save node's output file (the stock handler skips `temp` outputs), every weight sha256-pinned and fetched with a build secret, `BASE_DIGEST` and `COMFYUI_VERSION` required, nothing built or pushed by the studio; the workflows are UNPROVEN until the bake-off.
+
+**ADR-RUNPOD-BUCKET — outputs in the Owner's S3-compatible bucket (RUNPOD_PHASE1).** Decision: RunPod keeps a /run result 30 minutes, so the worker writes every output, manifest and claim to a bucket the Owner creates (e.g. Cloudflare R2), read through SigV4 presigned URLs (7 days at most = 604800 s); any S3-compatible HTTPS endpoint; its two keys live in the RunPod connection's vault (`s3_access_key_id`, `s3_secret_access_key`), never in .env for his studio. A step is refused before any GPU switch while the bucket is not configured.
+
+**ADR-JOURNAL-NO-PICTURES — the journal keeps a picture's fingerprint, not the picture (RUNPOD_PHASE1).** Decision: migration 0056 replaces every `data:<mime>;base64,…` in a journal row's `request` (`reference_images[]`, `source_image`) by {"sha256", "bytes", "mime"} (batched, idempotent; `payload_hash` unchanged), and adds `batch_remote_id` (indexed), `batch_index`, `request_digest`, `gpu_session_id`, `billed_seconds_value` to `cloud_generation_job`, and the `gpu_session` table. Reason: 6.7 MB rows. Downgrade drops the table and columns and cannot restore the pictures (documented). Never run on data/studio.db by an agent; the test migrates a temporary database holding a fat 0055 row.
+
+**ADR-RUNPOD-BATCH-ROUNDS — a paid step on RunPod is rounds of one batch each, priced with their overhead (RUNPOD_PHASE1, STEPS).** Decision: round 1 buys every item of the step in one batch; later rounds only what QC sent back; each round is priced before it is sent (items + one round overhead = (cold start 120 s + idle 1 s) × rate) and must fit the step's remaining cap; the Owner's yes and `may_act`'s `cost_usd` cover the worst case of every round with its overhead. The mode guard is read before each round and polled while it runs; a stop cancels the unfinished chunks, keeps what finished, and records the rest «nu s-a cumpărat». Each item keeps its own journal row and SceneTake SUBMITTED before any poll; collection reads the bucket manifest first.
+
+**ADR-RUNPOD-BOOKING-NEVER-BELOW — the books are raised to what RunPod used, never lowered below the forecast (RUNPOD_PHASE1, adversary «money and the staircase», 2026-10-08).** Decision: after each round the studio reads its jobs' final /status once (`BatchRun.settle`; items normally arrive through the bucket manifests, so the times were otherwise never read) and, when (delayTime + executionTime)/1000 + idleTimeout per job × the budget rate exceeds what the meter kept for the round, raises the meter (the step's booking, and the cap left for its next rounds) to it (`gpu_batch.run_rounds(credits_for_seconds=…)`, `assembler.gpu_seconds_to_credits`). A measure below the forecast never lowers the booking: the Owner approved the forecast, and only a billing read (phase 2) settles it downward. The figure is an upper bound (queue and throttled time are counted, back-to-back chunks count the wait of the second). Also: a round whose first chunk's /run answer was lost is never refunded or refused as «nothing sent» because a later chunk could not leave; one item whose result cannot be taken (checksum, manifest, echoed key) fails alone as BAD_OUTPUT and stays counted; a passing read error while polling leaves the item pending (the round's deadline bounds it) instead of cancelling the paid batch.
+
+**ADR-RUNPOD-NO-LONE-RUN — on Serverless nothing is bought outside a round and its GPU session (RUNPOD_PHASE1, adversary, 2026-10-08).** Decision: `RunPodGenerationProvider._submit` refuses every per-request purchase in Serverless (not the mock) before anything is written or sent (MediaProviderError NEEDS_GPU_ROUND, unsent). Reason: outside a session workers.max is 0, so a lone /run waits in RunPod's queue and is served, and billed, by the next step's worker; and the studio's worker reads only `amn.batch.v1`. The still redo was still per-request: on a RunPod Serverless image adapter it is refused NEEDS_GPU_ROUND before the Owner's yes is asked or spent; a round-based still redo is left to build (the stills step re-buys a scene meanwhile). Prices from config/runpod_models.json are provenance ESTIMATED and read «estimare GPU nemăsurată dd.mm», never «tarif publicat»; a RunPod film's page shows «RunPod GPU» and applies no Runway balance rule (the backend's `local_step` already skipped it). Left open: a step's yes is spent before `open_session` asks `infra.gpu_on`, so a refusal there (card not accepted, GPU busy) uses up the yes with nothing bought.
+
+**ADR-RUNPOD-PRECHECK-BEFORE-YES — a RunPod step refuses before the Owner's yes when its GPU could not start (RUNPOD_PHASE1, completeness check, 2026-10-08).** Decision: the stills step and the motion step (test shot, motion, scene redo) on a batch adapter call `gpu_batch.gpu_precheck` (`gpu_session.precheck`) before they ask for or spend his approval: Serverless configured for the purpose, the bucket configured, and his card «Agenții pot porni singuri GPU-ul RunPod în pașii plătiți aprobați?» accepted (`allow_infra_actions`); else the step is refused with `NOT_CONFIGURED` or `BLOCKED_INFRA_DISABLED` and his words, nothing asked, nothing spent, nothing sent. A simulation passes. Reason: the open item of ADR-RUNPOD-NO-LONE-RUN: the yes was spent before `open_session` asked `infra.gpu_on`, so a card not yet accepted cost him a yes with nothing bought. Left open: GPU_BUSY (a second film on the other endpoint) is still decided only by `open_session`, after the yes; with one film at a time it does not arise.
+
+**ADR-RUNPOD-WORKER-PINNED — the worker image is pinned to what exists (RUNPOD_PHASE1, completeness check, 2026-10-08).** Decision: the base is `runpod/worker-comfyui:5.10.0-base` at `sha256:e9d18d3db15839ebb10c10c824109fc2956f31ef7bf21916220c008855b0d538` (the OCI index the registry served on 2026-10-08); `5.11.0-base` has a GitHub tag but the registry answers 404. `COMFYUI_VERSION` is 0.39.2, the release whose source every graph node was checked against. Every public weight's revision, sha256 and size come from Hugging Face's repo tree at that revision (metadata, no download). The gated LTX-2.5 files keep `sha256` null until `python -m runpod_worker.build resolve --image motion` reads `paths-info` with the Owner's `HF_TOKEN` (metadata only; the size must equal the pinned one, else nothing is written). The Dockerfile's ComfyUI checkout is sound: the base installs ComfyUI with comfy-cli 1.13.0, which runs `git clone`. Reason: `build plan` refused everything, and the base it would have used does not exist. Rollback: set the pins back to null; the build refuses again.

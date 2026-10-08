@@ -118,14 +118,4 @@ test('the key goes in a header, the capture time with it, never in the URL', asy
 
 /* ------------------------------------------------------------------------------ the wiring -- */
 
-test('the page offers the title both kept frames and sends only from the live stream\'s kept frames', () => {
-  assert.match(MAIN, /chooseTitleFrame\(\[/);
-  assert.match(MAIN, /readStudioFrame\(/);
-  // the send rides on the stream's own rare keep (onKeep), never on a frame loop
-  const keep = MAIN.slice(MAIN.indexOf('onKeep: (record) =>'), MAIN.indexOf('onKeep: (record) =>') + 900);
-  assert.match(keep, /sendStudioFrame\(/);
-  assert.match(keep, /studioSendDue\(/);
-  // the title gives up a kept frame whose light no longer matches the hour
-  assert.match(TITLE, /dropKept\(\)/);
-  assert.match(TITLE, /keptStillTrue/);
-});
+test('the pixel page sends no decorative image to the backend', () => { const main = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8'); assert.doesNotMatch(main, /sendStudioFrame\(|readStudioFrame\(/); });

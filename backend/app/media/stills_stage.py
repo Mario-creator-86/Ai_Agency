@@ -81,6 +81,7 @@ import inspect
 import json
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -94,6 +95,7 @@ from app.media.assembler import (
     FREE_FAILURE_KINDS,
     LIVE_KIND,
     STILL_HOLD_EVENT,
+    STUDIO_DEFECT_KIND,
     UNANSWERED_FAILURE_CODE,
     UNANSWERED_REASON,
     UNCOUNTED_DROP_STOP,
@@ -105,6 +107,7 @@ from app.media.assembler import (
     collect_submitted_takes,
     failure_code_of,
     failure_detail_of,
+    gpu_seconds_to_credits,
     identity_key,
     max_paid_attempts_per_scene,
     outcome_unknown,
@@ -139,6 +142,7 @@ from app.media.cost_plan import (
 )
 from app.media.disk import LOW_DISK, disk_refusal
 from app.media.faces import FaceCounter
+from app.media.mode_guard import PurchaseGuard, unasked_refusal
 from app.media.models import SceneTake, Storyboard, StoryboardScene
 from app.media.picture_qc import StillJudgement, judge_still
 from app.media.prompt_lint import (
@@ -162,6 +166,15 @@ from app.media.still_gate import (
     positive_instruction,
 )
 from app.providers.media_http import MediaProviderError, TaskStillOpen
+from app.providers.runpod.batch import (
+    UNCERTAIN,
+    BatchRequest,
+    ItemOutcome,
+    SubmittedItem,
+    item_seed,
+    supports_batch,
+)
+from app.providers.runpod.wiring import bind_scene, sync_take_quality
 
 #: The Policy Kernel's name for this step, and the sheet step it is bound to.
 STILLS_ACTION = "media.stills_purchase"
@@ -444,6 +457,14 @@ def stills_plan(
         to_buy = []
     cost = per_scene * len(to_buy)
     cap = cost * (1 + MAX_REROLLS)
+    # RunPod Serverless: every round is one batch job that pays a GPU start (cold start + idle
+    # tail). Scene 1 goes alone while the film has no Figure 1, so such a step is two series
+    # of rounds; the worst case is every re-roll round of each (0 for a per-image vendor).
+    overhead = prices.round_overhead("image", model_id)
+    series = 2 if first is not None and first.index in to_buy and len(to_buy) > 1 else 1
+    if to_buy and overhead:
+        cost += overhead * series
+        cap += overhead * series * (1 + MAX_REROLLS)
     planned = {
         "storyboard_id": storyboard_id,
         "step": STILLS_STEP,
@@ -473,6 +494,8 @@ def stills_plan(
         "cost_credits": cost,
         "cap_credits": cap,
     }
+    if overhead:
+        planned["round_overhead_credits"] = overhead
     plan_hash = hashlib.sha256(_canonical(planned).encode("utf-8")).hexdigest()
     return {
         **planned,
@@ -723,6 +746,12 @@ def _set_verdicts(
                 row.status = "REJECTED"
                 row.failure_code = GATE_FAILURE_CODE
                 row.failure_detail = ("; ".join(report.reasons_ro) or "respinsă")[:500]
+            sync_take_quality(
+                session,
+                row,
+                accepted=report.decision == "PASSED",
+                reason="; ".join(report.reasons_ro),
+            )
 
 
 def _claim_intent(
@@ -885,6 +914,412 @@ def settle_stills(
     return summary
 
 
+# ------------------------------------------------------------------ RunPod rounds (batches)
+
+#: Why a later scene waits on RunPod too: scene 1 gives the film its look (Figure 1).
+FIGURE_ONE_MISSING = (
+    "Scena {first} nu are încă o imagine aprobată; ea dă lumina, paleta și granulația "
+    "filmului, așa că restul scenelor nu se cumpără fără ea."
+)
+
+
+@dataclass
+class _SceneRound:
+    """One scene bought in rounds: its words, its pictures and what its candidates did."""
+
+    scene: _Scene
+    entry: dict[str, Any]
+    still_plan: StillPlan
+    identity: str
+    requests: int
+    committed_before: float
+    instruction: str = ""
+    rerolls: int = 0
+    retried: bool = False
+    attempt: int = 1
+    references: tuple[bytes, ...] = ()
+    with_character: bool = False
+    with_figure: bool = False
+    outcome: dict[str, Any] | None = None
+    #: This round's judged candidates (take id, report) and its failed items' codes.
+    verdicts: list[tuple[str, StillReport]] = field(default_factory=list)
+    failed: list[str] = field(default_factory=list)
+    uncertain: bool = False
+    cancelled: bool = False
+    intents: dict[str, str | None] = field(default_factory=dict)
+
+
+@dataclass
+class _StillRounds:
+    """The stills step on RunPod Serverless: rounds of batches in one GPU session
+    (`media.gpu_batch.run_rounds`), with the same gate, re-rolls and Figure 1 as the
+    per-request path. Round 1 is scene 1 alone while the film has no Figure 1 (every later
+    scene is drawn with it), else every scene; later rounds are what the gate sent back."""
+
+    engine: Engine
+    storyboard_id: str
+    correlation_id: str
+    adapter: Any
+    model_id: str
+    first_live: int | None
+    figure_one: bytes | None
+    per_image: float
+    overhead: float
+    credit_usd: float
+    ledger: _Ledger
+    limit: int
+    work_dir: Path
+    environment: str
+    registry: Any
+    judge: Judge
+    face_counter: FaceCounter | None
+    measure: Sequence[str]
+    ffmpeg_path: str | None
+    faces_forbidden: bool
+    rules: tuple[str, ...]
+    states: dict[int, _SceneRound] = field(default_factory=dict)
+    waiting: list[int] = field(default_factory=list)
+    stop: str | None = None
+    unverified: bool = False
+
+    # ------------------------------------------------------------------ requests
+
+    def _prepare(self, state: _SceneRound) -> None:
+        refs, with_character, with_figure = _references(
+            state.scene,
+            self.figure_one,
+            self.adapter,
+            first=state.scene.index == self.first_live,
+        )
+        state.references = tuple(refs)
+        state.with_character, state.with_figure = with_character, with_figure
+        self.unverified = self.unverified or (
+            bool(refs) and not bool(getattr(self.adapter, "REFERENCE_IMAGE_VERIFIED", False))
+        )
+
+    def _requests(self, state: _SceneRound) -> list[BatchRequest]:
+        prompt = _prompt(
+            state.scene, state.instruction, state.with_figure, with_character=state.with_character
+        )
+        width, height = (int(part) for part in STILL_RATIO.split(":"))
+        return [
+            BatchRequest(
+                operation="image",
+                project_id=self.storyboard_id,
+                scene_id=str(state.scene.index),
+                candidate_index=candidate,
+                attempt_number=state.attempt,
+                model=self.model_id,
+                prompt=prompt,
+                negative_prompt=None,
+                seed=item_seed(self.storyboard_id, state.scene.index, state.attempt, candidate),
+                width=width,
+                height=height,
+                duration=None,
+                fps=None,
+                references=state.references,
+                source_image=None,
+                price_usd=Decimal(str(self.per_image)) * Decimal(str(self.credit_usd)),
+            )
+            for candidate in range(STILL_CANDIDATES)
+        ]
+
+    def price(self, requests: list[BatchRequest]) -> float:
+        """A round's credits: its images and one GPU start (cold start + idle tail)."""
+        return self.per_image * len(requests) + self.overhead
+
+    def _send(self, state: _SceneRound) -> list[BatchRequest]:
+        if state.requests >= self.limit:
+            state.outcome = {
+                "status": "NEEDS_OWNER",
+                "reason": attempts_reason(state.scene.index, state.requests, self.limit),
+            }
+            return []
+        state.requests += 1
+        state.verdicts, state.failed = [], []
+        return self._requests(state)
+
+    # ------------------------------------------------------------------ callbacks
+
+    def submitted(self, item: SubmittedItem) -> None:
+        """RunPod accepted the round: the candidate's take is SUBMITTED, before any poll."""
+        state = self.states[int(item.request.scene_id)]
+        state.intents[item.job_row_id] = _record_intent(
+            self.engine,
+            str(item.remote_item_id),
+            storyboard_id=self.storyboard_id,
+            scene_number=state.scene.index,
+            kind="still",
+            prompt_hash=state.identity,
+            model_id=self.model_id,
+            resolution=STILL_RATIO,
+            correlation_id=self.correlation_id,
+            credits=float(self.per_image),
+            seed=item.request.seed,
+        )
+
+    def landed(self, outcome: ItemOutcome) -> None:
+        """One candidate came back: kept as PAID and UNJUDGED, then judged at once (the worker
+        meanwhile makes the next one)."""
+        state = self.states[int(outcome.item.request.scene_id)]
+        intent = state.intents.get(outcome.item.job_row_id)
+        if outcome.state == "COMPLETED" and outcome.path is not None:
+            content = Path(outcome.path).read_bytes()
+            path = self.work_dir / (
+                f"scene_{state.scene.index:02d}_{uuid4().hex[:8]}"
+                f"_c{outcome.item.request.candidate_index + 1}.png"
+            )
+            path.write_bytes(content)
+            self.ledger.images += 1
+            take_id = record_take(
+                self.engine,
+                take_id=intent,
+                storyboard_id=self.storyboard_id,
+                scene_number=state.scene.index,
+                kind="still",
+                prompt_hash=state.identity,
+                model_id=self.model_id,
+                resolution=STILL_RATIO,
+                status="PAID",
+                correlation_id=self.correlation_id,
+                credits_quoted=float(self.per_image),
+                path=path,
+                sha256=hashlib.sha256(content).hexdigest(),
+                failure_code=UNJUDGED_FAILURE_CODE,
+                failure_detail=UNJUDGED_DETAIL,
+                remote_task_id=outcome.item.remote_item_id,
+                seed=outcome.item.request.seed,
+            )
+            self.ledger.take_ids.append(take_id)
+            report = _judge_candidate(
+                self.engine,
+                self.registry,
+                path,
+                state.still_plan,
+                self.correlation_id,
+                environment=self.environment,
+                judge=self.judge,
+                face_counter=self.face_counter,
+                measure=self.measure,
+                ffmpeg_path=self.ffmpeg_path,
+            )
+            state.verdicts.append((take_id, report))
+            return
+        error = str(outcome.error or outcome.state)
+        uncertain = error == UNCERTAIN
+        state.uncertain = state.uncertain or uncertain
+        state.cancelled = state.cancelled or outcome.state == "CANCELLED"
+        self.ledger.take_ids.append(
+            record_take(
+                self.engine,
+                take_id=intent,
+                storyboard_id=self.storyboard_id,
+                scene_number=state.scene.index,
+                kind="still",
+                prompt_hash=state.identity,
+                model_id=self.model_id,
+                resolution=STILL_RATIO,
+                status="REFUSED",
+                correlation_id=self.correlation_id,
+                credits_quoted=float(self.per_image) if uncertain else None,
+                failure_code=UNANSWERED_FAILURE_CODE if uncertain else f"RUNPOD.{error}"[:100],
+                failure_detail=(
+                    "Nu s-a cumpărat: pasul s-a oprit înainte de această imagine."
+                    if outcome.state == "CANCELLED"
+                    else None
+                ),
+                remote_task_id=outcome.item.remote_item_id,
+            )
+        )
+        state.failed.append(error)
+
+    # ------------------------------------------------------------------- deciding
+
+    def _decide(self, state: _SceneRound) -> str | None:
+        """The scene after its round: APPROVED, an outcome for the Owner, or "again" (a
+        re-roll, or one retry of items the worker failed)."""
+        reports = [report for _take, report in state.verdicts]
+        best = choose_best(reports)
+        _set_verdicts(self.engine, state.verdicts, best)
+        if best is not None:
+            chosen = next(take for take, report in state.verdicts if report is best)
+            if state.scene.index == self.first_live:
+                self.figure_one = Path(best.path).read_bytes()
+            state.outcome = {"status": "APPROVED", "take_id": chosen, "score": best.score}
+            return None
+        if state.uncertain:
+            state.entry.update(failure_kind="UNANSWERED", failure_code=UNANSWERED_FAILURE_CODE)
+            self.stop = UNANSWERED_REASON.format(scene=state.scene.index)
+            state.outcome = {"status": "NEEDS_OWNER", "reason": self.stop}
+            return None
+        if state.cancelled:
+            state.outcome = {
+                "status": "NOT_BOUGHT",
+                "reason": self.stop or "Pasul s-a oprit; restul nu s-a cumpărat.",
+            }
+            return None
+        if not reports:
+            if not state.retried:
+                # The worker failed the items (not the gate): tried once more, same words.
+                state.retried = True
+                return "again"
+            state.entry.update(failure_kind="BAD_OUTPUT", failure_code="; ".join(state.failed))
+            state.outcome = {
+                "status": "NEEDS_OWNER",
+                "reason": f"Scena {state.scene.index}: RunPod nu a dat nicio imagine "
+                f"({', '.join(dict.fromkeys(state.failed))}).",
+            }
+            return None
+        failing = next((r for r in reports if r.violations), reports[0])
+        step = next_step(failing, rerolls_done=state.rerolls)
+        if step.action == "reroll":
+            state.rerolls += 1
+            state.instruction = positive_instruction(
+                [code for report in reports for code in report.violations]
+            )
+            return "again"
+        if step.action == "compose_locally":
+            state.outcome = {"status": "COMPOSE_LOCALLY", "reason": step.reason_ro}
+            return None
+        state.outcome = {
+            "status": "NEEDS_OWNER",
+            "reason": step.reason_ro,
+            "reasons": list(dict.fromkeys(r for rep in reports for r in rep.reasons_ro)),
+        }
+        return None
+
+    def next_round(self, outcomes: list[ItemOutcome]) -> list[BatchRequest]:
+        """What the gate sent back, plus the rest of the film once scene 1 has its still."""
+        touched = sorted({int(o.item.request.scene_id) for o in outcomes})
+        again = [index for index in touched if self._decide(self.states[index]) == "again"]
+        if self.stop is not None:
+            return []
+        requests: list[BatchRequest] = []
+        for index in again:
+            state = self.states[index]
+            state.attempt += 1
+            requests += self._send(state)
+        if self.waiting and self.figure_one is not None:
+            # Scene 1's still was approved in this round: the rest of the film has its look.
+            for index in self.waiting:
+                state = self.states[index]
+                self._prepare(state)
+                requests += self._send(state)
+            self.waiting = []
+        elif self.waiting and self.first_live is not None:
+            first = self.states.get(self.first_live)
+            if first is not None and first.outcome is not None:
+                # Scene 1 ended without an approved still: nothing later is bought blind.
+                for index in self.waiting:
+                    self.states[index].outcome = {
+                        "status": "NOT_BOUGHT",
+                        "reason": FIGURE_ONE_MISSING.format(first=self.first_live),
+                    }
+                self.waiting = []
+        return requests
+
+    # ----------------------------------------------------------------------- run
+
+    def run(
+        self,
+        deferred: list[tuple[_Scene, dict[str, Any]]],
+        *,
+        permit: Any,
+        guard: PurchaseGuard | None,
+        stopped: Callable[[], str | None],
+    ) -> dict[str, Any]:
+        from app.media.gpu_batch import run_rounds  # noqa: PLC0415 - gpu_batch reads runpod
+
+        buying = {scene.index for scene, _entry in deferred}
+        first: list[BatchRequest] = []
+        for scene, entry in deferred:
+            state = _SceneRound(
+                scene=scene,
+                entry=entry,
+                still_plan=StillPlan(
+                    scene=scene.index,
+                    still_prompt=scene.words,
+                    camera_move=scene.camera_move,
+                    faces_forbidden=self.faces_forbidden,
+                    bible_rules=self.rules,
+                    look_block=scene.look_block,
+                    palette_words=_palette_words(scene.look_block),
+                ),
+                identity=take_hash(scene.identity, self.model_id),
+                requests=scene.attempts,
+                committed_before=self.ledger.committed,
+            )
+            self.states[scene.index] = state
+            if scene.index != self.first_live and self.figure_one is None:
+                if self.first_live in buying:
+                    self.waiting.append(scene.index)  # bought once scene 1 has its still
+                else:
+                    state.outcome = {
+                        "status": "NOT_BOUGHT",
+                        "reason": FIGURE_ONE_MISSING.format(first=self.first_live),
+                    }
+                continue
+            self._prepare(state)
+            first += self._send(state)
+        summary: dict[str, Any] = {"rounds": 0, "stopped": None, "cap_stop": None}
+        if first:
+            summary = run_rounds(
+                self.engine,
+                self.adapter,
+                permit=permit,
+                purpose="image",
+                first_round=first,
+                next_round=self.next_round,
+                price_credits=self.price,
+                cap_left=lambda: float(self.ledger.cap) - self.ledger.committed,
+                guard=guard,
+                stopped=stopped,
+                on_submitted=self.submitted,
+                on_outcome=self.landed,
+                meter=self.ledger.meter,
+                credits_for_seconds=gpu_seconds_to_credits(
+                    self.adapter, credit_usd=self.credit_usd
+                ),
+            )
+        if summary.get("stopped") and summary.get("stopped") != UNCERTAIN:
+            self.stop = self.stop or summary["stopped"]
+        for index, state in self.states.items():
+            if state.outcome is None and (state.verdicts or state.failed):
+                self._decide(state)  # its last round, ended by a stop or the cap
+            if state.outcome is None:
+                state.outcome = {
+                    "status": "NOT_BOUGHT",
+                    "reason": self.stop
+                    or summary.get("cap_stop")
+                    or FIGURE_ONE_MISSING.format(first=self.first_live),
+                }
+            state.entry.update(state.outcome)
+            state.entry["rerolls"] = state.rerolls
+            if state.outcome["status"] in ("NEEDS_OWNER", "COMPOSE_LOCALLY"):
+                free = (
+                    str(state.entry.get("failure_kind") or "") in FREE_FAILURE_KINDS
+                    and self.ledger.committed <= state.committed_before
+                )
+                _event(
+                    self.engine,
+                    STILL_HOLD_EVENT,
+                    self.storyboard_id,
+                    {
+                        "severity": "WARNING",
+                        "scene_number": index,
+                        "status": state.outcome["status"],
+                        "reason": state.outcome["reason"],
+                        "rerolls": state.rerolls,
+                        "failure_kind": state.entry.get("failure_kind"),
+                        "identity": identity_key(state.scene.identity),
+                        "holds": not free,
+                    },
+                    self.correlation_id,
+                )
+        summary["stopped"] = self.stop or summary.get("cap_stop")
+        return summary
+
+
 # ------------------------------------------------------------------------------ the step
 
 
@@ -908,12 +1343,21 @@ def run_stills_stage(
     requester: str = "video_editor",
     meter: SpendMeter | None = None,
     margin: float | None = None,
+    unasked: bool = True,
+    timezone: str | None = None,
 ) -> dict[str, Any]:
     """The stills step of one film, bought only under the Owner's yes for this plan.
 
     ``margin`` is the Owner's balance margin (``settings.paid_step_balance_margin``; 1.15 by
     default): the step starts when the balance holds its first round x the margin, and buys
     each request only while the balance holds that request's price x the margin.
+
+    ``unasked`` (the default) is a step nobody pressed: the day's staircase, FILM_CONTINUE. It
+    is refused before the balance is read when the Policy Kernel refuses it outright, and before
+    every request the kernel is asked again without spending anything (`mode_guard`): a mode he
+    lowered, or a stricter rule, stops the step there (spec 51, «Lowering autonomy»). False is
+    his own press on the sheet, which goes on through BLOCKED_MODE and NEEDS_APPROVAL
+    (`media.services.OWNER_PRESS_PASSES`). ``timezone`` is his clock, for the stop's sentence.
 
     ``meter`` is kept up to date as requests are sent and credits committed, so the caller
     can book what was spent when the step raises half-way. A request that may have been
@@ -1028,6 +1472,32 @@ def run_stills_stage(
             raise StillsStageRefused(LOW_DISK, no_room, plan=plan)
     cap = int(plan["cap_credits"])
     margin = float(margin or BALANCE_MARGIN)
+    asked_about = {"plan_hash": plan_hash, "cap_credits": cap}
+    if plan["to_buy"] and supports_batch(image_adapter):
+        # RunPod Serverless: a GPU that could not be switched on (his card not accepted, no
+        # bucket) refuses here, before his yes is asked for or spent with nothing bought.
+        from app.media import gpu_batch  # noqa: PLC0415 - gpu_batch reads runpod
+        from app.providers.runpod.gpu_session import GpuSessionRefused  # noqa: PLC0415
+
+        try:
+            gpu_batch.gpu_precheck(
+                engine, image_adapter, purpose="image", integration_id=integration_id
+            )
+        except GpuSessionRefused as exc:
+            raise StillsStageRefused(str(exc.code), exc.reason_ro, plan=plan) from exc
+    if plan["to_buy"] and unasked:
+        # Unasked, the Owner's mode is asked before his balance (2026-10-04): a step the kernel
+        # refuses outright reads no balance and raises no low-balance card.
+        refused = unasked_refusal(
+            engine,
+            STILLS_ACTION,
+            subject=storyboard_id,
+            context=asked_about,
+            cost_usd=plan["cap_usd"],
+            requester=requester,
+        )
+        if refused is not None:
+            raise StillsStageRefused(str(refused["status"]), str(refused["reason"]), plan=plan)
     read, before, problem = _read_balance(image_adapter) if plan["to_buy"] else (False, None, None)
     if problem is not None:
         raise StillsStageRefused(LOW_BALANCE, f"Nu se cumpără imagini: {problem}.", plan=plan)
@@ -1056,7 +1526,7 @@ def run_stills_stage(
                 # The cap, the most his yes lets the step spend with its re-rolls (MONEY-08):
                 # OVER_USD compares his threshold with it, not with the expected cost.
                 cost_usd=plan["cap_usd"],
-                context={"plan_hash": plan_hash, "cap_credits": cap},
+                context=asked_about,
             )
         if not verdict["allowed"]:
             raise StillsStageRefused(
@@ -1065,6 +1535,22 @@ def run_stills_stage(
                 approval_id=verdict.get("approval_id"),
                 plan=plan,
             )
+        # The same question again before every request, never spending (spec 51).
+        guard: PurchaseGuard | None = PurchaseGuard.after(
+            engine,
+            verdict,
+            action=STILLS_ACTION,
+            step="stills",
+            storyboard_id=storyboard_id,
+            requester=requester,
+            cost_usd=plan["cap_usd"],
+            context=asked_about,
+            unasked=unasked,
+            correlation_id=correlation_id,
+            timezone=timezone,
+        )
+    else:
+        guard = None
 
     faces_forbidden = bible_face_rule(bible) is not None
     rules = _bible_rules(bible)
@@ -1082,6 +1568,10 @@ def run_stills_stage(
     unverified = False
     # Where the balance stopped the step, if it did (`balance_rule.low_balance_record`).
     low_balance: dict[str, Any] | None = None
+    # RunPod Serverless buys in rounds of batches inside one GPU session (`gpu_batch`): the
+    # scenes to buy are gathered here and bought after the loop, all at once.
+    batching = bool(plan["to_buy"]) and supports_batch(image_adapter)
+    deferred: list[tuple[_Scene, dict[str, Any]]] = []
 
     for scene in scenes:
         entry: dict[str, Any] = {"scene_index": scene.index, "scene_kind": scene.kind}
@@ -1124,6 +1614,9 @@ def run_stills_stage(
         if stopped is not None:
             entry.update(status="NOT_BOUGHT", reason=stopped)
             continue
+        if batching:
+            deferred.append((scene, entry))
+            continue
         if scene.index != first_live and figure_one is None:
             entry.update(
                 status="NOT_BOUGHT",
@@ -1154,6 +1647,12 @@ def run_stills_stage(
         while outcome is None:
             if stop_requested(engine):
                 stopped = "Proprietarul a oprit autonomia; nu se mai cumpără imagini."
+                outcome = {"status": "NOT_BOUGHT", "reason": stopped}
+                break
+            lowered = guard.stop_reason(scene.index) if guard is not None else None
+            if lowered is not None:
+                # His mode or rule changed while the step ran: nothing more is bought.
+                stopped = lowered
                 outcome = {"status": "NOT_BOUGHT", "reason": stopped}
                 break
             if requests >= limit:
@@ -1222,6 +1721,7 @@ def run_stills_stage(
             ledger.meter.attempts += 1
             requests += 1
             try:
+                bind_scene(image_adapter, storyboard_id, scene.index, "image")
                 candidates, quoted = _buy(
                     image_adapter, prompt, references, STILL_CANDIDATES, on_submitted=submitted
                 )
@@ -1275,6 +1775,12 @@ def run_stills_stage(
                     retried = True
                     continue
                 entry.update(failure_kind=failure.kind, failure_code=failure_code_of(exc))
+                if failure.kind == STUDIO_DEFECT_KIND:
+                    # Our request was wrong (the vendor names the parameter, 2026-10-04): the
+                    # scene is not held for the Owner and nothing more is sent in this step.
+                    stopped = f"Scena {scene.index}: {failure.reason_ro}"
+                    outcome = {"status": "NOT_BOUGHT", "reason": stopped}
+                    break
                 if failure.stop_step:
                     stopped = failure.reason_ro
                 outcome = {
@@ -1412,6 +1918,68 @@ def run_stills_stage(
                 correlation_id,
             )
 
+    gpu: dict[str, Any] | None = None
+    if deferred:
+        from app.providers.runpod.gpu_session import StepPermit  # noqa: PLC0415
+
+        rounds = _StillRounds(
+            engine=engine,
+            storyboard_id=storyboard_id,
+            correlation_id=correlation_id,
+            adapter=image_adapter,
+            model_id=model_id,
+            first_live=first_live,
+            figure_one=figure_one,
+            per_image=per_image,
+            overhead=float(prices.round_overhead("image", model_id)),
+            credit_usd=float(prices.credit_usd),
+            ledger=ledger,
+            limit=limit,
+            work_dir=work_dir,
+            environment=environment,
+            registry=registry,
+            judge=judge,
+            face_counter=face_counter,
+            measure=measure,
+            ffmpeg_path=ffmpeg_path,
+            faces_forbidden=faces_forbidden,
+            rules=rules,
+        )
+        try:
+            gpu = rounds.run(
+                deferred,
+                permit=StepPermit.from_guard(
+                    guard,
+                    verdict,
+                    action=STILLS_ACTION,
+                    step=STILLS_STEP,
+                    storyboard_id=storyboard_id,
+                    plan_hash=plan_hash,
+                    requester=requester,
+                    correlation_id=correlation_id,
+                    integration_id=integration_id,
+                    unasked=unasked,
+                ),
+                guard=guard,
+                stopped=lambda: (
+                    "Proprietarul a oprit autonomia; nu se mai cumpără imagini."
+                    if stop_requested(engine)
+                    else None
+                ),
+            )
+        except MediaProviderError as exc:
+            if not exc.unsent:
+                raise
+            # The GPU was not switched on, or the round could not even be sent: nothing was
+            # bought, nothing is booked (the caller lets the hold go).
+            raise StillsStageRefused(
+                str(exc.code or "COMPUTE_NOT_READY"),
+                str(getattr(exc, "reason_ro", None) or exc),
+                plan=plan,
+            ) from exc
+        stopped = stopped or gpu.get("stopped")
+        unverified = unverified or rounds.unverified
+
     after: float | None = None
     measured: float | None = None
     if read:
@@ -1461,6 +2029,8 @@ def run_stills_stage(
         "cap_credits": cap,
         "needs_owner": needs_owner,
         "stopped": stopped,
+        # The Owner's mode or rule changed while the step ran (`mode_guard`), or None.
+        "mode_stopped": guard.stopped if guard is not None else None,
         # The scene the balance stopped, the balance read and what was needed (or None).
         "low_balance": low_balance,
         "reference_unverified": unverified,
@@ -1468,6 +2038,8 @@ def run_stills_stage(
         # was collected before this step looked at anything.
         "in_flight": [e["scene_index"] for e in results if e.get("status") == "IN_FLIGHT"],
         "collected": collected,
+        # RunPod Serverless: the rounds, the GPU session's jobs and the billed estimate.
+        "gpu": gpu,
     }
     _event(engine, "media.stills_step_finished", storyboard_id, summary, correlation_id)
     return summary

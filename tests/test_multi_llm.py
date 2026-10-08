@@ -326,6 +326,36 @@ def test_4_a_model_can_be_replaced_without_touching_code(engine, staffed):
         assert session.get(AgentRun, first["id"]).model_name == PRIMARY
 
 
+def test_owner_choice_matching_the_seed_is_protected_from_role_preferences(engine, staffed):
+    from app.agents.services import _owner_chose_models
+
+    seed = load_seed_config()
+    names = {row["primary"] for row in seed["llm_allocation"]}
+    names.update(row["secondary"] for row in seed["llm_allocation"] if row["secondary"])
+    with_models(engine, staffed, dict.fromkeys(names, "an answer"))
+    editor = agent_of(engine, "VideoEditor")
+    with Session(engine) as session:
+        assert not _owner_chose_models(session, session.get(Agent, editor.id), "VideoEditor")
+    assign_agent(engine, editor.id, editor.model_id, editor.version)
+    with Session(engine) as session:
+        assert _owner_chose_models(session, session.get(Agent, editor.id), "VideoEditor")
+
+
+def test_seed_assignment_stays_automatic_when_the_seed_file_changes(engine, staffed, monkeypatch):
+    from app.agents import services
+
+    seed = load_seed_config()
+    names = {row["primary"] for row in seed["llm_allocation"]}
+    names.update(row["secondary"] for row in seed["llm_allocation"] if row["secondary"])
+    with_models(engine, staffed, dict.fromkeys(names, "an answer"))
+    editor = agent_of(engine, "VideoEditor")
+    monkeypatch.setattr(services, "_allocation_entry", lambda role: None)
+    with Session(engine) as session:
+        assert not services._owner_chose_models(
+            session, session.get(Agent, editor.id), "VideoEditor"
+        )
+
+
 def test_5_no_model_name_appears_in_the_studios_logic():
     """The architectural rule, checked against the source. A model name lives in the Owner's
     configuration file and in the registry rows discovered from the vendor. If one appears in

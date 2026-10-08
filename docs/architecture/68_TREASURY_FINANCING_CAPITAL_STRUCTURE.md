@@ -1,5 +1,23 @@
 # Treasury, Financing & Capital Structure
 
+## Current Owner scope — simple pixel studio, 2026-10-08
+
+The Owner explicitly supersedes the earlier top-down/3D headquarters and active Treasury,
+virtual financing and VendorShop product requirements. The active interface is an original
+browser-rendered, side-view pixel studio; no Blender, Unreal or GPU stream is required.
+Its agents, work states, conversations and replay facts come from backend records. The
+illustrated scenery is decorative, never evidence of a real room, weather or live GPU.
+
+Retain the existing media pipeline, real provider costs and USD spending limits, research
+provenance, QA, encrypted credentials, Owner policy/approvals/STOP, durable workers,
+scheduling and recovery. Public Treasury/funding/minting/FX/virtual-ledger commands and
+screens are retired. Historical data and internal accounting compatibility remain preserved.
+Existing permissions are not raised automatically by developer AUTORUN.
+
+This scope takes precedence over conflicting visual/economy requirements below and in the
+older architecture package. Record: ../project/16_DECISION_LOG.md, ADR-SIMPLE-PIXEL-STUDIO.
+Current operator entry point: ../project/SIMPLE_STUDIO_GUIDE.md.
+
 ## Purpose
 
 Allow the CEO to manage liquidity realistically without giving the system access to real banking/credit transactions.

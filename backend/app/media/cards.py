@@ -72,8 +72,14 @@ REGULAR = "Inter-Regular.ttf"
 #: copy Blender 5.2 ships, licensed OFL 1.1 (fonts/OFL.txt). A file that does not hash to its
 #: row here is not used.
 FONT_SHA256: dict[str, str] = {
-    BOLD: "d4696a6b1da99ba49c9f859a0bab6d79fe3097a5d02ca94b4e6ce31c5a5aeb3c",
-    REGULAR: "dbe264aba627cc75697ae5c27a5aef4b82ffa7c20228042a0886ce44e1afe2e4",
+    BOLD: (
+        # pragma: allowlist nextline secret
+        "d4696a6b1da99ba49c9f859a0bab6d79fe3097a5d02ca94b4e6ce31c5a5aeb3c"
+    ),
+    REGULAR: (
+        # pragma: allowlist nextline secret
+        "dbe264aba627cc75697ae5c27a5aef4b82ffa7c20228042a0886ce44e1afe2e4"
+    ),
 }
 
 #: Bar animation: the first bar starts growing here, each next one this much later, and each

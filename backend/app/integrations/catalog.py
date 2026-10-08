@@ -172,6 +172,50 @@ CATALOG = {
         "https://developers.openai.com/api/docs/guides/tools-image-generation",
         ["image", "video", "voice"],
     ),
+    "comfyui": service(
+        "Studio local (ComfyUI)",
+        "media",
+        [
+            field("base_url", "Adresă ComfyUI", kind="url"),
+            field("manifest_path", "Manifest de workflow-uri (opțional)", required=False),
+            COMMERCIAL_USE,
+            LICENCE_TERMS,
+        ],
+        runtime="media",
+        purposes=["image", "video"],
+        help_text="Imagini și video generate pe acest PC. Cost API zero; consumă timp și energie. "
+        "Nu trece automat la Runway. Vocea se selectează separat.",
+        docs="https://github.com/Comfy-Org/ComfyUI",
+    ),
+    "runpod": service(
+        "RunPod GPU Cloud",
+        "media",
+        [
+            field("api_key", "Cheie API (sau RUNPOD_API_KEY)", False, True),
+            field("mode", "Transport", False, choices=["serverless", "pod"]),
+            field("stills_endpoint_id", "ID endpoint Serverless pentru imagini", False),
+            field("motion_endpoint_id", "ID endpoint Serverless pentru mișcare", False),
+            field("endpoint_id", "ID endpoint Serverless (unul singur, vechi)", False),
+            field("generation_base_url", "Adresă API cloud (doar Pod)", False, kind="url"),
+            field(
+                "s3_endpoint_url", "Adresă bucket S3 (ex. Cloudflare R2), HTTPS", False, kind="url"
+            ),
+            field("s3_bucket", "Numele bucketului pentru rezultate", False),
+            field("s3_region", "Regiunea bucketului (implicit auto)", False),
+            field("s3_prefix", "Prefixul în bucket (implicit amn/)", False),
+            field("s3_access_key_id", "Cheia de acces a bucketului (Access Key ID)", False, True),
+            field("s3_secret_access_key", "Cheia secretă a bucketului", False, True),
+            field("mock", "Simulare fără GPU (doar TEST)", False, choices=["true", "false"]),
+            COMMERCIAL_USE,
+            LICENCE_TERMS,
+        ],
+        "media",
+        "GPU RunPod Serverless: pornește doar în pașii plătiți aprobați și se oprește imediat "
+        "după; rezultatele merg în bucketul tău. Activare prin RUNPOD_ENABLED. Păstrează "
+        "aprobările și bugetul. Simularea nu demonstrează o conexiune reală.",
+        "https://docs.runpod.io/serverless/endpoints/send-requests",
+        ["image", "video"],
+    ),
     "runway": service(
         "Runway",
         "media",

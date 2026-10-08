@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "_note": "RunPod Serverless models of the studio (Owner decisions 2026-10-08). GPU seconds are ESTIMATES until the paid bake-off measures them; quality_score stays null until a paid test measures it. Excluded on licence: FLUX dev, Qwen-Image-2.1, Hunyuan*, MiniMax.",
+  "worker_images": {
+    "stills": null,
+    "motion": null
+  },
+  "rate_usd_per_hour": "4.00",
+  "models": [
+    {
+      "id": "Qwen-Image-2512",
+      "name": "Qwen-Image-2512 + SeedVR2 (2K)",
+      "purpose": "image",
+      "endpoint": "stills",
+      "tasks": ["text_to_image"],
+      "ratios": {"text_to_image": ["9:16"]},
+      "durations": {},
+      "max_seconds": null,
+      "output": [1530, 2720],
+      "native_resolution": [928, 1664],
+      "gpu_seconds_per_image": 60,
+      "quality_score": null,
+      "quality_source": "nemăsurat — testul plătit îl măsoară",
+      "licence": "Apache-2.0",
+      "licence_url": "https://huggingface.co/Qwen/Qwen-Image-2512",
+      "workflow": "qwen_image_2512_seedvr2"
+    },
+    {
+      "id": "LTX-2.5",
+      "name": "LTX-2.5 distilled (imagine în mișcare)",
+      "purpose": "video",
+      "endpoint": "motion",
+      "tasks": ["image_to_video"],
+      "ratios": {"image_to_video": ["9:16"]},
+      "durations": {"image_to_video": {"min": 1, "max": 10}},
+      "max_seconds": 10,
+      "output": [1080, 1920],
+      "native_resolution": [1088, 1920],
+      "gpu_seconds_per_video_second": 24,
+      "quality_score": null,
+      "quality_source": "nemăsurat — testul plătit îl măsoară",
+      "licence": "LTX-2 Community License (gratuit sub 10M USD venit; dezvăluirea AI rămâne; proveniența nu se șterge)",
+      "licence_url": "https://huggingface.co/Lightricks/LTX-2.5",
+      "workflow": "ltx_2_5_i2v"
+    },
+    {
+      "id": "Wan-2.2-LightX2V",
+      "name": "Wan 2.2 I2V A14B + LightX2V 4 pași",
+      "purpose": "video",
+      "endpoint": "motion",
+      "tasks": ["image_to_video"],
+      "ratios": {"image_to_video": ["9:16"]},
+      "durations": {"image_to_video": {"min": 1, "max": 10}},
+      "max_seconds": 10,
+      "output": [1080, 1920],
+      "native_resolution": [720, 1280],
+      "gpu_seconds_per_video_second": 33,
+      "quality_score": null,
+      "quality_source": "nemăsurat — testul plătit îl măsoară",
+      "licence": "Apache-2.0",
+      "licence_url": "https://huggingface.co/lightx2v/Wan2.2-Lightning",
+      "workflow": "wan_2_2_i2v_lightx2v"
+    }
+  ]
+}

@@ -440,69 +440,9 @@ def test_treasury_labels_every_figure_and_says_what_the_books_are_not(books):
 # --------------------------------------------------------------------------------- API --
 
 
-def test_the_economy_api_is_owner_only(client):
-    for path in ("/api/v1/economy/treasury", "/api/v1/economy/ledger", "/api/v1/economy/evidence"):
-        assert client.get(path).status_code == 401
-    assert client.post("/api/v1/economy/evidence", json={}).status_code == 401
-
-
-def test_the_api_records_settles_mints_and_reverses(client, headers, engine):
-    seed_chart_of_accounts(engine)
-    created = client.post(
-        "/api/v1/economy/evidence",
-        headers=headers,
-        json={
-            "command_id": str(uuid4()),
-            "source": "YOUTUBE",
-            "external_reference": "PAY-API-1",
-            "status": "PENDING_PAYOUT",
-            "amount": "250.00",
-            "currency": "USD",
-        },
-    )
-    assert created.status_code == 200, created.text
-    evidence_id = created.json()["id"]
-    treasury = client.get("/api/v1/economy/treasury", headers=headers).json()
-    assert treasury["spendable"]["amount"] == "0"
-
-    # Minting a pending payout is refused by the API, not just by the service.
-    refused = client.post(f"/api/v1/economy/evidence/{evidence_id}/mint", headers=headers)
-    assert refused.status_code == 409
-    assert "settled" in refused.json()["detail"].lower()
-
-    client.post(f"/api/v1/economy/evidence/{evidence_id}/settle", headers=headers)
-    minted = client.post(f"/api/v1/economy/evidence/{evidence_id}/mint", headers=headers)
-    assert minted.status_code == 200
-    treasury = client.get("/api/v1/economy/treasury", headers=headers).json()
-    assert treasury["spendable"]["amount"] == "250"
-    assert treasury["trial_balance"]["balanced"] is True
-
-    transaction_id = minted.json()["transaction_id"]
-    reversed_response = client.post(
-        f"/api/v1/economy/ledger/{transaction_id}/reverse",
-        headers=headers,
-        json={"command_id": str(uuid4()), "reason": "platform chargeback"},
-    )
-    assert reversed_response.status_code == 200
-    after = client.get("/api/v1/economy/treasury", headers=headers).json()
-    assert after["spendable"]["amount"] == "0"
-
-
-def test_the_api_rejects_a_malformed_amount_before_it_reaches_the_ledger(client, headers, engine):
-    seed_chart_of_accounts(engine)
-    response = client.post(
-        "/api/v1/economy/evidence",
-        headers=headers,
-        json={
-            "command_id": str(uuid4()),
-            "source": "YOUTUBE",
-            "external_reference": "PAY-BAD",
-            "status": "SETTLED",
-            "amount": "1,000.00",
-            "currency": "USD",
-        },
-    )
-    assert response.status_code == 422
+# The former public finance write/read flows were retired by the Owner on 2026-10-08.
+# Their replacement API contract is tested in test_simple_studio.py; historical
+# service-level ledger invariants above and below remain fully tested.
 
 
 def test_there_is_no_route_that_spends_or_pays_anything(client):

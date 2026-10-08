@@ -23,7 +23,9 @@ Three verbs, three sets of callers:
   reason in Romanian and changes nothing. A guided option (reconnect a connection, Google's
   consent screen, commercial use, music, licences) records his choice and the place to go,
   and the card waits, WAITING_FOR_OWNER_ACTION, until its condition clears or he marks it
-  done.
+  done. His DONE closes it only when the studio reads the condition true (2026-10-04); an
+  unmet or unreadable one keeps it waiting with what is still missing in ``apply_error_ro``.
+  A card nothing can read (``never``) closes on his DONE alone.
 
 Atomicity. The Owner's commands each open their own transaction (they serialise on the policy
 row), so the apply and the card's transition are two commits. The apply runs first under a
@@ -61,7 +63,7 @@ from app.services import (
     remember_command,
     utc_now,
 )
-from app.wording import COMMAND_REUSED, SETTINGS_TABS
+from app.wording import COMMAND_REUSED, SETTINGS_TABS, decimal
 
 logger = logging.getLogger("studio.decisions")
 
@@ -329,6 +331,8 @@ APPLIERS: dict[str, Applier] = {
     "autonomy_mode": _apply_policy("autonomy_mode"),
     "sheet_repair_retry": _from_sources("apply_sheet_repair_retry"),
     "sheet_local_move": _from_sources("apply_sheet_local_move"),
+    # His accept of «Agenții pot porni singuri GPU-ul RunPod …» (2026-10-08).
+    "runpod_infra": _from_sources("apply_runpod_infra"),
 }
 
 
@@ -491,23 +495,134 @@ CONDITIONS: dict[str, Condition] = {
     "sheet_repair_resumed": _condition_from_sources("sheet_repair_resumed_condition"),
     # The last balance reading a paid step recorded covers the card's need (2026-10-03).
     "balance_covers": _condition_from_sources("balance_covers"),
+    # The RunPod connection lets agents switch its GPU on (2026-10-08).
+    "runpod_infra_enabled": _condition_from_sources("runpod_infra_enabled"),
 }
+
+
+#: How a card's condition reads now (2026-10-04). MET: the studio sees the step done.
+#: UNMET: it reads false. UNREADABLE: the reading failed, or names a condition the studio no
+#: longer knows; the card stays open (fail closed). ONLY_OWNER: nothing the studio can read
+#: clears it (``never``, or no condition): his own DONE is the only way it closes.
+ConditionReading = Literal["MET", "UNMET", "UNREADABLE", "ONLY_OWNER"]
+
+
+def condition_reading(
+    session: Session, row: OwnerDecision, settings: Any = None
+) -> ConditionReading:
+    """Read the card's ``clears_when`` now; see `ConditionReading`."""
+    spec = row.clears_when if isinstance(row.clears_when, dict) else None
+    kind = str((spec or {}).get("type") or "")
+    if not spec or kind == "never":
+        return "ONLY_OWNER"
+    check = CONDITIONS.get(kind)
+    if check is None:
+        return "UNREADABLE"
+    try:
+        return "MET" if check(session, row, spec, settings) else "UNMET"
+    except Exception as exc:  # noqa: BLE001 - a reading that fails keeps the card, logged
+        logger.warning("decision_condition_unreadable", extra={"kind": row.kind}, exc_info=exc)
+        return "UNREADABLE"
 
 
 def condition_cleared(session: Session, row: OwnerDecision, settings: Any = None) -> bool:
     """Whether the card's ``clears_when`` reads true now. A condition that cannot be read is
     not cleared: the card keeps waiting rather than vanishing on an error."""
-    spec = row.clears_when if isinstance(row.clears_when, dict) else None
-    if not spec:
-        return False
-    check = CONDITIONS.get(str(spec.get("type") or ""))
-    if check is None:
-        return False
+    return condition_reading(session, row, settings) == "MET"
+
+
+# ------------------------------------------------------------ what is still missing, in words
+
+#: What his DONE gets when the studio cannot read the condition: the card stays open.
+UNREADABLE_RO = (
+    "Studioul nu poate citi acum dacă pasul este făcut, așa că cardul rămâne deschis. "
+    "Apasă «Am făcut-o» din nou peste puțin."
+)
+
+#: The words before what is missing, when his DONE meets an unmet condition.
+STILL_MISSING_LEAD_RO = "Studioul nu vede încă pasul făcut, așa că cardul rămâne deschis."
+
+#: What the studio reads as still missing, per condition: (session, card, params) -> words.
+Missing = Callable[[Session, OwnerDecision, Mapping[str, Any]], str]
+
+
+def _missing_commercial_use(session: Session, row: OwnerDecision, params: Mapping[str, Any]) -> str:
+    from app.decisions.sources import vendor_label  # noqa: PLC0415
+    from app.integrations.models import Integration  # noqa: PLC0415
+
+    integration = session.get(Integration, str(params.get("integration_id") or ""))
+    where = f"conexiunea {vendor_label(integration)}" if integration else "conexiune"
+    return (
+        f"Lipsește: pe {where} scrie «da» la «folosire comercială» și termenii planului "
+        "(Setări → Video și sunet)."
+    )
+
+
+def _missing_file(session: Session, row: OwnerDecision, params: Mapping[str, Any]) -> str:
+    names = [str(name) for name in params.get("any_of") or []]
+    return "Lipsește: în rădăcina proiectului nu există niciun fișier LICENSE sau EULA" + (
+        f" (caut: {', '.join(names)})." if names else "."
+    )
+
+
+def _missing_budget(session: Session, row: OwnerDecision, params: Mapping[str, Any]) -> str:
+    usd = decimal(int(params.get("usd_micros") or 0) / 1_000_000, 2)
+    return f"Lipsește: bugetul zilnic activ este încă sub {usd} USD."
+
+
+def _missing_words(words: str) -> Missing:
+    return lambda session, row, params: words
+
+
+MISSING_RO: dict[str, Missing] = {
+    "commercial_use": _missing_commercial_use,
+    "file_exists": _missing_file,
+    "daily_budget_at_least": _missing_budget,
+    "integration_verified": _missing_words(
+        "Lipsește: conexiunea nu a fost verificată cu succes după apariția cardului; "
+        "reconecteaz-o și apasă «Verifică» în Setări."
+    ),
+    "youtube_connected": _missing_words(
+        "Lipsește: cel puțin un canal YouTube nu este încă conectat."
+    ),
+    "youtube_channel_connected": _missing_words("Lipsește: canalul YouTube nu este încă conectat."),
+    "music_library_has_music": _missing_words(
+        "Lipsește: config/music_library.json nu are încă nicio piesă de muzică."
+    ),
+    "paid_media_approval_is_not": _missing_words(
+        "Lipsește: regula pașilor plătiți este încă aceeași."
+    ),
+    "setting_is_set": _missing_words(
+        "Lipsește: setarea nu are încă o valoare citită de studio (scrie-o în .env și "
+        "repornește studioul)."
+    ),
+    "media_folders_below": _missing_words(
+        "Lipsește: dosarul filmelor are încă la fel de multe dosare."
+    ),
+    "sheet_repair_resumed": _missing_words("Lipsește: reparația foii de filmare nu s-a reluat."),
+    "balance_covers": _missing_words(
+        "Lipsește: ultima citire a soldului Runway nu acoperă încă ce trebuie."
+    ),
+    "runpod_infra_enabled": _missing_words(
+        "Lipsește: agenții nu au încă voie să pornească GPU-ul RunPod în pașii aprobați."
+    ),
+}
+
+
+def still_missing_ro(session: Session, row: OwnerDecision, reading: ConditionReading) -> str | None:
+    """What the card still waits for, in his words; None when nothing is missing."""
+    if reading in ("MET", "ONLY_OWNER"):
+        return None
+    if reading == "UNREADABLE":
+        return UNREADABLE_RO
+    spec = row.clears_when if isinstance(row.clears_when, dict) else {}
+    words = MISSING_RO.get(str(spec.get("type") or ""))
     try:
-        return bool(check(session, row, spec, settings))
-    except Exception as exc:  # noqa: BLE001 - a reading that fails keeps the card, logged
-        logger.warning("decision_condition_unreadable", extra={"kind": row.kind}, exc_info=exc)
-        return False
+        detail = words(session, row, spec) if words else None
+    except Exception as exc:  # noqa: BLE001 - the card stays open; only the detail is lost
+        logger.warning("decision_missing_unworded", extra={"kind": row.kind}, exc_info=exc)
+        detail = None
+    return f"{STILL_MISSING_LEAD_RO} {detail}" if detail else STILL_MISSING_LEAD_RO
 
 
 # ---------------------------------------------------------------------------------- proposing
@@ -643,6 +758,8 @@ def _transition(
 def _close_by_condition(session: Session, row: OwnerDecision, reason_ro: str, by: str) -> None:
     """The question went away: a PENDING card is withdrawn, a waiting one is completed."""
     now = utc_now()
+    # A «still missing» note from his earlier DONE no longer stands.
+    row.apply_error_ro = None
     if row.status == "WAITING_FOR_OWNER_ACTION":
         row.applied = {
             **dict(row.applied or {}),
@@ -720,6 +837,102 @@ def refresh_owner_decisions(engine: Engine, settings: Any = None) -> dict[str, i
                 counts["completed" if card.status != "PENDING" else "withdrawn"] += 1
                 _close_by_condition(session, card, CONDITION_CLEARED_RO, "condition")
     return counts
+
+
+REOPENED_EVENT = "owner.decision_reopened"
+REOPENED_RO = (
+    "Cardul s-a redeschis: l-ai marcat făcut, dar studioul nu vede pasul făcut. Până la "
+    "4 octombrie 2026, «Am făcut-o» închidea cardul fără să verifice."
+)
+
+
+def _closed_by_unconfirmed_done(row: OwnerDecision) -> bool:
+    """A guided card his DONE closed (before 2026-10-04, unread), never re-opened yet. A DONE
+    taken since then carries ``done_reading`` (what the studio read when it closed the card):
+    it was confirmed, and a condition that changes later (a balance spent, a «da» taken back)
+    does not make it «unconfirmed»."""
+    applied = row.applied if isinstance(row.applied, dict) else {}
+    return (
+        row.status == "ACCEPTED"
+        and applied.get("type") == APPLY_GUIDED
+        and applied.get("completed_by") == OWNER
+        and "done_reading" not in applied
+        and not applied.get("reopened_at")
+    )
+
+
+def _asked_again(session: Session, row: OwnerDecision) -> bool:
+    """A newer card carries the same question (open, answered or refused): the older DONE is
+    superseded, and re-opening it would override what he answered on the newer card."""
+    return (
+        session.scalars(
+            select(OwnerDecision.id).where(
+                OwnerDecision.dedupe_key == row.dedupe_key,
+                OwnerDecision.id != row.id,
+                OwnerDecision.created_at >= row.created_at,
+            )
+        ).first()
+        is not None
+    )
+
+
+def reopen_unconfirmed_done(engine: Engine, settings: Any = None) -> list[str]:
+    """Re-open the guided cards an earlier DONE closed while their condition was unmet.
+
+    Until 2026-10-04 «Am făcut-o» closed a card without reading its ``clears_when`` (three
+    cards closed so on 2026-10-03 with nothing done: commercial use on two connections and
+    the sale terms). Such a card goes back to WAITING_FOR_OWNER_ACTION and says what is still
+    missing; a condition that cannot be read re-opens it too (fail closed). Each card once
+    (``reopened_at`` stays on it), with one ``owner.decision_reopened`` event, and never
+    while another open card holds its key. A card only he can close (``never``) keeps his
+    DONE, and so does a card whose question a newer card asked again (his answer there
+    stands). Read first, write only when something moves. Returns the re-opened cards' ids."""
+    with Session(engine) as session:
+        candidates = [
+            (row.id, row.version)
+            for row in session.scalars(
+                select(OwnerDecision).where(OwnerDecision.status == "ACCEPTED")
+            )
+            if _closed_by_unconfirmed_done(row)
+            and condition_reading(session, row, settings) not in ("MET", "ONLY_OWNER")
+        ]
+    if not candidates:
+        return []
+    reopened: list[str] = []
+    with Session(engine) as session, session.begin():
+        for decision_id, version in candidates:
+            row = session.get(OwnerDecision, decision_id)
+            if row is None or row.version != version or not _closed_by_unconfirmed_done(row):
+                continue  # it moved meanwhile; the next start reads it again
+            if _open_card(session, row.dedupe_key) is not None or _asked_again(session, row):
+                continue  # the question is open or answered on another card: no duplicate
+            missing = still_missing_ro(session, row, condition_reading(session, row, settings))
+            if missing is None:
+                continue
+            earlier = dict(row.applied or {})
+            done_at = earlier.pop("completed_at", None)
+            earlier.pop("completed_by", None)
+            row.applied = {
+                **earlier,
+                "reopened_at": utc_now(),
+                "reopened_reason_ro": REOPENED_RO,
+                "earlier_done_at": done_at,
+            }
+            row.apply_error_ro = missing
+            _transition(
+                session,
+                row,
+                "WAITING_FOR_OWNER_ACTION",
+                REOPENED_EVENT,
+                {
+                    "reason_ro": REOPENED_RO,
+                    "still_missing_ro": missing,
+                    "earlier_done_at": done_at,
+                    "by": "seed",
+                },
+            )
+            reopened.append(row.id)
+    return reopened
 
 
 # ----------------------------------------------------------------------------------- deciding
@@ -859,12 +1072,29 @@ def decide_owner_decision(
         row = _check_answerable(session.get(OwnerDecision, decision_id), decision_id, command)
         previous_status = row.status
         now = utc_now()
+        still_missing: str | None = None
         if command.decision == "REFUSE":
             status = "REFUSED"
             applied = dict(row.applied or {}) or None
         elif command.decision == "DONE":
-            status = "ACCEPTED"
-            applied = {**dict(row.applied or {}), "completed_by": OWNER, "completed_at": now}
+            # His «Am făcut-o» closes the card only when the studio sees the step done
+            # (2026-10-04): an unmet or unreadable condition keeps it waiting, and the card
+            # says what is still missing. A card nothing can read (`never`) is his to close.
+            reading = condition_reading(session, row, settings)
+            still_missing = still_missing_ro(session, row, reading)
+            if still_missing is None:
+                status = "ACCEPTED"
+                applied = {
+                    **dict(row.applied or {}),
+                    "completed_by": OWNER,
+                    "completed_at": now,
+                    # What the studio read when his DONE closed it (MET or ONLY_OWNER): a
+                    # confirmed DONE, never re-opened by `reopen_unconfirmed_done`.
+                    "done_reading": reading,
+                }
+            else:
+                status = "WAITING_FOR_OWNER_ACTION"
+                applied = dict(row.applied or {}) or None
         elif applied_command is not None:
             status = "ACCEPTED"
             applied = {"type": kind, **applied_command}
@@ -897,7 +1127,7 @@ def decide_owner_decision(
         elif command.note:
             row.note = command.note
         row.applied = applied
-        row.apply_error_ro = None
+        row.apply_error_ro = still_missing
         row.status = status
         row.version += 1
         row.updated_at = now
@@ -917,6 +1147,7 @@ def decide_owner_decision(
                 "source": row.source,
                 "applied_command": (applied_command or {}).get("command"),
                 "applied_event_id": (applied_command or {}).get("event_id"),
+                "still_missing_ro": still_missing,
             },
             command_id,
         )
@@ -1258,5 +1489,6 @@ __all__ = [
     "propose_owner_decision",
     "refresh_owner_decisions",
     "register_applier",
+    "reopen_unconfirmed_done",
     "withdraw_owner_decision",
 ]

@@ -57,7 +57,9 @@ test('a replayed event moves the scene but puts no bubble up: history is not tol
   state.handleDomainEvent({ event_type: 'agent.run_completed', payload: { agent_id: 'a1', status: 'SUCCEEDED', task_type: 'gather_sources' } }, false);
   state.handleDomainEvent({ event_type: 'agent.message_sent', aggregate_id: 'a1', payload: { text: 'Am găsit trei surse primare.' } }, false);
   assert.equal(state.speechBubbles.length, 0, 'no bubble from the replay');
-  assert.equal(state.agents[0].runtime_state, 'IDLE', 'the state it carried is applied');
+  assert.equal(state.agents[0].runtime_state, 'WORKING', 'a completed run does not overwrite the employee state');
+  state.handleDomainEvent({ event_type: 'agent.state_changed', aggregate_id: 'a1', payload: { runtime_state: 'IDLE' } }, false);
+  assert.equal(state.agents[0].runtime_state, 'IDLE', 'the authoritative state event is applied');
   state.handleDomainEvent({ event_type: 'agent.message_sent', aggregate_id: 'a1', payload: { text: 'Acum.' } }, true);
   assert.equal(state.speechBubbles.length, 1, 'a live event still speaks');
 });

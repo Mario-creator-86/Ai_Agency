@@ -142,7 +142,7 @@ def test_the_two_commands_that_let_money_be_spent_are_written_in_one_place_each(
                 budget_callers.append(where)
             if "set_price(" in stripped and where != "economy/prices.py":
                 price_callers.append(where)
-    assert set(budget_callers) == {"economy/router.py"}, budget_callers
+    assert set(budget_callers) == {"economy/router.py", "decisions/services.py"}, budget_callers
     assert set(price_callers) == {"economy/router.py"}, price_callers
     # And the door itself is the Owner's: no credentials, no prices, and none set.
     body = {

@@ -523,6 +523,34 @@ def _default_collector_for(engine: Engine) -> CollectorResolver:
     built: dict[str, Any] = {}
 
     def resolve(_take: SceneTake) -> Any:
+        from app.integrations.models import Integration  # noqa: PLC0415
+        from app.providers.runpod.jobs import GenerationJob  # noqa: PLC0415
+        from app.providers.runpod.wiring import connection  # noqa: PLC0415
+
+        with Session(engine) as session:
+            job = session.scalar(
+                select(GenerationJob).where(
+                    GenerationJob.remote_job_id == _take.remote_task_id,
+                    GenerationJob.project_id == _take.storyboard_id,
+                    GenerationJob.scene_id == str(_take.scene_number),
+                )
+            )
+            if job is not None:
+                identity = str(job.integration_id)
+                if identity not in built:
+                    integration = (
+                        session.get(Integration, job.integration_id) if job.integration_id else None
+                    )
+                    if integration is None or integration.status not in (
+                        "VERIFIED",
+                        "ACCESS_VERIFIED",
+                    ):
+                        return None
+                    vault = CredentialVault(
+                        Path(str(engine.url.database)).with_suffix(".credentials.key")
+                    )
+                    built[identity] = connection(engine, vault, integration)
+                return built[identity]
         if "adapter" not in built:
             vault = CredentialVault(Path(str(engine.url.database)).with_suffix(".credentials.key"))
             built["adapter"] = connection_account(engine, vault, runway_connection_id(engine))
@@ -697,6 +725,18 @@ def run_watchdog(
         logger.error("watchdog_days_failed", extra={"error": type(exc).__name__})
         days = {"interrupted": [], "error": True}
 
+    # A scene held for the Owner only because the vendor refused a request the studio itself
+    # sent wrong (2026-10-04: the Nepal test shot's keyframe ratio): released once, on the
+    # books, so the scene is planned again on its model. Reads and one event; 0 credits.
+    defect_holds: dict[str, Any]
+    try:
+        from app.media.assembler import release_studio_defect_holds  # noqa: PLC0415
+
+        defect_holds = {"released": release_studio_defect_holds(engine, correlation_id=correlation)}
+    except Exception as exc:  # noqa: BLE001 - one part's failure must not lose the others'
+        logger.error("watchdog_defect_holds_failed", extra={"error": type(exc).__name__})
+        defect_holds = {"released": [], "error": True}
+
     # The seventh, only when the Owner turned it on: a failed render's shots, deleted.
     try:
         intermediates = _sweep_failed_intermediates(engine, settings, correlation)
@@ -716,6 +756,7 @@ def run_watchdog(
         "film_leases": film_leases,
         "days": days,
         "intermediates": intermediates,
+        "defect_holds": defect_holds,
         "correlation_id": correlation,
     }
     logger.info(
@@ -731,6 +772,7 @@ def run_watchdog(
             "film_leases_reclaimed": len(film_leases["reclaimed"]),
             "days_interrupted": len(days["interrupted"]),
             "intermediates_swept": len(intermediates["files"]),
+            "defect_holds_released": len(defect_holds["released"]),
         },
     )
     return result

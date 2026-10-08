@@ -38,9 +38,8 @@ test('no control of the page is named only by its placeholder', () => {
   assert.deepEqual(unnamed, []);
 });
 
-test('the ten controls the audit named have a name of their own', () => {
-  for (const id of ['agent-run-objective', 'allowed-host-input', 'source-url', 'budget-limit', 'funding-amount',
-    'funding-note', 'funding-fx-rate', 'funding-fx-source', 'funding-rate', 'mail-reply-text']) {
+test('the essential controls have a name of their own', () => {
+  for (const id of ['agent-run-objective', 'allowed-host-input', 'source-url', 'budget-limit', 'budget-period', 'owner-token', 'mail-reply-text']) {
     const control = controls(HTML).find((c) => c.id === id);
     assert.ok(control, id);
     assert.ok(named(HTML, control), id);

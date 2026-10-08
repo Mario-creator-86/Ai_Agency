@@ -4,13 +4,15 @@ Introspecting dependency trees proves what the code says. This calls the applica
 it proves what the application does — including for any route added later, since the list comes
 from the OpenAPI surface rather than from a hand-written inventory.
 
-Four routes are public by design and are named here so that adding a fifth is a deliberate act:
+Five routes are public by design and are named here so that adding a sixth is a deliberate act:
 the two health probes, which must answer a load balancer, the OAuth callback, which Google
 redirects a browser to and which therefore cannot carry the Owner credential, and the reading of
 the studio's kept frame of its live building (W24), which the title shows before the sign-in and
 which carries only that picture. The callback's own protection is the single-use state, covered in
 `test_youtube_connections.py`; the kept frame is written only with the Owner's key
-(`test_office_kept_frame.py`).
+(`test_office_kept_frame.py`). The fifth (LOCAL_AUTO_LOGIN, 2026-10-08) hands the Owner's key to
+his own page on this machine and answers everyone else 404, as an unknown path
+(`test_local_session.py`).
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ PUBLIC = {
     ("GET", "/health/ready"),
     ("GET", "/auth/youtube/callback"),
     ("GET", "/api/v1/office/kept-frame"),
+    ("GET", "/api/v1/owner/local-session"),
 }
 
 #: Rejections. 401 and 403 are the credential refusing; 405 is a method the route does not take.
@@ -57,7 +60,7 @@ def _operations(client) -> list[tuple[str, str]]:
     ]
 
 
-def test_every_route_is_owner_only_except_the_four_that_cannot_be(client):
+def test_every_route_is_owner_only_except_the_five_that_cannot_be(client):
     operations = _operations(client)
     # A guard against the audit silently covering nothing if the schema shape ever changes.
     assert len(operations) > 50, f"only {len(operations)} operations found"
@@ -78,6 +81,8 @@ def test_the_public_routes_are_still_reachable(client):
     assert client.get("/health/ready").status_code in {200, 503}
     # nothing kept yet: an empty answer, never a picture made up for the title
     assert client.get("/api/v1/office/kept-frame").status_code == 204
+    # from outside this machine the hand-over is a path that does not exist
+    assert client.get("/api/v1/owner/local-session").status_code == 404
     # The callback answers a browser, so every outcome must be a readable HTML page rather than
     # a JSON error or a stack trace — including the ones that are nobody's fault.
     for query, expected in [

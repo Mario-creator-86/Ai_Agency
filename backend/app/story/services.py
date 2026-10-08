@@ -87,7 +87,7 @@ MAX_BEATS = 8
 #: 2026-09-24): the show's tone stated, full bibles only for those who act in the day's
 #: events (one line for the rest), and a "logline" the Publisher opens the description with.
 #: The answer schema is v3's plus that one optional field, so a v3 episode reads as before.
-EPISODE_TEMPLATE_VERSION = "episode-v5"
+EPISODE_TEMPLATE_VERSION = "episode-v6"
 #: The structure a writers' room asks of a short: in this order, the hook first and the
 #: button last; situation, turn and payoff may take more than one beat each.
 EPISODE_PARTS = ("hook", "situation", "turn", "payoff", "button")
@@ -952,7 +952,18 @@ PREVIOUSLY:
 
 PLAN FOR THIS EPISODE:
 {plan}
-{rewrite}"""
+{rewrite}
+
+FINAL SPOKEN-LENGTH CHECK, including on a rewrite:
+Only words inside lines[].text count; scene descriptions, directions, summaries and plans \
+do not fill the spoken duration. Count each beat and the total before returning your JSON: \
+{min_words} to {max_words} spoken words per beat and {min_episode_words} to \
+{max_episode_words} across the episode. The hook's first line is short, but the whole hook \
+beat still meets its word range: another person may answer it. The button is one line \
+within that same range. Expand the intervening dialogue with grounded reactions and \
+consequences, without adding events or repeating filler. A collection of very short \
+punchlines is too short even when it has enough beats. Return the episode JSON only, \
+without your counts or calculation."""
 
 #: How much of a refused draft or answer the next brief shows: enough for every beat of an
 #: eight-beat episode, not so much that the day's events are crowded out.

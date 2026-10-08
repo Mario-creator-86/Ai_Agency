@@ -1,5 +1,5 @@
 import { dayTrackWords } from './hud_charts.js';
-import { listWords, treasuryFace } from './hq_screens.js';
+import { listWords } from './hq_screens.js';
 import { sheetKeyFor } from './sheet_key.js';
 
 /**
@@ -8,8 +8,7 @@ import { sheetKeyFor } from './sheet_key.js';
  * At 2560x1440 the governance drawer ended its module list with about 350px of bare glass under
  * it. It now closes on three lines the page already holds, word for word from their sources:
  * - the day's run, in the slate's own words (hud_charts.js dayTrackWords);
- * - the treasury: the spendable VR$ balance and today's spend against the daily budget, as the
- *   Treasury's wall screen in the building says them (hq_screens.js treasuryFace);
+ * - the actual daily USD budget, remaining amount and spend from the budget projection;
  * - the next scheduled daily run, from /scheduler/jobs, said the way the daily-run dialog says it:
  *   a time only while the job is active and autonomy is on, because a time beside a stopped
  *   studio would promise a run that cannot happen.
@@ -126,17 +125,8 @@ export function studioReadout(facts) {
   } else {
     rows.push({ label: 'Rularea zilei', value: listWords(facts.reads && facts.reads.runs, 'nicio rulare în registru'), tone: 'quiet' });
   }
-  if (facts.treasury || facts.budget) {
-    const face = treasuryFace(facts.treasury, facts.budget);
-    rows.push({
-      label: 'Trezorerie',
-      value: face.balance === '—' ? '—' : `${face.balance} VR$ cheltuibili`,
-      note: face.line,
-      tone: face.deficit ? 'alert' : face.state && face.state !== 'OK' ? 'warn' : 'quiet',
-    });
-  } else {
-    rows.push({ label: 'Trezorerie', value: '—', note: facts.reads && facts.reads.figures === 'failed' ? 'trezoreria nu a putut fi citită' : undefined, tone: 'quiet' });
-  }
+  const daily = facts.budget?.budgets?.find(b => b.period === 'DAILY');
+  rows.push({ label: 'Buget zilnic', value: daily ? `${daily.remaining_usd} USD disponibili` : '—', note: daily ? `${daily.spent_usd} / ${daily.limit_usd} USD cheltuiți` : 'bugetul nu este disponibil', tone: daily?.state === 'EXCEEDED' ? 'alert' : 'quiet' });
   const next = nextRunWords(facts.jobs, { stopped: facts.stopped, timeZone: facts.timeZone });
   rows.push({ label: 'Următoarea rulare', value: next.value, tone: next.tone });
   rows.push(filmOfTheDay(facts.run));

@@ -38,7 +38,7 @@ const DIRECTOR_NOT_ON_PAGE = {
 };
 
 test('the two places that were «only through the API» now open the page\'s own controls', () => {
-  assert.deepEqual(fixPlaceOf(PRICES_NOT_ON_PAGE), { label: 'Trezorerie → Prețurile modelelor', door: 'treasury-modal', section: 'tr-prices' });
+  assert.deepEqual(fixPlaceOf(PRICES_NOT_ON_PAGE), { label: 'Autonomie → Prețurile modelelor', door: 'autonomy-modal', section: 'autonomy-prices' });
   assert.deepEqual(fixPlaceOf(DIRECTOR_NOT_ON_PAGE), { label: 'Setări → Canale', door: 'settings', tab: 'channels' });
   // the Owner's running studio (no place, no code): read by the check's name and its value
   const { place, place_label, place_section, code, ...old } = DIRECTOR_NOT_ON_PAGE;
@@ -46,17 +46,17 @@ test('the two places that were «only through the API» now open the page\'s own
   assert.equal(fixPlaceOf({ ...old, value: { ...old.value, bound: false } })?.door, 'publishing-modal', 'an unbound serial is fixed in its slot');
   assert.equal(fixPlaceOf({ ...old, value: { exists: false } }), null, 'no serial slot: nothing on the page creates one');
   const { place: p2, place_label: l2, place_section: s2, code: c2, ...oldPrices } = PRICES_NOT_ON_PAGE;
-  assert.equal(fixPlaceOf(oldPrices)?.section, 'tr-prices');
+  assert.equal(fixPlaceOf(oldPrices)?.section, 'autonomy-prices');
   // a backend that moved them (the other half of this wave): its label wins, the page's own section
   // stands in for a section the page does not have
-  assert.deepEqual(fixPlaceOf({ ...PRICES_NOT_ON_PAGE, place: 'treasury', place_label: 'Trezorerie → Prețurile modelelor', place_section: 'tr-token-prices' }),
-    { label: 'Trezorerie → Prețurile modelelor', door: 'treasury-modal', section: 'tr-prices' });
+  assert.deepEqual(fixPlaceOf({ ...PRICES_NOT_ON_PAGE, place: 'autonomy', place_label: 'Autonomie → Prețurile modelelor', place_section: 'tr-token-prices' }),
+    { label: 'Autonomie → Prețurile modelelor', door: 'autonomy-modal', section: 'autonomy-prices' });
   assert.deepEqual(fixPlaceOf({ ...DIRECTOR_NOT_ON_PAGE, place: 'settings:channels', place_label: 'Setări → Canale' }),
     { label: 'Setări → Canale', door: 'settings', tab: 'channels' });
   // FFmpeg stays on the machine: no key
   assert.equal(fixPlaceOf({ name: 'ffmpeg', ok: false, code: 'ffmpeg.missing', place: 'machine', place_label: 'calculatorul studioului' }), null);
   const html = checklistHtml(preflightChecklist({ checks: [PRICES_NOT_ON_PAGE, DIRECTOR_NOT_ON_PAGE] }), escapeHtml);
-  assert.match(html, /data-door="treasury-modal" data-section="tr-prices">Deschide Trezorerie → Prețurile modelelor</);
+  assert.match(html, /data-door="autonomy-modal" data-section="autonomy-prices">Deschide Autonomie → Prețurile modelelor</);
   assert.match(html, /data-door="settings" data-tab="channels">Deschide Setări → Canale</);
   assert.ok(html.includes(PRICES_NOT_ON_PAGE.message), 'the backend\'s sentence is printed as it came');
 });
@@ -204,13 +204,13 @@ test('a voice is its style and pace; its id is the tooltip', () => {
   assert.deepEqual(voiceWords({ voice_id: 'x_only' }), { text: '—', title: 'Identificatorul vocii: x_only' });
 });
 
-test('the page wires them: Setări → Canale and Despre studio, Trezorerie → Prețurile modelelor, no module list on the main screen', () => {
+test('the page wires them: Setări → Canale and Despre studio, Autonomie → Prețurile modelelor, no module list on the main screen', () => {
   assert.match(SETTINGS, /\['channels', 'Canale'\]/);
   assert.match(SETTINGS, /\['about', 'Despre studio'\]/);
   assert.ok(!HTML.includes('id="modules-panel"'), 'the module list left the drawer');
   assert.ok(!/<h2>Starea modulelor<\/h2>/.test(HTML));
-  assert.match(HTML, /<a href="#tr-prices">Prețurile modelelor<\/a>/);
-  assert.match(HTML, /id="tr-prices"/);
+  assert.match(HTML, /<a href="#autonomy-prices">Prețuri<\/a>/);
+  assert.match(HTML, /id="autonomy-prices"/);
   assert.match(HTML, /id="studio-about-btn"/);
   assert.equal(modulesSummary({ agents: 'IMPLEMENTED', research: 'PARTIAL', vendorshop: 'NOT_IMPLEMENTED', settings: 'IMPLEMENTED' }), '2 implementate · 1 parțial · 1 neimplementat');
   // Research's heavy parts come in one step per frame, as Media's do

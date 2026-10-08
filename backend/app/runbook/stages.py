@@ -113,6 +113,7 @@ from app.factual.story_review import (
     story_gate,
 )
 from app.integrations.services import selected_youtube
+from app.integrations.vault import RECONNECT_RO, VaultUnreadable
 from app.media.models import (
     EditorialReview,
     MediaAsset,
@@ -409,7 +410,13 @@ def _performance_intake(engine: Engine, vault: Any) -> dict[str, Any]:
     channels: dict[str, dict[str, Any]] = {}
     skipped: dict[str, str] = {}
     for channel_id, channel_name in slots:
-        provider, reason = analytics_provider_for_channel(engine, vault, channel_id)
+        try:
+            provider, reason = analytics_provider_for_channel(engine, vault, channel_id)
+        except VaultUnreadable as exc:
+            # Statistics are optional: unavailable credentials produce no measurements.
+            # The daily preflight still blocks work that requires the vault.
+            skipped[channel_id] = f"{exc.reason_ro}; {RECONNECT_RO}."
+            continue
         if provider is None:
             skipped[channel_id] = reason
             continue
@@ -427,8 +434,8 @@ def _performance_intake(engine: Engine, vault: Any) -> dict[str, Any]:
         detail = " ".join(skipped.values())[:300]
         return _outcome(
             SKIPPED,
-            "Niciun cont YouTube legat de un slot de canal pentru analytics. Leagă contul în "
-            "Distribuție → Sloturi de canal; fără legătură nu se știe ale cui sunt cifrele."
+            "Niciun cont YouTube utilizabil pentru analytics. Verifică legătura contului în "
+            "Distribuție → Sloturi de canal și accesul la cheile conexiunilor în Setări."
             + (f" ({detail})" if detail else ""),
             skipped=skipped,
         )
@@ -448,7 +455,7 @@ def _performance_intake(engine: Engine, vault: Any) -> dict[str, Any]:
         reason += f" {len(unavailable)} fără date."
     if skipped:
         reason += (
-            f" {count(len(skipped), 'slot nemăsurat', 'sloturi nemăsurate')} (fără cont legat)."
+            f" {count(len(skipped), 'slot nemăsurat', 'sloturi nemăsurate')} (cont indisponibil)."
         )
     return _outcome(
         COMPLETED,
@@ -1422,6 +1429,9 @@ OWNER_DECIDES = frozenset(
         # The media disk has less free space than his minimum (REL-08): only room made on
         # the disk, or a media folder moved to a bigger one, lets the step start.
         "LOW_DISK",
+        # His mode refuses the unasked step (2026-10-04: lowered while the day ran, the
+        # stair is refused before the balance is read): his mode, his decision.
+        "BLOCKED_MODE",
     }
 )
 
@@ -1668,6 +1678,9 @@ def _walk_staircase(
                 environment=environment,
                 storage_root=wiring.get("storage_root"),
                 ffmpeg_path=settings.ffmpeg_path,
+                # Nobody pressed it: the mode before the balance, and his policy read again
+                # before every vendor request (spec 51, 2026-10-04).
+                unasked=True,
                 **context,
             )
         except SheetStepRefused as exc:
@@ -1696,6 +1709,11 @@ def _walk_staircase(
             "booked": result.get("booked"),
         }
         bought.append(entry)
+        stopped_by = result.get("mode_stopped")
+        if isinstance(stopped_by, dict) and stopped_by.get("status") == "BLOCKED_MODE":
+            # His mode was lowered while the stair bought (spec 51): what it bought is in the
+            # books, the rest waits on his mode, never on a fault of the film's.
+            return stop("WAITING", step, str(result["stopped"]), refusal="BLOCKED_MODE")
         if result.get("stopped"):
             return stop("WAITING", step, str(result["stopped"]), refusal="STOPPED")
     return stop("WAITING", None, "Scara filmului nu s-a încheiat în această rulare.")
@@ -1749,7 +1767,15 @@ SHOT_PLAN_REASK_DAYS = 2
 #: Refusals that are the account's, not the film's: the next film would meet them as well, so
 #: the walk stops there, and a film waiting on the Owner's money or budget is never retired.
 ACCOUNT_WIDE = frozenset(
-    {"LOW_BALANCE", "OVER_DAILY_BUDGET", "OVER_BUDGET", "BLOCKED_NO_BUDGET", "LOW_DISK"}
+    {
+        "LOW_BALANCE",
+        "OVER_DAILY_BUDGET",
+        "OVER_BUDGET",
+        "BLOCKED_NO_BUDGET",
+        "LOW_DISK",
+        # The Owner's mode: every film meets it, and a film waiting on it is never retired.
+        "BLOCKED_MODE",
+    }
 )
 #: A take that cost (or may have cost) credits: what a retired film's letter lists.
 BOUGHT_TAKE_STATUSES = ("SUBMITTED", "PAID", "APPROVED", "REJECTED", "LOST")
@@ -3732,6 +3758,8 @@ def _apply_repairs(
                     ffmpeg_path=settings.ffmpeg_path,
                     storage_root=wiring.get("storage_root"),
                     note="Controlul calității a picat scena; refacere cerută de Video Editor.",
+                    # The day's repair, nobody's press: his policy before every re-roll.
+                    unasked=True,
                 )
             except SceneRedoRefused as exc:
                 entry = {

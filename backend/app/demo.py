@@ -206,6 +206,10 @@ class DemoModel:
         return GenerateResult(self._answer(prompt), 12, 48, None)
 
     def _answer(self, prompt: str) -> str:  # noqa: C901, PLR0911 - one branch per schema
+        # Inbox reports contain other departments' schema words. The requested decision
+        # schema wins over incidental words such as pronunciation in those reports.
+        if '"assign_to_role"' in prompt and '"decisions"' in prompt:
+            return self._director(prompt)
         if '"shots": [' in prompt or "ending_frame" in prompt:
             return self._shots(prompt)
         if "evidence_quote" in prompt:
@@ -360,9 +364,23 @@ class DemoModel:
         return json.dumps({"shots": shots})
 
     def _director(self, prompt: str) -> str:
-        ids = re.findall(r'"message_id":\s*"([^"]+)"', prompt) or re.findall(
-            r'"id":\s*"(' + _UUID.pattern + r')"', prompt
-        )
+        ids: list[str] = []
+        for boundary in re.findall(
+            r"<untrusted_source_evidence[^>]*>(.*?)</untrusted_source_evidence>",
+            prompt,
+            re.DOTALL,
+        ):
+            try:
+                facts = json.loads(boundary)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(facts, dict) and isinstance(facts.get("inbox"), list):
+                ids = [
+                    str(item["id"])
+                    for item in facts["inbox"]
+                    if isinstance(item, dict) and item.get("id")
+                ]
+                break
         return json.dumps(
             {
                 "summary": "DEMO: ziua a mers; nimic nu cere decizia Proprietarului.",

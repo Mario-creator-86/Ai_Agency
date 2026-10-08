@@ -173,7 +173,7 @@ test('the title\'s only controls are the key and its button; the stage is decora
   assert.equal((login.match(/<button\b/g) || []).length, 1, 'one button');
   assert.equal((login.match(/<a\b/g) || []).length, 0, 'no link');
   assert.ok(/<div id="title-stage" class="title-stage" aria-hidden="true">/.test(HTML));
-  assert.ok(/<body class="is-title">/.test(HTML), 'the first paint is the title, with no masthead');
+  assert.ok(/<body class="is-title pixel-studio">/.test(HTML), 'the first paint is the title, with no masthead');
 });
 
 test('the caption states the one thing the picture claims: the real hour', () => {

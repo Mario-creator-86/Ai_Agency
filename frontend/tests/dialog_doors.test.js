@@ -60,11 +60,11 @@ test('every door belongs to a room the building has, and the stream\'s measured 
   assert.deepEqual(doorWorldRect('research-modal', { rooms: MANIFEST.rooms, stream: false }), [517, 195, 345, 87]);
   assert.equal(doorWorldRect('nowhere', { rooms: MANIFEST.rooms }), null);
   // every door in the page is one of them, and the eyebrows name the same places
-  for (const id of ['research-modal', 'media-modal', 'publishing-modal', 'story-modal', 'runbook-modal', 'treasury-modal', 'workforce-modal']) {
+  for (const id of ['research-modal', 'media-modal', 'publishing-modal', 'story-modal', 'runbook-modal', 'autonomy-modal', 'workforce-modal']) {
     assert.ok(HTML.includes(`<dialog id="${id}"`), id);
   }
   assert.match(HTML, /id="research-modal"[\s\S]{0,300}CERCETARE · L3/);
-  assert.match(HTML, /id="treasury-modal"[\s\S]{0,300}TREZORERIE · S2/);
+  assert.match(HTML, /id="autonomy-modal"[\s\S]{0,300}SETĂRI DE RULARE/);
   assert.match(HTML, /id="media-modal"[\s\S]{0,300}RANDARE · L1/);
 });
 
@@ -106,7 +106,7 @@ test('a door read on the hover a moment ago opens on it; an old or unread one re
   assert.equal(doorNeedsRead(0, 10001, 10000), true);
   assert.equal(doorNeedsRead(9000, 5000, 10000), true, 'a clock that went back is not fresh');
   // the seven rooms of the menu read through the doors, not on their own click
-  for (const id of ['research-modal', 'media-modal', 'publishing-modal', 'workforce-modal', 'story-modal', 'runbook-modal', 'treasury-modal']) {
+  for (const id of ['research-modal', 'media-modal', 'publishing-modal', 'workforce-modal', 'story-modal', 'runbook-modal', 'autonomy-modal']) {
     assert.ok(MAIN.includes(`doorReads.set('${id}'`), `${id} has a reader`);
   }
   assert.equal((MAIN.match(/openDoor\(\w+Modal\)/g) || []).length, 7);

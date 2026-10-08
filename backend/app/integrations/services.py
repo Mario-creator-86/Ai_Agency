@@ -52,6 +52,16 @@ def public(row: Integration) -> dict:
 
 
 def validate(kind: str, config: dict, secrets: dict) -> None:
+    if kind == "runpod":
+        from app.providers.runpod.config import RunPodConfig  # noqa: PLC0415
+
+        # The form's values and the vault's keys (API key, bucket keys) together; an invalid
+        # value the form typed is refused here, an old .env never is (`from_integration`).
+        RunPodConfig.from_integration(config, secrets)
+    if kind == "comfyui":
+        from app.providers.comfyui import local_url  # noqa: PLC0415
+
+        local_url(str(config.get("base_url", "")))
     spec = CATALOG.get(kind)
     if not spec:
         raise ValueError("Serviciu necunoscut")
@@ -139,7 +149,13 @@ def save(engine: Engine, vault: CredentialVault, identifier: str, command: SaveI
                 f"({vault.path.name}) nu este mutat deoparte; apoi {RECONNECT_RO}."
             ) from None
         row.kind, row.name = command.kind, command.name.strip()
-        row.config, row.encrypted_secrets = command.config, encrypted
+        stored = dict(command.config)
+        if command.kind == "runpod" and isinstance(row.config, dict):
+            # His answer on the card «Agenții pot porni singuri GPU-ul RunPod …» is not a form
+            # field: a save of the form keeps it (`decisions.sources.apply_runpod_infra`).
+            if "allow_infra_actions" in row.config:
+                stored["allow_infra_actions"] = row.config["allow_infra_actions"]
+        row.config, row.encrypted_secrets = stored, encrypted
         row.secret_fields, row.version = sorted(secrets), version
         row.status, row.checked_at, row.event_id = "SAVED", None, event.event_id
         if row.kind in DISCOVERED_KINDS:
@@ -524,6 +540,7 @@ def assign_agent(
     additional_llm_policy: str | None = None,
     min_importance: str | None = None,
     min_confidence: float | None = None,
+    assignment_origin: str = "OWNER",
 ) -> dict:
     """Save which models an employee thinks with, and what to do with more than one.
 
@@ -540,6 +557,8 @@ def assign_agent(
     strategy = (multi_llm_strategy or "SINGLE").upper()
     policy = (additional_llm_policy or "IMPORTANT_ONLY").upper()
     importance = (min_importance or "STRATEGIC").upper()
+    if assignment_origin not in {"OWNER", "SEED_ALLOCATION"}:
+        raise ValueError("Origine necunoscută pentru alocarea modelului")
     if strategy not in STRATEGIES:
         raise ValueError(f"Strategie necunoscută: {strategy}")
     if policy not in POLICIES:
@@ -607,6 +626,7 @@ def assign_agent(
                 "tertiary_model_id": agent.tertiary_model_id,
                 "multi_llm_strategy": strategy,
                 "additional_llm_policy": policy,
+                "assignment_origin": assignment_origin,
             },
             str(uuid4()),
         )

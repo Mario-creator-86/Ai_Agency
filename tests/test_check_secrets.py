@@ -17,6 +17,7 @@ import secrets
 import shutil
 import string
 import subprocess
+import sys
 
 import pytest
 from app.config import ROOT
@@ -140,7 +141,41 @@ def test_in_a_git_tree_only_what_git_would_ship_is_scanned(tmp_path, capsys):
 
 
 @pytest.mark.slow
-def test_the_current_tree_passes_against_the_reviewed_baseline(capsys):
-    code = gate.main([])
-    output = capsys.readouterr().out
-    assert code == 0, output
+def test_the_current_tree_passes_against_the_reviewed_baseline():
+    # Exercise the shipped CLI, including its file-reading mode, as CI does.
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "scripts/check_secrets.py")],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=120,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_the_cli_detects_a_key_in_utf8_text_with_windows_default_encoding(tmp_path):
+    root = tmp_path / "tree"
+    (root / "scripts").mkdir(parents=True)
+    script = root / "scripts/check_secrets.py"
+    shutil.copy2(ROOT / "scripts/check_secrets.py", script)
+    (root / ".secrets.baseline").write_text('{"results": {}}', encoding="utf-8")
+    key = fake_key()
+    # The closing quote's UTF-8 bytes cannot be read as Windows cp1252. A scanner that
+    # silently treats this text file as binary misses the credential on its next line.
+    (root / "settings.py").write_text(
+        f'# Diacritice și citat ”\napi_key = "{key}"\n', encoding="utf-8"
+    )
+    result = subprocess.run(
+        [sys.executable, "-X", "utf8=0", str(script)],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=120,
+        check=False,
+    )
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "settings.py:2" in result.stdout
+    assert key not in result.stdout + result.stderr

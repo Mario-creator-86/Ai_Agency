@@ -6,7 +6,7 @@
       "original_path": "00_MASTER_PROMPT.md",
       "path": "docs/architecture/00_MASTER_PROMPT.md",
       "original_sha256": "c7b72750dc2bc99df188003233ae83e216b3e9d3b5b431c0e42f874d11520851",
-      "sha256": "c5d257ccb7cfe7e9ea6c428644baf2402765acd10777a6505ae013672c28f26d"
+      "sha256": "f65e5fd06e02da18e94b30fa269e825828fb13b2bbb28b137d34ec58fdd2854d"
     },
     {
       "original_path": "01_VISION.md",
@@ -36,7 +36,7 @@
       "original_path": "05_UI_UX_2D_OFFICE.md",
       "path": "docs/architecture/05_UI_UX_2D_OFFICE.md",
       "original_sha256": "11a0c27775ddd2ab42daa6c8dc9938cd367e17cd7605be1b230107d4b5ea0bf5",
-      "sha256": "11a0c27775ddd2ab42daa6c8dc9938cd367e17cd7605be1b230107d4b5ea0bf5"
+      "sha256": "a1872443d5014e672e19d55a30d2df9e676f3cdbdc21da8bad9fe1dd27944229"
     },
     {
       "original_path": "06_BACKEND_EVENT_MODEL.md",
@@ -312,7 +312,7 @@
       "original_path": "51_AUTONOMY_MODE_SEMANTICS.md",
       "path": "docs/architecture/51_AUTONOMY_MODE_SEMANTICS.md",
       "original_sha256": "c18937e2da4d958f50dba801b5c3862c1b78131fce1c9e06f45c2beb6db82948",
-      "sha256": "d55b7434c4502fe9dface54ca4ac8a9326bd30a0cfb952e63afbd992082bbfc5"
+      "sha256": "fd7af4e4a25bad8b9f0d94cab4e36e32337f3efe3e49e14615bb53941fbfd62f"
     },
     {
       "original_path": "52_OBSERVABILITY_METRICS_CATALOG.md",
@@ -402,7 +402,7 @@
       "original_path": "66_VIRTUAL_REAL_ECONOMY_ENGINE.md",
       "path": "docs/architecture/66_VIRTUAL_REAL_ECONOMY_ENGINE.md",
       "original_sha256": "d38ed7df9b8f101b58df8b4e583e900536191df3a0e19ff16327e2343d5fa4c7",
-      "sha256": "d38ed7df9b8f101b58df8b4e583e900536191df3a0e19ff16327e2343d5fa4c7"
+      "sha256": "0d59947efcc021595373fa9256635c5f5cfe684dbbfd52dbedcdec8ea0eee7a5"
     },
     {
       "original_path": "67_VENDORSHOP_PROCUREMENT_ARCHITECT.md",
@@ -414,7 +414,7 @@
       "original_path": "68_TREASURY_FINANCING_CAPITAL_STRUCTURE.md",
       "path": "docs/architecture/68_TREASURY_FINANCING_CAPITAL_STRUCTURE.md",
       "original_sha256": "01f28d99f1925d08462750e7692183e6fb3cb9f7fded8f3b3df5fe30dcdbc357",
-      "sha256": "01f28d99f1925d08462750e7692183e6fb3cb9f7fded8f3b3df5fe30dcdbc357"
+      "sha256": "3510211bbe231988d9f73640c31da4ee5b052ac09dbb7d6cee891f9180910bee"
     },
     {
       "original_path": "69_REVENUE_MONETIZATION_CASH_RECONCILIATION.md",
@@ -438,7 +438,7 @@
       "original_path": "72_ECONOMY_STORY_WORLD_INTEGRATION.md",
       "path": "docs/architecture/72_ECONOMY_STORY_WORLD_INTEGRATION.md",
       "original_sha256": "c4b434eb4de7b4020de81a785783e7507ec6c6dfbc3fe927ac6e8d58b40ee632",
-      "sha256": "c4b434eb4de7b4020de81a785783e7507ec6c6dfbc3fe927ac6e8d58b40ee632"
+      "sha256": "37864ff9261c353d7652eb3fbae9f25e754034ce6f5b5d42795a374a2f4c40f0"
     },
     {
       "original_path": "73_END_TO_END_ECONOMY_SCENARIOS.md",
@@ -468,7 +468,7 @@
       "original_path": "README.md",
       "path": "docs/architecture/README.md",
       "original_sha256": "ed1e3fb277cbb122db1d1fb1a72e16c6b6e7dc3f05295e6f07bb062be37d642c",
-      "sha256": "5dc5d9892857f492682a878bcaf54baed7981a8a437e2b02f646706fc7e0143a"
+      "sha256": "6e709fbbc741ed6a55f3deb711d0a10a38966f6c390d8d4637fb4e80d9353f2c"
     },
     {
       "original_path": "REVISION_REPORT.md",

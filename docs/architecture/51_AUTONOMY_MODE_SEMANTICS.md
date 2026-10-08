@@ -204,6 +204,15 @@ the five-point publishing gate and by the Policy Kernel. The mode gate in the da
 does not re-read it — five readers are enough, and a sixth would create a place where somebody could
 later think the stop lives.
 
+Amended 2026-10-08 (ADR-GPU-OFF-ALWAYS, 16_DECISION_LOG): «Oprirea GPU-ului nu este o acțiune
+autonomă: nu cheltuie, doar oprește cheltuiala». `infra.gpu_off` (T0) — purging a RunPod queue,
+cancelling its jobs, setting `workers.max` to 0 and verifying it is off — is answered ALLOWED by
+`may_act` as its first check, before the stop, T4 and SAFE_MODE. The Owner's «Oprește GPU acum», the
+GPU guard (at start, every minute while a GPU session is open, at shutdown) and the launcher's off
+therefore work under STOP AUTONOMY; the guard is neither the watchdog nor a scheduled job, both of
+which stay behind the stop. Switching the GPU ON (`infra.gpu_on`, T2) stays behind the stop, T4 and
+SAFE_MODE, and is allowed only inside a paid media step the kernel already lets run.
+
 ## SAFE_MODE
 
 Stricter incident state:

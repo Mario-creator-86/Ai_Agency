@@ -1346,32 +1346,11 @@ def prefer_capable_models(engine: Engine) -> dict[str, list[dict[str, str]]]:
 
 
 def _owner_chose_models(session: Session, agent: Agent, role_name: str) -> bool:
-    """Whether this employee's models are the Owner's own choice, rather than the file's.
+    """Protect explicit assignments even when they match the current seed configuration.
 
-    The guard here used to be the bare existence of an `agent.model_assigned` event, which is
-    written by the Owner's command and by `apply_llm_allocation` alike, because the allocation
-    applies the studio's own file *through* that command. Measured 2026-09-18 on this tree:
-    the first model sync assigns the Video Editor the primary her role is allocated in
-    `config/workforce_seed.json`, and writes that event — so a seeing model admitted afterwards
-    could never reach her, and the preference stood down for a choice the Owner never made.
-
-    What decides it is the last event that moved her models:
-
-    - nothing at all — she is where the seed hired her, and may be moved;
-    - `agent.model_preferred` — this function moved her last, so it may move her again;
-    - `agent.model_assigned` — the studio's file when her three slots hold exactly the models
-      that file names for her role, and the Owner's hand otherwise.
-
-    Two cases are read as his on purpose: a role the allocation does not name at all, and an
-    allocation that cannot be read. Standing down costs a picture check that says honestly it
-    could not run; moving wrongly overwrites a decision, and only one of the two is undoable
-    by the studio.
-
-    One case the record cannot decide: the Owner who assigns an employee, by hand, to exactly
-    the three models his own file already names for her. That is read as the file's, and she
-    may be moved. The move goes only to a model declaring everything her role requires as well
-    as what it prefers, and writes `agent.model_preferred` rather than his event, so his next
-    assignment still wins and stays won.
+    New assignment events record their origin. Minimal legacy events came from the Owner's
+    command and stay protected. Older ensemble events have no origin; retain their slot
+    comparison for compatibility, protecting them when the seed cannot be read.
     """
     from app.agents.ensemble import resolve_model  # noqa: PLC0415
 
@@ -1386,6 +1365,12 @@ def _owner_chose_models(session: Session, agent: Agent, role_name: str) -> bool:
     )
     if last is None or last.event_type == "agent.model_preferred":
         return False
+    origin = last.payload.get("assignment_origin")
+    if origin is not None:
+        return origin != "SEED_ALLOCATION"
+    ensemble_fields = {"secondary_model_id", "tertiary_model_id", "multi_llm_strategy"}
+    if not ensemble_fields.issubset(last.payload):
+        return True
     entry = _allocation_entry(role_name)
     if entry is None:
         return True

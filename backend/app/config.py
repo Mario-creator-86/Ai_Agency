@@ -50,6 +50,13 @@ class Settings(BaseSettings):
     port: int = Field(default=8000, ge=1024, le=65535)
     sheet_blocker_scan_seconds: int = Field(default=300, ge=30, le=86400)
     allowed_hosts: list[str] = ["localhost", "127.0.0.1"]
+    #: LOCAL_AUTO_LOGIN (2026-10-08). The Owner: «Te rog sa elimini pagina de logare, nu trebuie
+    #: momentan». On, the page opened on this machine at the studio's own loopback address is
+    #: handed the Owner key by GET /api/v1/owner/local-session and enters without the sign-in
+    #: form; a page from anywhere else (another machine, a proxy, another site's origin, a
+    #: studio bound beyond loopback) still sees the form (app/local_session.py). Every route
+    #: still requires the key. STUDIO_LOCAL_AUTO_LOGIN=false brings the form back for everyone.
+    local_auto_login: bool = True
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     # The log file (REL-05): JSON lines in <log_dir>/studio.log, rotated at
     # log_file_max_bytes with log_file_backups older files kept. With no STUDIO_LOG_DIR the
@@ -459,6 +466,10 @@ class Settings(BaseSettings):
     provider_catalog_refresh_seconds: int = Field(default=21600, ge=60, le=604800)
     provider_catalog_retry_seconds: int = Field(default=900, ge=30, le=86400)
     provider_catalog_poll_seconds: int = Field(default=60, ge=5, le=3600)
+    #: The RunPod GPU guard (`providers.runpod.gpu_guard`): at start, every minute while a GPU
+    #: session is open (every 10 minutes otherwise) and at shutdown, in the process that holds
+    #: the worker's lock. It only ever switches a GPU off; it runs under STOP AUTONOMIE too.
+    runpod_guard_enabled: bool = True
 
     @property
     def youtube_credentials_present(self) -> bool:

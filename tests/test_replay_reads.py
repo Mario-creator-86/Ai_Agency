@@ -444,24 +444,5 @@ def test_many_moments_are_one_request_and_a_fixed_number_of_indexed_queries(book
         assert name in query_plan(books, *found[0]), (table, found[0][0])
 
 
-def test_the_route_answers_many_moments_and_refuses_nonsense(client, headers, engine):
-    seed_chart_of_accounts(engine)
-    ok = client.get(
-        "/api/v1/economy/as-of",
-        params=[("at", "2026-09-12T20:50:00Z"), ("at", "2026-09-12T23:59:00+03:00")],
-        headers=headers,
-    )
-    assert ok.status_code == 200
-    body = ok.json()
-    assert [r["at"] for r in body["readings"]] == [
-        "2026-09-12T20:50:00+00:00",
-        "2026-09-12T20:59:00+00:00",
-    ]
-    assert body["timezone"] == "Europe/Bucharest"
-    assert client.get("/api/v1/economy/as-of", headers=headers).status_code == 422
-    assert (
-        client.get("/api/v1/economy/as-of", params={"at": "noon"}, headers=headers).status_code
-        == 422
-    )
-    too_many = [("at", "2026-09-12T20:50:00Z")] * 241
-    assert client.get("/api/v1/economy/as-of", params=too_many, headers=headers).status_code == 422
+def test_virtual_finance_replay_is_not_a_public_route(client):
+    assert "/api/v1/economy/as-of" not in client.app.app.openapi()["paths"]

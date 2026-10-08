@@ -87,7 +87,7 @@ def test_production_under_mode_with_no_daily_budget_buys_nothing(engine, tmp_pat
 
     assert refused.value.status == "BLOCKED_NO_BUDGET", refused.value.reason_ro
     assert refused.value.http_status == 409
-    assert "Trezorerie → Buget" in refused.value.reason_ro
+    assert "Autonomie → Buget" in refused.value.reason_ro
     assert "buget zilnic" in refused.value.reason_ro
     assert models.posts() == 0
     # Whatever the step held while it was refused was let go.
@@ -170,7 +170,7 @@ def test_the_preflight_budget_line_blocks_exactly_when_the_studio_would_buy_unas
     line = _check(run_preflight(engine, settings, vault), "spending_budget")
     assert line["ok"] is False and line["severity"] == BLOCKING
     assert line["code"] == "spending_budget.none_unasked"
-    assert "Trezorerie → Buget și cheltuieli" in line["message"]
+    assert "Autonomie → Buget și cheltuieli" in line["message"]
     assert "fără să te întrebe" in line["message"]
 
     # A monthly budget alone is still not the daily limit the unasked purchase needs.

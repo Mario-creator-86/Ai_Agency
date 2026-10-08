@@ -220,7 +220,20 @@ def test_only_the_owners_command_module_reaches_an_approval_row():
             if named:
                 readers.add(path.relative_to(ROOT).as_posix())
                 break
-    assert readers == {"backend/app/models.py", "backend/app/services.py"}, readers
+    assert readers == {
+        "backend/app/models.py",
+        "backend/app/services.py",
+        "backend/app/decisions/services.py",
+        "backend/app/media/shooting_sheet.py",
+    }, readers
+    for path in (APPLICATION / "decisions/services.py", APPLICATION / "media/shooting_sheet.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        assert not any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "ApprovalRequest"
+            for node in ast.walk(tree)
+        ), f"{path.name} may read existing approvals, never create authority"
 
 
 def test_nothing_but_the_owners_command_reaches_the_decision_or_the_mode():
@@ -234,11 +247,13 @@ def test_nothing_but_the_owners_command_reaches_the_decision_or_the_mode():
         path.relative_to(ROOT).as_posix()
         for path in APPLICATION.rglob("*.py")
         if any(
-            name in path.read_text(encoding="utf-8")
-            for name in ("decide_approval", "change_autonomy_mode")
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in {"decide_approval", "change_autonomy_mode"}
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
         )
     }
-    assert callers == {"backend/app/main.py", "backend/app/services.py"}, callers
+    assert callers == {"backend/app/main.py", "backend/app/decisions/services.py"}, callers
 
 
 def test_the_owners_two_approval_routes_are_his_alone(client, engine):

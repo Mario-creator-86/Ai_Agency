@@ -42,6 +42,7 @@ from sqlalchemy.orm import Session
 
 from app.agents.memory import agent_for_role, remember
 from app.agents.vision import SPAN_FRAME_WIDTH, frames_at
+from app.db import lock_for_write
 from app.factual.editorial import dangles
 from app.factual.models import FactualClaim
 from app.media.cards import film_finish
@@ -658,7 +659,12 @@ def evaluate_media_qc(
         face_counter=face_counter,
     )
 
-    with Session(engine) as session, session.begin():
+    # Read and measured under a read session only. The measuring takes seconds (ffprobe, the
+    # loudness pass, duplicate frames), and a transaction that read and then wrote was refused
+    # «database is locked» whenever anything committed meanwhile (2026-10-02/03: edit_and_qc
+    # failed in four runs, each after three retries; the Owner's own QC press at 05:39 too).
+    # The verdict is written below in a short transaction that takes the write lock first.
+    with Session(engine) as session:
         asset = session.get(MediaAsset, media_asset_id)
         if not asset:
             raise ValueError(f"Media asset {media_asset_id} not found")
@@ -1102,6 +1108,8 @@ def evaluate_media_qc(
         status = "PASSED" if overall_passed else "FAILED"
         score = 1.0 if overall_passed else round(max(0.0, 1.0 - (len(failure_reasons) * 0.25)), 2)
 
+    with Session(engine) as session, session.begin():
+        lock_for_write(session)
         event = append_event(
             session,
             "media.qc_evaluated",

@@ -264,7 +264,9 @@ _BIBLE_INSTRUCTIONS = (
     "colour palette; how light behaves across the film; the camera's language; the weather, "
     "if any; the continuity rules every shot must obey (what stays identical from shot to "
     "shot — a character's face and clothing, a location, a time of day, a palette); and what "
-    "must never appear. Vertical 9:16, watched on a phone: the subject has to stay readable. "
+    "must never appear. Respect the physical setting: for an airless scene describe vacuum "
+    "and direct sunlight, not terrestrial weather, haze or wind. Vertical 9:16, watched on "
+    "a phone: the subject has to stay readable. "
     "Be specific and brief — a rule that could describe any film is not a rule. Write every "
     "value in plain English words, the way a photographer would say it: the place by its "
     "name and what it looks like, the season, the weather, the light, and colours named in "
@@ -1031,7 +1033,9 @@ def write_shot_prompts(
         passed, why = story_gate(session, board.script_draft_id)
         if not passed:
             raise PromptError(why)
-        need_bible = not board.visual_bible_json
+        need_bible = not board.visual_bible_json or (
+            registry is not None and board.visual_bible_json.get("source") == "studio defaults"
+        )
         facts = _film_facts(session, board)
         editor = agent_for_role(session, PROMPT_ROLE)
         editor_id = editor.id if editor else None
@@ -1732,7 +1736,7 @@ PEOPLE_SENTENCE = (
 )
 FACES_CONSTRAINT = "Faces stay turned away from the camera."
 MOTION_PAD = "The movement stays smooth and unhurried."
-DEFAULT_WORLD_MOTION = "Soft haze drifts slowly through the air."
+DEFAULT_WORLD_MOTION = "Background details remain stable throughout the shot."
 VEO_NEGATIVE = ("text", "subtitles", "logo", "watermark")
 VEO_FACES = "human faces"
 

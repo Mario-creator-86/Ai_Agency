@@ -403,31 +403,10 @@ export class DayReplayPlayer {
    * @param {import('./day_replay.js').Timeline|null} timeline
    */
   async _readFigures(timeline) {
-    if (!timeline) return;
-    if (this.figuresRun === timeline.runId && this.figures) return;
-    // a studio that could not read its log by time predates the books' read too (W16): not asked
-    const query = figuresQuery(timeline, this.readMethod);
-    if (!query) {
-      this.figures = null;
-      this.figuresUntil = null;
-      this.figuresRun = '';
-      return;
-    }
-    // one read per 240 moments, one after the other, all now: nothing is read while it plays (W17)
-    /** @type {any[]|null} */
-    let readings = [];
-    for (const read of query.reads) {
-      const answer = await this.deps.api(read.path).catch(() => null);
-      const part = acceptFigures(answer, read.moments);
-      if (!part) {
-        readings = null;
-        break;
-      }
-      readings.push(...part);
-    }
-    this.figures = readings && readings.length ? readings : null;
-    this.figuresUntil = this.figures ? query.until : null;
-    this.figuresRun = this.figures ? timeline.runId : '';
+    // Virtual Treasury replay is retired; unknown historical USD figures stay unknown.
+    this.figures = null;
+    this.figuresUntil = null;
+    this.figuresRun = timeline ? timeline.runId : '';
   }
 
   /** @param {any} run */

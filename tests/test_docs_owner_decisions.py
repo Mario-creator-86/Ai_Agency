@@ -90,7 +90,10 @@ def test_the_decision_log_records_the_window_and_its_rules():
 
 def test_the_status_has_a_dated_section_above_the_audit_naming_each_item():
     text = _text(PROJECT / "CURRENT_STATUS.md")
-    assert text.startswith("# CURRENT STATUS — State on 2026-10-03")
+    import re
+
+    date = re.match(r"^# CURRENT STATUS — State on (\d{4}-\d{2}-\d{2})\n", text)
+    assert date and date.group(1) >= "2026-10-03"
     assert text.find(STATUS_HEADING) < text.find(AUDIT_STATUS_HEADING)
     section = _section(text, STATUS_HEADING)
     for item in ITEMS:
@@ -116,6 +119,7 @@ def test_the_changelog_and_roadmap_lead_with_the_window():
 
 def test_the_project_state_names_the_window():
     state = json.loads((PROJECT / "PROJECT_STATE.json").read_text(encoding="utf-8"))
-    assert state["migration_version"] == expected_revision() == "0054_owner_decisions"
+    assert state["migration_version"] == expected_revision()
+    assert "0054_owner_decisions" in state["completed_milestone"]
     assert "2026-10-03" in state["active_task"]
     assert "Decizii" in state["active_task"]

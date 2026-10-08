@@ -118,6 +118,35 @@ def test_performance_intake_is_skipped_without_an_analytics_account(runners):
     assert "analytics" in outcome["reason"]
 
 
+def test_performance_intake_skips_an_unreadable_vault_without_inventing_metrics(
+    runners, engine, monkeypatch
+):
+    from app.analytics.models import AnalyticsSnapshot
+    from app.integrations.vault import VAULT_MISSING, VaultUnreadable
+    from sqlalchemy import func, select
+
+    channels = _seeded_channels(engine)
+    asked = []
+
+    def unreadable(engine_, vault, channel_id):
+        asked.append(channel_id)
+        raise VaultUnreadable(VAULT_MISSING)
+
+    def forbidden_measure(*args, **kwargs):
+        pytest.fail("Unusable credentials must never reach an analytics request")
+
+    monkeypatch.setattr("app.runbook.stages.analytics_provider_for_channel", unreadable)
+    monkeypatch.setattr("app.runbook.stages.measure_channel_publications", forbidden_measure)
+    outcome = runners["performance_intake"]()
+
+    assert outcome["status"] == "SKIPPED", outcome
+    assert set(asked) == {channel["id"] for channel in channels.values()}
+    assert set(outcome["artefacts"]["skipped"]) == set(asked)
+    assert all("cheii" in reason for reason in outcome["artefacts"]["skipped"].values())
+    with Session(engine) as session:
+        assert session.scalar(select(func.count()).select_from(AnalyticsSnapshot)) == 0
+
+
 # --------------------------------------------------------------------- the selection --
 
 

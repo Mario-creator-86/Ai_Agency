@@ -19,17 +19,17 @@ test('the next run is a time only while the job is active and autonomy is on', (
 
 test('with nothing read, every line is a dash', () => {
   const { rows } = studioReadout({});
-  assert.deepEqual(rows.map((r) => [r.label, r.value]), [['Rularea zilei', '—'], ['Trezorerie', '—'], ['Următoarea rulare', '—'], ['Filmul zilei', '—']]);
+  assert.deepEqual(rows.map((r) => [r.label, r.value]), [['Rularea zilei', '—'], ['Buget zilnic', '—'], ['Următoarea rulare', '—'], ['Filmul zilei', '—']]);
 });
 
-test('the treasury line is the wall screen\'s own figures, cut to cents', () => {
-  const treasury = { spendable: { amount: '50000.009' }, in_deficit: false };
-  const budget = { budgets: [{ period: 'DAILY', active: true, spent_usd: '0.5', limit_usd: '15', ratio: 0.03, state: 'OK' }] };
-  const row = studioReadout({ treasury, budget }).rows[1];
-  assert.equal(row.value, '50.000 VR$ cheltuibili');
-  assert.equal(row.note, 'azi 0,5 / 15 USD');
+test('the budget line reports only actual USD spend and remaining allowance', () => {
+  const budget = { budgets: [{ period: 'DAILY', spent_usd: '0.5', limit_usd: '15', remaining_usd: '14.5', state: 'OK' }] };
+  const row = studioReadout({ budget }).rows[1];
+  assert.equal(row.value, '14.5 USD disponibili');
+  assert.equal(row.note, '0.5 / 15 USD cheltuiți');
   assert.equal(row.tone, 'quiet');
-  assert.equal(studioReadout({ treasury: { ...treasury, in_deficit: true }, budget }).rows[1].tone, 'alert');
+  assert.ok(!row.value.includes('VR$'));
+  assert.equal(studioReadout({ budget: { budgets: [{ ...budget.budgets[0], state: 'EXCEEDED' }] } }).rows[1].tone, 'alert');
 });
 
 test('the day\'s run is the slate\'s own words, and says a run is under way only while it is', () => {
@@ -42,7 +42,7 @@ test('the day\'s run is the slate\'s own words, and says a run is under way only
   // not read is not empty (W12)
   assert.equal(studioReadout({ track: { empty: true } }).rows[0].value, '—');
   assert.equal(studioReadout({ track: { empty: true }, reads: { runs: 'failed' } }).rows[0].value, 'registrul nu a putut fi citit');
-  assert.equal(studioReadout({ reads: { figures: 'failed' } }).rows[1].note, 'trezoreria nu a putut fi citită');
+  assert.equal(studioReadout({ reads: { figures: 'failed' } }).rows[1].note, 'bugetul nu este disponibil');
 });
 
 test('the key changes only when a line does', () => {
@@ -95,6 +95,6 @@ test('a day with no film says so, and nothing read is a dash', async () => {
 
 test('the readout carries the film of the day as its fourth line', () => {
   const { rows } = studioReadout({ run: runOf({ media: { awaiting_owner: [{ storyboard_id: FILM, step: 'test_shot' }] } }) });
-  assert.deepEqual(rows.map((r) => r.label), ['Rularea zilei', 'Trezorerie', 'Următoarea rulare', 'Filmul zilei']);
+  assert.deepEqual(rows.map((r) => r.label), ['Rularea zilei', 'Buget zilnic', 'Următoarea rulare', 'Filmul zilei']);
   assert.equal(rows[3].value, 'te așteaptă la cadrul de probă');
 });

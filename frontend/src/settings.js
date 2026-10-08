@@ -18,8 +18,8 @@ const sections = [['llm', 'Furnizori AI'], ['agents', 'Angajați'], ['media', 'V
 /** The module names the drawer gave them (main.js), for Setări → Despre studio. */
 const MODULE_LABEL = {
   agents: 'Angajați', providers: 'Furnizori AI', workflows: 'Automatizare', research: 'Cercetare factuală',
-  media: 'Producție media', publishing: 'Publicare', story: 'Office Serial', treasury: 'Trezorerie VR$',
-  procurement: 'VendorShop', financing: 'Finanțare', settings: 'Setări', analytics: 'Analitice',
+  media: 'Producție media', publishing: 'Publicare', story: 'Office Serial',
+ settings: 'Setări', analytics: 'Analitice',
 };
 // No 'youtube' purpose: a YouTube channel is chosen by connecting it, not by picking a saved
 // credential row out of a list. The backend refuses that purpose for the same reason.
@@ -42,7 +42,7 @@ function option(select, value, text) {
 
 /**
  * @param {(path: string, options?: any) => Promise<any>} api
- * @param {{ onChange?: () => Promise<void> | void, modules?: () => Record<string, string> | null }} [hooks]
+ * @param {{ onChange?: () => Promise<void> | void, modules?: () => Record<string, string> | null, onAutonomy?: () => void }} [hooks]
  *   `onChange` runs after every successful change here. Assigning a model, verifying a
  *   provider or binding a channel all alter what the rest of the app should be showing —
  *   the office inspector in particular — and without this the app kept displaying the state
@@ -170,7 +170,9 @@ export function initSettings(api, hooks = {}) {
       button.addEventListener('click', () => { active = key; render(); });
       nav.append(button);
     }
-    dialog.append(nav);
+    const autonomy = node('button', 'Autonomie · programare și buget', 'secondary');
+    autonomy.addEventListener('click', () => { reset(); hooks.onAutonomy?.(); });
+    dialog.append(autonomy, nav);
     const output = node('p', '', 'settings-message');
     output.setAttribute('role', 'status');
     dialog.append(output);

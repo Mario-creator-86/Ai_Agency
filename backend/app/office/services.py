@@ -2,12 +2,42 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
 from app.agents.models import Agent, ModelRecord, ProviderRecord, Role
+
+PIXEL_OFFICE = json.loads(
+    (Path(__file__).resolve().parents[3] / "config/pixel_office.json").read_text(encoding="utf-8")
+)
+VISIBLE_LIFECYCLES = {"HIRED", "ACTIVE", "PAUSED", "SUSPENDED"}
+
+
+def personal_pixel_slots(agents: list[Agent], role_map: dict[str, str]) -> dict[str, int]:
+    """Reserve an employee's personal seat from immutable hiring order, including former staff.
+
+    The first hire in a seeded role gets its illustrated room; later hires get annex seats.
+    Retained offboarded rows keep their reservation, so pausing, leaving or hiring cannot move
+    another employee. A seat is presentation metadata, never an agent policy/capability.
+    """
+    primary = {station["role"].casefold(): i for i, station in enumerate(PIXEL_OFFICE["stations"])}
+    primary["researcher"] = primary["leadresearcher"]
+    used: set[int] = set()
+    slots: dict[str, int] = {}
+    extra = len(PIXEL_OFFICE["stations"])
+    for agent in sorted(agents, key=lambda a: (a.hired_at, a.id)):
+        preferred = primary.get(role_map.get(agent.role_id, "").casefold())
+        slot = preferred if preferred is not None and preferred not in used else extra
+        if slot == extra:
+            extra += 1
+        slots[agent.id] = slot
+        used.add(slot)
+    return slots
+
 
 DEFAULT_OFFICE_LAYOUT: dict[str, Any] = {
     # World pixels of the headquarters scene (frontend/public/assets/hq/manifest.json, built in
@@ -251,12 +281,12 @@ def get_office_layout_with_assignments(engine: Engine) -> dict[str, Any]:
 
     with Session(engine) as session:
         provider_names = {p.id: p.name for p in session.scalars(select(ProviderRecord))}
-        # Load all hired/active agents
-        agents = session.scalars(
-            select(Agent).where(Agent.lifecycle.in_(["HIRED", "ACTIVE", "PAUSED", "SUSPENDED"]))
-        ).all()
+        # Former employees reserve their old seat; they are never drawn as current staff.
+        all_agents = list(session.scalars(select(Agent)).all())
+        agents = [agent for agent in all_agents if agent.lifecycle in VISIBLE_LIFECYCLES]
 
         role_map = {r.id: r.name for r in session.scalars(select(Role)).all()}
+        pixel_slots = personal_pixel_slots(all_agents, role_map)
 
         # The model each agent is actually assigned, so the interface can show it instead of
         # a value written into the page. `is_available` travels with it: an agent can hold an
@@ -308,6 +338,7 @@ def get_office_layout_with_assignments(engine: Engine) -> dict[str, Any]:
                             "role_name": role_map.get(desk_agent.role_id, "Agent"),
                             "runtime_state": desk_agent.runtime_state,
                             "lifecycle": desk_agent.lifecycle,
+                            "version": desk_agent.version,
                             "x": desk["x"],
                             "y": desk["y"],
                             # None when the Owner has not assigned a model yet; the
@@ -324,6 +355,40 @@ def get_office_layout_with_assignments(engine: Engine) -> dict[str, Any]:
                         }
                     )
 
+        # Extra staff also have a personal desk. The active pixel view displays another office
+        # page instead of squeezing multiple employees onto one desk or silently hiding them.
+        for agent in agents:
+            if agent.id in assigned_agents:
+                continue
+            station = PIXEL_OFFICE["stations"][
+                pixel_slots[agent.id] % len(PIXEL_OFFICE["stations"])
+            ]
+            desk_assignments.append(
+                {
+                    "desk_id": f"desk_agent_{agent.id}",
+                    "agent_id": agent.id,
+                    "display_name": agent.display_name,
+                    "role_name": role_map.get(agent.role_id, "Agent"),
+                    "runtime_state": agent.runtime_state,
+                    "lifecycle": agent.lifecycle,
+                    "version": agent.version,
+                    "x": station["x"],
+                    "y": station["y"],
+                    "model_id": agent.model_id,
+                    **(
+                        model_map.get(agent.model_id or "")
+                        or {
+                            "model_name": None,
+                            "model_is_available": False,
+                            "provider_name": None,
+                        }
+                    ),
+                }
+            )
+        for assignment in desk_assignments:
+            assignment["pixel_slot"] = pixel_slots[assignment["agent_id"]]
+            assignment["pixel_desk_id"] = f"pixel_desk_{assignment['agent_id']}"
+        layout["pixel_office"] = PIXEL_OFFICE
         layout["assignments"] = desk_assignments
-        layout["unassigned_count"] = len(agents) - len(assigned_agents)
+        layout["unassigned_count"] = 0
         return layout

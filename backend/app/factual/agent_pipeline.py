@@ -718,6 +718,9 @@ def agent_write_script(
                 else "\nScrie povestea din nou, ținând cont de fiecare punct.\n"
             )
         )
+    from app.media.local_media import writer_constraints  # noqa: PLC0415
+
+    prompt += writer_constraints(engine, target_duration_seconds)
     result = run_agent_task(
         engine,
         registry,

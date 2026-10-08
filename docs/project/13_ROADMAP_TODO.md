@@ -1,5 +1,165 @@
 # Roadmap / TODO v3
 
+## RunPod Serverless phase 1 — 2026-10-08 (proven on fakes only)
+
+- [x] RUNPOD_PHASE1_STEPS — paid stills/test shot/motion/redo bought in rounds of one batch job
+  each inside one GPU session; round overhead priced; bucket manifests before /status; journal
+  without base64; verification without /run; planner ratio normalisation and selected RunPod
+  model; media readiness needs the bucket; GPU start shown in the sheet's price.
+- [x] RUNPOD_PHASE1_CONTROL / RUNPOD_PHASE1_WORKER — GPU on/off, guard, kernel, cards, page and
+  the amn.batch.v1 worker image sources (see their ADRs in 16_DECISION_LOG.md).
+- [x] RUNPOD_OWNER_SETUP_CHECK — worker base fixed to the published 5.10.0-base and pinned by
+  digest, ComfyUI 0.39.2, public weights pinned, `build resolve` for the gated LTX-2.5
+  checksums; a RunPod step refuses before the Owner's yes while his GPU card is not accepted.
+- [ ] RUNPOD_IMAGE_BUILD_HOST — Owner decision: where the two images (~39 GB and ~78 GB of
+  weights) are built and pushed, and the registry credentials in RunPod.
+- [ ] RUNPOD_REFERENCE_STILLS — a reference-capable still route (Qwen-Image-2512 is text-to-image:
+  locked characters refuse NEEDS_REFERENCE on RunPod, Figure 1 is not used); a model decision.
+- [ ] RUNPOD_STILL_REDO_ROUNDS — the per-scene still redo bought as a round (refused today).
+- [ ] RUNPOD_BUCKET — the Owner creates the S3-compatible bucket (e.g. Cloudflare R2) and puts
+  its endpoint, name and two keys on the RunPod connection.
+- [ ] RUNPOD_BAKE_OFF — the paid test card: billed rate (3.49 vs 4.00), cold start, idleTimeout
+  1 s honoured, GPU seconds per still/clip (replace config/runpod_models.json estimates),
+  quality against Runway, LTX-2.5 provenance boxes, Restricted key access, R2 If-None-Match.
+- [ ] RUNPOD_BALANCE — phase 2: read RunPod's balance/billing once its API field is confirmed.
+
+## Living pixel studio — 2026-10-08
+
+- [x] PIXEL_STUDIO_LIFE — one hover tooltip, no character rectangle, independent seated
+  state/role gestures and original ambient city actors; approved detailed art preserved.
+- [x] PIXEL_LIFE_ACCEPTANCE — 846 frontend, type check, three bounded browser checks and
+  53 scoped backend/docs pass; actual eight-agent production animation/video verified.
+
+Report and rollback: PIXEL_STUDIO_LIFE.md; evidence: data/pixel-life-2026-10-08/.
+
+## No sign-in form on the Owner's machine — 2026-10-08
+
+- [x] LOCAL_AUTO_LOGIN — loopback-only key hand-over route, setting, page entry without the form;
+  backend (real uvicorn), frontend, type, lint and docs checks pass; browser-verified on an
+  isolated fake studio. Live at his next start (page build + new route).
+
+## Pixel navigation and night — 2026-10-08
+
+- [x] PIXEL_NAVIGATION_NIGHT — fix desktop clipping, wheel/drag/fit navigation, native mobile
+  scroll; coloured actual-solar sunset/night and stylistic moon/stars. Preserve approved art.
+- [x] PIXEL_NAVIGATION_ACCEPTANCE — 826 frontend, type check, two bounded browser cases and
+  53 scoped backend/docs pass; real signed-in 8-agent UI and served assets verified.
+
+## Stale backup warning — 2026-10-08
+
+- [x] BACKUP_STALE_ALERT — actual fresh online copy; automatic queued backup completed;
+  live readiness HEALTHY. Restore latest real artifact with usable keys/eight agents on
+  isolated target; eleven backup regressions pass. Threshold and Owner policy preserved.
+
+## Python runtime recovery — 2026-10-08
+
+- [x] PYTHON_RUNTIME_RECOVERY — restore the pinned missing base before CMD startup; update
+  obsolete uv download metadata. Real recovery and complete server/page/API lifecycle
+  verified on isolated state; preserve production data/policy and locked packages.
+
+## Launcher compatibility — 2026-10-08
+
+- [x] ROOT_START_COMPATIBILITY — restore python start.py with locked uv delegation; preserve
+  options/cwd/exit code and graceful Ctrl+C. Twelve scoped cases and real help probes pass.
+
+## Pixel outdoor clock and Bucharest weather — 2026-10-08
+
+- [x] PIXEL_OUTDOOR_CLOCK_WEATHER — original exterior clock, DST/local time, real configured
+  weather and solar tint; protected furnished interiors, capped particles and lifecycle guards.
+- [x] PIXEL_WEATHER_GRAPHICS — isolated real Canvas checks for current provider observation,
+  day/night/rain/fog/snow/storm, stale/unavailable/replay weather, hidden/logout and phone.
+- [ ] PIXEL_WEATHER_OWNER_FLOWS — repeat the full owner_flows suite when its existing game
+  guard permits it. The current run skipped all 11 flows; historical 10-flow pass is separate.
+
+## Agent scenario acceptance — 2026-10-08
+
+- [x] AGENT_SCENARIO_ACCEPTANCE — eight assigned agents tested through actual Ollama Cloud;
+  independent factual handoffs, contradictions/injection, lost upload response, vocal/editing
+  advice, insufficient budget, strategic HOLD, STOP/pause and unavailable-model refusals.
+- [x] SCENARIO_MAIL_CONCURRENCY — reproduce SQLite reply race; acquire write lock before
+  reading in reply/forward/resolve. Verify actual concurrent-writer regression and mail suite.
+- [x] SCENARIO_DEMO_DIRECTOR — correct schema routing and inbox IDs; repeat real local encode
+  and QC without outbound vendors. Day PARTIAL because external prerequisites are absent.
+- [x] SCENARIO_SERIAL_FEEDBACK — episode-v6 spoken-length reminder; record every rejected
+  draft and final real Director PASS. Do not relax duration, per-beat or factual/privacy gates.
+- [x] SCENARIO_HERO_PREVIEW — priced motion waiting on stills is no longer presented as free;
+  preserve explicit caps and free reuse. Five policy cases and four staircase flows pass.
+- [x] SCENARIO_SQLITE_RUNTIME — preserve prior environment; pin Python 3.14.8 with measured
+  SQLite 3.53.1 containing the WAL concurrency fix. Production integrity check passes.
+- [x] SCENARIO_SECRET_UTF8 — scan Unicode text reliably on Windows, detect a new fake key,
+  review fixture hashes individually without weakening the scanner.
+- [x] SCENARIO_ANALYTICS_VAULT — missing/unreadable optional statistics credentials are
+  reported without invented data; normal daily preflight still blocks the missing key.
+- [ ] SERIAL_NORMAL_RETRY_ACCEPTANCE — final sample required five rewrites, exceeding the
+  normal autonomous allowance; exact two-draft stage rejects, alternative model times out.
+  Prove repeatable acceptance within existing retry/token caps.
+- [ ] RUNPOD_LIVE_ACCEPTANCE — real credentials/endpoints, capped generation and existing QC.
+- [ ] PUBLISHING_LIVE_ACCEPTANCE — authorised real account, media/rights gates and receipt.
+
+Report: AGENT_SCENARIO_REPORT.md. Current suite counts and limits: CURRENT_STATUS.md.
+
+## Current Ollama Cloud role allocation — 2026-10-08
+
+- [x] OLLAMA_ROLE_ALLOCATION — authenticate existing connection; inspect actual 18-variant/
+  17-family catalogue and official sources; verify 16 role samples through real Cloud calls;
+  save five primary changes and retain three suitable choices for the existing eight agents.
+- [x] OWNER_ASSIGNMENT_ORIGIN — protect explicit choices even when they match seed proposals;
+  retain legacy compatibility, verify regressions and record all eight assignments explicitly.
+- [x] OLLAMA_ALLOCATION_HANDOFF — full catalogue/reasons/sources, existing prices/policy preserved,
+  backups and UI readback. 103 scoped backend tests pass; details in CURRENT_STATUS.md and
+  [OLLAMA_ROLE_ALLOCATION.md](OLLAMA_ROLE_ALLOCATION.md).
+
+## Simple pixel studio and essential autonomy — 2026-10-08
+
+- [x] PRESERVE_DETAILED_STUDIO — retain approved library/furniture/plants/lighting, add one
+  furnished floor, seat eight existing agents at illustrated desks facing away, preserve
+  live states and other menus. Supersedes the earlier cleared-furniture scene; evidence,
+  browser captures and verification counts are in CURRENT_STATUS.md.
+
+- [x] PERSONAL_PIXEL_DESKS — stable individual desks, seated layered characters, existing
+  Character Bible identity, actual runtime/lifecycle gestures, annex pages and truthful
+  stale/replay/reduced-motion behavior. Evidence and test counts: CURRENT_STATUS.md.
+
+- [x] SIMPLE_PIXEL_STUDIO — original browser Canvas/environment/characters; existing menus,
+  staff selection/chat, backend reality, accessibility, responsive layout and reduced motion.
+- [x] RETIRE_TREASURY — no active Treasury/funding/FX/mint/virtual-ledger screen/public API;
+  historical data/internal accounting compatibility preserved, real USD costs/gates retained.
+- [x] AUTONOMY_OVERVIEW — current policy/environment/STOP/schedule, links to existing controls,
+  budget/prices and collapsed preflight; existing versioned authorization preserved.
+- [x] SIMPLE_OPERATOR_HANDOFF — guide, source backup, art provenance, reviewed spec precedence,
+  804 UI/nine browser/364 distinct scoped backend tests and static/build/integrity checks.
+
+Start: [SIMPLE_STUDIO_GUIDE.md](SIMPLE_STUDIO_GUIDE.md). Evidence: CURRENT_STATUS.md.
+This supersedes the earlier top-down/live-HQ and active virtual-finance product milestones.
+RunPod real connection/paid acceptance below remain external work, explicitly deferred.
+
+## RunPod additional provider and local ComfyUI uninstall — 2026-10-07
+
+- [x] RUNPOD_CLOUD_PREPARATION — modular Pod/Serverless adapters, durable idempotency/recovery,
+  existing QA/asset/VideoEditor/watchdog integration, GPU estimates and existing financial gates,
+  read-only connection check, offline PNG/5s-MP4 verification and disabled infra hooks.
+- [x] COMFYUI_UNINSTALL — owned E:/Studio application/models/cache/runtime/workflows/launchers
+  removed; stale Agency image/video selections detached, voice/artifacts preserved.
+- [ ] RUNPOD_REAL_CONNECTION — supply real credentials and endpoint; authenticate health/models
+  and select the available catalogue. No live connection claim based on offline tests.
+- [ ] RUNPOD_PAID_ACCEPTANCE — after the separate Owner approval gate, one image and one five-second
+  I2V test with real cost/log/asset/QA verification. Never run these in ordinary automated tests.
+
+Implementation/evidence: [RUNPOD_HANDOFF.md](RUNPOD_HANDOFF.md).
+
+## Graphics launch is opt-in — 2026-10-04
+
+- [x] GRAPHICS_OPT_IN — latest Owner request supersedes automatic START_WITH_GRAPHICS:
+  ordinary launches create no graphics supervisor; `--graphics` opts into the existing
+  lifecycle, `--no-graphics` remains compatible. 85 launcher/graphics/rebuild tests passed.
+
+## A lowered mode stops a paid step — 2026-10-04
+
+- [x] MODE_REDUCTION_STOPS_PURCHASE — his policy read before every vendor request of a step
+  bought unasked; the mode before the balance; STUDIO_DEFECT for a 400 naming our request, old
+  holds released by the watchdog; QC and the scheduler tick write under the lock. Fakes only.
+- [ ] Escalate a STUDIO_DEFECT that is not yet fixed to the team instead of retrying it daily.
+
 ## Shooting-sheet clarity — 2026-10-04
 
 - [x] SHOOTING_SHEET_UI — overview with actual media state; production rows before wide scenes;

@@ -38,6 +38,7 @@ from app.agents.services import (
     run_agent_task,
     sync_provider_models,
 )
+from app.db import lock_for_write
 from app.providers.registry import ProviderRegistry
 from app.security import require_owner
 
@@ -128,6 +129,7 @@ def create_agents_router(registry: ProviderRegistry) -> APIRouter:
             with Session(request.app.state.engine) as session, session.begin():
                 from app.agents.models import AgentMessage  # noqa: PLC0415
 
+                lock_for_write(session)
                 parent = session.get(AgentMessage, message_id)
                 if parent is None:
                     raise HTTPException(status_code=404, detail="Mesajul nu există")
@@ -162,6 +164,7 @@ def create_agents_router(registry: ProviderRegistry) -> APIRouter:
     ) -> dict:
         try:
             with Session(request.app.state.engine) as session, session.begin():
+                lock_for_write(session)
                 row = forward_message(
                     session,
                     message_id,
@@ -181,6 +184,7 @@ def create_agents_router(registry: ProviderRegistry) -> APIRouter:
     ) -> dict:
         try:
             with Session(request.app.state.engine) as session, session.begin():
+                lock_for_write(session)
                 row = resolve_message(
                     session, message_id, resolution=command.resolution, resolved_by="Owner"
                 )

@@ -86,6 +86,9 @@ class WriteScriptCommand(BaseModel):
     topic_id: str = Field(min_length=36, max_length=36)
     target_duration_seconds: int = Field(default=50, ge=15, le=180)
     agent_id: UUID | None = None
+    revision_notes: list[Annotated[str, Field(min_length=1, max_length=2000)]] = Field(
+        default_factory=list, max_length=8
+    )
 
 
 class RetrieveSourceCommand(BaseModel):
@@ -442,6 +445,7 @@ def create_factual_router() -> APIRouter:
                 str(cmd.command_id),
                 target_duration_seconds=cmd.target_duration_seconds,
                 agent_id=str(cmd.agent_id) if cmd.agent_id else None,
+                notes=cmd.revision_notes or None,
             )
         except NoVerifiedClaims as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from None

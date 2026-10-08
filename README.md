@@ -5,8 +5,8 @@ Fact Checker, Script Writer, Voice Artist, Video Editor, Publisher, Accountant) 
 topic, verifies its claims against stored sources, writes a factual short and an office serial,
 plans the shots, buys pictures, motion and narration from the vendors you connect (Runway,
 ElevenLabs), cuts the film with FFmpeg, measures it, and uploads it to YouTube — each paid step
-and each upload only as far as **your** policy allows. The page shows the studio as a living
-office; an optional Unreal Engine headquarters can be streamed into it.
+and each upload only as far as **your** policy allows. The page shows agents in an original
+side-view pixel studio, with the existing production and settings menus.
 
 What it is not: a hosted service, a multi-user product or a promise of good films. It runs on
 one machine, for one Owner, on `127.0.0.1`. Where the work stands is in
@@ -17,11 +17,17 @@ came with it). The Romanian operator guide is [docs/OPERATOR_GUIDE.md](docs/OPER
 
 | Needed | Version | Install |
 |---|---|---|
-| Python | 3.12 – 3.14 | python.org, or `uv python install 3.14` |
+| Python | 3.12 – 3.14; local runtime pinned to 3.14.8 | python.org, or `uv python install 3.14.8` |
 | uv | current | https://docs.astral.sh/uv/ |
 | Node.js + npm | 22.12+ | nodejs.org (only to build the page) |
 | **FFmpeg + FFprobe** | 7 or newer, full build | **required for films**: Windows `winget install Gyan.FFmpeg` · Debian/Ubuntu `sudo apt install ffmpeg` · macOS `brew install ffmpeg` |
 | Git | any | only to clone |
+
+The local environment uses Python 3.14.8 with SQLite 3.53.1, verified on this machine.
+Use a runtime containing the [SQLite WAL concurrency fix](https://www.sqlite.org/wal.html#walreset)
+(3.51.3 or newer, or the 3.44.6/3.50.7 backports). A temporary test database reported corruption
+on the previous SQLite 3.50.4 runtime; that cause was not conclusively reproduced. The production
+database passed its integrity check. Package versions remain locked in `uv.lock`.
 
 FFmpeg is not optional: without it the studio refuses to render (HTTP 503) rather than write a
 fake file, and quality control cannot measure a film. A film uses `libx264`, `aac`, `subtitles`
@@ -29,8 +35,8 @@ fake file, and quality control cannot measure a film. A film uses `libx264`, `aa
 `silencedetect` and `signalstats`; the launcher lists any your build lacks and what the film
 loses without it. Gyan's "full" Windows build and the distribution packages have them all.
 
-Optional: Unreal Engine 5.8 and Epic's Pixel Streaming infrastructure, only for the live
-headquarters (see `art-source/unreal/live/`); everything else works without them.
+The interface needs no Blender, Unreal Engine, ComfyUI or GPU stream. Archived graphics
+sources remain recoverable. Start with [the short Romanian guide](docs/project/SIMPLE_STUDIO_GUIDE.md).
 
 ## Install and first run
 
@@ -38,8 +44,15 @@ headquarters (see `art-source/unreal/live/`); everything else works without them
 git clone <your copy> C:\amn-ai        # a SHORT path: some art files have long names
 cd C:\amn-ai
 start.cmd                               # Windows
-uv run python scripts/start.py          # any platform
+uv run --locked python scripts/start.py # any platform
+python start.py                         # compatible root entry; delegates through uv
 ```
+
+If the existing Windows environment refers to a missing base Python, `start.cmd`
+restores the version declared in `.python-version` before launching. A healthy environment
+does not download or reinstall Python. Recovery needs network access and a recent `uv`
+that knows the requested version; it stops with a diagnostic if restoration fails.
+On this PC `uv` was updated from 0.11.0 to 0.12.23 for the pinned 3.14.8 download.
 
 On Windows, either clone into a short folder as above or run
 `git config --global core.longpaths true` first; a deep folder fails with "Filename too long".
@@ -48,31 +61,23 @@ A release archive (`scripts/make_release.py`) has no such files.
 `start.py` syncs the locked Python environment, writes `.env` with a fresh Owner key, creates
 and migrates the database (`data/studio.db`, backed up before any later migration), seeds the
 employees, channels and books, builds the page, prints a preflight read from the studio itself,
-and serves http://127.0.0.1:8000. Paste `STUDIO_OWNER_TOKEN` from `.env` into the sign-in form.
+and serves http://127.0.0.1:8000. Opened on this machine (127.0.0.1, localhost or [::1] at the
+studio's port), the page enters without the sign-in form: the studio hands it the Owner key
+(`STUDIO_LOCAL_AUTO_LOGIN`, on by default; the Owner, 2026-10-08). From another machine, through a
+proxy, or with `STUDIO_HOST` beyond loopback, paste `STUDIO_OWNER_TOKEN` from `.env` into the form.
 Ctrl+C stops it. Every step is idempotent: run the same command to restart or upgrade.
-Flags: `--skip-frontend`, `--skip-sync`, `--rebuild`, `--no-graphics`.
+Flags: `--skip-frontend`, `--skip-sync`, `--rebuild`, `--graphics`, `--no-graphics`.
 
-**The live headquarters start and stop with the studio** (Windows, when Unreal and Epic's
-Pixel Streaming infrastructure are installed: `AMN_PS_INFRA`, `AMN_PS_NODE`, `AMN_UE_ROOT` in the
-environment or `art-source/unreal/.env.paths`, and `STUDIO_OFFICE_STREAM_SIGNALLING_URL` in
-`.env`). Once the server answers, `start.py` starts the signalling server (wilbur) and Unreal
-with the arguments in `art-source/unreal/live/stream_command.json`, the same list
-`start_live_hq.ps1` reads; a stream already running is adopted, never doubled, and an Unreal
-editor on another project is never touched. While Path of Exile or League of Legends runs, or
-free memory (commit) is under 16 GB, the studio runs and the graphics wait, then start by
-themselves; a stream that dies is started again after a pause, at most three times an hour.
-**Ctrl+C** lets the server stop cleanly first (up to 30 s; a day stops at its boundary, never
-inside a purchase), then stops Unreal and wilbur and says what it stopped; pressing it again
-does not hurry the server. Closing the window, or ending `start.py`, also ends everything it
-started (a Windows Job Object), but the server then gets no clean stop: use Ctrl+C. Without the
-machine paths, in `--demo`, with `--no-graphics`, or in a service without a desktop (session 0),
-the graphics are skipped with one line saying why and the page draws its own building.
+**The studio starts directly with the pixel interface.** Ordinary launches do not start
+graphics processes. Legacy `--graphics` tooling is retained for archived art work; it is not
+used by the current interface. Treasury and virtual financing are retired from the active
+product; actual USD budgets/prices and provider costs remain under **Autonomie**.
 
 **A new studio starts safe:** autonomy STOPPED, mode **MANUAL**, environment **TEST**, the daily
 job dormant, no vendor connected. Nothing runs, nothing is bought and nothing is published until
 you say so in the page.
 
-Before the first real day, set where the studio is (it runs the clock and the sky), in `.env`:
+Before the first real day, set the scheduling timezone and calendar in `.env`:
 `STUDIO_TIMEZONE`, `STUDIO_OFFICE_LATITUDE`, `STUDIO_OFFICE_LONGITUDE`, `STUDIO_OFFICE_CITY`,
 `STUDIO_HOLIDAY_COUNTRY`. The defaults are Bucharest. Every setting is listed, grouped and
 explained in [.env.example](.env.example); `STUDIO_TIMEZONE` and `STUDIO_NAME` are written into
@@ -106,7 +111,7 @@ All connections are made in the page and their keys are stored encrypted beside 
   provider and syncing its models, give each employee a model in Setări → Angajați (or run
   `uv run python scripts/apply_llm_allocation.py`, which applies `config/workforce_seed.json`'s
   allocation to employees nobody configured). Set `STUDIO_AGENT_DAILY_TOKEN_BUDGET` for a paid model.
-- **Runway** (stills and motion) and **ElevenLabs** (narration) — Setări → Video și sunet. Record
+- **RunPod** (optional cloud stills/video; [connection guide](docs/RUNPOD_INTEGRATION.md)), **Runway** (stills and motion) and **ElevenLabs** (narration) — Setări → Video și sunet. Record
   on each connection whether your plan allows commercial use: until you do, quality control
   passes a film for a private upload only.
 - **YouTube** — Setări → Conturi și e-mail, with an OAuth client from **your own** Google Cloud
@@ -126,7 +131,7 @@ All connections are made in the page and their keys are stored encrypted beside 
 | Mode | Guvernanță | MANUAL (you move each stage), SUPERVISED (routine runs, external writes ask), AUTONOMOUS_CEO (the Director acts within policy). T4 actions are always yours. |
 | Environment | the MEDIU switch | TEST buys nothing from real vendors in the daily run; PRODUCTION climbs the shooting sheet. |
 | Paid-step rule | the shooting sheet, «Când te întreabă un pas plătit al unui film» | EVERY_PAID_STEP (default: every stills, hero, motion and redo step asks you), OVER_USD (asks above your amount), MODE (follows the mode). |
-| Budgets | Trezorerie → Buget și cheltuieli | A daily budget is **required** for MODE or OVER_USD in PRODUCTION; without one the step is refused (BLOCKED_NO_BUDGET). |
+| Budgets | Autonomie → Buget și cheltuieli | A daily budget is **required** for MODE or OVER_USD in PRODUCTION; without one the step is refused (BLOCKED_NO_BUDGET). |
 | Film ceiling | `STUDIO_FILM_BUDGET_USD` | What one film may spend in all. The default (motion budget + a six-scene stills cap, 15.24 USD) is below a four-scene 10-second film at 1080p: set your own. |
 | Publishing | Distribuție, per channel | Visibility (private/unlisted/public), category, language, Shorts length. |
 
@@ -154,8 +159,9 @@ vault key is wrapped with DPAPI for your Windows account; `-RunWhenLoggedOff` (S
 able to unwrap it, so the supported unattended mode is an interactive logon with automatic
 sign-in. The studio then starts DEGRADED and the day is blocked with a letter rather than run on
 unreadable keys. The service does not activate the daily job and does not keep the PC awake.
-The default (interactive) task starts the live headquarters like `start.cmd`; an S4U task runs
-in session 0, without a desktop, and starts the studio without them.
+The default (interactive) task starts the studio without the live headquarters. Graphics
+require `--graphics` in the launch command and an interactive desktop; an S4U task runs in
+session 0 and skips them even when requested.
 
 **Linux** — a systemd user unit, [scripts/amn-ai.service](scripts/amn-ai.service) (installation
 steps inside). On Linux the vault key is stored **unwrapped** with mode 0600 beside the database:
@@ -228,9 +234,13 @@ decision and an explicit index hash update (`scripts/check_docs.py`).
 
 ## API
 
-Every route except `/health/*` and the YouTube OAuth callback requires
-`Authorization: Bearer <STUDIO_OWNER_TOKEN>` (sockets take the key as their first message, never
-in the URL). The page is the API's client: `GET /api/v1/snapshot`, `GET /api/v1/events`, the
+Every route except `/health/*`, the YouTube OAuth callback, the title's kept frame and
+`GET /api/v1/owner/local-session` requires `Authorization: Bearer <STUDIO_OWNER_TOKEN>` (sockets
+take the key as their first message, never in the URL). The last hands the key only to a loopback
+peer asking at the studio's own loopback address with the page's own `X-Studio-Local-Session: 1`
+header, no proxy header and no foreign Origin, with
+`STUDIO_HOST` on loopback and `STUDIO_LOCAL_AUTO_LOGIN` on; everyone else gets the 404 of an
+unknown path (`backend/app/local_session.py`). The page is the API's client: `GET /api/v1/snapshot`, `GET /api/v1/events`, the
 Owner's commands under `/api/v1/owner/*` (versioned, idempotent by `command_id`; a stale version
 answers 409), and one router per area under `/api/v1/` (agents, providers, settings, factual,
 media, publishing, analytics, economy, youtube, workforce, story, runbook, scheduler, office).

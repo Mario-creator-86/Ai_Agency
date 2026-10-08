@@ -231,7 +231,11 @@ def fake_director(
 
 
 def registry():
-    return SimpleNamespace(registered_ids=lambda: ["fake-provider"])
+    return SimpleNamespace(
+        registered_ids=lambda: ["fake-provider"],
+        cached_status=lambda provider_id: "UNKNOWN",
+        get=lambda provider_id: None,
+    )
 
 
 def allow_director_approval(engine, allowed: bool = True) -> None:
@@ -1950,6 +1954,32 @@ def test_the_brief_names_the_day_the_names_the_rooms_and_the_voices(engine, staf
     # The brief is English, and names the day instead of calling it "azi".
     for romanian in ("DISTRIBUȚIA", "EVENIMENTELE", " azi", "Răspunde"):
         assert romanian not in prompt
+
+
+def test_the_writer_counts_spoken_words_after_reading_a_short_refused_draft(
+    engine, staffed, monkeypatch
+):
+    from app.story.services import EPISODE_WORDS, WORDS_PER_BEAT
+
+    _, ids = letters_day(engine)
+    first = written(engine, monkeypatch, beats_for(ids, [SARAH, KAEL]))
+    prompts: list[str] = []
+    answers_in_turn(monkeypatch, [episode_answer(beats_for(ids, [SARAH, KAEL]))], prompts)
+    write_episode(
+        engine,
+        registry(),
+        first["log_id"],
+        str(uuid4()),
+        notes="The previous draft had only 46 spoken words; expand the dialogue.",
+        rewrite_of=first["id"],
+    )
+    (prompt,) = prompts
+    # The measurement excludes scene directions and must still be obeyed on a rewrite.
+    tail = prompt[prompt.rfind("</untrusted_source_evidence>") :]
+    assert f"{EPISODE_WORDS[0]} to {EPISODE_WORDS[1]}" in tail
+    assert f"{WORDS_PER_BEAT[0]} to {WORDS_PER_BEAT[1]}" in tail
+    assert "Only words inside lines[].text count" in tail
+    assert "first line" in tail and "whole hook beat" in tail
 
 
 def test_the_speaking_cast_is_two_to_four_who_act_in_the_cited_events(engine, staffed, monkeypatch):

@@ -24,12 +24,10 @@
 # is the default (Interactive) task with Windows signing the Owner in automatically. Verify S4U
 # once on the machine before relying on it.
 #
-# THE LIVE HEADQUARTERS (2026-10-04). start.py starts the streamed Unreal headquarters with the
-# studio and stops them with it. The default (Interactive) task runs in the Owner's own session,
-# where Unreal renders as it does from start.cmd, so the graphics start. An S4U task runs in
-# session 0, which has no desktop and where Unreal has never been seen rendering: start.py skips
-# the graphics there with one line in the log, and the page draws its own building. Stopping the
-# task ends start.py, and with it everything it started (a Windows Job Object).
+# THE LIVE HEADQUARTERS (2026-10-04). Ordinary start.py runs and this task start without graphics.
+# The Owner must explicitly add --graphics to opt into Unreal and wilbur; even then an S4U task
+# in session 0 skips them because it has no desktop. Stopping the task ends start.py and
+# everything it started (a Windows Job Object).
 #
 # LOGS. The studio writes its full log, rotated (10 files of 10 MB), to data\logs\studio.log
 # (STUDIO_LOG_DIR to move it). The console the task captures is only warnings and errors

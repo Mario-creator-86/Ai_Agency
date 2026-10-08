@@ -21,17 +21,8 @@
          origin; the Latin file carries the title, so it is asked for before the stylesheet finds it. -->
     <link rel="preload" href="/fonts/oxanium/oxanium-latin-wght.woff2" as="font" type="font/woff2" crossorigin />
   </head>
-  <body class="is-title">
-    <!-- THE TITLE STAGE. The studio's own world behind the sign-in: the office's sky at the real
-         Bucharest sun (a canvas) and the office's Blender plates as depth layers (title_screen.js
-         builds them from /assets/hq/plates/plates.json). Decorative: every word a visitor needs is
-         in #login. -->
-    <div id="title-stage" class="title-stage" aria-hidden="true">
-      <canvas class="title-sky"></canvas>
-      <div class="title-world"></div>
-      <div class="title-veil"></div>
-      <svg class="title-filters" width="0" height="0" focusable="false"><filter id="title-night-grade" color-interpolation-filters="sRGB"><feColorMatrix type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 1 0" /></filter></svg>
-    </div>
+  <body class="is-title pixel-studio">
+    <div id="title-stage" class="title-stage" aria-hidden="true"></div>
     <header class="topbar">
       <a href="/" class="brand" title="AMN-AI — Autonomous Machine Nexus · Artificial Intelligence"><img src="/amn-ai-mark.png" alt="" width="38" height="38" class="brand-logo" /><span><strong>AMN-AI</strong><br /><span class="brand-sub">Autonomous Machine Nexus</span></span></a>
       <span class="topbar-crumb"><span id="studio-name">AMN-AI</span> <span class="separator">/</span> Spațiul Proprietarului</span>
@@ -48,10 +39,15 @@
           <p class="eyebrow title-eyebrow"><img src="/amn-ai-mark.png" alt="" class="title-mark" width="40" height="40" />AUTONOMOUS MACHINE NEXUS · ARTIFICIAL INTELLIGENCE</p>
           <h1 id="title-name" class="title-name">AMN-AI</h1>
           <p class="title-line">Un loc pentru ideea următoare.</p>
-          <form id="login-form" class="title-form">
+          <!-- LOCAL_AUTO_LOGIN (2026-10-08): on the Owner's own machine the page enters without the
+               key (local_entry.js), so the form starts hidden under the waiting line and shows only
+               when this machine is not handed the key (another machine, the setting off). -->
+          <p id="login-wait" class="helper title-wait" role="status">Se deschide studioul…</p>
+          <form id="login-form" class="title-form" hidden>
             <label for="owner-token">Cheia Proprietarului</label>
             <input id="owner-token" type="password" required minlength="32" autocomplete="off" spellcheck="false" />
             <button type="submit" class="primary">Intră în studio <span aria-hidden="true">↗</span></button>
+            <p id="login-local" class="helper" hidden>Pe acest calculator poți intra și fără cheie: lasă câmpul gol și apasă «Intră în studio».</p>
             <p class="helper">Cheia locală se află în fișierul .env, la STUDIO_OWNER_TOKEN. Rămâne doar în memoria acestei pagini.</p>
           </form>
         </div>
@@ -87,19 +83,21 @@
                    picture or standing about on the panel outside it. The canvas takes focus so the
                    employees can be reached with the arrows as well as with a pointer. -->
               <div class="scene-viewport" id="scene-viewport">
-              <canvas id="office-canvas" class="office-canvas" tabindex="0" aria-label="Sediul AMN-AI. Săgețile trec de la un angajat la altul, apoi prin ecranele clădirii; Enter deschide ce ai ales."></canvas>
+              <canvas id="office-canvas" class="office-canvas" tabindex="0" aria-label="Studioul AMN-AI. Săgețile selectează angajații, Enter deschide conversația."></canvas>
+              <div id="pixel-office-pages" class="pixel-office-pages" role="group" aria-label="Birourile agenților" hidden></div>
               <!-- «RELUAREA ZILEI» (W13): while the newest finished day is played back from its record,
                    a letterbox closes over the sky row and the street, so no one takes it for live. -->
               <div class="replay-letterbox" aria-hidden="true"></div>
               <!-- W28: the room whose door is open, lit (dialog_doors.js): the page's mark of what he opened. -->
               <div id="door-light" class="door-light" aria-hidden="true" hidden></div>
-              <div class="scene-readout scene-readout-info" title="Ora locală a studioului și vremea reală pe care o citește studioul. Fără un serviciu de vreme configurat, scena nu desenează vremea."><span class="scene-label replay-now-label">ACUM</span><span id="scene-info">—</span><span id="replay-then" class="replay-then" title="Ora din registru a momentului reluat" hidden><span class="replay-then-label">ATUNCI</span><span id="replay-then-time" class="scene-figure">—</span></span></div>
+              <div class="scene-readout scene-readout-info" title="Ora locală și vremea de afară. Lumina urmează poziția soarelui; decorul rămâne o ilustrație."><span class="scene-label replay-now-label">ACUM</span><span id="scene-info">—</span><span id="replay-then" class="replay-then" title="Ora din registru a momentului reluat" hidden><span class="replay-then-label">ATUNCI</span><span id="replay-then-time" class="scene-figure">—</span></span></div>
               <!-- The replayed world is lit by its own hour's sun and draws no weather: the page does
                    not know the weather of that night, and says so under the ATUNCI clock (W15). -->
               <p id="replay-weather" class="replay-weather" hidden>vremea de atunci nu e cunoscută</p>
               <span id="office-status" class="tag live-pill scene-readout scene-readout-live" data-state="reconnecting"><span class="live-dot" aria-hidden="true"></span><span id="office-fps"><span class="scene-live">Se conectează</span></span></span>
               <!-- The slate: what is being looked at, the day's run as one segment per stage (the
                    runbook's own events, hud_charts.js), and when the studio was last read. -->
+              <div id="pixel-roster" class="pixel-roster" role="group" aria-label="Angajații studioului"></div>
               <div class="scene-slate"><span id="room-caption">—</span><span id="day-track" class="day-track" role="img" aria-label="Nicio rulare a zilei în registru."><svg class="day-track-bar" width="0" height="6" focusable="false" aria-hidden="true"></svg><span class="day-track-label">—</span></span><span id="snapshot-time">—</span></div>
               <!-- THE FACES MADE LEGIBLE (W10): the glass readout laid beside the building's face the
                    pointer or the keyboard stands on (scene_readout.js). It is hidden from assistive
@@ -153,6 +151,7 @@
               <div class="camera-toolbar">
                 <div class="toolbar-group toolbar-scene">
                 <button id="stop-toggle" class="cam-btn cam-switch" disabled title="Autonomia studioului: pornită sau oprită. Oprirea rămâne în vigoare și nu pornește niciodată angajați sau publicări."><span class="switch-label">AUTONOMIE</span><span class="switch-track"><span class="switch-knob"></span></span><span id="switch-state" class="switch-state">—</span></button>
+                <div id="gpu-switch" class="gpu-switch" hidden></div>
                 <button id="environment-toggle" class="cam-btn cam-switch" disabled title="Mediul studioului. TEST: se generează minimul, pe cel mai ieftin model compatibil. PRODUCTION: cel mai ieftin model care atinge calitatea de care are nevoie fiecare scenă."><span class="switch-label">MEDIU</span><span id="environment-state" class="switch-state">—</span></button>
                 <!-- The camera is one instrument, not four loose boxes: the four controls that
                      move the same eye share one plate and are divided by hairlines. -->
@@ -183,7 +182,7 @@
                 <button id="open-workforce-btn" class="quiet cam-btn" title="Cum lucrează angajații și ce schimbări de personal susțin măsurătorile"><svg class="ui-icon cam-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8.6" r="3.5"/><path d="M5.2 19.6c.9-3.6 3.5-5.6 6.8-5.6s5.9 2 6.8 5.6"/></svg><span class="room-label">Angajați</span></button>
                 <button id="open-story-btn" class="quiet cam-btn" title="Jurnalul zilei și episodul din Office Serial construit din el"><svg class="ui-icon cam-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="3.6" width="14" height="16.8" rx="2.4"/><path d="M8.4 8.4h7.2M8.4 12h7.2M8.4 15.6h4.6"/></svg><span class="room-label">Jurnal</span></button>
                 <button id="open-runbook-btn" class="quiet cam-btn" title="Ce poate face studioul acum și ce a făcut fiecare rulare a zilei"><svg class="ui-icon cam-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.6 18.9h16.8"/><path d="M7 18.9a5 5 0 0 1 10 0"/><path d="M12 6.1V3.9"/><path d="M7.05 8.25L5.5 6.7"/><path d="M16.95 8.25L18.5 6.7"/></svg><span class="room-label">Rularea zilei</span></button>
-                <button id="open-treasury-btn" class="quiet cam-btn" title="Registrul VR$: dovezile reale, ce s-a emis din ele și ce nu poate fi cheltuit"><svg class="ui-icon cam-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="7" width="18" height="10" rx="2.2"/><circle cx="12" cy="12" r="2.3"/><path d="M6.6 12h.8M16.6 12h.8"/></svg><span class="room-label">Trezorerie</span></button>
+                <button id="open-autonomy-btn" class="quiet cam-btn" title="Programare, permisiuni și limite de cheltuieli" aria-label="Autonomie"><svg class="ui-icon cam-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 3h4v3h3v4h4v4h-4v4h-3v3h-4v-3H7v-4H3v-4h4V6h3V3Z"/><path d="M10 10h4v4h-4z"/></svg><span class="room-label">Autonomie</span></button>
                 </div>
               </div>
               <div id="rooms" class="rooms" hidden></div>
@@ -215,7 +214,7 @@
               <div id="owner-inbox-list" class="owner-inbox-list"><div class="topics-loading">Se citesc scrisorile…</div></div>
             </section>
             <!-- THE STUDIO AT A GLANCE (side_readout.js): the side drawer's lower half. The day's run,
-                 the treasury, the next scheduled run, each from the record the page already reads, «—»
+                 the USD budget, the next scheduled run, each from the record the page already reads, «—»
                  where it holds nothing. W34: at every height; the module list («Starea modulelor», a
                  developer's checklist) left the main screen for Setări → Despre studio, and its key is
                  the readout's foot. -->
@@ -227,8 +226,7 @@
       <!-- Agent Inspector Modal / Drawer -->
       <dialog id="agent-inspector" class="studio-dialog">
         <div class="dialog-header inspector-head" id="inspector-head">
-          <!-- W32: the roster's portrait of the employee (the real Unreal frame at the desk while the
-               stream is seen, else the page's figure), the state worn on it; the place and the name -->
+          <!-- The employee's original pixel portrait, shared with the scene, and actual state. -->
           <span class="person-portrait inspector-portrait is-empty" id="inspector-portrait" aria-hidden="true"><canvas class="person-canvas" width="0" height="0"></canvas><span class="person-portrait-none">—</span><span class="person-state"><span class="person-dot"></span><span class="person-state-word" id="inspector-state-chip">—</span></span></span>
           <div class="inspector-heading">
             <span class="eyebrow dialog-eyebrow" id="inspector-role">ROL</span>
@@ -509,39 +507,17 @@
         </div>
       </dialog>
 
-      <!-- Phase 11: Treasury and the VR$ ledger -->
-      <dialog id="treasury-modal" class="studio-dialog research-dialog">
+      <dialog id="autonomy-modal" class="studio-dialog research-dialog" aria-labelledby="autonomy-title">
         <div class="dialog-header">
-          <div>
-            <p class="eyebrow dialog-eyebrow">TREZORERIE · S2</p>
-            <h2 class="dialog-title">Trezorerie VR$</h2>
-            <p class="dialog-desc">Un dolar verificat devine un VR$, o singură dată. Estimările și încasările nedecontate se văd, dar nu pot fi cheltuite. Registrul este în partidă dublă și nimic nu se șterge: o corecție este o stornare.</p>
-          </div>
-          <button id="close-treasury-btn" class="dialog-close" aria-label="Închide"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.4 6.4l11.2 11.2M17.6 6.4L6.4 17.6"/></svg></button>
+          <div><p class="eyebrow dialog-eyebrow">SETĂRI DE RULARE</p><h2 id="autonomy-title" class="dialog-title">Autonomie</h2><p class="dialog-desc">Ce poate face studioul, când lucrează și cât poate cheltui. Setările și verificările vin din configurația reală.</p></div>
+          <button id="close-autonomy-btn" class="dialog-close" aria-label="Închide">×</button>
         </div>
         <div class="dialog-body dialog-body-railed">
-          <nav class="dialog-rail" aria-label="Secțiunile trezoreriei">
-            <a href="#tr-positions">Poziții</a>
-            <a href="#tr-budget">Buget și cheltuieli</a>
-            <a href="#tr-prices">Prețurile modelelor</a>
-            <a href="#tr-funding">Aport de capital</a>
-            <a href="#tr-accounts">Conturi cu saldo</a>
-            <a href="#tr-entries">Înregistrări recente</a>
-          </nav>
+          <nav class="dialog-rail" aria-label="Setările de autonomie"><a href="#autonomy-overview">Pregătire</a><a href="#autonomy-budget">Buget</a><a href="#autonomy-prices">Prețuri</a></nav>
           <div class="dialog-pane">
-
-          <div class="dialog-section-bottom" id="tr-positions">
-            <div class="topics-header-row">
-              <h3 class="dialog-section-header-bright-compact">Poziții</h3>
-              <button id="refresh-treasury-btn" class="quiet btn-refresh">Reîncarcă</button>
-            </div>
-            <div id="treasury-summary" class="treasury-summary">
-              <div class="topics-loading">Se încarcă trezoreria…</div>
-            </div>
-            <p id="treasury-disclaimer" class="helper-note"></p>
-          </div>
-
-          <div class="dialog-section-bottom" id="tr-budget">
+            <div class="topics-header-row"><h3 class="dialog-section-header-bright-compact">Configurarea autonomiei</h3><button id="refresh-autonomy-btn" class="quiet btn-refresh">Reîncarcă</button></div>
+            <div id="autonomy-overview" aria-live="polite">Se citesc setările…</div>
+          <div class="dialog-section-bottom" id="autonomy-budget">
             <h3 class="dialog-section-header-bright-compact">Buget și cheltuieli</h3>
             <p class="helper-note">Cheltuielile vin din registru: estimări (o randare la prețul modelului) și facturi. Bugetul este limita pe care o pui; peste linia de avertizare Nadia (Accountant) escaladează, iar peste limită studioul nu mai randează.</p>
             <div id="budget-cards" class="budget-grid"><div class="topics-loading">Se încarcă bugetul…</div></div>
@@ -563,7 +539,7 @@
 
           <!-- W34: the token prices, the Owner's to type (PUT /economy/prices, owner_controls.js). The
                preflight's model_prices line opens here. -->
-          <div class="dialog-section-bottom" id="tr-prices">
+          <div class="dialog-section-bottom" id="autonomy-prices">
             <h3 class="dialog-section-header-bright-compact">Prețurile modelelor</h3>
             <p class="helper-note" id="prices-meaning"></p>
             <p class="helper-note prices-currency">Prețurile se scriu în <strong>USD</strong>, moneda în care studioul ține prețurile.</p>
@@ -571,48 +547,6 @@
             <div id="prices-status" class="dialog-status-msg" role="status" hidden></div>
           </div>
 
-          <div class="dialog-section-bottom" id="tr-funding">
-            <h3 class="dialog-section-header-bright-compact">Aport de capital</h3>
-            <p class="helper-note">Registrul este ținut numai în VR$. Moneda de mai jos este a banilor reali pe care îi pui, pentru că un VR$ se naște dintr-un dolar verificat: <strong>1 USD = 1 VR$</strong>. Dacă folosești altă monedă, spune cursul și de unde l-ai luat; registrul primește tot VR$.</p>
-            <p class="helper-note">Un aport intră în capital și nu se restituie. Un împrumut creează o datorie, cu dobânda și scadența pe care le pui. Niciunul nu mișcă bani reali: doar înregistrează că i-ai pus. Dobânda este înregistrată, dar încă nu se acumulează singură.</p>
-            <form id="funding-form" class="dialog-form">
-              <div class="topic-input-grid">
-                <select id="funding-type" class="dialog-input" aria-label="Tipul aportului">
-                  <option value="CAPITAL_CONTRIBUTION">Aport de capital · fără dobândă</option>
-                  <option value="OWNER_LOAN">Împrumut de la Proprietar · cu dobândă</option>
-                </select>
-                <input id="funding-amount" aria-label="Suma depusă" class="dialog-input" required maxlength="20" placeholder="Suma reală depusă, ex: 5000" />
-              </div>
-              <div class="topic-input-grid">
-                <input id="funding-currency" class="dialog-input" value="USD" maxlength="3" aria-label="Moneda banilor reali" placeholder="Moneda reală, ex: USD" />
-                <input id="funding-note" aria-label="Nota depunerii (opțional)" class="dialog-input" maxlength="2000" placeholder="Notă (opțional)" />
-              </div>
-              <div id="funding-fx-fields" class="topic-input-grid" hidden>
-                <input id="funding-fx-rate" aria-label="Cursul față de USD" class="dialog-input" maxlength="20" placeholder="Curs față de USD, ex: 1.08" />
-                <input id="funding-fx-source" aria-label="Sursa cursului" class="dialog-input" maxlength="120" placeholder="Sursa cursului, ex: BNR 10.09.2026" />
-              </div>
-              <div id="funding-loan-fields" class="topic-input-grid" hidden>
-                <input id="funding-rate" aria-label="Dobânda anuală, în procente" class="dialog-input" maxlength="8" placeholder="Dobândă anuală %, ex: 7 sau 7.25" />
-                <input id="funding-maturity" class="dialog-input" type="date" aria-label="Scadență" />
-              </div>
-              <p id="funding-preview" class="funding-preview">Scrie suma ca să vezi câți VR$ intră în registru.</p>
-              <button type="submit" class="primary dialog-submit-btn">Înregistrează aportul ↗</button>
-            </form>
-            <div id="funding-status" class="dialog-status-msg" hidden></div>
-            <div id="funding-history" class="topics-container"></div>
-          </div>
-
-          <div class="dialog-section-bottom" id="tr-accounts">
-            <h3 class="dialog-section-header-bright-compact">Conturi cu saldo</h3>
-            <div id="treasury-accounts" class="topics-container"></div>
-          </div>
-
-          <div id="tr-entries">
-            <h3 class="dialog-section-header-bright-compact">Înregistrări recente</h3>
-            <div id="treasury-ledger" class="topics-container">
-              <div class="topics-loading">Se încarcă registrul…</div>
-            </div>
-          </div>
           </div>
         </div>
       </dialog>

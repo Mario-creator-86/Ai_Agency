@@ -41,6 +41,36 @@ logger = logging.getLogger("studio.provider_discovery")
 #: Connections whose account inventory is read from the vendor after the key is saved. The
 #: values are what the Settings card shows; nothing here names a model or a voice.
 DISCOVERED_KINDS: dict[str, dict[str, Any]] = {
+    "runpod": {
+        "label": "RunPod",
+        "title": "Producție GPU Cloud · RunPod",
+        "model_label": "Model video",
+        "voice_label": None,
+        "image_model_label": "Model imagine",
+        "purposes": ["video", "image"],
+        "has_voices": False,
+        "refresh_label": "Verifică API și modelele",
+        "syncing": "Se verifică RunPod…",
+        "verify_hint": "Configurează cheia, endpointurile Serverless (imagini și mișcare), "
+        "bucketul pentru rezultate și RUNPOD_ENABLED=true în .env. MOCK este doar o simulare.",
+        "select_hint": "Alege modelele din catalogul cloud; vocea rămâne pe conexiunea existentă.",
+        "unusable": "modelul nu este disponibil în backendul cloud",
+    },
+    "comfyui": {
+        "label": "Studio local",
+        "title": "Producție locală · ComfyUI",
+        "model_label": "Profil video implicit",
+        "voice_label": None,
+        "image_model_label": "Profil imagine implicit",
+        "purposes": ["video", "image"],
+        "has_voices": False,
+        "refresh_label": "Verifică modelele locale",
+        "syncing": "Se verifică Studio local…",
+        "verify_hint": "Pornește ComfyUI și verifică adresa locală.",
+        "select_hint": "Alege Studio local pentru imagini și video; ElevenLabs pentru voce. "
+        "Runway rămâne o alternativă aleasă explicit.",
+        "unusable": "profilul nu este disponibil local",
+    },
     "elevenlabs": {
         "label": "ElevenLabs",
         "title": "Configurație de producție · ElevenLabs",
@@ -83,8 +113,10 @@ PERMISSIONS_HINT = (
 KEY_ERRORS = {
     "missing_permissions": "Cheia ElevenLabs este validă, dar a fost creată cu permisiuni "
     "restrânse. " + PERMISSIONS_HINT,
-    "invalid_api_key": "Cheia ElevenLabs este invalidă sau a fost revocată. Generează o cheie "
-    "nouă în ElevenLabs → Developers → API Keys și salveaz-o din nou.",
+    "invalid_api_key": (  # pragma: allowlist secret — error prose, not a credential
+        "Cheia ElevenLabs este invalidă sau a fost revocată. Generează o cheie "
+        "nouă în ElevenLabs → Developers → API Keys și salveaz-o din nou."
+    ),
     "quota_exceeded": "Contul ElevenLabs nu mai are credit pentru cererea de verificare. "
     "Verifică abonamentul, apoi reîncearcă.",
     "too_many_concurrent_requests": "ElevenLabs limitează cererile acestui cont chiar acum. "
@@ -160,6 +192,12 @@ def usable_purposes(kind: str, resource: ProviderResource) -> list[str]:
     """
     meta = resource.api_metadata if isinstance(resource.api_metadata, dict) else {}
     caps = resource.capabilities if isinstance(resource.capabilities, dict) else {}
+    if kind in ("comfyui", "runpod"):
+        return [
+            p
+            for p, task in (("image", "text_to_image"), ("video", "image_to_video"))
+            if task in meta.get("tasks", [])
+        ]
     if kind == "elevenlabs":
         usable = (
             meta.get("can_do_text_to_speech") is True
@@ -287,6 +325,8 @@ def catalog_view(session: Session, identifier: str) -> dict:
 
 
 def _metadata(item: dict, resource_type: str, kind: str = "elevenlabs") -> dict:
+    if kind in ("comfyui", "runpod"):
+        return {k: v for k, v in item.items() if k not in ("graph", "workflow")}
     # Only public catalog fields; voice samples, verification recordings and account data stay out.
     if kind == "runway":
         fields: tuple[str, ...] = (
@@ -380,17 +420,43 @@ def refresh_catalog(
                 "status": row.status,
                 "message": "Catalogul este actual sau se actualizează deja.",
             }
-        key = vault.decrypt(row.encrypted_secrets).get("api_key", "")
+        secrets = vault.decrypt(row.encrypted_secrets)
+        key = secrets.get("api_key", "")
+        local_config = dict(row.config) if kind in ("comfyui", "runpod") else None
 
     authenticated = False
     models: list[dict] = []
     voices: list[dict] = []
     error = None
     warning = None
+    runpod_problems: str | None = None
     has_voices = bool(DISCOVERED_KINDS[kind]["has_voices"])
     try:
-        adapter = discovery_adapter(kind, key)
+        adapter: Any
+        if kind == "runpod":
+            from app.providers.runpod.adapters import RunPodConnection  # noqa: PLC0415
+            from app.providers.runpod.config import RunPodConfig  # noqa: PLC0415
+
+            # Verified without /run (a paid worker): the endpoints' settings and /health, the
+            # bucket, and the pinned catalogue (config/runpod_models.json) in serverless.
+            adapter = RunPodConnection(
+                RunPodConfig.from_integration(local_config or {}, secrets),
+                engine,
+                integration_id=identifier,
+                storage_root=settings.media_root if settings else None,
+            )
+        elif local_config is not None:
+            from app.providers.comfyui import ComfyConnection  # noqa: PLC0415
+
+            adapter = ComfyConnection(local_config)
+        else:
+            adapter = discovery_adapter(kind, key)
         health = asyncio.run(adapter.health_check())
+        problems = health.get("problems_ro") if kind == "runpod" else None
+        if health["status"] != "HEALTHY" and isinstance(problems, list) and problems:
+            # RunPod Serverless says what is wrong in the Owner's words (an always-on worker,
+            # a missing bucket, a key without access): kept, not replaced by a generic text.
+            runpod_problems = " ".join(str(p) for p in problems)
         if health["status"] != "HEALTHY":
             raise MediaProviderError(
                 "Credential verification failed",
@@ -416,7 +482,7 @@ def refresh_catalog(
                 "http_status": getattr(exc, "http_status", None),
             },
         )
-        error = explain_key_error(exc, authenticated, kind)
+        error = runpod_problems or explain_key_error(exc, authenticated, kind)
 
     with Session(engine) as session, session.begin():
         row = session.get(Integration, identifier)
@@ -463,6 +529,16 @@ def refresh_catalog(
                     resource.name = str(item.get("name") or remote_id)[:300]
                     resource.api_metadata = _metadata(item, resource_type, kind)
                     resource.api_available, resource.last_seen_at = True, utc_now()
+                    if kind == "comfyui":
+                        resource.pricing = {"per_image_usd": 0.0, "per_second_usd": 0.0}
+                        resource.metadata_source = "Local execution; no external API billing"
+                    if kind == "runpod":
+                        resource.pricing = {
+                            k: item[k] for k in ("per_image_usd", "per_second_usd") if k in item
+                        }
+                        resource.metadata_source = (
+                            "RunPod cloud backend estimates; not settled billing"
+                        )
                     # A model the vendor exposed today has filmed nothing. It is taken into
                     # the catalogue so the Owner can see it, and parked outside production
                     # until its own results say otherwise — never trusted for its brand or
@@ -630,6 +706,21 @@ def save_production(engine: Engine, identifier: str, command: ProductionCommand)
         row.image_model_id = command.image_model_id
         row.allow_production_override = command.allow_production_override
         row.version, row.updated_at = command.expected_version + 1, utc_now()
+        if integration.kind in ("comfyui", "runpod"):
+            # An explicit profile choice admits a candidate, not a fabricated quality
+            # score. Every generated still/clip still has to pass the film's usual QC.
+            for model_id in (command.model_id, command.image_model_id):
+                resource = production_resource(session, identifier, "MODEL", model_id)
+                if resource is not None and resource.production_status in (
+                    "DISCOVERED",
+                    "QUARANTINE",
+                ):
+                    resource.production_status = "CANDIDATE"
+                    resource.lifecycle_note = (
+                        "Model RunPod ales explicit pentru test și producție cu QC."
+                        if integration.kind == "runpod"
+                        else "Profil local ales explicit pentru test și producție cu QC."
+                    )
         append_event(
             session,
             "media.production_configured",

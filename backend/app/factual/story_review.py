@@ -486,6 +486,17 @@ def _ask_director(
             "ending may answer its hook perfectly in entirely different words. Judge it "
             "yourself and say so; the flag is not a verdict.\n"
         )
+    from app.media.local_media import writer_constraints  # noqa: PLC0415
+
+    local_constraints = writer_constraints(engine, int(facts.get("target_seconds") or 20))
+    if local_constraints:
+        prompt += local_constraints + (
+            "These production limits apply to this review too. A narrative beat may span "
+            "adjacent short shots: do not require merging them into a shot longer than the "
+            "model supports. Judge the current script supplied below; earlier notes may "
+            "describe scenes removed or replaced. Never request unsupported facts or "
+            "numbers from an earlier draft.\n"
+        )
     prompt += wrap_in_inert_boundary(payload, "script-under-review")
     result = run_agent_task(
         engine,

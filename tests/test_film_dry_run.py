@@ -735,7 +735,7 @@ def test_under_mode_the_sheet_names_clip_qc_acceptance_and_the_motion_needs_no_l
 
     # His default rule, EVERY_PAID_STEP: the sheet says he looks at the hero himself.
     every = sheet(client, headers, storyboard_id)["steps"]["motion"]
-    assert every["hero"]["rule_accepts"] is False
+    assert every["hero"]["rule_accepts"] is False, every
     assert "Proprietarul" in every["waiting_ro"]
     assert "controlul clipului" not in every["waiting_ro"]
 

@@ -631,6 +631,17 @@ def test_the_policy_module_calls_no_provider(monkeypatch):
     import app.media.production_policy as policy
 
     source = open(policy.__file__, encoding="utf-8").read()
-    assert "app.providers" not in source
+    import ast
+
+    provider_imports = set()
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.ImportFrom) and (node.module or "").startswith("app.providers"):
+            provider_imports.add(node.module)
+        elif isinstance(node, ast.Import):
+            provider_imports.update(
+                alias.name for alias in node.names if alias.name.startswith("app.providers")
+            )
+    # RunPod connection parsing is pure configuration; runtime adapters remain forbidden.
+    assert provider_imports <= {"app.providers.runpod.config"}
     assert "httpx" not in source
     pytest.importorskip("app.media.cost_plan")

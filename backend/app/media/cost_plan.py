@@ -42,6 +42,10 @@ PRICE_FILE = ROOT / "config" / "runway_prices.json"
 STALE_AFTER_DAYS = 30
 DOCUMENTED = "DOCUMENTED"
 MEASURED = "MEASURED"
+#: The studio's own forecast, not a vendor's published tariff: RunPod Serverless is priced
+#: from estimated GPU-seconds x the budget rate (config/runpod_models.json) until the paid
+#: bake-off measures it. The Owner reads it as an estimate, never as «tarif publicat».
+ESTIMATED = "ESTIMATED"
 
 #: The stills every LIVE scene buys before any motion: two candidates at 2K (1530:2720).
 STILLS_MODEL = "seedream5_pro"
@@ -76,7 +80,7 @@ class PriceRow:
     resolution: str  # "*" when the page gives one price for every resolution
     source_url: str
     date: str  # ISO day the price was read or measured
-    provenance: str  # DOCUMENTED | MEASURED
+    provenance: str  # DOCUMENTED | MEASURED | ESTIMATED
     credits_per_second: float | None = None
     credits_per_second_audio: float | None = None
     credits_per_image: float | None = None
@@ -93,6 +97,21 @@ class PriceTable:
     credit_usd: float
     rows: tuple[PriceRow, ...]
     seconds: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
+    stills_model: str = STILLS_MODEL
+    #: What one paid ROUND costs besides its items, per purpose ("image", "video"): on RunPod
+    #: Serverless a round is one batch job whose worker loads its models (the cold start) and
+    #: idles 1 s before it scales to zero, all billed (`providers.runpod.pricing`). Empty for a
+    #: vendor that bills per item only (Runway): 0.
+    overhead_credits_per_round: Mapping[str, float] = field(default_factory=dict)
+    #: The models whose purchases are priced per round (their overhead applies), e.g. the
+    #: RunPod catalogue; a Runway model of the same table never carries it.
+    round_models: frozenset[str] = frozenset()
+
+    def round_overhead(self, purpose: str, model_id: str | None) -> int:
+        """Whole credits one round of ``model_id`` adds (0 for a per-item vendor)."""
+        if model_id is None or model_id not in self.round_models:
+            return 0
+        return _credits(float(self.overhead_credits_per_round.get(purpose) or 0.0))
 
     def row(self, model_id: str, resolution: str) -> PriceRow:
         """The row for this model at this resolution, or its any-resolution row."""
@@ -248,6 +267,8 @@ def source_label(row: PriceRow, *, today: date | None = None) -> str:
         return "nevalidat"
     if row.provenance == MEASURED:
         return "măsurat"
+    if row.provenance == ESTIMATED:
+        return f"estimare GPU nemăsurată {date.fromisoformat(row.date):%d.%m}"
     return f"tarif publicat {date.fromisoformat(row.date):%d.%m}"
 
 

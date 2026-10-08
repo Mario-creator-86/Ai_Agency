@@ -1520,6 +1520,39 @@ def test_the_director_sees_the_conversation_she_is_in(engine, studio):
     assert "good enough to publish, not whether it is perfect" in seen[1]
 
 
+def test_director_respects_the_same_shot_limits_as_writer(engine, studio, monkeypatch):
+    from app.factual.story_review import review_story
+
+    observed = []
+
+    def limits(_engine, seconds):
+        assert seconds == 20
+        return "LOCAL VIDEO CONSTRAINT: at most 4 seconds and 8 words per shot.\n"
+
+    monkeypatch.setattr("app.media.local_media.writer_constraints", limits)
+
+    def answer(prompt):
+        observed.append(prompt)
+        return json.dumps(
+            {
+                "verdict": "PASS",
+                "hook_strength": 8,
+                "clarity": 8,
+                "payoff": 8,
+                "cta_fit": 8,
+                "retention": {"at_3": 70, "at_end": 40},
+                "notes": [],
+            }
+        )
+
+    registry, _ = registry_with(studio, answer)
+    script_id = a_script(engine, a_topic(engine), status="VERIFIED_PASS")
+    review_story(engine, registry, script_id, str(uuid4()), target_seconds=20)
+    assert "at most 4 seconds and 8 words per shot" in observed[0]
+    assert "do not require merging" in observed[0]
+    assert "Never request unsupported facts" in observed[0]
+
+
 def test_at_the_last_exchange_she_must_decide(engine, studio):
     """A REVISE at the wall is a refusal without the word: there will be no rewrite to answer
     it, and the day would end having quietly made nothing. Her authority is untouched — what

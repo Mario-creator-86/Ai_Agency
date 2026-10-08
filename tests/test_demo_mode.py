@@ -63,6 +63,33 @@ def test_the_demo_seams_are_exactly_the_days_vendor_boundaries():
     assert set(DEMO_VENDOR_SEAMS) == set(VENDOR_FAKES)
 
 
+def test_director_demo_review_keeps_its_schema_when_a_report_mentions_pronunciation(tmp_path):
+    from app.agents.director import director_review
+    from app.agents.messages import post_message
+    from app.agents.models import Agent, Role
+    from app.demo import demo_registry
+
+    engine = _demo_studio(_demo_settings(tmp_path))
+    try:
+        with Session(engine) as session, session.begin():
+            voice_artist = session.scalar(
+                select(Agent).join(Role, Agent.role_id == Role.id).where(Role.name == "VoiceArtist")
+            )
+            message = post_message(
+                session,
+                intent="STATUS",
+                subject="Voice pronunciation check",
+                from_agent_id=voice_artist.id,
+                body_text="The pronunciation check passed; no further work is requested.",
+            )
+            message_id = message.id
+        result = director_review(engine, demo_registry(engine))
+        assert result["reviewed"] == 1
+        assert result["applied"] == [{"message_id": message_id, "action": "ACKNOWLEDGE"}]
+    finally:
+        engine.dispose()
+
+
 def test_installing_the_demo_vendors_is_undone_on_exit():
     from app.demo import DEMO_VENDOR_SEAMS, demo_vendors
 
@@ -106,7 +133,7 @@ def test_the_page_says_demo_and_publish_and_payment_routes_are_refused(tmp_path)
             ("POST", "/api/v1/publishing/publications/x/execute"),
             ("POST", "/api/v1/youtube/connections"),
             ("PUT", "/api/v1/economy/budget"),
-            ("POST", "/api/v1/economy/owner-funding"),
+            ("PUT", "/api/v1/economy/prices"),
             ("PUT", "/api/v1/settings/integrations/runway"),
             ("POST", "/api/v1/providers/x/sync-models"),
             ("POST", "/api/v1/owner/environment"),
@@ -124,7 +151,7 @@ def test_the_page_says_demo_and_publish_and_payment_routes_are_refused(tmp_path)
         # Reading still works, and so does the run the buyer starts.
         assert client.get("/api/v1/publishing/channels", headers=headers).status_code == 200
         # A refusal never needs the key to be told: an anonymous call is still 401 first.
-        assert client.post("/api/v1/economy/owner-funding", json={}).status_code == 401
+        assert client.put("/api/v1/economy/prices", json={}).status_code == 401
 
 
 def test_a_real_studio_carries_no_demo_banner_and_no_demo_refusal(client, headers):

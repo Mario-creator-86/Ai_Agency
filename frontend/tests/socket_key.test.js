@@ -54,7 +54,7 @@ test('the page builds no socket URL with the key by hand any more', () => {
   const main = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
   assert.doesNotMatch(main, /\?token=/);
   assert.match(main, /firstMessage:/);
-  assert.match(main, /authMessage: \(\) => authMessage\(ownerToken\)/);
+  assert.match(main, /firstMessage: \(\) => \(ownerToken \? authMessage\(ownerToken\) : null\)/);
 });
 
 test('only the relay\'s own word counts as ready', () => {

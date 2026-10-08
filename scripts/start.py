@@ -20,16 +20,17 @@ Options:
                       nothing bought, nothing published (SELL-03, app.demo)
     --demo-dir PATH   where the demo's database, films and logs live
     --demo-port N     the demo's port (8010, so it never takes the studio's 8000)
-    --no-graphics     do not start the live headquarters (wilbur + Unreal) with the studio
+    --graphics        explicitly start the live headquarters (wilbur + Unreal) with the studio
+    --no-graphics     keep graphics disabled (also the default; retained for existing commands)
 
-The live headquarters start with the studio (the Owner, 2026-10-04: «cand rulez python
-start.py, trebuie sa porneasca si grafica. La fel, cand opresc, totul trebuie sa se
-opreasca!»): once the server answers, scripts/live_graphics.py starts wilbur and Unreal (or
-adopts the ones already running, never a second), waits while one of his games runs or memory
-is short, and brings a dead one back a bounded number of times. Ctrl+C lets the server stop
-cleanly first (its 30 s; a day stops at its boundary, never inside a purchase), then stops the
-graphics. Everything this script starts is in a Windows Job Object that ends with it, so a
-closed window or a killed start.py leaves nothing running.
+The studio starts without the live headquarters. The Owner's latest instruction, 2026-10-04:
+«vreau sa o opresti, sa nu porneasca cu proiectul». Only with --graphics, once the server answers,
+scripts/live_graphics.py starts wilbur and Unreal (or adopts the ones already running, never a
+second), waits while a game runs or memory is short, and brings a dead one back a bounded number
+of times. Ctrl+C lets the server stop cleanly first (its 30 s; a day stops at its boundary, never
+inside a purchase), then stops any graphics enabled for this start. Everything this script starts
+is in a Windows Job Object that ends with it, so a closed window or a killed start.py leaves
+nothing running.
 """
 
 from __future__ import annotations
@@ -286,10 +287,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--demo", action="store_true", help="the demo, on simulated vendors")
     parser.add_argument("--demo-dir", type=Path, default=DEMO_DIR)
     parser.add_argument("--demo-port", type=int, default=DEMO_PORT)
-    parser.add_argument(
+    graphics = parser.add_mutually_exclusive_group()
+    graphics.add_argument(
+        "--graphics",
+        action="store_true",
+        help="explicitly start the live headquarters (wilbur + Unreal); disabled by default",
+    )
+    graphics.add_argument(
         "--no-graphics",
         action="store_true",
-        help="do not start the live headquarters (wilbur + Unreal) with the studio",
+        help="keep the live headquarters disabled (the default)",
     )
     return parser
 
@@ -381,6 +388,44 @@ def wait_for_server(server: Any, on_interrupt: Callable[[], None] = lambda: None
             pending = True
 
 
+#: The RunPod GPU off after the studio stops: at most this long, and on a closing window this
+#: long (Windows ends a closing console's processes within about five seconds).
+GPU_OFF_SECONDS = 45
+GPU_OFF_FAST_SECONDS = 4
+
+
+def runpod_gpu_off(fast: bool) -> None:
+    """Switch the studio's RunPod GPUs off (scripts/runpod_gpu_off.py, this interpreter). It
+    prints its own one line, and is silent with no RunPod connection. Never raises: a stopping
+    launcher is never held; the studio's guard checks again at the next start. On a closing
+    window it runs without a console of its own (``--fast``: purge + PATCH, 2 s a request), so
+    the console's close does not end it first."""
+    command = [
+        sys.executable,
+        str(ROOT / "scripts" / "runpod_gpu_off.py"),
+        "--reason",
+        "LAUNCHER_STOP",
+    ]
+    if fast:
+        command.append("--fast")
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if fast and sys.platform == "win32" else 0
+    try:
+        subprocess.run(
+            command,
+            cwd=str(ROOT),
+            timeout=GPU_OFF_FAST_SECONDS if fast else GPU_OFF_SECONDS,
+            check=False,
+            creationflags=flags,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        if not fast:
+            print(
+                "    GPU RunPod: oprirea nu a putut fi verificată — verifică în consola RunPod "
+                "sau apasă «Oprește GPU acum» la pornire.",
+                flush=True,
+            )
+
+
 def serve(
     command: list[str],
     *,
@@ -391,10 +436,12 @@ def serve(
     assign: Callable[[int], Any] = lambda pid: None,
     install_close_handler: Callable[[Callable[[], None]], Any] = lambda callback: None,
     interrupt: Callable[[Any], bool] = ask_server_to_stop,
+    gpu_off: Callable[[bool], Any] | None = None,
 ) -> int:
     """Run the server; beside it, once it answers, the graphics' supervisor. Stop order: the
     server (asked once by start.py at the first Ctrl+C), then the graphics (Unreal, then
-    wilbur). From the first Ctrl+C on, the supervisor starts nothing more."""
+    wilbur), then the RunPod GPU off (``gpu_off(False)``; on a closing window ``gpu_off(True)``
+    first). From the first Ctrl+C on, the supervisor starts nothing more."""
     if graphics is not None and port_busy():
         print(
             "    [grafica] Adresa studioului răspunde deja (un alt studio pornit?): "
@@ -432,6 +479,9 @@ def serve(
         # go first, fast; the Job Object takes whatever is left when start.py ends.
         state["stopping"] = True
         stop_event.set()
+        # Money first: a RunPod GPU left on bills by the second (the Owner, 2026-10-08).
+        if gpu_off is not None:
+            gpu_off(True)
         if graphics is not None:
             graphics.stop(fast=True)
         try:
@@ -467,11 +517,22 @@ def serve(
             uninterrupted(lambda: joining.join(timeout=30))
         if graphics is not None:
             uninterrupted(graphics.stop)
+        if gpu_off is not None:
+            off = gpu_off
+            uninterrupted(lambda: off(False))
     return code
 
 
 def prepare_graphics(args: argparse.Namespace, settings: Any, job: Any) -> Any:
     """The graphics' supervisor for this start, or None with one line saying why not."""
+    if not args.graphics:
+        reason = (
+            "Grafica live nu pornește: ai cerut --no-graphics."
+            if args.no_graphics
+            else "Grafica live nu pornește automat; pentru pornire explicită folosește --graphics."
+        )
+        print(f"    [grafica] {reason}", flush=True)
+        return None
     reason = live_graphics.skip_reason(
         no_graphics=args.no_graphics,
         demo=args.demo,
@@ -582,6 +643,7 @@ def main() -> int:
             port_open=lambda: port_answers(settings.host, settings.port),
             assign=lambda pid: job.assign(pid) if job is not None else None,
             install_close_handler=win_processes.install_close_handler,
+            gpu_off=runpod_gpu_off,
         )
         if code != 0:
             raise StepFailed(f"Server: `{' '.join(server_command)}` exited with code {code}.")

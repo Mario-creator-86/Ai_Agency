@@ -1,7 +1,7 @@
-"""The live headquarters started, kept up and stopped with the studio (scripts/start.py).
+"""The live headquarters optionally started with scripts/start.py --graphics.
 
-The Owner, 2026-10-04: «cand rulez python start.py, trebuie sa porneasca si grafica. La fel,
-cand opresc, totul trebuie sa se opreasca!» The graphics are Epic's signalling server (wilbur,
+The Owner's latest instruction, 2026-10-04, disables graphics on ordinary studio starts.
+When explicitly enabled, graphics are Epic's signalling server (wilbur,
 node.exe, streamer 8888 / player 8890) and Unreal streaming /Game/HQ/HQ_Dusk into it over Pixel
 Streaming 2, with Remote Control on 127.0.0.1:30010. The studio relays the signalling and drives
 the scene; the page draws its own building while there is no stream.
@@ -237,7 +237,7 @@ def skip_reason(
     if session == 0:
         # A Scheduled Task registered with -RunWhenLoggedOff (S4U) runs in session 0, which has
         # no desktop: Unreal has never been seen rendering there. The default, interactive task
-        # runs in the Owner's own session and starts the graphics like start.cmd.
+        # runs in the Owner's own session; graphics still require an explicit --graphics.
         return (
             "Grafica live nu pornește în sesiunea 0 (serviciu fără utilizator conectat): "
             "Unreal nu are ecran acolo. Pornește studioul cu sarcina interactivă sau cu start.cmd."

@@ -7,7 +7,10 @@ paid step, when to leave EVERY_PAID_STEP, editorial QC advisory or blocking, the
 films, the sale terms. `seed_owner_decisions` puts each in his window, once.
 
 "Once" is literal: a key that has EVER had a card (in any state) is never seeded again, so a
-card he refused does not come back at the next start. The reconnect, YouTube, commercial-use
+card he refused does not come back at the next start. One exception (2026-10-04): a guided card
+that his «Am făcut-o» closed while its condition was unmet (before that day DONE did not read
+the condition) is re-opened once, on its own row, by `reopen_unconfirmed_done`; his refusals
+and his «keep it as it is» answers are never re-opened. The reconnect, YouTube, commercial-use
 and music cards use the keys and the shapes of the studio's own producers
 (`app.decisions.sources`), so a question the audit and a failing run both see is one card.
 Each card is proposed only when the studio's own state says the question stands (a connection
@@ -33,11 +36,17 @@ from sqlalchemy.orm import Session
 
 from app.config import ROOT
 from app.decisions.models import OwnerDecision
-from app.decisions.services import media_folder_count, propose_owner_decision
+from app.decisions.services import (
+    media_folder_count,
+    propose_owner_decision,
+    reopen_unconfirmed_done,
+)
 from app.decisions.sources import (
     commercial_use_card,
     music_card,
     reconnect_card,
+    runpod_infra_card,
+    runpod_ltx_licence_card,
     youtube_card,
 )
 from app.wording import count, decimal
@@ -361,6 +370,28 @@ def _commercial_cards(session: Session) -> list[dict[str, Any]]:
     return cards
 
 
+def _runpod_cards(session: Session) -> list[dict[str, Any]]:
+    """A real RunPod connection whose GPU agents may not switch on yet: his card (2026-10-08);
+    and, once, the LTX-2.5 licence only his Hugging Face account can accept."""
+    from app.integrations.models import Integration  # noqa: PLC0415
+
+    cards: list[dict[str, Any]] = []
+    real = [
+        row
+        for row in session.scalars(
+            select(Integration).where(Integration.kind == "runpod").order_by(Integration.id)
+        )
+        if str((row.config or {}).get("mock", "")).strip().lower() != "true"
+    ]
+    for integration in real:
+        allowed = str((integration.config or {}).get("allow_infra_actions", "")).strip().lower()
+        if allowed != "true":
+            cards.append(runpod_infra_card(integration))
+    if real:
+        cards.append(runpod_ltx_licence_card())
+    return cards
+
+
 def _music_cards() -> list[dict[str, Any]]:
     from app.media.music_library import load_library  # noqa: PLC0415
 
@@ -588,7 +619,11 @@ def _ever_seen(session: Session, dedupe_key: str) -> bool:
 
 def seed_owner_decisions(engine: Engine, settings: Any = None) -> list[str]:
     """Put the audit's open questions in the Owner's window, each once. Returns the ids of the
-    cards created by this call (none on a second call)."""
+    cards created by this call (none on a second call). First, the cards an earlier DONE
+    closed while their condition was unmet are re-opened, once (`reopen_unconfirmed_done`)."""
+    reopened = reopen_unconfirmed_done(engine, settings)
+    if reopened:
+        logger.info("owner_decisions_reopened", extra={"cards": reopened})
     with Session(engine) as session:
         proposals: list[dict[str, Any]] = []
         if not _ever_seen(session, "audit:daily_budget"):
@@ -597,6 +632,7 @@ def seed_owner_decisions(engine: Engine, settings: Any = None) -> list[str]:
         proposals += _youtube_cards(session)
         proposals += _commercial_cards(session)
         proposals += _music_cards()
+        proposals += _runpod_cards(session)
         proposals += _paid_rule_cards(session)
         proposals += _editorial_cards(settings)
         if not _ever_seen(session, "audit:old_test_films"):

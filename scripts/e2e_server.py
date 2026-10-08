@@ -27,6 +27,9 @@ import threading
 import time
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
+
+from fastapi import Depends, HTTPException, Request
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
@@ -90,6 +93,8 @@ def build_settings(folder: Path, token: str) -> Any:
         media_root=folder / "media",
         backup_dir=folder / "backups",
         min_free_gb=0,
+        # The flows sign in through the form, as from another machine (LOCAL_AUTO_LOGIN).
+        local_auto_login=False,
     )
     # every switch that would reach the network off (trends, weather, the Unreal stream, ...)
     return demo_settings(settings)
@@ -97,6 +102,7 @@ def build_settings(folder: Path, token: str) -> Any:
 
 def prepare_studio(settings: Any, folder: Path) -> str:
     """The database, a released stop in TEST, the channels and one planned film."""
+    from app.agents.services import seed_initial_workforce
     from app.db import create_db_engine, migrate
     from app.models import OwnerPolicy
     from app.publishing.services import seed_default_channels
@@ -107,6 +113,8 @@ def prepare_studio(settings: Any, folder: Path) -> str:
     engine = create_db_engine(settings.database_url)
     migrate(engine)
     bootstrap_studio(engine, settings, autonomy_mode="AUTONOMOUS_CEO")
+    seed_initial_workforce(engine)
+    seed_extra_desks(engine)
     with Session(engine) as session, session.begin():
         policy = session.get(OwnerPolicy, 1)
         policy.autonomy_stopped = False
@@ -118,6 +126,81 @@ def prepare_studio(settings: Any, folder: Path) -> str:
     storyboard_id = planned_film(engine, films)
     engine.dispose()
     return storyboard_id
+
+
+def seed_extra_desks(engine: Any) -> None:
+    """Two actual test employees exercise annex desks without changing the eight seeded roles."""
+    from app.agents.models import Agent, Role
+    from app.services import utc_now
+    from sqlalchemy import select
+    from sqlalchemy.orm import Session
+
+    with Session(engine) as session, session.begin():
+        template = session.scalars(select(Agent)).first()
+        role = Role(
+            id=str(uuid4()),
+            name="BrowserTestColleague",
+            mission="Exercise personal seating",
+            allowed_task_types="test",
+            prohibited_actions="paid_work",
+            created_at=utc_now(),
+            event_id=template.event_id,
+        )
+        session.add(role)
+        session.flush()
+        for i in range(2):
+            session.add(
+                Agent(
+                    id=str(uuid4()),
+                    display_name=f"Test colleague {i + 1}",
+                    role_id=role.id,
+                    provider_id=template.provider_id,
+                    model_id=template.model_id,
+                    lifecycle="ACTIVE",
+                    runtime_state="IDLE",
+                    max_concurrent_tasks=1,
+                    version=1,
+                    hired_at=utc_now(),
+                    event_id=template.event_id,
+                )
+            )
+
+
+def wire_agent_state_probe(inner: Any) -> None:
+    """Drive committed agent events in the disposable server only; never a production route."""
+    from app.agents.models import Agent
+    from app.db import lock_for_write
+    from app.security import require_owner
+    from app.workflows.services import append_event_with_outbox
+    from sqlalchemy.orm import Session
+
+    @inner.post("/api/v1/e2e/agent-state", dependencies=[Depends(require_owner)])
+    def agent_state_probe(request: Request, command: dict[str, str]) -> dict:
+        settings = request.app.state.settings
+        folder = getattr(request.app.state, "e2e_folder", None)
+        database = Path(request.app.state.engine.url.database).resolve()
+        if folder is None or not _inside(database, folder) or settings.worker_enabled:
+            raise HTTPException(403, "Agent probe requires the isolated test server")
+        mode = command.get("runtime_state")
+        if mode not in {"IDLE", "WORKING", "THINKING", "REVIEWING", "BLOCKED", "ERROR"}:
+            raise HTTPException(422, "Invalid runtime state")
+        with Session(request.app.state.engine) as session, session.begin():
+            lock_for_write(session)
+            agent = session.get(Agent, command.get("agent_id"))
+            if agent is None:
+                raise HTTPException(404, "No such test employee")
+            agent.runtime_state = mode
+            agent.version += 1
+            append_event_with_outbox(
+                session,
+                "agent.state_changed",
+                "agent",
+                agent.id,
+                agent.version,
+                {"runtime_state": mode, "task_type": "browser_state_probe"},
+                str(uuid4()),
+            )
+            return {"agent_id": agent.id, "runtime_state": mode, "version": agent.version}
 
 
 def serve_page(inner: Any, dist: Path) -> None:
@@ -170,6 +253,8 @@ def main(argv: list[str] | None = None) -> int:
         storyboard_id = prepare_studio(settings, folder)
         app = create_app(settings)
         inner = app.app  # create_app wraps the FastAPI app in TrustedHostMiddleware
+        inner.state.e2e_folder = folder.resolve()
+        wire_agent_state_probe(inner)
         serve_page(inner, args.dist.resolve())
         server = uvicorn.Server(
             uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning", lifespan="on")

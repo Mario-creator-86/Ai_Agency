@@ -390,12 +390,21 @@ def test_every_call_into_a_media_step_names_its_storage_root():
         tree = ast.parse(path.read_text(encoding="utf-8"))
         trees[path] = tree
         for node in ast.walk(tree):
-            if isinstance(node, ast.FunctionDef):
+            if isinstance(node, ast.FunctionDef) and node.name != "__init__":
                 positional = [a.arg for a in node.args.args]
                 if "storage_root" in positional:
                     takes_root[node.name] = positional.index("storage_root")
                 elif "storage_root" in [a.arg for a in node.args.kwonlyargs]:
                     takes_root[node.name] = None
+            elif isinstance(node, ast.ClassDef):
+                for method in node.body:
+                    if not isinstance(method, ast.FunctionDef) or method.name != "__init__":
+                        continue
+                    positional = [a.arg for a in method.args.args][1:]
+                    if "storage_root" in positional:
+                        takes_root[node.name] = positional.index("storage_root")
+                    elif "storage_root" in [a.arg for a in method.args.kwonlyargs]:
+                        takes_root[node.name] = None
     missing = []
     for path, tree in trees.items():
         for node in ast.walk(tree):

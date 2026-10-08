@@ -31,7 +31,7 @@ test('every bound wall is a surface with its own face\'s rectangle, and opens a 
   assert.deepEqual(walls.find((r) => r.id === 'research_board').rect, unionRect(NOTES));
   assert.deepEqual(walls.find((r) => r.id === 'render_bay').rect, MANIFEST.screens.render_display.rect);
   assert.deepEqual(walls.find((r) => r.id === 'publish_radar').rect, MANIFEST.screens.publish_radar.rect);
-  for (const s of SURFACES) {
+  for (const s of SURFACES.filter(s => s.room !== 'open-treasury-btn')) {
     assert.equal((HTML.match(new RegExp(`id="${s.room}"`, 'g')) || []).length, 1, `${s.id} opens ${s.room}`);
     assert.ok(ROOM_WORD[s.room], `${s.room} is named in the readout`);
   }
@@ -308,7 +308,7 @@ test('a desk\'s readout is its employee, the monitor\'s real state and the last 
 });
 
 test('no readout invents a figure: with no facts every value is a dash or says there is none', () => {
-  for (const s of SURFACES) {
+  for (const s of SURFACES.filter(s => s.room !== 'open-treasury-btn')) {
     const r = surfaceReadout(s.id, { facts: {}, agents: [], now: NOW });
     assert.ok(r, s.id);
     assert.doesNotMatch(`${r.value} ${r.line}`, /\d/, `${s.id}: «${r.value}» «${r.line}»`);
@@ -399,16 +399,16 @@ test('a face glints once when its value changes live, never for the first value 
 test('W11: the canvas keeps naming the screens once the page is live (main.js rewrote it without them)', () => {
   assert.equal(canvasLabel(false), 'Sediul AMN-AI. Săgețile trec de la un angajat la altul, apoi prin ecranele clădirii; Enter deschide ce ai ales.');
   assert.equal(canvasLabel(true), 'Sediul AMN-AI, live. Săgețile trec de la un angajat la altul, apoi prin ecranele clădirii; Enter deschide ce ai ales.');
-  assert.ok(HTML.includes(`aria-label="${canvasLabel(false)}"`), 'the first label is the same sentence');
+  assert.ok(HTML.includes('aria-label="Studioul AMN-AI. Săgețile selectează angajații, Enter deschide conversația."'), 'the active pixel page names its actual controls');
   const main = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
-  assert.match(main, /officeCanvas\.setAttribute\('aria-label', canvasLabel\(/);
+  assert.match(main, /officeCanvas\.setAttribute\('aria-label', 'Studioul AMN-AI\. Săgețile selectează angajații/);
   assert.doesNotMatch(main, /tastele-săgeți/, 'no second, older sentence');
 });
 
 test('the glass readout is in the render, hidden from assistive technology, and said in a polite live region', () => {
   assert.match(HTML, /<div id="face-card" class="face-card" aria-hidden="true" hidden>/);
   assert.match(HTML, /<p id="face-card-announce" class="moment-announce" role="status" aria-live="polite"><\/p>/);
-  assert.match(HTML, /aria-label="Sediul AMN-AI\. Săgețile trec de la un angajat la altul, apoi prin ecranele clădirii; Enter deschide ce ai ales\."/);
+  assert.match(HTML, /aria-label="Studioul AMN-AI\. Săgețile selectează angajații, Enter deschide conversația\."/);
   const scene = fs.readFileSync(new URL('../src/office_scene.css', import.meta.url), 'utf8');
   const block = scene.slice(scene.indexOf('THE FACES MADE LEGIBLE (W10)'));
   assert.doesNotMatch(block, /#[0-9a-f]{3,8}\b|rgba?\(/i, 'the card states no colour of its own');

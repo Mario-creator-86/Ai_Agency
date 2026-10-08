@@ -87,7 +87,7 @@ def test_the_preflight_says_when_no_budget_has_been_set(engine, settings, vault,
     assert "Niciun buget activ" in empty["message"]
     # The message names the one place that sets one, in the page's words; the route is the
     # line's technical record (W31: «PUT /economy/budget» read as a console).
-    assert "Trezorerie → Buget și cheltuieli" in empty["message"]
+    assert "Autonomie → Buget și cheltuieli" in empty["message"]
     assert "PUT /economy/budget" not in empty["message"]
     assert empty["technical"]["routes"] == ["PUT /economy/budget"]
 
@@ -134,7 +134,7 @@ def test_the_preflight_says_which_kinds_of_model_have_no_price(engine, settings,
     for kind in kinds:
         assert kind in unpriced["message"]
     # W34: the price form is in the treasury; the line names it rather than the route.
-    assert "Trezorerie → Prețurile modelelor" in unpriced["message"]
+    assert "Autonomie → Prețurile modelelor" in unpriced["message"]
     assert "API" not in unpriced["message"]
     assert unpriced["technical"]["routes"] == ["PUT /economy/prices"]
     assert "0 USD" not in unpriced["message"] and "0 USD" not in unpriced["detail"]
@@ -775,7 +775,7 @@ def test_in_production_the_daily_budget_that_cannot_hold_two_films_is_said_befor
     assert "episodul serialului" in films["message"]
     assert "12 USD" in films["message"] and "15 USD" in films["message"]
     assert "3 USD" in films["message"]
-    assert "Trezorerie → Buget și cheltuieli" in films["message"]
+    assert "Autonomie → Buget și cheltuieli" in films["message"]
     assert "plafonul unui film" in films["message"]
     assert films["technical"]["routes"] == ["PUT /economy/budget"]
     assert films["technical"]["settings"] == ["STUDIO_FILM_BUDGET_USD", "STUDIO_MOTION_BUDGET_USD"]

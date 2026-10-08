@@ -1,5 +1,5 @@
 // W36, THE LAST PLAIN SURFACES, GAME-GRADE. The release judge (W35) found Setări → Canale and
-// Trezorerie → Prețurile modelelor clean but plain (the OFF switch read as an alarm), a cold entry
+// Autonomie → Prețurile modelelor clean but plain (the OFF switch read as an alarm), a cold entry
 // that showed the plates and the live stream at once for ~300 ms, Distribuție's first open under
 // reduced motion laid out in one frame, a price form that could not add a model the preflight did
 // not name nor price a whole provider, and the page's own labels for the two new places in «·»
@@ -21,7 +21,7 @@ const MAIN = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8')
 
 test('the page\'s own names for the two new places are the backend\'s, with its arrow', () => {
   const old = (name, value) => ({ name, ok: false, severity: 'INFORMATIONAL', message: '…', detail: '', value, place: 'not_on_page', place_label: 'API-ul studioului' });
-  assert.equal(fixPlaceOf({ ...old('model_prices', null), code: 'model_prices.unpriced' })?.label, 'Trezorerie → Prețurile modelelor');
+  assert.equal(fixPlaceOf({ ...old('model_prices', null), code: 'model_prices.unpriced' })?.label, 'Autonomie → Prețurile modelelor');
   assert.equal(fixPlaceOf({ ...old('serial_channel', { exists: true, bound: true }), code: 'serial_channel.director_may_not_approve' })?.label, 'Setări → Canale');
 });
 

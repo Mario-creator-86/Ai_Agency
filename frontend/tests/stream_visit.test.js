@@ -33,37 +33,15 @@ test('the camera moving asks the invitation to be placed again once it rests, no
   assert.ok(INVITE_RELAYOUT_MS > 0 && INVITE_RELAYOUT_MS <= 400);
   const onView = MAIN.slice(MAIN.indexOf('onView: (view) => {'), MAIN.indexOf('onView: (view) => {') + 600);
   assert.match(onView, /replayInvite && replayInvite\.shown\) relayoutInviteSoon\(\)/);
-  // before the stream's own early return: the page's renderer moves the invitation too
-  assert.ok(onView.indexOf('relayoutInviteSoon') < onView.indexOf('if (!liveStream) return;'));
+  assert.doesNotMatch(onView, /liveStream/, 'the invitation follows the pixel camera directly');
   const soon = MAIN.slice(MAIN.indexOf('function relayoutInviteSoon()'), MAIN.indexOf('function relayoutInviteSoon()') + 400);
   assert.match(soon, /clearTimeout\(inviteRelayoutTimer\)/);
   assert.match(soon, /replayInvite\.relayout\(\)/);
   assert.match(soon, /INVITE_RELAYOUT_MS/);
 });
 
-test('reduced motion: the stream is one real frame at a time, and the corner says so instead of a frame rate', async () => {
-  const { HELD_STILL_MS, streamLayers } = await import('../src/hq_stream_config.js');
-  const { sceneReadout } = await import('../src/live_claims.js');
-  assert.equal(HELD_STILL_MS, 10000);
-  assert.deepEqual(streamLayers('live', false, true), { still: true, waiting: false, note: '', held: true, kept: false });
-  assert.deepEqual(streamLayers('live', true, true), { still: true, waiting: false, note: '', held: true, kept: false });
-  // an outage still says it is frozen, held or not
-  assert.equal(streamLayers('offline', true, true).note, 'reconnecting');
-  assert.equal(streamLayers('offline', true, true).held, false);
-  const base = { stream: 'live', hasStill: true, socket: 'open', data: 'fresh', streamFps: 38.6, pageFps: 144 };
-  const held = sceneReadout({ ...base, streamHeld: true });
-  assert.equal(held.parts.map(([, t]) => t).join(''), 'Live · Unreal · un cadru la 10 s');
-  assert.ok(held.live);
-  assert.match(held.title, /mișcare redusă/);
-  assert.doesNotMatch(held.parts.map(([, t]) => t).join(''), /fps/);
-  assert.equal(sceneReadout({ ...base, streamHeld: false }).parts.map(([, t]) => t).join(''), 'Live · Unreal 39fps');
-  const css = fs.readFileSync(new URL('../src/office_scene.css', import.meta.url), 'utf8');
-  assert.match(css, /\.live-stream-layer\.held video \{ visibility: hidden; \}/);
-  const stream = fs.readFileSync(new URL('../src/hq_stream.js', import.meta.url), 'utf8');
-  assert.match(stream, /HELD_STILL_MS : HELD_FIRST_MS/, 'held, a frame is renewed every HELD_STILL_MS, sooner until the first');
-  assert.match(MAIN, /held: \(\) => reducedMotion\(\)/);
-  assert.match(MAIN, /liveStream\.setHeld\(reducedMotion\(\)\)/, 'a change of the system setting is followed');
-});
+test('the pixel page passes reduced motion and current data to its renderer', () => { const main = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8'); assert.match(main, /reducedMotion: \(\) => reducedMotion\(\)/); assert.match(main, /dataLive: \(\) => streetMoves/); });
+
 
 test('the building\'s focus ring stands above the stream, inside the room the drawers leave', () => {
   const css = fs.readFileSync(new URL('../src/office_scene.css', import.meta.url), 'utf8');

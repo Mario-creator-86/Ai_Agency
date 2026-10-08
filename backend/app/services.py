@@ -507,6 +507,12 @@ ACTION_RISK_TIERS: dict[str, str] = {
     # image credits inside the budget, so T2 like the stills. It had a label and no tier, so
     # the kernel would have refused it as unclassified had anything asked.
     "media.character_reference_set": "T2",
+    # The RunPod Serverless GPU (2026-10-08, the Owner's cards). Switching it OFF spends
+    # nothing and stops spending: T0, and `may_act` allows it before every other check, under
+    # STOP AUTONOMY too (ADR-GPU-OFF-ALWAYS). Switching it ON is allowed only inside a paid
+    # step of a film the kernel already lets run, under its cap (`_gpu_on_verdict`).
+    "infra.gpu_off": "T0",
+    "infra.gpu_on": "T2",
     # T4 — alter hard budget; change the Policy Kernel; reveal/rotate credentials; accept
     # legal terms; disable core audit or security protections.
     "budget.change_hard_limit": "T4",
@@ -589,6 +595,8 @@ APPROVAL_ACTION_LABELS: dict[str, str] = {
     "media.test_shot": "Cadrul de probă al unui film, care rămâne în film",
     "media.motion_purchase": "Mișcarea pentru restul scenelor unui film",
     "media.scene_redo": "Refacerea unei singure scene a unui film",
+    "infra.gpu_off": "Oprirea GPU-ului RunPod",
+    "infra.gpu_on": "Pornirea GPU-ului RunPod într-un pas plătit aprobat",
 }
 
 #: The paid steps of a film's shooting sheet, each named by the step the sheet calls it. For
@@ -608,7 +616,7 @@ STRICTEST_PAID_MEDIA_APPROVAL = PAID_MEDIA_APPROVALS[0]
 #: budget (2026-10-02, MONEY-06 / AR-07): fail closed, never "no budget, no limit".
 BLOCKED_NO_BUDGET = "BLOCKED_NO_BUDGET"
 #: Where the Owner sets the budget, in the page's own words (`preflight.BUDGET_PLACE`).
-BUDGET_PLACE_WORDS = "Trezorerie → Buget și cheltuieli"
+BUDGET_PLACE_WORDS = "Autonomie → Buget și cheltuieli"
 
 
 #: The step the sheet's narration question is bound to (`shooting_sheet.narration_gate`).
@@ -1248,6 +1256,91 @@ def _ask_or_spend(
     return "NEEDS_APPROVAL", waiting, request.id
 
 
+#: Why `infra.gpu_off` is always allowed, in the Owner's words.
+GPU_OFF_ALLOWED_WORDS = (
+    "Oprirea GPU-ului nu cheltuie nimic și este permisă oricând, inclusiv la STOP AUTONOMIE."
+)
+#: `infra.gpu_on` outside a paid step the kernel lets run.
+BLOCKED_NOT_IN_STEP = "BLOCKED_NOT_IN_STEP"
+GPU_NOT_IN_STEP_WORDS = "GPU-ul se pornește doar în interiorul unui pas plătit aprobat."
+#: `infra.gpu_on` while the Owner has not accepted the card that lets agents switch it on.
+BLOCKED_INFRA_DISABLED = "BLOCKED_INFRA_DISABLED"
+GPU_INFRA_DISABLED_WORDS = (
+    "Agenții nu au voie încă să pornească GPU-ul RunPod; acceptă cardul din fereastra Decizii."
+)
+
+
+def _runpod_infra_allowed(session: Session, integration_id: object) -> bool:
+    """The Owner's card «Agenții pot porni singuri GPU-ul RunPod …» was accepted for this
+    RunPod connection (its ``allow_infra_actions`` is true)."""
+    from app.integrations.models import Integration  # noqa: PLC0415
+
+    if not isinstance(integration_id, str) or not integration_id:
+        return False
+    row = session.get(Integration, integration_id)
+    if row is None or row.kind != "runpod" or not isinstance(row.config, dict):
+        return False
+    return str(row.config.get("allow_infra_actions", "")).strip().lower() in ("true", "1", "yes")
+
+
+def _gpu_on_verdict(
+    session: Session,
+    *,
+    requester: str,
+    subject: str,
+    cost_usd: float | None,
+    context: dict | None,
+) -> tuple[str, str]:
+    """`infra.gpu_on`, after the stop, T4 and safe mode (2026-10-08, the Owner's cards).
+
+    ALLOWED only when ``context.step_action`` is a paid step of a film, the Owner accepted the
+    RunPod card, and that step itself would run now: the kernel allows it; or it needs his yes
+    and ``approval_id`` names his yes for this step and plan (granted, or already spent by the
+    step); or it is his own press and the answer is one about agents acting unasked
+    (`media.services.OWNER_PRESS_PASSES`). The inner question is read with ``ask_owner=False``:
+    nothing is asked, written or spent here.
+    """
+    ctx = context if isinstance(context, dict) else {}
+    step_action = ctx.get("step_action")
+    if not isinstance(step_action, str) or step_action not in PAID_MEDIA_STEPS:
+        return BLOCKED_NOT_IN_STEP, GPU_NOT_IN_STEP_WORDS
+    if not _runpod_infra_allowed(session, ctx.get("integration_id")):
+        return BLOCKED_INFRA_DISABLED, GPU_INFRA_DISABLED_WORDS
+    plan_hash = ctx.get("plan_hash")
+    inner = may_act(
+        session,
+        step_action,
+        requester=requester,
+        subject=subject,
+        cost_usd=cost_usd,
+        context={"plan_hash": plan_hash},
+        ask_owner=False,
+    )
+    if inner["allowed"]:
+        return "ALLOWED", ""
+    status = str(inner["status"])
+    approval_id = ctx.get("approval_id")
+    if status == "NEEDS_APPROVAL" and isinstance(approval_id, str) and approval_id:
+        answer = session.get(ApprovalRequest, approval_id)
+        diff = answer.proposed_diff if answer is not None else None
+        if (
+            answer is not None
+            and answer.action == step_action
+            and answer.subject == subject
+            and answer.result == "APPROVED"
+            and isinstance(diff, dict)
+            and diff.get("plan_hash") == plan_hash
+            and (answer.consumed_at is not None or answer.expires_at > utc_now())
+        ):
+            return "ALLOWED", ""
+    if ctx.get("owner_press") is True:
+        from app.media.services import OWNER_PRESS_PASSES  # noqa: PLC0415 - media imports us
+
+        if status in OWNER_PRESS_PASSES:
+            return "ALLOWED", ""
+    return BLOCKED_NOT_IN_STEP, f"{GPU_NOT_IN_STEP_WORDS} {inner['reason']}".strip()
+
+
 def may_act(
     session: Session,
     action: str,
@@ -1317,6 +1410,11 @@ def may_act(
     policy = session.get(OwnerPolicy, 1)
     mode = str(policy.autonomy_mode or "MANUAL") if policy else "MANUAL"
 
+    if action == "infra.gpu_off":
+        # First, before the stop, T4 and safe mode: switching the GPU off spends nothing and
+        # only stops spending (ADR-GPU-OFF-ALWAYS, 51's dated amendment).
+        return verdict("ALLOWED", GPU_OFF_ALLOWED_WORDS)
+
     if tier is None:
         return verdict(
             "BLOCKED_UNCLASSIFIED",
@@ -1345,6 +1443,14 @@ def may_act(
             f"«{action_words(action)}» ({tier}).",
         )
 
+    if action == "infra.gpu_on":
+        # After the stop, T4 and safe mode; never the mode's own ALLOWED: the GPU goes on only
+        # inside a paid step the kernel already lets run (or the Owner's own press of it).
+        status, reason = _gpu_on_verdict(
+            session, requester=requester, subject=subject, cost_usd=cost_usd, context=context
+        )
+        return verdict(status, reason)
+
     step = PAID_MEDIA_STEPS.get(action)
     if step is not None:
         # The Owner's gate on paid media (his policy, stricter than 51's modes): read after
@@ -1361,8 +1467,16 @@ def may_act(
         # Whatever decides below — the Owner or the mode — decides about this plan.
         context = plan
         rule, threshold = paid_media_policy(policy)
+        # 2026-10-05, the Owner: «pe CEO autonom îmi cere acordul doar dacă generează cu
+        # bani». A step whose cap is exactly 0 — the local ComfyUI selection — cannot spend
+        # anything, so under AUTONOMOUS_CEO the mode alone decides it, whatever rule says;
+        # a step that can spend even a cent still follows his `paid_media_approval`, and the
+        # modes he chose to be asked in (MANUAL, SUPERVISED) keep asking about free steps too.
+        free = cost_usd is not None and cost_usd == 0
         why = None
-        if rule == "EVERY_PAID_STEP":
+        if free and mode == "AUTONOMOUS_CEO":
+            pass
+        elif rule == "EVERY_PAID_STEP":
             why = "Politica Proprietarului cere aprobarea fiecărui pas plătit al unui film"
         elif rule == "OVER_USD" and threshold is not None:
             if cost_usd is None:
@@ -1399,8 +1513,10 @@ def may_act(
         # except that in PRODUCTION nothing is bought unasked without a daily limit (fail
         # closed, MONEY-06 / AR-07): with no budget `reserve_spend` refuses nothing, and a fresh
         # install switched to AUTONOMOUS_CEO + MODE would buy on nothing but each sheet's cap.
+        # A free step is exempt: its cap is 0, so it spends nothing, budget or no budget.
         if (
-            tier <= MODE_ALLOWS.get(mode, "T1")
+            not free
+            and tier <= MODE_ALLOWS.get(mode, "T1")
             and str(policy.environment or "TEST") == "PRODUCTION"
             and not has_active_daily_budget(session)
         ):
@@ -1837,14 +1953,7 @@ def snapshot(
             #              (story/serial_stage.py). Not end to end: an episode the Owner approves by
             #              hand is never storyboarded, a day that already has a draft is never
             #              returned to, and nothing writes tomorrow's episode.
-            #   financing  PARTIAL, was NOT_IMPLEMENTED. Owner funding runs: a capital
-            #              contribution or an Owner loan with its terms is recorded in the VR$
-            #              books (economy/services.record_owner_funding, POST
-            #              /economy/owner-funding, the Treasury dialog). Not built: the CEO's
-            #              financing request, the market-benchmarked terms and the interest that
-            #              accrues on its own.
-            #   procurement stays NOT_IMPLEMENTED: no VendorShop or purchase code exists
-            #              (economy/services.py says spending VR$ has no code yet).
+            # Virtual financing/procurement retired by Owner, 2026-10-08.
             "modules": {
                 "agents": "IMPLEMENTED",
                 "providers": "IMPLEMENTED",
@@ -1855,9 +1964,6 @@ def snapshot(
                 "publishing": "PARTIAL",
                 "analytics": "PARTIAL",
                 "story": "PARTIAL",
-                "treasury": "PARTIAL",
-                "procurement": "NOT_IMPLEMENTED",
-                "financing": "PARTIAL",
             },
             "events": [EventView.model_validate(e).model_dump() for e in reversed(recent)],
             # The name tags in the headquarters read each employee's last task from here,

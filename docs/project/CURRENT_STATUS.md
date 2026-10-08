@@ -1,4 +1,577 @@
-# CURRENT STATUS — State on 2026-10-03
+# CURRENT STATUS — State on 2026-10-08
+
+Current proof: the 2026-10-01/02 paid film readiness audit was proven on fakes only;
+AGENT_SCENARIO_ACCEPTANCE later used actual Ollama Cloud calls, with normal serial
+acceptance and real GPU/media/upload still pending. Current local UI evidence is reported
+separately below and does not prove those external workflows.
+
+## Active claim — PIXEL_ACTOR_REFINEMENT (2026-10-08)
+
+Root; started 2026-10-08T18:14:57.991201+00:00. Improve original animal/bicycle/street
+and employee silhouettes and animation substantially after inspecting official game imagery.
+Files: pixel_life.js, pixel_people.js, pixel_office.js, config/pixel_office.json and relevant
+tests. Plan: backed-up baseline → refined street actors → refined seated staff → actual
+Canvas/browser review → current-source build and read-only real UI video → handoff.
+Preserve the approved detailed illustration, backend truth, fixed seats and existing guards.
+Rollback sources: data/pixel-actors-2026-10-08/before; preserve concurrent work when rebuilding.
+
+## RUNPOD_PHASE1 — Serverless rounds of batches, proven on fakes only (2026-10-08)
+
+Owner cards of 2026-10-08: all stills and video on RunPod Serverless, one RTX PRO 6000 at a
+budgeted 4.00 USD/h, «trebuie sa se opreasca imediat dupa, nu la 30 sec», «Totul pe RunPod
+oricum». Three implementers (CONTROL: GPU on/off, guard, kernel, cards, page; WORKER: the
+`amn.batch.v1` image; STEPS: rounds, bucket, pricing, planner, stages). STEPS, done and tested:
+a paid step on a Serverless adapter buys in ROUNDS inside one GPU session
+(`media/gpu_batch.py`): each round is ONE `/run` job carrying every item (chunked back-to-back
+under the 2400 s executionTimeout), priced with its GPU start ((120 s cold start + 1 s idle) ×
+rate) and cut to the remaining cap; items get their own journal row and SceneTake SUBMITTED
+before any poll; pictures go to the Owner's bucket content-addressed through the studio's own
+SigV4 presigner (`providers/runpod/s3.py`, AWS published vector pinned) and the journal keeps
+only {sha256, bytes, mime}; collection reads the bucket manifest first, then /status (404 =
+EXPIRED_UNDELIVERED); a stop, a lowered mode or «Oprește GPU acum» cancels what is unfinished,
+keeps what finished, gives back the rest. Stills: scene 1 alone while the film has no Figure 1,
+then the rest, then re-rolls; motion/test shot/redo: one round, the clip-QC retry is the next.
+Verification without /run (endpoint settings + /health, min 0, bucket); pinned catalogue
+config/runpod_models.json (ESTIMATES: 60 GPU-s a still, 24/33 GPU-s per clip second); planner
+normalises ratios (9:16 = 1080:1920 when the declared output reaches it) and takes the selected
+RunPod model («Profil RunPod selectat de Proprietar»); media readiness needs the bucket.
+Tests: 305 RunPod cases of all three owners, the 18-case paid-path scan (`submit_batch` is a
+paid method behind may_act and a booking), stills/motion/sheet/takes/watchdog/discovery/policy
+suites, 855 frontend cases, ruff, format, mypy, check_docs pass. Nothing called
+RunPod, Hugging Face, a registry or a bucket; no image built; his studio not restarted. Not
+working until the paid bake-off card: rate, cold start, idleTimeout honoured, quality, licence
+boxes. Guide: docs/RUNPOD_INTEGRATION.md; ADRs: 16_DECISION_LOG.md «RunPod Serverless, phase 1».
+
+Adversary check «nothing keeps billing» (2026-10-08, fakes only): tests/test_runpod_billing_adversary.py
+(17 cases: step raising mid-batch, studio killed after max=1, guard under STOP, two films on one
+endpoint, late /run, failing PATCH at close, RunPod's own scale-to-zero, idle, verify bound, Owner
+off mid-step, long QC, every endpoint off promptly, launcher). Four defects fixed test-first: a
+failing film sharing the GPU now cancels its own unfinished job; no /run leaves once the session
+was switched off (BatchRefused GPU_FORCED_OFF, rows UNSENT, cost 0); the session is renewed after
+each judged item, so a long QC is not taken for a dead step by the guard; force_off sends max=0 to
+every endpoint concurrently before verifying any (the window-close path sends purge and max=0
+together), so one slow endpoint never holds another past the 20 s / 45 s / 4 s bounds.
+
+Adversary check «money and the staircase» (2026-10-08, fakes only):
+tests/test_runpod_money_adversary.py (14 cases). Held as built: a round over the remaining cap
+is cut and an empty one sends nothing; the mode lowered before a round sends nothing, during it
+cancels, keeps what finished and buys no next round; a re-roll is a new batch with new keys in
+the cap; takes left by a crash mid-batch are collected free, never re-bought. Defects fixed
+test-first: (1) a lost /run answer followed by an unsent chunk was refunded and refused as
+«nothing spent» while the first job could run: now counted, SUBMISSION_UNCERTAIN; (2) the
+billed estimate never reached the books (items come from manifests, /status was never read):
+the round now reads its jobs' final times (`BatchRun.settle`) and raises the meter to
+(delayTime + executionTime)/1000 + idle × the budget rate when above the estimate (never lowers
+it); (3) one corrupt item (checksum, manifest) or a passing 5xx while polling aborted the whole
+paid batch: now that item alone is FAILED «BAD_OUTPUT» (counted) / the poll is retried;
+(4) a lone per-request /run on Serverless (still redo, legacy calls) went out with workers.max 0
+outside any session: the provider refuses it unsent (NEEDS_GPU_ROUND) and the still redo on
+RunPod is refused before the Owner's yes is asked (a round-based still redo is still to build);
+(5) the sheet labelled RunPod estimates «tarif publicat» and a RunPod film showed «Sold Runway:
+Necunoscut» and disabled its redo buttons: rows are ESTIMATED («estimare GPU nemăsurată»), the
+page shows «RunPod GPU» and no Runway balance rule. Open: the yes of a step is spent before
+the GPU card is checked (a BLOCKED_INFRA_DISABLED refusal uses it up, nothing bought) - fixed
+by the completeness check below.
+
+Completeness check «what the Owner needs before the paid test» (2026-10-08, fakes only plus
+public registry/Hugging Face METADATA; nothing downloaded, built or sent to RunPod):
+tests/test_runpod_owner_setup.py (12 cases, seen failing first). Fixed: the worker named a
+base image that was never published (`runpod/worker-comfyui:5.11.0-base`, registry 404):
+now `5.10.0-base` pinned by its OCI index digest, ComfyUI 0.39.2 pinned, every public weight's
+revision/sha256/size pinned (stills ~39 GB, motion ~78 GB); the gated LTX-2.5 checksums are
+pinned by `build resolve` with the Owner's token (metadata only), so `build plan stills` is
+complete today and `motion` waits for his token. A RunPod step now refuses before his yes is
+asked for or spent while his GPU card is not accepted, the bucket is missing or Serverless is
+not configured (`gpu_session.precheck`). The verify hint names endpoints, bucket and
+`RUNPOD_ENABLED=true`. scripts/check_secrets.py reads a whole `revision`/`sha256` pin line
+of backend/runpod_worker/models.lock.json as a checksum (any other value there is still
+scanned; .secrets.baseline untouched). Still open, his or a decision: where the images are built and pushed;
+a reference-capable still route (Qwen-Image-2512 is text-to-image: locked characters refuse
+NEEDS_REFERENCE on RunPod and Figure 1 is not used); the round-based still redo; balance reads.
+
+## PIXEL_STUDIO_LIFE — complete, actual UI verified (2026-10-08)
+
+Claim released. Remove the duplicated canvas name/state and hover/selection rectangle;
+retain one truthful native tooltip and existing selection/inspector. Original seated staff
+have independent breathing, head turns, cup/stretch poses and visible foreground hands.
+Actual WORKING/THINKING/REVIEWING selects role-specific desk gestures. Add original walking
+pedestrians, cyclist, car, cat, birds, cloud drift and weather-aware evening details.
+Preserve the approved illustration, interiors, personal desks, solar sky, clock and menus.
+
+846 frontend cases, type check, three bounded actual Canvas/browser checks and 53 scoped
+backend/layout/weather/docs cases pass. Actual read-only signed-in production UI at 21:06,
+Senin 18°C: all eight real staff ACTIVE/IDLE, all eight animating/raster-changing, moving
+traffic, no double canvas label/rectangle/page errors; IDs/runtime unchanged. The actual
+7.886-second video is saved. Working/weather fixtures remain separate from production proof.
+
+Canonical current combined frontend built; source hash and served JS/CSS match (200).
+Readiness 200 HEALTHY. Concurrent LOCAL_AUTO_LOGIN source was preserved and included in the
+build; this task did not restart the running backend to activate that route. Its earlier
+statement about an unbuilt frontend describes that task's own run. No production policy/data
+change, worker restart or paid call initiated by this refinement. Full Owner workflow guard
+and real external production acceptance remain separate.
+
+Files/research/rollback: docs/project/PIXEL_STUDIO_LIFE.md. Evidence/video/logs/before copies:
+data/pixel-life-2026-10-08/. Refresh with Ctrl + F5. Cosmetic motion freezes for stale/replay,
+hidden, parked or reduced-motion conditions; 12 configured paints/second is not a benchmark.
+
+## LOCAL_AUTO_LOGIN — complete, tested; takes effect at his next start (2026-10-08)
+
+Claim released. The Owner: «Te rog sa elimini pagina de logare, nu trebuie momentan». On this
+machine the page enters without the key form: GET /api/v1/owner/local-session hands the key only
+to a loopback peer at the studio's own loopback Host:port, with no proxy header, no foreign
+Origin/Sec-Fetch-Site, STUDIO_HOST on loopback and STUDIO_LOCAL_AUTO_LOGIN on (default); else
+404. Page: one entry `enterStudio(key)` for the form and the hand-over; no form flash; key only
+in memory; sign-out offers an empty-field entry; a later 401 retries once per page load.
+Tested: 57 new backend cases (incl. a real uvicorn on loopback), the route audit, env
+example, e2e server settings; 846 frontend cases, tsc, ruff, mypy, check_docs. Isolated fake
+studio on 127.0.0.1:55621 in the browser pane: entered with no form, sign-out showed the offer,
+the empty press entered again, no key in storage. His studio on :8000 was not restarted and
+frontend/dist was not rebuilt: his next `start.cmd` builds the page and serves the new route.
+Security adversary pass (same day, complete, tested): the route now also requires the page's own
+header X-Studio-Local-Session: 1 (no <img>/<script>/frame/form/link/no-cors load or plain
+program GET gets the key), refuses Via/CF-Connecting-IP/True-Client-IP/X-Forwarded-Proto and
+similar tunnel headers, answers Cross-Origin-Resource-Policy: same-origin, and is hidden from
+the API description. Sockets and require_owner unchanged. test_local_session 73 cases, route
+audit/env/e2e server, local_entry 14 cases, ruff, mypy, check_docs.
+
+## PIXEL_NAVIGATION_NIGHT — complete, actual UI verified (2026-10-08)
+
+Claim released. Fix desktop aspect-ratio conflict; the whole scene fits. Add bounded wheel,
+trackpad/touch/pointer navigation after zoom, pointer-centred Ctrl zoom and fit reset; retain
+native mobile scrolling, agent selection and menus. Replace grey exterior blend with rich
+solar sunset/night sky, stylistic moon/stars and a sun that disappears below the horizon.
+Original approved art unchanged; actual weather, protected room details and guards preserved.
+
+826 frontend unit cases, type check, two bounded real Canvas/page browser checks and 53
+scoped backend/documentation cases pass. Build source hash is current; running server serves
+identical JS/CSS (200). Real authenticated UI: eight seated staff, 20:36 Senin 18°C, visible
+moon, canvas/frame both 1006 px, no page errors; zoom/scroll/fit operated. No worker restart,
+production policy/data change or new paid call. Full owner workflow guard remains separate.
+
+Details/files/rollback: docs/project/PIXEL_NAVIGATION_NIGHT.md. Evidence/captures/logs/source
+and dist backup: data/pixel-navigation-night-2026-10-08/. Refresh UI with Ctrl + F5.
+
+## BACKUP_STALE_ALERT — actual backup and restore verified (2026-10-08)
+
+Claim released. Owner's banner was accurate: the latest normal backup dated 2026-10-05
+11:28 UTC, 77.7 hours old against the unchanged 36-hour limit. The running server's worker
+was healthy; the enabled 03:30 Europe/Bucharest CATCH_UP schedule fired after restart at
+17:07:58 UTC and its backup task was still QUEUED. No backup failure was recorded.
+
+Use existing scripts/backup.py: actual online copy made at 17:10:55 UTC. The already queued
+automatic task then completed at 17:11:04 UTC, attempt 1, proving automatic recovery works.
+Configured retention keeps the newest daily copy; current artifact is
+ data/backups/studio-20261008T171104Z.db (with manifest, wrapped key and media inventory).
+SHA-256 and SQLite integrity verified. Restored that real latest artifact using the existing
+restore service to data/backup-alert-2026-10-08/restore-check/studio.db: integrity ok, eight
+ACTIVE agents, all copied keys usable. Restore guard applies only to the disposable copy
+(STOPPED/TEST); production remains AUTONOMOUS_CEO/PRODUCTION and autonomy_stopped=false.
+
+Live /health/ready now returns 200 HEALTHY: database, credentials, worker, disk, toolchain and
+backup OK, problems empty. Next scheduled backup: 2026-10-09 03:30 local, provided the studio
+and computer remain running. Eleven existing backup tests pass. No application code, warning
+threshold, scheduling policy or permissions changed; no worker restart or external job by this
+repair. Production background work started by the Owner continues normally.
+
+Evidence: data/backup-alert-2026-10-08/verification.json and restored test copy. Re-load the UI
+for its updated status. Current verification: BACKUP_STALE_ALERT; earlier launch/weather/
+provider evidence retains the limitations documented below.
+
+## PYTHON_RUNTIME_RECOVERY — startup verified (2026-10-08)
+
+Claim released. Owner's missing-base interpreter error was reproduced on a disposable
+project before the fix (exit 103). The original managed runtime already existed and passed
+actual version probes during investigation; no live disappearance was attributed to a cause.
+start.cmd now probes an existing venv before uv run, reinstalls only the declared Python
+when it cannot start/import SQLite, then confirms recovery before proceeding. Missing/empty
+pin and failed recovery stop with an explanation. Healthy launches do not reinstall Python.
+
+A second reproduced failure: installed uv 0.11.0 had no download metadata for 3.14.8.
+Update the existing pip-installed utility to uv 0.12.23; keep its original binaries in the
+evidence backup. Actual restored fixture runs Python 3.14.8. Production environment remains
+3.14.8 / SQLite 3.53.1, with existing locked packages and .python-version unchanged.
+
+Validation: 12 scoped launcher pytest cases pass after the uv update; actual CMD/root help
+probes return 0, disposable missing-base recovery succeeds, missing pin and unavailable
+runtime stop with exit 1; an empty pin also rejects an inherited version value. The final
+combined launcher/documentation selection passes 21 tests. Full start.cmd executes locked sync/bootstrap, uses the current
+frontend and serves the page and two bundle assets (200), health/live (200), authenticated
+snapshot (200) and the 8-agent endpoint (200) on an isolated copy. health/ready returns
+503 solely BACKUP_MISSING because this disposable folder has no backup; database/credentials,
+disk and toolchain are healthy and its worker is deliberately OFF. This is not a claim that
+production readiness, autonomous media or external providers are newly green.
+
+Console BREAK confirms Application shutdown complete and the listener closes. The outer
+cmd process exits with Windows console-interrupt 0xC000013A; the application stops normally.
+The harness was corrected for that exit code, readiness semantics, the actual snapshot/agents
+contracts and bounded shutdown waiting. Production DB SHA-256 is unchanged; no production
+worker, catalog poll, GPU, paid model/media request or upload runs. Product policy/keys intact.
+
+Changed: start.cmd, root README/operator guide and project tracking. Evidence/backups in
+data/python-runtime-repair-2026-10-08 (before/uv, before sources, red/green recovery logs,
+server_smoke.py, server-start.log, server-result.json). Temporary runtime/venv test directories
+were removed after verification; logs/results remain. Start .\start.cmd in the actual E:
+project and open the configured local address (currently http://127.0.0.1:8000).
+
+Current verification: PYTHON_RUNTIME_RECOVERY. Previous weather/agent integration evidence
+and its limitations remain separate in the sections below.
+
+## ROOT_START_COMPATIBILITY — verified entry points (2026-10-08)
+
+Claim released. Reproduced python start.py failing because the project root had no start.py;
+the existing scripts/start.py --help already worked through uv. Add a standard-library-only
+root entry that delegates to uv run --locked python scripts/start.py, with unchanged options
+and project cwd. It preserves exit status and waits through Ctrl+C rather than killing the
+child before the existing graceful launcher finishes. Missing uv/spawn errors remain failures.
+start.cmd also requests the locked environment. Global Python here is 3.14.3; delegated
+startup uses the existing pinned 3.14.8 environment. No dependency or product-policy change.
+
+Validation: eight existing launcher cases plus four compatibility regressions pass (12/0/0);
+real python start.py --help and canonical uv help return 0, no bootstrap/server/worker.
+Ruff passes. Commands tested from the actual E: project; the C: auxiliary folder is not
+the server checkout. Start with .\start.cmd or python start.py from the E: root; keep its
+terminal open and stop with Ctrl+C. Local address follows existing host/port configuration.
+
+Changed: start.py (new thin wrapper), start.cmd, tests/test_root_start_launcher.py, root
+README/operator guide and project tracking. Evidence/backups: data/launcher-compat-2026-10-08.
+Previous weather/scenario counts remain separate; no broad or full-browser rerun was made.
+
+## PIXEL_OUTDOOR_CLOCK_WEATHER — implemented and scene-verified (2026-10-08)
+
+Claim released. București / Europe/Bucharest retained. Original brass street clock on the
+right sidewalk shows actual local analog time and HH:MM, including DST. Existing solar
+calculation tints exterior daylight/dusk/night; furnished room pixels remain intact.
+Authenticated own-origin /office/weather reuses the existing cached provider. Conditions
+drive exterior cloud tint, rain/drizzle/storm, fog and snow, with bounded original particles.
+Geometry, palette, masks and refresh/age caps are configurable in config/pixel_office.json.
+
+No invented precipitation on missing/unreachable/aged weather, and no current-weather overlay
+on historical replay. Optional observed_at_utc uses provider offset for timezone-safe ageing;
+the backend cache includes timezone. Time keeps updating with idle agents. Reduced motion,
+stale/disconnected data and replay stop particle motion; hidden/parked pages stop all timers
+and polling. Logout/place change invalidates weather, including late preceding-context reads.
+No production weather preset/control, model change, permission or DB migration.
+
+Actual read-only configured provider check: 2026-10-08 16:01 UTC, București, api.open-meteo.com;
+observation 19:00 local / 16:00 UTC, clear, 21.8°C. This is a real source receipt. Rain/fog/
+snow/storm/day/night fixtures are explicitly simulated and prove rendering, not those current
+outdoor conditions. Eight actual employee records and their Character Bible appearances were
+read only for the isolated scene captures. No production worker/GPU/media/upload started.
+
+Verification of this change, separate from the historical whole-project lanes:
+- 168 scoped backend cases pass (weather/time metadata/auth/cache, personal desks, simple
+  studio, world/environment bridge and scene parameters), 0 failed/skipped; 20.01 s.
+- All 818 frontend unit cases pass, 0 failed/skipped; JavaScript type check passes.
+- One actual Chromium Canvas integration passes, with current source receipt, day/night,
+  rain/fog/snow/storm, protected room pixels, time advancement, reduced/stale/replay motion,
+  hidden/logout/late-read guards and phone captures; no backend process or external requests.
+- The full owner_flows suite is **0 passed / 0 failed / 11 skipped**, because its unchanged
+  guard detects an Owner game. The previous 10-flow pass predates this weather change and
+  is not reused as current acceptance. Repeat the full suite when its guard permits it.
+- Ruff and formatting pass; mypy passes for 252 backend source files. Documentation/hash,
+  secret scan (954 files, 67 individually reviewed findings) and diff checks pass; 18 related
+  documentation regressions pass after retaining the historical acceptance references.
+- Production frontend/dist rebuilt after retaining all 83 previous served files in a ZIP.
+  Build passes; existing single entry is now 506.46 kB (168.18 kB gzip) and emits Vite's size
+  warning. No threshold was raised or disabled. This is a packaging warning, not a failed build.
+
+Changed: frontend/src/pixel_environment.js (new), pixel_office.js, main.js, pixel_studio.css,
+frontend/index.html, config/pixel_office.json; backend/app/office/weather.py;
+tests/test_office_weather.py, frontend/tests/pixel_environment.test.js (new), replay unit
+harness and owner_flows.spec.js; isolated pixel_environment.spec.js (new), test:scene script.
+Operator/assets/roadmap/changelog/decisions/spec scopes and three current architecture hashes
+updated deliberately, retaining all original inventory hashes. Source and served UI backups:
+data/pixel-weather-2026-10-08/before. Logs/receipt/summary/captures: same task folder.
+
+Capture distinction: screenshots/component-current-* are isolated scene views using actual
+staff/appearance/provider snapshots, not the full signed-in UI. component-*-test are simulated
+weather/time cases. Existing menus and backend state wiring remain; full UI flow acceptance
+is the deferred check above. Run the isolated graphic check with npm run test:scene --prefix
+frontend; the full workflow check remains npm run test:e2e --prefix frontend.
+
+Next: repeat guarded owner_flows acceptance, then continue existing normal serial retry and
+real RunPod/media/publishing prerequisites below. The clock/weather feature needs no RunPod API.
+
+## AGENT_SCENARIO_ACCEPTANCE — verification completed, production limits recorded (2026-10-08)
+
+Eight assigned agents exercised through existing services on disposable databases: independent
+factual handoffs, contradictions/injection, lost upload receipt, insufficient budget, STOP,
+pause, unavailable models, strategic HOLD and Director inbox. **30 real Cloud attempts**,
+including one 600-second timeout. First fifteen cases pass all expected-behavior assertions;
+safe refusals are successes for negative scenarios, never fabricated production success.
+Factual rewrite PASS; manually clarified serial PASS remains DRAFT by channel policy.
+The exact normal two-draft serial stage rejects both Kimi drafts; a Nemotron alternative
+times out and is not promoted. Normal autonomous serial acceptance remains open.
+
+Final regression evidence on Python 3.14.8 / SQLite 3.53.1:
+- Quick lane: **3,262 passed / 0 failed / 3 skipped**, 1,068.38 seconds.
+- Slow lane: **274 passed / 2 failed / 2 skipped**, 1,592.79 seconds. The two failures expose
+  UTF-8 scanning and keyless-copy analytics handling, subsequently fixed and rechecked.
+- Final affected files: **123 passed / 0 failed / 0 skipped**, 146.73 seconds, including both
+  previously failed cases and two new regressions. Across lanes/rechecks: **3,540 unique
+  passing cases, zero unresolved failures, five skipped**. This is not one all-green full run.
+- Frontend: **812 tests**; all **10 real browser flows** pass on the new runtime. TypeScript,
+  scratch build, lint/format and mypy (197 application files) pass. Local demo MP4 and QC pass;
+  voice/images are fake vendors. Missing external prerequisites leave the demo day PARTIAL.
+
+Fixed mail write concurrency, demo Director schema/IDs, serial feedback placement, configured
+RunPod catalog storage and false zero-cost hero previews. The shipped secret-check CLI forces
+UTF-8 on Windows; individually reviewed fixture hashes do not weaken new-secret detection.
+Optional unreadable analytics credentials skip measurement with the actual reason; normal
+missing-vault preflight still blocks the day. Keyless two-day rehearsal proves this block,
+not two completed films or serial recovery. Five skips require historical inputs, local Ollama
+or Windows symlink privilege; they are recorded individually in verification-summary.json.
+
+Actual production preflight is **DEGRADED** with no blocking failure: image service unselected,
+no configured STUDIO_AGENT_DAILY_TOKEN_BUDGET; eight film-character references remain absent
+(informational). This read-only check does not certify stored YouTube/media credentials.
+Production staff, policy, selections and run/publication counts have the unchanged fingerprint;
+production and checked disposable DBs pass integrity checks. The prior runtime is preserved,
+uv.lock unchanged. No production worker, paid GPU/media, upload, commit or push was started.
+
+RunPod credentials/endpoints, real voice/media/publication acceptance and normal-retry serial
+quality remain pending. Full report: [AGENT_SCENARIO_REPORT.md](AGENT_SCENARIO_REPORT.md).
+Evidence: data/scenario-acceptance-2026-10-08, including original failed/aborted logs and final
+rechecks. Historical milestones below retain their original evidence and limits.
+
+## OLLAMA_ROLE_ALLOCATION — completed and verified (2026-10-08, Codex)
+
+The saved Ollama Cloud connection authenticated successfully. Actual /api/tags lists 18
+variants across 17 families; /api/show confirms declared capabilities. Official documentation
+and these observations inform role choices; bounded role probes support suitability, not a
+global ranking. All five selected models answered through the saved Cloud credentials.
+
+Saved production assignments: Sarah/Director, Marcus/ScriptWriter and Kael/VideoEditor keep
+kimi-k3; Aris/LeadResearcher uses minimax-m3; Elena/FactChecker uses deepseek-v4-pro:0813;
+Lyra/VoiceArtist and Nadia/Accountant use mistral-large-4; Vera/Publisher uses nemotron-3-ultra.
+Sarah retains nemotron-3-ultra as REVIEW / IMPORTANT_ONLY / STRATEGIC secondary. Five model
+changes, three suitable primaries retained. All eight choices are recorded through versioned
+commands with explicit OWNER origin and read back from actual settings/office projections.
+All eight production employees are ACTIVE/IDLE; assigned models are available.
+
+The new seed configuration exposed a real protection bug: a manual assignment equal to the
+current seed could be overwritten by a role preference. Assignment events now record OWNER
+or SEED_ALLOCATION internally; matching manual choices stay protected even as seed data changes.
+Minimal legacy Owner events are protected; full legacy ensemble events keep the prior slot
+comparison when origin is unavailable. No migration or API command-field change is required.
+
+Verified on final code:
+- 16/16 selected role samples pass (two per employee), including two actual image inputs,
+  Romanian voice direction, unsupported claims, QC/provenance publication gates and budgets.
+  18 real Cloud calls total; two initial probes were strengthened and replaced. Remaining
+  results were reused. This is bounded synthetic testing, not a full production acceptance.
+- 103 scoped backend tests pass: LLM connection, multi-model routing, workforce/capability
+  preference protection, policy/workflow and integration settings. The two new regressions
+  failed before the fix; they and the existing legacy Owner guard pass afterwards.
+- Lint/format pass; mypy passes on all 197 application source files. Documentation inventory/
+  architecture hashes, secret scan and git diff checks are recorded in the evidence folder.
+- Actual settings roster and pixel office agree on all eight saved available models; current
+  page build matches its frontend sources. No frontend source change was needed.
+
+Existing product budgets, permissions, media/voice providers and scheduling are unchanged.
+Tokens/cost estimates use existing configured prices, not a confirmed Ollama invoice. No
+production worker, GPU/media generation, publishing, commit or push was started. RunPod still
+awaits credentials/endpoints. Consistent pre-change SQLite and configuration backups remain.
+Evidence: data/model-routing-2026-10-08/{catalog,connection-check,role-samples,allocation,
+origin-confirmation,ui-readback}.json and accompanying logs. Guide/catalog/source links:
+[OLLAMA_ROLE_ALLOCATION.md](OLLAMA_ROLE_ALLOCATION.md).
+
+## PRESERVE_DETAILED_STUDIO — completed and locally verified (2026-10-08, Codex)
+
+Owner supplies 94139.jpg and explicitly requests preserving its rich furniture/library/plants/
+lighting/street details while seating the eight existing agents, optionally adding a floor and
+using back-facing characters. The original library, long/private desks, editing equipment,
+drawing table, lounge, plants, lighting, roof, timber and sunset street are retained in a
+three-floor extension. New upper floor: three seats; middle: two library seats plus Director;
+lower: editing and drawing/ledger seats. The furnished lounge stays clear.
+Backup: data/pixel-details-backup/before-details.zip. Current staff, other menus, runtime policy
+and production data are preserved; no production-worker start, paid job or publication.
+
+Active art: frontend/public/assets/pixel/studio-detailed.png (1536 × 1024), edited through
+built-in imagegen from the original studio.png and Owner's approved 94139.jpg. Both earlier
+assets remain; reference copy and exact prompt are in art-source/pixel/. This supersedes the
+cleared furniture/generic drawn desks described in the historical personal-desks milestone.
+
+config/pixel_office.json binds the same eight reserved slots to actual illustrated furniture
+across three levels. pixel_people.js adds refined rear seated silhouettes, hair/accessories
+and actual-state gestures; face portraits remain. pixel_desks.js now only projects stable
+seats and restores configured original chair/stool foreground pixels. Generic desk/screen
+overlays are removed. Names appear on hover/selection; roster/inspector retain actual states.
+Selection bounds follow each illustrated seat. No backend schema or production staff change.
+
+Verified on final code:
+- 812 frontend tests pass, no skips; TypeScript and Vite production build pass.
+- 14 scoped backend tests pass: personal reservations, current office/state and shared-layout
+  compatibility. Backend code is unchanged in this visual refinement; earlier 71 checks remain
+  evidence for the previous backend implementation.
+- All ten isolated Chromium flows pass, no skips. Protected library, lounge and monitor pixels
+  equal the original illustration under the actual Canvas viewport transform. Seat/annex and
+  keyboard/pointer selection, committed backend states, animation, open inspector, pause/resume,
+  stale-data recovery, reduced motion and 390px no overflow also pass.
+- Actual desktop/mobile/inspector captures were inspected. Library and stool occupants sit at
+  their illustrated furniture; chair backrests correctly cover rear-facing bodies. All three
+  floors, roof and street remain visible in the desktop fit view; phone supports detail zoom.
+- Architecture inventory/hash, secret scan (948 files, 46 reviewed baseline findings) and
+  git diff check pass. The approved reference copy is byte-identical to the Owner attachment.
+
+Evidence: data/pixel-details-backup/{frontend-final,backend-final,e2e-final,types-final,build-final}.log.
+Captures: seated-agents-desktop.png, seated-agents-mobile.png, seated-agent-inspector.png.
+These use a disposable TEST database with eight seeded roles and two named Test colleagues to
+verify annex pages. They do not alter or describe production staffing; actual staff remains
+the eight employees read in the previous milestone. Vendors are simulated, outbound sockets
+blocked and production worker disabled. No paid GPU generation, publishing, commit or push.
+Asset provenance/prompt: PIXEL_STUDIO_ASSETS.md. Operator guide: SIMPLE_STUDIO_GUIDE.md.
+
+## PERSONAL_PIXEL_DESKS — completed and locally verified (2026-10-08, Codex)
+
+Owner requests every agent seated at their own desk, more refined characters and animations
+driven by actual backend runtime/lifecycle states. Scope: office seating projection, pixel
+renderer/appearance, real-time updates and responsive/browser regressions. Preserve other
+menus, existing permissions, pipeline and historical data. No paid jobs or production-worker start.
+Backup: data/pixel-desks-backup/before. Every visible employee now has a personal desk and a seated
+character. Hiring order across retained rows reserves ownership; first role holders keep the
+eight illustrated places, additional employees use accessible annex pages. Runtime, pause,
+later hiring and departure do not move surviving staff. No database migration is required.
+
+Shared geometry: config/pixel_office.json. Backend assignments carry pixel_slot, pixel_desk_id
+and actual version/runtime/lifecycle/model information, including staff beyond eight desks.
+New pixel_people.js draws layered 32x40 seated sprites and bound Character Bible details;
+pixel_desks.js draws owned furniture, monitors, microphone, books and the Accountant's ledger.
+Original generated studio-desks.png clears the background furniture. Previous art is retained.
+
+Actual WORKING/THINKING/REVIEWING states select typing/writing, chin-rest and review gestures;
+IDLE breath/blink/glance is cosmetic life, not invented work. PAUSED/BLOCKED/ERROR/UNKNOWN stay
+still. Lost/stale data, replay, reduced motion and hidden pages suppress gestures. Cached
+frames and bounded timers avoid a continuous busy render loop. Versioned authoritative reads
+repair missed events; older reads/events and completed-run receipts cannot rewind newer work.
+An open inspector follows the same authoritative employee state and repaints its portrait
+when runtime/lifecycle changes, without replacing the conversation.
+
+Verified on the final code:
+- 810 frontend tests pass, no skips; TypeScript and Vite production build pass.
+- 71 scoped backend tests pass: personal seating, >8 staff, retained reservations/reopened DB,
+  real working/idle/pause/resume, authenticated office state, existing agents/identity, legacy
+  layout compatibility, error detail, last task and factual replay reads.
+- All ten isolated Chromium flows pass. The new flow drives committed backend states through
+  the existing WebSocket, checks unchanged desks and real painted animation, annex selection,
+  pause/resume, live inspector/portrait state, stable reduced-motion frames, stale-data
+  freeze/recovery and 390px no overflow.
+- Ruff check/format (609 files), mypy (197 application files), architecture inventory/hash,
+  secret scan (947 files; all 46 baseline findings reviewed) and git diff check pass.
+
+Evidence: data/pixel-desks-backup/{frontend-final,backend-final,e2e-final,build-final}.log.
+Actual browser captures there: seated-agents-desktop.png, seated-agents-mobile.png and
+seated-agent-inspector.png. Captures use a disposable TEST backend with eight seeded roles plus
+two clearly named Test colleagues to verify annex desks; they are not production employees.
+The state probe is authenticated, worker-disabled and scoped to that temporary database,
+defined only by scripts/e2e_server.py; production exposes no such endpoint. External sockets
+are blocked, vendors simulated and no paid GPU/publishing job runs.
+
+The Owner asked how many employees exist: a read-only query of the actual configured production
+database confirms eight ACTIVE employees, all IDLE at the time checked: Sarah, Dr. Aris, Elena,
+Marcus, Lyra, Kael, Vera and Nadia. No staff or work state was changed in that database.
+Current operator guide: SIMPLE_STUDIO_GUIDE.md; asset provenance: PIXEL_STUDIO_ASSETS.md.
+
+## SIMPLE_PIXEL_STUDIO — implemented and locally verified, 2026-10-08
+
+The Owner's latest scope is complete in the existing application: original side-view pixel
+environment/characters, accessible staff selection/portraits and existing inspector/chat; other
+production menus preserved. Treasury/virtual funding/mint/FX/ledger public routes, its screen
+and financing/procurement module claims are retired. Actual USD budgets/prices/provider costs,
+QA, provenance, permissions, STOP, durable work/scheduling and optional RunPod remain.
+
+Autonomie presents current mode/environment/STOP/next run/timezone and links to existing
+versioned policy, schedule and connection controls. Costs/prices stay together; detailed
+preflight is collapsed. Menus/settings retain existing authorization, concurrency and idempotency
+rules. Accountant seed contract version 6 watches real daily USD remaining after reservations;
+existing Owner-customized contracts are not overwritten. No default permissions were raised.
+
+The active page loads no legacy HQ plates, weather or GPU stream. One illustrated background
+and a small Canvas engine replace the old scene/entry pipeline (main.js removes 907 lines and
+adds 91). Scenery is labelled illustrated; movement requires actual working staff, fresh
+connection and motion preference. Existing Blender/Unreal sources and historical data remain
+recoverable. Original asset/reference record: PIXEL_STUDIO_ASSETS.md.
+
+Verification on the final implementation:
+- 804 frontend unit/contract tests pass, no skipped tests; TypeScript and Vite build pass.
+- Nine isolated Chromium flows pass, including keyboard/pointer staff selection, mobile 390px,
+  reduced motion/no horizontal overflow, autonomy shortcuts, pricing/budgets, Owner approvals,
+  409 stale-version and 422 invalid-input handling, publishing policy and decision windows.
+- 364 distinct scoped backend tests verified: first run 362 pass; two obsolete menu-name
+  assertions corrected; the full 13-test budget-gate module then passes. No code behavior was
+  weakened to repair those tests. Includes retired finance API non-mutation/Owner authentication,
+  USD budgets, legacy accounting compatibility, scheduler/worker, identity, modes, policy,
+  RunPod routing/recovery and factual replay. This is scoped regression, not the entire suite.
+- Ruff check/format (608 files), mypy (197 application files), architecture inventory/hashes
+  and secret scan (943 files, all 46 baseline findings reviewed) pass; final git diff check passes.
+
+Evidence: data/simplification-backup/frontend-final.log, backend-final.log,
+budget-gates-final.log, e2e-final.log and build-final.log. Browser runs use disposable backend
+data, simulated vendors, disabled worker and no non-loopback sockets. Screenshots there:
+pixel-studio-desktop.png, pixel-studio-mobile.png, autonomy-desktop.png (isolated test studio).
+Previous integration assertion bodies and pre-edit dirty sources are archived there.
+
+Branch: codex/simple-pixel-studio. No commit/push/deployment, schema migration, real GPU job,
+publishing or production-worker start in this task. No historical financial/media data deleted.
+Deliberate precedence overrides reviewed/indexed for six visual/economy specs; integrity
+checker and original hashes/count remain unchanged. Decision: ADR-SIMPLE-PIXEL-STUDIO.
+
+Start with SIMPLE_STUDIO_GUIDE.md and start.cmd. RunPod credentials/endpoint and authenticated
+external validation remain pending as explicitly deferred by the Owner; read RUNPOD_HANDOFF.md
+and ../RUNPOD_INTEGRATION.md. Do not restore old local ComfyUI or enable paid work from AUTORUN.
+
+## RUNPOD_CLOUD_GENERATION — local implementation complete; real connection pending
+
+Owner requests an additional RunPod image/video provider, using existing media, durable
+workflow, QA, storage and spending gates. Authentication and live endpoint setup are explicitly
+deferred by the Owner; implement and verify using mocks, with all paid infrastructure disabled.
+Branch: feat/runpod-cloud-generation. Preserve all pre-existing dirty changes and other claims.
+Implemented: providers/runpod, existing media factory/routing/QA/recovery, discovery/catalog,
+pricing/estimated accounting, configuration, migration 0055, scoped tests and integration guide.
+Offline image → QA rejection/regeneration → five-second video → restart recovery passed;
+synthetic files persist locally. 394 scoped backend tests and 799 UI tests passed, along with
+lint/format/types/docs/secrets and frontend build. Evidence: [RUNPOD_HANDOFF.md](RUNPOD_HANDOFF.md).
+Live studio.db migration was backed up and applied; all 77 existing tables remained identical,
+no foreign-key errors and no cloud jobs. RunPod stays disabled, including all infra mutations.
+
+Separate cleanup complete: E:/Studio ComfyUI software/models/caches/launchers and stale software
+backups removed (~172.7 GB inventoried). Films, images, benchmark results and historical reports
+remain; Nepal film checksum unchanged. Removed the obsolete Agency Comfy connection and detached
+image/video selections, preserving voice. Existing adapter source is retained for compatibility.
+Read docs/RUNPOD_INTEGRATION.md and this handoff before continuing. Credentials/endpoint and
+authenticated health/models, followed by Owner-approved real GPU tests, remain unverified.
+No paid cloud job, GPU start, publishing or new model installation occurred.
+
+
+## Historical claim — LOCAL_MEDIA_ELEVENLABS (2026-10-05, superseded 2026-10-07)
+
+The Owner's latest instruction uninstalled ComfyUI/models and detached local image/video
+selection. The earlier installation/server claims below are historical; do not reinstall or
+resume local paid voice/video acceptance as a side effect of the RunPod task.
+
+User request: local images and video by default, ElevenLabs voice retained, Runway optional.
+Scope: ComfyUI provider and discovery; existing media factory, shooting-sheet routing and UI; tests and operator documentation. Preserve existing dirty work and paid voice/Owner policy.
+Plan: (1) baseline and contracts; (2) local adapter and verified model inventory; (3) route existing film steps without Runway balance for local media; (4) settings/defaults; (5) real local generation and regression checks; (6) record evidence and handoff. No paid cloud fallback.
+Status: baseline 86 tests passed; same 86 pass after first changes; 11 local adapter contract tests pass. Local image/video adapters, catalog and sheet billing are implemented but full end-to-end run is still pending. ComfyUI actual inventory: SDXL + FAST/QUALITY/HERO available; 12.9 GiB free RAM observed. Agency started without graphics via scripts/start.py (launcher 5704, server 29004).
+Expanded user request: run a completely NEW idea/scenario through AI Agency to a complete film, then upload to YouTube. Default upload PRIVATE for review. Do not reuse the Nepal film. Evidence and runtime journal: data/local-media-acceptance/. Remaining: routing regression tests, real settings selection, short-shot writer constraints, factual/creative production through app APIs, real generations+ElevenLabs+assembly+QC, authenticated YouTube upload.
+
+## Graphics launch is opt-in — 2026-10-04 (GRAPHICS_OPT_IN, completed)
+
+The Owner's latest request supersedes START_WITH_GRAPHICS's automatic launch: ordinary
+`start.py` and `start.cmd` start the studio without Unreal or wilbur. Only `--graphics`
+creates the existing supervisor; `--no-graphics` remains compatible. No supervisor or
+graphics machine probe is created on the default path, so it cannot adopt or restart a stream.
+The optional lifecycle, game/memory gates and graceful server shutdown stay in place.
+
+Files: `scripts/start.py`, `scripts/live_graphics.py` (description/comment only),
+`tests/test_live_graphics.py`, `scripts/install_studio_service.ps1` (comment only), README,
+operator guide and project tracking. Baseline: 56 launcher/graphics tests passed. Regression
+cases failed before the change; final launcher/graphics/rebuild suite: 85 passed on Windows,
+using fake graphics processes. Read-only Windows inventory found no live stream to stop.
+Lint, formatting, launcher help and documentation integrity checks passed.
+No studio restart, database/provider call, art modification or graphics launch performed.
+Next start uses the new default; an already-running older launcher would need restarting.
 
 ## Active claim — SHEET_BLOCKER_REPAIR (Codex, 2026-10-03, priority)
 
@@ -78,6 +651,126 @@ window (2026-10-03)» below), except the CI remote and the always-on host.
 5. Make the first capped paid film under EVERY_PAID_STEP: it is the real test of the staircase,
    the clip QC thresholds, the captions, the grade and the mix. Loosen the rule to MODE only after.
 6. Decide: a git remote or runner for CI; `narration_purchase`; LOCAL_MOVE; an always-on host.
+
+## «Am făcut-o» verified as an adversary: a confirmed DONE stays closed (2026-10-04, DONE_REOPEN_GUARD)
+
+Claim: DONE_REOPEN_GUARD (Claude, adversarial review of DONE_READS_CONDITION, 2026-10-04) —
+`backend/app/decisions/services.py`, `frontend/src/owner_decisions.js`,
+`frontend/src/owner_decisions.css`, appended tests in `tests/test_owner_decision_done_condition.py`
+and `frontend/tests/owner_decisions.test.js`. Released with this entry.
+
+Found: (1) `reopen_unconfirmed_done` re-opened ANY guided card closed by his DONE whose condition
+reads false at a later start, including a DONE the studio had confirmed after the fix: a
+low-balance card he closed after topping up would come back «l-ai marcat făcut, dar studioul nu
+vede pasul făcut … Până la 4 octombrie» once the balance was spent again, which is untrue.
+(2) An old DONE-closed card was re-opened over a newer card for the same question that he had
+refused. (3) In the window, a DONE the studio could not confirm answered «Cardul așteaptă
+acțiunea ta: …» and opened Settings, so the line saying what is missing was hidden behind it;
+a re-opened card did not say why it came back.
+
+Changed: a DONE that closes a card now records `done_reading` (MET or ONLY_OWNER); only a DONE
+without it (taken before the fix) can be re-opened, and not when a newer card carries the same
+key. In the window a DONE that stays open says the studio's «Lipsește: …» line and keeps him on
+the card; a re-opened card shows its `reopened_reason_ro`; the history says «Ai marcat-o făcută,
+iar studioul a văzut pasul făcut» or «…; doar tu o poți confirma».
+
+Verified on a fresh copy of his database (scratchpad\adv_decisions, -wal/-shm; never opened in
+place): exactly `201da5b0`, `1548ae7e`, `90b099aa` re-open, a second run none. Attacks that held
+without a change: DONE on `never`/no condition closes; a condition that errors keeps the card
+open; a condition met later closes it on the next reading; an agent's DONE is refused (403) and
+changes nothing; a re-opened card he refuses stays refused across starts.
+
+Tests: 5 new backend tests (2 seen failing first), 2 new frontend tests (both seen failing
+first); decisions tests and neighbours 70 + 27 passed; `npm test` 797 passed; `npm run check`,
+ruff, ruff format --check, mypy (235 files) and check_docs clean. Fakes only: no provider, no
+credit, no run; his studio on :8000 untouched (the page change ships with his next start's
+rebuild).
+
+## «Am făcut-o» closes a card only when the studio sees it done (2026-10-04, DONE_READS_CONDITION)
+
+Claim: DONE_READS_CONDITION (Claude, 2026-10-04) — `backend/app/decisions/services.py`,
+`backend/app/decisions/seed.py`, `tests/test_owner_decision_done_condition.py` (new) and one
+assertion in `tests/test_owner_decisions.py`. Released with this entry.
+
+Found: on 2026-10-03 at 21:02 his DONE closed three guided cards whose `clears_when` read false:
+commercial use on Runway (`1548ae7e`, connection `9f040391`, config only `credit_usd`) and on
+ElevenLabs (`201da5b0`, connection `c5fbe3e3`, config empty), and the sale terms (`90b099aa`,
+no LICENSE or EULA at the root). `decide_owner_decision` set ACCEPTED on DONE without reading the
+condition, and the seed never raises a key twice, so the page said «Ai marcat-o făcută» while the
+licence gate still refused, for good.
+
+Changed: DONE reads the card's condition (`condition_reading`: MET, UNMET, UNREADABLE,
+ONLY_OWNER). MET or ONLY_OWNER (`never`, or no condition: Google's consent screen) closes it as
+before. UNMET or UNREADABLE (fail closed) keeps it WAITING_FOR_OWNER_ACTION, records his press
+(`owner.decision_decided` with `still_missing_ro`) and puts what is missing in `apply_error_ro`,
+which his window already shows; for commercial use «scrie «da» la «folosire comercială» și
+termenii planului» naming the connection, for the sale terms the LICENSE/EULA files looked for.
+A card later closed by its condition drops that note. At start-up the seed first runs
+`reopen_unconfirmed_done`: a guided card closed by his DONE whose condition does not read true
+goes back to WAITING on its own row, once (`reopened_at` stays on it), with one
+`owner.decision_reopened` event, and never while another open card holds its key. His refusals
+and «keep it as it is» accepts are untouched.
+
+Verified on a copy of his database (copied with -wal/-shm into the scratchpad at 08:59, already at
+0054; never opened in place): exactly the three cards above re-open, with the Romanian lines;
+Google's (`a08517e6`, `never`) keeps his DONE; a second run re-opens nothing; open cards 4, one
+per key. His running studio is unchanged: the re-open happens at his next start (the seed runs
+at start-up), and his DONE now reads the condition only after that restart too.
+
+Tests: 9 new (fakes only; no provider, no credit, no run) seen failing first (7 of 9; the two
+`never`/no-condition cases already passed), then passing; `test_owner_decisions.py`,
+`test_owner_decision_sources.py`, `test_docs_owner_decisions.py` and the new file: 65 passed.
+ruff check, ruff format --check and mypy (234 files) clean.
+
+## A lowered mode stops a paid step before its next request (2026-10-04, MODE_REDUCTION_STOPS_PURCHASE)
+
+Claim: MODE_REDUCTION_STOPS_PURCHASE (Claude, 2026-10-04) — `media/mode_guard.py` (new),
+`media/stills_stage.py`, `media/assembler.py`, `media/shooting_sheet.py`,
+`media/production_policy.py`, `media/qc.py`, `runbook/stages.py`, `workflows/watchdog.py`,
+`workflows/services.py` (`scheduler_tick` only); tests `test_mode_lowered_mid_step.py`,
+`test_studio_defect_refusal.py`, `test_busy_snapshot_writes.py` (new). Released with this entry.
+
+Found (copy of his books, read-only): the day's LHC stills step (4d0da5d9) started 05:02:20 UTC
+under AUTONOMOUS_CEO + MODE; he lowered the mode to MANUAL at 05:08:27 (event 7525, REDUCTION);
+the step read only the stop, so scenes 4-9 were still submitted 05:09:04-05:21:18 (6 x 18 = 108
+credits of the step's 162, balance 262 -> 100). Spec 51 says: «Lowering autonomy. Immediate and
+safe: future work uses lower mode; active workflow external writes respect current policy at
+execution time.» The 12 pictures are kept and booked (SETTLED); each of scenes 4-9 has one
+gate-approved still and one alternate on the sheet.
+
+Changed:
+- Every paid loop bought unasked (stills, test shot, motion, clip-QC retry, a redo's re-rolls)
+  asks `may_act(..., ask_owner=False)` before each vendor request (`PurchaseGuard`). It goes on
+  on ALLOWED, on NEEDS_APPROVAL for a step that spent his yes for this plan, and, for his own
+  press, through `OWNER_PRESS_PASSES`; otherwise it stops there, books what it bought and records
+  `media.paid_step_stopped_by_mode` once («Modul de autonomie a fost coborât la manual la 08:08,
+  în timpul pasului: ce s-a cumpărat până atunci rămâne; restul nu s-a cumpărat.»). The staircase
+  passes `unasked=True`; the film then WAITs with refusal BLOCKED_MODE, which is now his (never
+  retired, the walk stops, `OWNER_DECIDES`/`ACCOUNT_WIDE`). The day's QC repairs pass it too.
+- Unasked, the mode is asked before the balance (`unasked_refusal` in `_run_sheet_step` and in
+  each stage): under MANUAL no balance read and no «alimentează contul» card. A question still
+  waits for the balance. His own press keeps the balance first.
+- A 400 naming our own request (keyframe `auto_*` ratio, «Data URI is too large») is
+  STUDIO_DEFECT: no hold, the model stays, the step stops. The watchdog releases such old CONTRACT
+  holds once (`media.studio_defect_hold_released`). Dry run on a scratch copy: 4 holds released
+  (Nepal stills 2/3 of 10-03 07:50-07:57, already approved since, and Nepal scene 1's test shot,
+  seq 7330); scene 1 is planned on wan3 again (HERO, 100 credits); a second pass releases nothing.
+- «Baza de date era ocupată»: not a storm a retry cures (each run already retried 20/40/80 s and
+  his own QC press failed alone at 05:39 on 10-03). `evaluate_media_qc` read, measured for
+  seconds, then wrote on a stale snapshot; it now measures under a read session and writes in a
+  short transaction that takes the write lock first. `scheduler_tick` (the start-up
+  `worker_pass_failed`) takes the lock first too.
+
+Not done: nothing escalates a STUDIO_DEFECT that is not yet fixed (it is retried, uncharged, next
+run). His running studio has none of this until his next restart (no auto-reload); the release
+happens at the first watchdog pass after it. Nothing was bought, run or sent to a vendor.
+
+Tests: 20 new (fakes only; no provider, no credit, no run), each seen failing first (scene 4
+bought after the mode was lowered; «database is locked» on both busy tests), then passing.
+Targeted: 363 passed (stills, film costing, sheet, redo, model lock, takes, watchdog, scheduler,
+QC, take words, redo bounds, policy, modes, paid paths, sheet assemble/repair, motion), then 205
+passed (daily run stages, budget gates, disk, worker, watchdog, docs truth) on the final code.
+ruff check, ruff format --check, mypy (235 files) and check_docs clean.
 
 ## Completed — SHOOTING_SHEET_UI (Codex /root, 2026-10-04; claim released)
 

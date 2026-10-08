@@ -199,7 +199,7 @@ def test_with_no_daily_budget_the_choice_says_nothing_is_bought_unasked(
 
     assert outcome["buys_unasked"] is False
     assert "niciun buget zilnic activ" in outcome["message_ro"]
-    assert "Trezorerie → Buget și cheltuieli" in outcome["message_ro"]
+    assert "Autonomie → Buget și cheltuieli" in outcome["message_ro"]
 
 
 def test_a_rejection_queues_nothing_and_says_so(client, engine, headers, tmp_path):

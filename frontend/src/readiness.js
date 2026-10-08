@@ -187,12 +187,12 @@ export const FIX_PLACES = {
   'settings:social': { label: 'Setări · Conturi și e-mail', door: 'settings', tab: 'social' },
   research: { label: 'Cercetare · Surse și afirmații', door: 'research-modal', section: 'rs-sources' },
   publishing: { label: 'Distribuție · Sloturi de canal', door: 'publishing-modal', section: 'channels-list' },
-  treasury: { label: 'Trezorerie · Buget și cheltuieli', door: 'treasury-modal', section: 'tr-budget' },
+  autonomy: { label: 'Autonomie · Buget și cheltuieli', door: 'autonomy-modal', section: 'autonomy-budget' },
   characters: { label: 'Media · Character Bible', door: 'media-modal', tab: 'characters', section: 'media-characters-section' },
   // W34: the two decisions that were «only through the API». W36: named as the backend names them
   // (preflight PLACES, «→»), so an older backend's key reads as the others do
   'settings:channels': { label: 'Setări → Canale', door: 'settings', tab: 'channels' },
-  prices: { label: 'Trezorerie → Prețurile modelelor', door: 'treasury-modal', section: 'tr-prices' },
+  prices: { label: 'Autonomie → Prețurile modelelor', door: 'autonomy-modal', section: 'autonomy-prices' },
 };
 
 /**
@@ -207,7 +207,7 @@ export const CODE_FIX = {
 };
 
 /** The sections of index.html a key can bring into view (W34: a backend's other name stands in for none). */
-export const PAGE_SECTIONS = ['rs-sources', 'tr-budget', 'tr-prices', 'media-characters-section', 'channels-list'];
+export const PAGE_SECTIONS = ['rs-sources', 'autonomy-budget', 'autonomy-prices', 'media-characters-section', 'channels-list'];
 
 /**
  * A line's code: the backend's own (`<name>.<condition>`, W32), or, from a backend that does not
@@ -246,8 +246,8 @@ export const CHECK_FIX = {
   youtube_upload_access: 'settings:social',
   youtube_statistics_access: 'settings:social',
   youtube_channel_binding: 'publishing',
-  spending_budget: 'treasury',
-  daily_budget_films: 'treasury',
+  spending_budget: 'autonomy',
+  daily_budget_films: 'autonomy',
   character_references: 'characters',
 };
 
@@ -263,7 +263,7 @@ export const BACKEND_DOORS = {
   publishing: 'publishing-modal',
   workforce: 'workforce-modal',
   story: 'story-modal',
-  treasury: 'treasury-modal',
+  autonomy: 'autonomy-modal',
   autonomy_switch: 'autonomy_switch',
 };
 

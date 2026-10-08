@@ -900,3 +900,54 @@ def test_reviews_are_rationed_by_the_hour(engine, staffed):
     result = correspondence_round(engine, registry)
     assert len(result["answered"]) == 1 and "deferred" in result["review"]
     assert [c["system"][:15] for c in model.calls] == ["You are Elena ("]
+
+
+def test_owner_reply_survives_another_writer_committing_after_the_parent_is_read(
+    client, headers, engine, staffed
+):
+    from threading import Event, Thread
+
+    from app.agents.director import letter_to_owner
+    from sqlalchemy import event
+
+    letter_id = letter_to_owner(engine, "Concurrent reply scenario", "Please answer this letter.")
+    writer_finished = Event()
+    writer_errors = []
+    threads = []
+
+    def competing_write():
+        try:
+            with engine.begin() as connection:
+                connection.exec_driver_sql(
+                    "UPDATE owner_policy SET version = version + 1 WHERE id = 1"
+                )
+        except Exception as exc:
+            writer_errors.append(exc)
+        finally:
+            writer_finished.set()
+
+    def after_parent_read(connection, cursor, statement, parameters, context, executemany):
+        if "FROM agent_message" not in statement or letter_id not in parameters or threads:
+            return
+        thread = Thread(target=competing_write)
+        threads.append(thread)
+        thread.start()
+        # Without a write lock the competing commit invalidates the reply's read snapshot.
+        # With one it waits until the reply commits, so this wait is deliberately bounded.
+        writer_finished.wait(0.3)
+
+    request_engine = client.app.app.state.engine
+    event.listen(request_engine, "after_cursor_execute", after_parent_read)
+    try:
+        reply = client.post(
+            f"/api/v1/agents/messages/{letter_id}/reply",
+            json={"text": "The repair is complete; please verify it."},
+            headers=headers,
+        )
+    finally:
+        event.remove(request_engine, "after_cursor_execute", after_parent_read)
+        for thread in threads:
+            thread.join(timeout=5)
+    assert threads and writer_finished.is_set() and not writer_errors
+    assert reply.status_code == 200
+    assert reply.json()["in_reply_to"] == letter_id

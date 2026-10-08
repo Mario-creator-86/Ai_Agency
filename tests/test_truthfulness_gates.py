@@ -415,8 +415,9 @@ def test_a_model_becomes_available_only_after_the_provider_answers(seeded):
     assert provider is not None and provider.status == "HEALTHY"
 
     # The models it did not name stay unavailable.
-    for name in ("kimi-k2.6:cloud", "qwen3-coder:480b-cloud"):
-        assert by_name[name].is_available is False, f"{name} was never named by the provider"
+    for name, model in by_name.items():
+        if name != "glm-5.2:cloud":
+            assert model.is_available is False, f"{name} was never named by the provider"
 
 
 def test_an_unreachable_provider_is_never_recorded_as_healthy(seeded):

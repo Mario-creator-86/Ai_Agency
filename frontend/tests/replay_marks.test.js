@@ -74,8 +74,9 @@ test('a replayed caption keeps its kind, and under reduced motion (no tags, no c
 });
 
 test('the page lays the plaques off every mark the renderer hands it over the replay', () => {
-  assert.match(MAIN, /for \(const c of officeEngine\.renderer\.captionBoxes \|\| \[\]\)/);
-  assert.doesNotMatch(MAIN, /captionBoxes \|\| \[\]\)\.filter\(/, 'no kind is left out');
+  assert.doesNotMatch(MAIN, /layoutPlaques|streamPlaques/, 'pixel replay uses no stream overlay');
+  assert.match(MAIN, /new DayReplayPlayer/);
+  assert.match(MAIN, /enterReplayLook\(\)/);
 });
 
 test('a tag never lies over a replayed caption: it steps sideways, so «RELUARE · hh:mm:ss» stays legible', async () => {
