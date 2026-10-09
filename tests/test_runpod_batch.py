@@ -782,6 +782,28 @@ def test_an_uncertain_round_stops_the_step(engine, tmp_path, fake_session):
     assert [o.error for o in seen] == ["SUBMISSION_UNCERTAIN"]
 
 
+def test_a_failed_run_logs_runpods_answer(engine, tmp_path, fake_session, caplog):
+    # 2026-10-09: the first live /run failed in 0.1 s and the studio kept no reason; the take
+    # only said «refused, reason unknown». RunPod's status and sanitised words are logged now.
+    import logging
+
+    caplog.set_level(logging.INFO, logger="studio.runpod")
+    cloud = Cloud()
+    cloud.run_answers = [
+        MediaProviderError(
+            "api.runpod.ai refused the request (HTTP 503)",
+            http_status=503,
+            unanswered=True,
+            detail="endpoint is updating",
+        )
+    ]
+    made = adapter(engine, tmp_path, cloud)
+    rounds(engine, made, [request("1", 0)])
+    (logged,) = [r for r in caplog.records if r.getMessage() == "runpod_run_failed"]
+    assert logged.http_status == 503 and logged.unanswered is True
+    assert logged.detail == "endpoint is updating" and logged.items == 1
+
+
 def test_a_refused_first_round_spends_nothing(engine, tmp_path, fake_session):
     made = adapter(engine, tmp_path, Cloud(), s3_bucket=None)
     with pytest.raises(batch_module.BatchRefused):

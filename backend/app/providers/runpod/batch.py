@@ -1217,6 +1217,22 @@ async def _submit_remote(
             proven = exc.unsent or (
                 exc.http_status in (400, 401, 403, 404, 413, 422) and not exc.unanswered
             )
+            # RunPod's own answer, already sanitised by media_http: without it a failed /run
+            # read only «refused, reason unknown» (2026-10-09, the first live stills round).
+            logger.warning(
+                "runpod_run_failed",
+                extra={
+                    "endpoint_id": endpoint,
+                    "items": len(pairs),
+                    "http_status": exc.http_status,
+                    "unsent": exc.unsent,
+                    "unanswered": exc.unanswered,
+                    "vendor_code": exc.code,
+                    "detail": (exc.detail or "")[:300],
+                    "error_class": type(exc).__name__,
+                    "cause_class": type(exc.__cause__).__name__ if exc.__cause__ else None,
+                },
+            )
             for _item, row in pairs:
                 if proven:
                     store.update(
