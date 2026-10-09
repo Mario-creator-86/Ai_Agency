@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from typing import Any
 from urllib.parse import urlsplit
@@ -460,24 +461,42 @@ def test_a_stills_round_runpod_never_queued_leaves_the_scene_free(engine, tmp_pa
     _identifier, live, made = studio
     storyboard_id = a_film(engine, tmp_path)
     result = approved_stills(engine, made, storyboard_id, tmp_path)
-    assert len(live.runs()) == 1
+    # One /run: every scene's pair in round 1 (Qwen-Image-2512 takes no Figure 1 to wait for).
+    assert len(live.runs()) == 1 and len(live.runs()[0]["input"]["items"]) == 8
     by_scene = {entry["scene_index"]: entry for entry in result["scenes"]}
-    assert by_scene[1]["status"] == "NOT_BOUGHT"
-    assert "nu a pus cererea la coadă" in by_scene[1]["reason"]
+    for scene in (1, 2, 3, 4):
+        assert by_scene[scene]["status"] == "NOT_BOUGHT"
+        assert "nu a pus cererea la coadă" in by_scene[scene]["reason"]
     assert result["spent_credits_quoted"] == 0
     assert result["gpu"]["unsent_proof"]["proven"] is True
     takes = still_takes(engine, storyboard_id)
-    assert len(takes) == 2
+    assert len(takes) == 8
     assert all(t.status == "REFUSED" and t.failure_code == "RUNPOD.NOT_QUEUED" for t in takes)
     assert all(t.credits_quoted is None for t in takes)
     # Not held for the Owner: no hold event, nothing in the scene's memory, buyable again.
     assert events(engine, assembler.STILL_HOLD_EVENT) == []
     memory = assembler.scene_memory(
-        engine, storyboard_id, "still", {1: scene_identity(engine, storyboard_id, 1)}
+        engine,
+        storyboard_id,
+        "still",
+        {n: scene_identity(engine, storyboard_id, n) for n in (1, 2, 3, 4)},
     )
-    assert memory[1].hold_ro is None and memory[1].attempts == 0
+    assert all(memory[n].hold_ro is None and memory[n].attempts == 0 for n in (1, 2, 3, 4))
     plan = stills_plan(engine, storyboard_id, model_id=made.model, table=stills_table())
-    assert 1 in plan["to_buy"]
+    assert plan["to_buy"] == [1, 2, 3, 4]
+
+
+@contextmanager
+def scene_one_alone():
+    """The stills step as it ran on 2026-10-09: scene 1's pair alone in round 1, the later
+    scenes waiting for its still as the film's Figure 1. Since then only a scene whose request
+    could carry Figure 1 waits (`stills_stage._StillRounds._carries_figure`); the holds, cards
+    and proofs below are about that day's round of scene 1 alone."""
+    from app.media import stills_stage
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(stills_stage._StillRounds, "_carries_figure", lambda self, scene: True)
+        yield
 
 
 # ------------------------------------------------- the release of a hold left before 2026-10-09
@@ -498,7 +517,8 @@ def legacy_hold(engine, tmp_path, recorded_gpu, **session_values: Any) -> dict[s
     named = stills_stage.runpod_hold_items
     stills_stage.runpod_hold_items = lambda refused: {}  # type: ignore[assignment]
     try:
-        result = approved_stills(engine, made, storyboard_id, tmp_path, correlation)
+        with scene_one_alone():
+            result = approved_stills(engine, made, storyboard_id, tmp_path, correlation)
     finally:
         stills_stage.runpod_hold_items = named  # type: ignore[assignment]
     (hold,) = events(engine, assembler.STILL_HOLD_EVENT)
@@ -729,7 +749,8 @@ def stuck_on_runpod(engine, tmp_path, made, live) -> str:
     from test_stills_stage import a_film
 
     storyboard_id = a_film(engine, tmp_path)
-    result = approved_stills(engine, made, storyboard_id, tmp_path)
+    with scene_one_alone():
+        result = approved_stills(engine, made, storyboard_id, tmp_path)
     assert len(live.runs()) == 1
     assert result["gpu"]["unsent_proof"]["proven"] is False
     assert {e["scene_index"]: e for e in result["scenes"]}[1]["status"] == "NEEDS_OWNER"

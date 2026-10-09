@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-10-09 — RunPod stills: a fair sharpness check, true GPU seconds, every scene first
+
+- The sharpness check reads the sharp part of a picture: a sharp subject on a dark, soft
+  background passes; blurred, downscaled or letterboxed frames still fail.
+- RunPod time is booked as billed: run time, one worker start and the 1 s tail, never the
+  model-download wait.
+- The stills step sends every scene in its first round; re-rolls come after.
+- Statuses on the shooting sheet read in Romanian.
+
 ## 2026-10-09 — a refused RunPod /run no longer strands a film
 
 - A /run RunPod refused without a job is proven never queued (queue before the purge, the

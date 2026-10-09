@@ -778,6 +778,61 @@ def test_a_round_is_cut_to_the_cap_in_scene_order_and_an_empty_one_sends_nothing
     assert meter.committed == 0
 
 
+def test_a_cut_round_keeps_every_scenes_first_candidates_before_any_reroll():
+    # 2026-10-09: scene 1's re-rolls took every round and scenes 2-5 never had a first still.
+    # A round cut at the cap drops re-rolls (a later attempt) before any scene's first pair.
+    from app.media.gpu_batch import fit_round
+
+    mixed = [request("1", 0, attempt=2), request("1", 1, attempt=2)]
+    mixed += [request("3", 0), request("3", 1), request("2", 0, attempt=3)]
+    kept = fit_round(mixed, price, 26.0)  # room for two items and the round's GPU start
+    assert [(r.scene_id, r.attempt_number) for r in kept] == [("3", 1), ("3", 1)]
+    every = fit_round(mixed, price, 1000.0)
+    assert [(r.scene_id, r.candidate_index, r.attempt_number) for r in every] == [
+        ("3", 0, 1),
+        ("3", 1, 1),
+        ("1", 0, 2),
+        ("1", 1, 2),
+        ("2", 0, 3),
+    ]
+
+
+def test_a_scene_a_cut_left_out_goes_before_the_rerolls_when_room_comes_back(
+    engine, tmp_path, fake_session
+):
+    cloud = Cloud()
+    # One item per job (a 300 s execution cap): scene 2's /run never leaves the studio.
+    cloud.run_answers = [None, MediaProviderError("no network", unsent=True)]
+    made = adapter(engine, tmp_path, cloud, execution_timeout_cap_seconds=300)
+    made.core.transport = made.core.client.transport = finishing(cloud)
+    asked = []
+
+    def next_round(outcomes):
+        asked.append(sorted(o.item.request.scene_id for o in outcomes))
+        return [request("1", 0, attempt=2)] if len(asked) == 1 else []  # scene 1's re-roll
+
+    summary, meter, _seen = rounds(
+        engine,
+        made,
+        [request(str(n), 0) for n in (1, 2, 3, 4)],
+        next_round=next_round,
+        cap=40.0,
+    )
+    # Round 1 (4 x 10 + 5 = 45) is cut to scenes 1-3 (35); scene 2 was never sent and its 10
+    # credits come back, so 15 are left. Round 2 is scene 4 (left out whole, its first still)
+    # and scene 1's re-roll (25): cut to scene 4 (15), which is bought; the re-roll is not.
+    sent = [
+        (it["scene_id"], job)
+        for job in sorted(cloud.jobs)
+        for it in cloud.jobs[job]["input"]["items"]
+    ]
+    assert [scene for scene, _job in sent] == ["1", "3", "4"]
+    assert sent[-1][1] not in {job for scene, job in sent[:-1]}  # scene 4 in a round of its own
+    assert summary["rounds"] == 2 and asked == [["1", "2", "3"], ["4"]]
+    assert summary["cap_stop"].startswith("STOPPED_AT_CAP")
+    assert meter.committed == 40.0
+
+
 def test_a_stop_mid_round_cancels_and_gives_back_what_was_not_made(engine, tmp_path, fake_session):
     cloud = Cloud()
     made = adapter(engine, tmp_path, cloud)
@@ -891,9 +946,11 @@ def stills_table():
     )
 
 
-def test_stills_on_runpod_are_rounds_scene_one_first_then_the_rest_then_rerolls(
+def test_stills_on_runpod_are_rounds_every_scene_first_then_the_rerolls(
     engine, tmp_path, fake_session
 ):
+    # Qwen-Image-2512 binds no reference picture, so no scene waits for scene 1's still (its
+    # Figure 1 could never be sent): round 1 is every scene's pair, the re-rolls come after.
     from app.media.models import SceneTake
     from app.media.stills_stage import StillsStageRefused, run_stills_stage, stills_plan
     from test_approvals import answer
@@ -934,18 +991,177 @@ def test_stills_on_runpod_are_rounds_scene_one_first_then_the_rest_then_rerolls(
 
     jobs = [cloud.jobs[j]["input"]["items"] for j in sorted(cloud.jobs)]
     scenes = [[int(item["scene_id"]) for item in items] for items in jobs]
-    assert scenes == [[1, 1], [2, 2, 3, 3, 4, 4], [2, 2], [2, 2]]
+    assert scenes == [[1, 1, 2, 2, 3, 3, 4, 4], [2, 2], [2, 2]]
     assert len(fake_session) == 1 and fake_session[0]["closed"]
     by_scene = {entry["scene_index"]: entry for entry in result["scenes"]}
     assert all(by_scene[n]["status"] == "APPROVED" for n in (1, 3, 4))
     assert by_scene[2]["status"] == "NEEDS_OWNER" and by_scene[2]["rerolls"] == 2
-    assert result["gpu"]["rounds"] == 4
-    # 12 images x 7 credits + 4 GPU starts x 14 credits.
-    assert result["spent_credits_quoted"] == 12 * 7 + 4 * 14  # GPU starts in whole credits
+    assert result["gpu"]["rounds"] == 3
+    # 12 images x 7 credits + 3 GPU starts x 14 credits.
+    assert result["spent_credits_quoted"] == 12 * 7 + 3 * 14  # GPU starts in whole credits
     with Session(engine) as s:
         rows = s.scalars(select(SceneTake).where(SceneTake.storyboard_id == storyboard_id)).all()
         assert len(rows) == 12 and all(r.remote_task_id.startswith("job-") for r in rows)
         assert sorted({r.status for r in rows if r.scene_number == 2}) == ["REJECTED"]
+
+
+#: A fifth filmed scene for the five-scene film (the 2026-10-09 film had five).
+FIFTH_SUBJECT = (
+    "A wide view of a river delta under low grey cloud, small fishing boats far away, 24 mm "
+    "lens, seen from high above."
+)
+
+
+def five_scene_film(engine, tmp_path):
+    """Five LIVE scenes with compiled, clean prompts (test_stills_stage's look and subjects)."""
+    from app.media.models import Storyboard, StoryboardScene
+    from test_scene_takes import nepal_like
+    from test_stills_stage import BIBLE, LOOK, SUBJECTS, TAIL
+
+    subjects = {**SUBJECTS, 5: FIFTH_SUBJECT}
+    words = {n: f"{LOOK} {subjects[n]} {TAIL}" for n in range(1, 6)}
+    purposes = ("HOOK", "SETUP", "EVIDENCE", "EVIDENCE", "REVEAL")
+    storyboard_id = nepal_like(
+        engine,
+        tmp_path,
+        kinds=[("LIVE", purposes[n - 1], words[n]) for n in range(1, 6)],
+    )
+    with Session(engine) as s, s.begin():
+        s.get(Storyboard, storyboard_id).visual_bible_json = dict(BIBLE)
+        for row in s.scalars(
+            select(StoryboardScene).where(StoryboardScene.storyboard_id == storyboard_id)
+        ):
+            row.prompt_json = {
+                "scene_kind": "LIVE",
+                "source": "model",
+                "still_prompt": words[row.scene_index],
+                "look_block": LOOK,
+                "camera_move": "slow push-in",
+            }
+    return storyboard_id
+
+
+@pytest.fixture
+def proving_session(monkeypatch):
+    """The GPU session faked; its close records what proves RunPod queued nothing (the queue
+    read empty before the purge, the purge removed 0, the endpoint verified off), as
+    `gpu_session.close_session` does, so an unanswered /run is proven unsent."""
+    from contextlib import contextmanager
+
+    from app.media import gpu_batch
+
+    opened = []
+
+    @contextmanager
+    def fake(engine, adapter, *, purpose, permit):
+        session = Session_()
+        opened.append({"purpose": purpose, "session": session, "closed": False})
+        try:
+            yield session
+        finally:
+            session.off_evidence = {
+                "before_purge": {"in_queue": 0, "in_progress": 0, "running": 0},
+                "purge_removed": 0,
+                "off": {"off": True},
+                "other_sessions": [],
+            }
+            opened[-1]["closed"] = True
+
+    monkeypatch.setattr(gpu_batch, "gpu_session", fake)
+    monkeypatch.setattr(gpu_batch, "gpu_precheck", lambda *args, **kwargs: None)
+    return opened
+
+
+def test_a_film_whose_scene_one_is_resent_buys_every_scene_first_and_its_rerolls_after(
+    engine, tmp_path, proving_session
+):
+    """2026-10-09, «The Particle That Shouldn't Exist (But Does)»: scene 1's /run failed with
+    no answer and was proven never queued; the next step sent scene 1's two items again with
+    the same keys, and ONLY them, then re-rolled scene 1 twice; scenes 2-5 were never sent.
+    Now round 1 is scene 1's re-sent pair AND every scene never sent, and scene 1's re-rolls
+    come after, within the same cap."""
+    from app.media.assembler import SceneRedoRefused, redo_plan, redo_scene
+    from app.media.stills_stage import StillsStageRefused, run_stills_stage, stills_plan
+    from test_approvals import answer
+    from test_stills_stage import FACE, NO_FACE, SUBJECTS, SpyJudge, faces_in
+
+    storyboard_id = five_scene_film(engine, tmp_path)
+    # Scene 1 is refused by the gate every time (a face the bible forbids); the rest pass.
+    cloud = PictureCloud(
+        lambda prompt: FACE.read_bytes() if SUBJECTS[1] in prompt else NO_FACE[0].read_bytes()
+    )
+    cloud.run_answers = [MediaProviderError("lost", unanswered=True)]
+    made = adapter(engine, tmp_path, cloud)
+    table = stills_table()
+    common = {
+        "table": table,
+        "storage_root": tmp_path / "media",
+        "judge": SpyJudge(),
+        "face_counter": faces_in(),
+        "measure": ("faces",),
+    }
+
+    # The earlier /run: scene 1 alone («Refă imaginea»), unanswered, proven never queued.
+    def redo():
+        plan = redo_plan(engine, storyboard_id, "still", 1, table=table, stills_model=made.model)
+        return redo_scene(
+            engine,
+            storyboard_id,
+            str(uuid4()),
+            kind="still",
+            scene_index=1,
+            plan_hash=plan["plan_hash"],
+            image_adapter=made,
+            **common,
+        )
+
+    with pytest.raises(SceneRedoRefused) as asked:
+        redo()
+    answer(engine, asked.value.approval_id, "APPROVED", note="Da, refă imaginea.")
+    assert redo()["still"]["status"] == "NOT_BOUGHT" and not cloud.jobs
+    with Session(engine) as s:
+        rows = s.scalars(select(GenerationJob)).all()
+        first_keys = {row.idempotency_key for row in rows}
+        assert len(first_keys) == 2 and {row.scene_id for row in rows} == {"1"}
+        assert all(row.error_code == "UNSENT" for row in rows)
+
+    # The stills step: every scene is bought; scene 1's pair goes again with the same keys.
+    def go():
+        plan = stills_plan(engine, storyboard_id, model_id=made.model, table=table)
+        return run_stills_stage(
+            engine,
+            storyboard_id,
+            str(uuid4()),
+            plan_hash=plan["plan_hash"],
+            image_adapter=made,
+            registry=None,
+            **common,
+        )
+
+    assert stills_plan(engine, storyboard_id, model_id=made.model, table=table)["to_buy"] == [
+        1,
+        2,
+        3,
+        4,
+        5,
+    ]
+    with pytest.raises(StillsStageRefused) as asked:
+        go()
+    answer(engine, asked.value.approval_id, "APPROVED", note="Da, imaginile.")
+    result = go()
+
+    jobs = [cloud.jobs[j]["input"]["items"] for j in sorted(cloud.jobs)]
+    assert [[int(item["scene_id"]) for item in items] for items in jobs] == [
+        [1, 1, 2, 2, 3, 3, 4, 4, 5, 5],
+        [1, 1],
+        [1, 1],
+    ]
+    assert {item["idempotency_key"] for item in jobs[0][:2]} == first_keys
+    by_scene = {entry["scene_index"]: entry for entry in result["scenes"]}
+    assert all(by_scene[n]["status"] == "APPROVED" for n in (2, 3, 4, 5))
+    assert by_scene[1]["status"] == "NEEDS_OWNER" and by_scene[1]["rerolls"] == 2
+    # 14 images x 7 credits + 3 GPU starts x 14 credits, inside the approved cap.
+    assert result["spent_credits_quoted"] == 14 * 7 + 3 * 14 <= result["cap_credits"]
 
 
 # ------------------------------------------------------------------------ the motion step

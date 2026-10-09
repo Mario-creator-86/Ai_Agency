@@ -109,7 +109,37 @@ const TAKE_WORDS = {
   APPROVED: 'Aprobată',
   REJECTED: 'Respinsă',
   REFUSED: 'Refuzată de furnizor',
+  // never collected before the vendor's output expired (assembler's LOST, VENDOR.NOT_COLLECTED)
+  LOST: 'Pierdută: rezultatul nu a mai putut fi ridicat de la furnizor',
 };
+
+/**
+ * A take still at the vendor, by its status (the take's, or its RunPod job's), with the vendor
+ * named: «Trimisă la RunPod: se generează». 2026-10-09: «Alte imagini» showed «SUBMITTED».
+ * @type {Record<string, (vendor: string) => string>}
+ */
+const IN_FLIGHT_WORDS = {
+  STARTING: (v) => `Se trimite la ${v}`,
+  SUBMITTED: (v) => `Trimisă la ${v}: se generează`,
+  QUEUED: (v) => `La coadă la ${v}: așteaptă un GPU`,
+  IN_QUEUE: (v) => `La coadă la ${v}: așteaptă un GPU`,
+  RUNNING: (v) => `Trimisă la ${v}: se generează`,
+  IN_PROGRESS: (v) => `Trimisă la ${v}: se generează`,
+  UPLOADING: (v) => `Gata la ${v}: se aduce în studio`,
+};
+
+/**
+ * A take's status in the Owner's words, never the raw code (which stays in `data-status`).
+ * `vendor` is «RunPod» on a film bought on RunPod's GPU (`gpuBilled`), else «furnizor».
+ * @param {unknown} status @param {string} [vendor]
+ */
+export function takeStatusWords(status, vendor = 'furnizor') {
+  const key = String(status ?? '');
+  const settled = /** @type {Record<string, string>} */ (TAKE_WORDS)[key];
+  if (settled) return settled;
+  const sent = IN_FLIGHT_WORDS[key];
+  return sent ? sent(vendor) : 'Stare necunoscută';
+}
 
 const NUMBER = new Intl.NumberFormat('ro-RO', { useGrouping: true, maximumFractionDigits: 2 });
 const MONEY = new Intl.NumberFormat('ro-RO', { useGrouping: true, minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -811,9 +841,9 @@ function vendorTextHtml(e, take) {
   return text ? `<details class="sheet-vendor-text"><summary>Textul furnizorului</summary><p lang="en">${e(text)}</p></details>` : '';
 }
 
-/** @param {(value: unknown) => string} e @param {any} take */
-function takeWords(e, take) {
-  const status = TAKE_WORDS[/** @type {keyof typeof TAKE_WORDS} */ (take?.status)] || String(take?.status || '');
+/** @param {(value: unknown) => string} e @param {any} take @param {string} [vendor] */
+function takeWords(e, take, vendor = 'furnizor') {
+  const status = takeStatusWords(take?.status, vendor);
   let why = take?.reason_ro || take?.failure_code;
   // a shot the clip QC rejected says why on its own line (clipQcWords), not twice
   if (take?.clip_qc && String(take?.reason_ro || '').startsWith('Controlul clipului')) why = '';
@@ -991,15 +1021,16 @@ function liveSceneHtml(sheet, scene, o) {
     : '<p class="sheet-still-missing">Nicio imagine aprobată încă: scena intră în pasul imaginilor.</p>';
   const pressed = o.pressed || null;
   const closed = Boolean(closedReason(sheet));
+  const vendor = gpuBilled(sheet) ? 'RunPod' : 'furnizor';
   const all = Array.isArray(scene.candidates) ? scene.candidates : [];
   const candidates = all.filter((/** @type {any} */ c) => !freeRefusal(c)).map((/** @type {any} */ c) => `<li class="sheet-candidate">`
     + (c.file_url ? `<img class="sheet-thumb" data-sheet-src="${e(c.file_url)}" alt="Candidat pentru scena ${e(index)}">` : '')
-    + `<p>${takeWords(e, c)}</p>${vendorTextHtml(e, c)}${takeButtons(e, c, 'still', pressed, closed)}</li>`).join('');
+    + `<p>${takeWords(e, c, vendor)}</p>${vendorTextHtml(e, c)}${takeButtons(e, c, 'still', pressed, closed)}</li>`).join('');
   const refused = freeRefusalsHtml(e, all.filter(freeRefusal));
   const allShots = Array.isArray(scene.shots) ? scene.shots : [];
   /** @param {any} s */
   const shotHtml = (s) => `<li class="sheet-shot">`
-    + `<p>${s.kind === 'test_shot' ? 'Cadrul de probă' : 'Clip'} · ${e(s.model_id || '—')} · ${e(s.seconds ?? '?')} s · ${takeWords(e, s)}</p>`
+    + `<p>${s.kind === 'test_shot' ? 'Cadrul de probă' : 'Clip'} · ${e(s.model_id || '—')} · ${e(s.seconds ?? '?')} s · ${takeWords(e, s, vendor)}</p>`
     + vendorTextHtml(e, s)
     + (s.file_url ? `<p class="sheet-clip-qc" data-verdict="${e(s.clip_qc?.verdict || 'NONE')}">${e(clipQcWords(s.clip_qc))}</p>` : '')
     + (s.file_url ? `<button type="button" class="quiet sheet-play" data-sheet-action="play" data-sheet-src="${e(s.file_url)}">Redă clipul</button>` : '')

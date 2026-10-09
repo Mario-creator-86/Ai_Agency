@@ -50,6 +50,7 @@ import {
   stepButtons,
   stepConfirmHtml,
   stepPath,
+  takeStatusWords,
   usdText,
   withdrawnWords,
 } from '../src/shooting_sheet.js';
@@ -1173,4 +1174,59 @@ test('a refusal whose cost was not measured is said as «poate fi taxată, pân�
   assert.doesNotMatch(card, /sheet-refused/, 'not in the 0-credit group');
   assert.ok(card.includes('poate fi taxată, până la 40 credite'));
   assert.ok(!card.includes('măsurat). · '), 'the unmeasured number is not said again as a cost');
+});
+
+// ------------------------------------------- a take still at the vendor, in words (2026-10-09)
+//
+// «The Particle That Shouldn't Exist (But Does)»: while RunPod made scene 1's stills, «Alte imagini»
+// listed its takes as «SUBMITTED», the raw journal status, in a page that speaks Romanian.
+
+/** The visible words of some markup: tags (and the attributes in them) left out. @param {string} html */
+const visible = (html) => html.replace(/<[^>]*>/g, ' ');
+
+test('a take still at the vendor is said in Romanian, never by its raw status', () => {
+  const s = sheet();
+  // the film buys on RunPod's GPU (`gpuBilled`): the words name RunPod
+  s.footer.balance = { applicable: false, billing_mode: 'gpu', credits: null, read: false, problem: null };
+  const three = scene(s, 3);
+  const base = { ...three.candidates[0], file_url: null, failure_code: null, reason_ro: null, refusal: null, credits_measured: null };
+  const statuses = ['SUBMITTED', 'QUEUED', 'IN_QUEUE', 'RUNNING', 'IN_PROGRESS', 'STARTING', 'UPLOADING'];
+  three.candidates = statuses.map((status, n) => ({ ...base, take_id: `in-flight-${n}`, status }));
+  const card = sceneCard(sheetHtml(s, { escape: e }), 3);
+  const others = card.slice(card.indexOf('<details class="sheet-alternatives">'));
+  assert.match(others, /<summary>Alte imagini \(7\)<\/summary>/);
+  assert.match(others, /<span class="sheet-take-status" data-status="SUBMITTED">Trimisă la RunPod: se generează<\/span>/);
+  assert.match(others, /data-status="RUNNING">Trimisă la RunPod: se generează</);
+  assert.match(others, /data-status="QUEUED">La coadă la RunPod: așteaptă un GPU</);
+  for (const status of statuses) {
+    assert.ok(!visible(others).includes(status), `${status} is not shown as it is`);
+    assert.ok(!takeStatusWords(status, 'RunPod').includes(status), status);
+  }
+  // another vendor's film: the same words, without naming RunPod
+  assert.equal(takeStatusWords('SUBMITTED'), 'Trimisă la furnizor: se generează');
+  assert.match(sceneCard(sheetHtml((() => { const t = sheet(); scene(t, 3).candidates = [{ ...base, status: 'SUBMITTED' }]; return t; })(), { escape: e }), 3), /data-status="SUBMITTED">Trimisă la furnizor: se generează</);
+  // the settled ones keep their words; a status the page does not know is never shown raw
+  assert.equal(takeStatusWords('PAID', 'RunPod'), 'Cumpărată, neaprobată încă');
+  assert.equal(takeStatusWords('REFUSED', 'RunPod'), 'Refuzată de furnizor');
+  assert.equal(takeStatusWords('SOMETHING_NEW', 'RunPod'), 'Stare necunoscută');
+  assert.equal(takeStatusWords(undefined), 'Stare necunoscută');
+});
+
+test('every status a take can have has its own words (backend SCENE_TAKE_STATUSES)', () => {
+  // The sheet passes take.status through as it is (shooting_sheet._take_view): a status the page
+  // has no words for reads «Stare necunoscută», which is wrong for one the studio knows (LOST:
+  // never collected before the vendor's output expired, and possibly billed).
+  const models = fs.readFileSync(new URL('../../backend/app/media/models.py', import.meta.url), 'utf8');
+  const tuple = models.match(/SCENE_TAKE_STATUSES[^=]*=\s*\(([^)]*)\)/);
+  assert.ok(tuple, 'SCENE_TAKE_STATUSES is still a tuple in backend/app/media/models.py');
+  const statuses = [...tuple[1].matchAll(/"([A-Z_]+)"/g)].map((m) => m[1]);
+  assert.ok(statuses.includes('LOST') && statuses.length >= 7, statuses.join(','));
+  for (const status of statuses) {
+    for (const vendor of ['RunPod', 'furnizor']) {
+      const words = takeStatusWords(status, vendor);
+      assert.notEqual(words, 'Stare necunoscută', status);
+      assert.ok(!words.includes(status), `${status} is said in words, not as its code`);
+    }
+  }
+  assert.equal(takeStatusWords('LOST', 'RunPod'), 'Pierdută: rezultatul nu a mai putut fi ridicat de la furnizor');
 });

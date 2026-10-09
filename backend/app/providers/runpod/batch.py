@@ -434,6 +434,8 @@ class _Chunk:
     sent_at: float
     finished: bool = False
     status: dict[str, Any] | None = None
+    #: Its /run got no answer (no job id, SUBMISSION_UNCERTAIN): RunPod may have run it anyway.
+    uncertain: bool = False
 
 
 @dataclass
@@ -524,26 +526,53 @@ class BatchRun:
         logger.info("runpod_batch_cancelled", extra={"reason": reason[:200]})
 
     def billed_seconds_estimate(self) -> float | None:
-        """Σ over the round's jobs of (delayTime + executionTime)/1000 + idleTimeout, or None
-        until every job reported its times."""
-        total = 0.0
+        """What RunPod bills for the round: `billed_seconds` of each job it accepted, summed
+        (Σ executionTime + each worker start, at most ``cold_start_seconds``, + its idle tail),
+        or None until every such job reported its times."""
+        jobs = self._billed()
+        if any(seconds is None for _chunk, seconds in jobs):
+            return None
+        return float(sum((seconds for _chunk, seconds in jobs if seconds is not None), Decimal(0)))
+
+    def _billed(self) -> list[tuple[_Chunk, Decimal | None]]:
+        """Each job RunPod accepted in this round, in the order it was sent, with what RunPod
+        bills for it (`billed_seconds`), or None while it has not reported its times.
+
+        A job is read against the accepted job sent just before it (the chunks go back to back
+        to one worker, workers.max=1), and against the run budget (``policy.executionTimeout``)
+        of every job between them whose /run got no answer: such a job may have run on the
+        worker meanwhile, and its run is then inside this job's wait (2026-10-09 review)."""
+        jobs: list[tuple[_Chunk, Decimal | None]] = []
+        previous: dict[str, Any] | None = None
+        unseen: Decimal | None = Decimal(0)
         for chunk in self.chunks:
             if chunk.remote_id is None:
+                if chunk.uncertain and unseen is not None:
+                    budget = _decimal(chunk.policy.get("executionTimeout"))
+                    unseen = None if budget is None else unseen + budget / 1000
                 continue
-            status = chunk.status or {}
-            delay, execution = status.get("delayTime"), status.get("executionTime")
-            if not isinstance(delay, int | float) or not isinstance(execution, int | float):
-                return None
-            total += (float(delay) + float(execution)) / 1000 + self.config.idle_timeout_seconds
-        return total
+            jobs.append(
+                (chunk, billed_seconds(self.config, chunk.status, previous=previous, unseen=unseen))
+            )
+            previous, unseen = chunk.status or {}, Decimal(0)
+        return jobs
+
+    def _book(self) -> None:
+        """Each finished job's billed seconds onto its items (`_book_batch`). A job is booked
+        again once the one before it reports: how much of its wait is a new worker start
+        depends on that job's times (until then it is booked as the round's first)."""
+        for chunk, seconds in self._billed():
+            if chunk.finished and seconds is not None:
+                _book_batch(self.engine, chunk, seconds)
 
     def settle(self) -> None:
         """Read each sent job's final /status once its items are in, for its times.
 
         Items normally arrive through their bucket manifests, so /status is never read while
-        the round runs; without this read the billed seconds (delayTime + executionTime + the
-        idle tail) would stay unknown and the step would book only its estimate. A free GET per
-        job; a job not final yet, or an unreadable answer, leaves the estimate as it is."""
+        the round runs; without this read the billed seconds (`billed_seconds`: the execution,
+        the worker's start and the idle tail) would stay unknown and the step would book only
+        its estimate. A free GET per job; a job not final yet, or an unreadable answer, leaves
+        the estimate as it is."""
         if self.config.mock:
             return
         pending = [
@@ -567,10 +596,9 @@ class BatchRun:
                     continue
                 chunk.status = status
                 chunk.finished = str(status.get("status")) in _FINAL_RUN_STATES
-                if chunk.finished:
-                    _book_batch(self.engine, self.config, chunk)
 
         asyncio.run(read())
+        self._book()
 
     # ------------------------------------------------------------ the proof of nothing queued
 
@@ -725,6 +753,7 @@ class BatchRun:
         client = self._client()
         bucket = self.config.bucket()
         statuses: dict[str, dict[str, Any] | None] = {}
+        finished = False
         for chunk in self.chunks:
             for item in chunk.items:
                 if item.job_row_id in self._reported:
@@ -770,8 +799,9 @@ class BatchRun:
                 if status is not None:
                     chunk.status = status
                     chunk.finished = str(status.get("status")) in _FINAL_RUN_STATES
-                    if chunk.finished:
-                        _book_batch(self.engine, self.config, chunk)
+                    finished = finished or chunk.finished
+        if finished:
+            self._book()
         return outcomes
 
     def _note_queue(self) -> None:
@@ -851,6 +881,67 @@ def _has_times(status: dict[str, Any] | None) -> bool:
     )
 
 
+def billed_seconds(
+    config: RunPodConfig,
+    status: dict[str, Any] | None,
+    *,
+    previous: dict[str, Any] | None = None,
+    unseen: Decimal | None = Decimal(0),
+) -> Decimal | None:
+    """What RunPod bills for one job of a round, from its /status times (seconds), or None
+    until the job reported them.
+
+    RunPod bills a worker from when it starts running until it fully stops: its start (mostly
+    the models loading), the execution and the idle timeout; «Pulling the container image and
+    downloading cached models happen before the worker starts running and are not billed»
+    (https://docs.runpod.io/serverless/pricing; «You aren't billed for worker time while the
+    model downloads», https://docs.runpod.io/serverless/endpoints/model-caching). /status gives
+    ``executionTime`` and ``delayTime``, the whole time from the /run to a worker taking the
+    job: the queue while no worker ran, the image pull and the cached model's download (none of
+    it billed) and the worker's own start (billed). The two cannot be told apart from /status,
+    so a job books its execution and, of its wait:
+
+    * the round's first job (``previous`` None, or its times unknown): at most
+      ``cold_start_seconds`` (the start the plan priced each round with) + the idle tail
+      (``idle_timeout_seconds``, counted once per worker);
+    * a later chunk of the same round (``previous``: the /status of the accepted job sent just
+      before it, to the same worker, workers.max=1): only the part of its wait that job's own
+      wait and run do not explain, ``delayTime - (previous delayTime + executionTime)``, at most
+      one worker start + one idle tail. Normally nothing: it waited for the worker to finish
+      the job before it, whose execution is counted there. More when that worker stopped in
+      between (a job past its executionTimeout «fails and the worker stops»; a crash): the
+      next one paid a new start;
+    * ``unseen``: the run budget (``policy.executionTimeout``) of the jobs sent between them
+      whose /run got no answer. RunPod may have run such a job on the worker before this one;
+      its run is then inside this job's wait and is counted, up to that budget, on top of the
+      start (None: a budget unknown, the whole wait counts).
+
+    So a round books its jobs' execution + one start and one idle tail per worker that ran it,
+    never the queue wait while no worker ran or the model downloaded.
+
+    2026-10-09, «The Particle That Shouldn't Exist (But Does)»: the job waited 28 minutes for the
+    model's download ($0.00000/s on RunPod's console) and the worker ran about 340 s; RunPod
+    charged 0.27 USD for the session, while (delayTime + executionTime) + idle per job booked
+    about 2,074 s, 2.3 USD of the step's 2.94 USD cap at the 4.00 USD/h budget rate."""
+    if not _has_times(status):
+        return None
+    times = status or {}
+    execution = max(Decimal(0), Decimal(str(times["executionTime"])) / 1000)
+    wait = max(Decimal(0), Decimal(str(times["delayTime"])) / 1000)
+    start = Decimal(config.cold_start_seconds)
+    idle = Decimal(config.idle_timeout_seconds)
+    if previous is None or not _has_times(previous):
+        ceiling = None if unseen is None else start + unseen
+        return execution + (wait if ceiling is None else min(wait, ceiling)) + idle
+    before = Decimal(str(previous["delayTime"])) / 1000
+    before += max(Decimal(0), Decimal(str(previous["executionTime"])) / 1000)
+    extra = wait - before
+    if extra <= 0:
+        return execution
+    ceiling = None if unseen is None else start + idle + unseen
+    return execution + (extra if ceiling is None else min(extra, ceiling))
+
+
 def _passing(exc: MediaProviderError) -> bool:
     """A read that may succeed if simply asked again (no answer, throttled, a server error)."""
     status = exc.http_status
@@ -895,15 +986,9 @@ def _write_asset(storage_root: Path, row_id: str, ext: str, content: bytes) -> P
     return target
 
 
-def _book_batch(engine: Engine, config: RunPodConfig, chunk: _Chunk) -> None:
-    """The job's billed estimate, apportioned to its items by their GPU seconds."""
-    status = chunk.status or {}
-    delay, execution = status.get("delayTime"), status.get("executionTime")
-    if not isinstance(delay, int | float) or not isinstance(execution, int | float):
-        return
-    billed = Decimal(str((float(delay) + float(execution)) / 1000)) + Decimal(
-        config.idle_timeout_seconds
-    )
+def _book_batch(engine: Engine, chunk: _Chunk, billed: Decimal) -> None:
+    """The job's billed seconds (`billed_seconds`), apportioned to its items by their GPU
+    seconds: a worker's start and idle tail ride on the job that started that worker."""
     with Session(engine) as s, s.begin():
         lock_for_write(s)
         rows = [s.get(GenerationJob, item.job_row_id) for item in chunk.items]
@@ -1464,7 +1549,9 @@ async def _submit_remote(
                 note = getattr(session, "note_uncertain", None)
                 if callable(note):
                     note([row.idempotency_key for _item, row in pairs])
-            run.chunks.append(_Chunk(None, chunk_items_list, policy, time.monotonic()))
+            run.chunks.append(
+                _Chunk(None, chunk_items_list, policy, time.monotonic(), uncertain=not proven)
+            )
             uncertain_any = uncertain_any or not proven
             if not sent_any and not uncertain_any and proven:
                 raise failure  # nothing was sent at all: the step refuses before spending

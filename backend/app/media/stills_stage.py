@@ -462,8 +462,11 @@ def stills_plan(
     cost = per_scene * len(to_buy)
     cap = cost * (1 + MAX_REROLLS)
     # RunPod Serverless: every round is one batch job that pays a GPU start (cold start + idle
-    # tail). Scene 1 goes alone while the film has no Figure 1, so such a step is two series
-    # of rounds; the worst case is every re-roll round of each (0 for a per-image vendor).
+    # tail). Scene 1 goes first while the film has no Figure 1 when the later scenes can carry
+    # it (a model that binds reference pictures; otherwise every scene is in round 1,
+    # `_StillRounds`), so such a step is at most two series of rounds, and both are priced
+    # whatever the model; the worst case is every re-roll round of each (0 for a per-image
+    # vendor).
     overhead = prices.round_overhead("image", model_id)
     series = 2 if first is not None and first.index in to_buy and len(to_buy) > 1 else 1
     if to_buy and overhead:
@@ -973,12 +976,24 @@ class _SceneRound:
     not_queued: bool = False
 
 
+#: Stands for the film's Figure 1 when asking whether a scene's request could carry it.
+_ANY_FIGURE = b"figure"
+
+
 @dataclass
 class _StillRounds:
     """The stills step on RunPod Serverless: rounds of batches in one GPU session
     (`media.gpu_batch.run_rounds`), with the same gate, re-rolls and Figure 1 as the
-    per-request path. Round 1 is scene 1 alone while the film has no Figure 1 (every later
-    scene is drawn with it), else every scene; later rounds are what the gate sent back."""
+    per-request path.
+
+    Round 1 is every scene to buy: scenes left uncertain by an earlier /run and sent again with
+    their keys, and every scene never sent. Only a scene whose request would really carry the
+    film's Figure 1 (a model that binds reference pictures, the 2511 route) waits for scene 1's
+    still; on a model that binds none (Qwen-Image-2512) Figure 1 is never sent, and waiting for
+    it only starved the film: on 2026-10-09 scene 1 was re-rolled alone for three rounds and
+    scenes 2-5 were never bought. Later rounds are what the gate sent back (re-rolls, one retry)
+    and the scenes that waited for Figure 1; a cut keeps first candidates before re-rolls
+    (`gpu_batch.fit_round`)."""
 
     engine: Engine
     storyboard_id: str
@@ -1023,6 +1038,14 @@ class _StillRounds:
         self.unverified = self.unverified or (
             bool(refs) and not bool(getattr(self.adapter, "REFERENCE_IMAGE_VERIFIED", False))
         )
+
+    def _carries_figure(self, scene: _Scene) -> bool:
+        """Whether this scene's request would carry the film's Figure 1 once scene 1 has its
+        still (`_references` with this adapter's reference limits): only such a scene waits."""
+        _pictures, _character, with_figure = _references(
+            scene, _ANY_FIGURE, self.adapter, first=False
+        )
+        return with_figure
 
     def _requests(self, state: _SceneRound) -> list[BatchRequest]:
         prompt = _prompt(
@@ -1309,7 +1332,11 @@ class _StillRounds:
                 committed_before=self.ledger.committed,
             )
             self.states[scene.index] = state
-            if scene.index != self.first_live and self.figure_one is None:
+            if (
+                scene.index != self.first_live
+                and self.figure_one is None
+                and self._carries_figure(scene)
+            ):
                 if self.first_live in buying:
                     self.waiting.append(scene.index)  # bought once scene 1 has its still
                 else:

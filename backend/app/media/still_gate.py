@@ -9,11 +9,39 @@ up to 68 credits a second. So the still is checked first, twice, at no credit co
 1. Local checks (`local_checks`), measured with the encoder the studio already has and the
    YuNet face detector (`app.media.faces`):
    - degenerate: stripes, bands or a blank field (`app.media.qc.still_is_degenerate`);
-   - sharpness: variance of the 4-neighbour Laplacian at 1080 px width, pooled over the
-     tiles that hold a picture (a tile whose luma barely varies is flat sky or black and
-     says nothing about focus). Floor 250. Measured 2026-09-27 on the six Nepal stills:
-     592, 614, 870, 603, 893 and 331 (scene 6 is half flat black; whole-frame it read 197,
-     which is why flat tiles are left out);
+   - sharpness (`measure_focus`), two readings at 1080 px width on an 8 x 14 grid of tiles. A
+     still is in focus when its subject is: a documentary frame with a sharp subject before a
+     dark, soft background (shallow depth of field) is not a blurred frame. Until 2026-10-09
+     the Laplacian variance was pooled over every tile that held a picture, floor 250; the
+     five stills of «The Particle That Shouldn't Exist (But Does)» (a worker in blue coveralls
+     and a white hard hat, sharp, in a dark tunnel kept soft on purpose) read 70-182 on it and
+     were all rejected, so scenes 2-5 were never bought. Now:
+     * sharpness: each tile's 4-neighbour Laplacian variance with its strongest 5 % of
+       responses left out (one hard line, a letterbox bar's edge or a box drawn on a blurred
+       picture, is 1-3 % of a tile), read at the median of the sharpest tenth of the tiles (the
+       6th of 112: a subject's worth of the frame). Floor 30;
+     * fine detail kept: the share of those tiles' Laplacian energy left once the picture is
+       halved and restored (bicubic). Real fine detail lives in the octave that takes away,
+       so a sharp still keeps little of it; a 2x upscale or a picture softened before delivery
+       keeps most of it, whatever its texture or contrast. At most 48 %.
+     Measured 2026-10-09 with this code on the five delivered 1530x2720 PNGs (scene_01_
+     ac5b5e97_c1, 340ebcb1_c2, 14aec523_c1, b5f88e79_c2, d1e900d3_c1, read only) and on copies
+     of them made in a scratch folder (the sigmas at 1080 px unless said):
+       as delivered                67 / 255 / 70 / 67 / 261, kept 16 / 28 / 17 / 21 / 20 %
+       Gaussian sigma 1            12-49, kept 55-66 %         (fails)
+       Gaussian sigma 2 and 4      22 at most, kept 75 % up    (fails; at 1080 or at 1530 px)
+       saved at 540 px wide        11-51, kept 68-79 %         (fails)
+       to 512 px and back up       10-45, kept 72-83 %         (fails)
+       sigma 3-4 + letterbox bars  5-6                         (fails; the top-5 mean read 262)
+       sigma 4 + a small white box 5-6                         (fails; the top-5 mean read 1228)
+       sigma 4 + one subtitle line 11-15                       (fails)
+     The six Nepal stills as tests/fixtures/nepal_1d530880 keeps them (540x960 JPEG) read
+     53-305 but keep 51-54 % (52-56 % upscaled to 1530x2720 bicubic): they fail, their half
+     resolution is soft at 1080. Upscaled with lanczos and an unsharp mask (the rehearsal's
+     stand-ins) they keep 40-45 % and pass: a sharpened upscale is left to the vision check.
+     The floor sits 2.2x under the softest real still (67) and 2x over the sharpest overlay
+     on a blurred frame (15); the 48 % sits 1.7x over the real stills' 28 %, between the
+     sharpened upscales' 45 % and the plain ones' 51 %;
    - motion blur: the ratio of horizontal to vertical gradient energy. Nepal stills read
      1.1-1.5; a 12 px horizontal smear reads above 5. Blocks a static shot, warns on a
      moving one (a pan may carry some blur honestly);
@@ -58,11 +86,24 @@ from app.media.toolchain import find_ffmpeg
 
 #: The width every picture check measures at: the final film's width.
 MEASURE_WIDTH = 1080
-#: Laplacian variance floor at 1080 px (see the module docstring for the measurements).
-SHARPNESS_FLOOR = 250
-#: A tile whose luma standard deviation is below this holds no picture to be sharp.
-FLAT_TILE_STD = 6.0
+#: Laplacian variance floor at 1080 px, read on the median of the sharpest tenth of the tiles
+#: (see the module docstring for the measurements).
+SHARPNESS_FLOOR = 30
 TILES_ACROSS, TILES_DOWN = 8, 14
+#: The sharpness is read on the sharpest 1/SHARPEST_SHARE of the tiles (11 of 112), at their
+#: median: a subject's worth of the frame must be sharp, whatever the background does.
+SHARPEST_SHARE = 10
+#: The share of a tile's strongest Laplacian responses left out of its variance: one hard line
+#: (a letterbox bar's edge, a box drawn on the picture) is 1-3 % of a tile and says nothing
+#: about the focus of the rest.
+TRIM_SHARE = 0.05
+#: The most of its Laplacian energy (over the sharpest tenth of the tiles) a still may keep when
+#: it is halved and restored: real fine detail does not survive that, an upscale or a softened
+#: picture keeps most of it (see the module docstring for the measurements).
+FINE_DETAIL_KEPT_MAX = 0.48
+#: Where the sharpness term of a passing still's score is full, on a log scale: 100 x the floor,
+#: so a sharper take of the same picture scores higher without saturating.
+SHARPNESS_SCORE_SPAN = 100
 #: Horizontal/vertical gradient-energy ratio (either way round) at which a still carries
 #: baked motion blur.
 MOTION_BLUR_ANISOTROPY = 2.5
@@ -194,13 +235,18 @@ def _raw_gray(
     kernel: str | None = None,
     rdiv: float = 1.0,
     width: int = MEASURE_WIDTH,
+    *,
+    halved: bool = False,
 ) -> bytes | None:
     """The picture as 8-bit full-range luma at `width`, optionally convolved.
 
     A convolution is written with a bias of 128 and scaled by `rdiv`, so a signed response
-    fits a byte; the caller undoes the scale on the variance.
+    fits a byte; the caller undoes the scale on the variance. ``halved``: the picture is first
+    scaled to half that width and back (bicubic), which takes away its finest octave.
     """
     chain = f"scale={width}:-2:flags=bicubic,format=gray"
+    if halved:
+        chain += ",scale=iw/2:ih/2:flags=bicubic,scale=iw*2:ih*2:flags=bicubic"
     if kernel:
         chain += f",convolution=0m='{kernel}':0rdiv={rdiv}:0bias=128"
     try:
@@ -243,6 +289,27 @@ def _variance(data: bytes) -> float:
     return sum(n * (value - mean) ** 2 for value, n in histogram.items()) / count
 
 
+def _trimmed_variance(data: bytes, share: float = TRIM_SHARE) -> float:
+    """Variance of a biased convolution's bytes once the `share` of them farthest from 128 (its
+    zero) is left out, from the histogram: what one hard line in the tile cannot make."""
+    if not data:
+        return 0.0
+    histogram = Counter(data)
+    drop = int(len(data) * share)
+    kept: dict[int, int] = {}
+    for value in sorted(histogram, key=lambda v: (-abs(v - 128), v)):
+        count = histogram[value]
+        taken = min(drop, count)
+        drop -= taken
+        if count > taken:
+            kept[value] = count - taken
+    total = sum(kept.values())
+    if not total:
+        return 0.0
+    mean = sum(value * n for value, n in kept.items()) / total
+    return sum(n * (value - mean) ** 2 for value, n in kept.items()) / total
+
+
 def _tiles(data: bytes, width: int) -> Iterable[bytes]:
     height = len(data) // width
     tile_w, tile_h = width // TILES_ACROSS, height // TILES_DOWN
@@ -255,32 +322,55 @@ def _tiles(data: bytes, width: int) -> Iterable[bytes]:
             )
 
 
-def measure_sharpness(ffmpeg: str | None, path: Path | str) -> float | None:
-    """Laplacian variance at 1080 px, pooled over the tiles that hold a picture.
+#: The 4-neighbour Laplacian, as ffmpeg's convolution matrix.
+LAPLACIAN = "0 1 0 1 -4 1 0 1 0"
 
-    None only when it cannot be measured. A still in which no tile holds any picture is
-    measured over the whole frame, where it reads close to 0.
+
+@dataclass(frozen=True)
+class Focus:
+    """What the sharpness check reads on a still (`measure_focus`)."""
+
+    #: Trimmed Laplacian variance at 1080 px, the median of the sharpest tenth of the tiles.
+    sharpness: float
+    #: The share of those tiles' Laplacian energy left once the still is halved and restored.
+    fine_kept: float
+
+
+def measure_focus(ffmpeg: str | None, path: Path | str) -> Focus | None:
+    """How sharp the still's sharpest part is, and whether its fine detail is real.
+
+    The subject decides whether a still is in focus, not the background: a dark tunnel or a
+    sky kept soft on purpose says nothing about the focus. So each tile of the 8 x 14 grid is
+    read on its own (its Laplacian variance, the strongest 5 % of its responses left out, so
+    one hard line cannot make it), and the still reads the median of its sharpest tenth: a
+    subject's worth of the frame (6 tiles of 112) must be sharp. Then the same picture is
+    halved and restored: real fine detail lives in the octave that takes away, so a sharp
+    still keeps a small share of those tiles' energy, and an upscale, or a picture softened
+    before it was delivered, keeps most of it, however much texture it has.
+
+    None only when it cannot be measured; a blank field reads close to 0, keeping all of it.
     """
     if not ffmpeg or not Path(path).is_file():
         return None
-    luma = _raw_gray(ffmpeg, path)
-    laplacian = _raw_gray(ffmpeg, path, "0 1 0 1 -4 1 0 1 0", 0.25)
-    if luma is None or laplacian is None or len(luma) != len(laplacian):
+    laplacian = _raw_gray(ffmpeg, path, LAPLACIAN, 0.25)
+    restored = _raw_gray(ffmpeg, path, LAPLACIAN, 0.25, halved=True)
+    if laplacian is None or restored is None or len(laplacian) != len(restored):
         return None
-    total = weight = 0.0
-    for luma_tile, laplacian_tile in zip(
-        _tiles(luma, MEASURE_WIDTH), _tiles(laplacian, MEASURE_WIDTH), strict=True
-    ):
-        if math.sqrt(_variance(luma_tile)) < FLAT_TILE_STD:
-            continue
-        # The response was divided by 4 to fit a byte: its variance is 16 times smaller.
-        total += _variance(laplacian_tile) * 16 * len(laplacian_tile)
-        weight += len(laplacian_tile)
-    if not weight:
-        # No tile holds a picture: a blank field (the degenerate check names it) or a still
-        # blurred until nothing varies. Either way it is measured, and it is not sharp.
-        return round(_variance(laplacian) * 16, 1)
-    return round(total / weight, 1)
+    # The response was divided by 4 to fit a byte: its variance is 16 times smaller.
+    own = [_trimmed_variance(tile) * 16 for tile in _tiles(laplacian, MEASURE_WIDTH)]
+    kept = [_trimmed_variance(tile) * 16 for tile in _tiles(restored, MEASURE_WIDTH)]
+    order = sorted(range(len(own)), key=lambda index: own[index], reverse=True)
+    sharpest = order[: max(1, len(order) // SHARPEST_SHARE)]
+    energy = sum(own[index] for index in sharpest)
+    share = sum(kept[index] for index in sharpest) / energy if energy > 1e-9 else 1.0
+    return Focus(sharpness=round(own[sharpest[len(sharpest) // 2]], 1), fine_kept=round(share, 3))
+
+
+def measure_sharpness(ffmpeg: str | None, path: Path | str) -> float | None:
+    """The sharpness `measure_focus` reads (the trimmed Laplacian variance at 1080 px of the
+    median of the sharpest tenth of the tiles), or None."""
+    focus = measure_focus(ffmpeg, path)
+    return None if focus is None else focus.sharpness
 
 
 def measure_anisotropy(ffmpeg: str | None, path: Path | str) -> float | None:
@@ -443,27 +533,46 @@ def local_checks(
                 else CheckResult("degenerate", "PASSED", False, None, "structură de imagine")
             )
     if "sharpness" in measure:
-        sharpness = measure_sharpness(ffmpeg, path)
-        if sharpness is None:
+        focus = measure_focus(ffmpeg, path)
+        if focus is None:
             checks.append(
                 _unmeasured(
                     "sharpness", f"Claritatea nu a fost măsurată: {no_encoder}", environment
                 )
             )
-        elif sharpness < SHARPNESS_FLOOR:
+        elif focus.sharpness < SHARPNESS_FLOOR:
             checks.append(
                 CheckResult(
                     "sharpness",
                     "FAILED",
                     True,
-                    sharpness,
-                    f"Imaginea e neclară: {sharpness:.0f} sub pragul de {SHARPNESS_FLOOR} "
+                    focus.sharpness,
+                    f"Imaginea e neclară: {focus.sharpness:.0f} sub pragul de {SHARPNESS_FLOOR} "
                     f"(la {MEASURE_WIDTH} px)",
+                )
+            )
+        elif focus.fine_kept > FINE_DETAIL_KEPT_MAX:
+            checks.append(
+                CheckResult(
+                    "sharpness",
+                    "FAILED",
+                    True,
+                    focus.sharpness,
+                    f"Imaginea e moale (mărită sau estompată): înjumătățită și refăcută își "
+                    f"păstrează {focus.fine_kept:.0%} din detaliul fin, peste pragul de "
+                    f"{FINE_DETAIL_KEPT_MAX:.0%} (la {MEASURE_WIDTH} px)",
                 )
             )
         else:
             checks.append(
-                CheckResult("sharpness", "PASSED", False, sharpness, f"claritate {sharpness:.0f}")
+                CheckResult(
+                    "sharpness",
+                    "PASSED",
+                    False,
+                    focus.sharpness,
+                    f"claritate {focus.sharpness:.0f}; la înjumătățire rămâne "
+                    f"{focus.fine_kept:.0%} (prag {FINE_DETAIL_KEPT_MAX:.0%})",
+                )
             )
     if "motion_blur" in measure:
         anisotropy = measure_anisotropy(ffmpeg, path)
@@ -541,12 +650,21 @@ def _sha256(path: Path | str) -> str | None:
         return None
 
 
+def _sharpness_term(value: float | None) -> float:
+    """The sharpness reading as 0..1 for the score: 0 at the floor, 1 at `SHARPNESS_SCORE_SPAN`
+    times it, on a log scale. The five 2026-10-09 stills read 67-261 (0.18-0.47), noise reads
+    thousands; a linear /1000 saturated on the readings of the old whole-picture measure."""
+    if not value or value <= SHARPNESS_FLOOR:
+        return 0.0
+    return min(math.log(value / SHARPNESS_FLOOR) / math.log(SHARPNESS_SCORE_SPAN), 1.0)
+
+
 def _score(checks: Sequence[CheckResult], judgement: StillJudgement | None) -> float:
     """How good a passing still is, 0..1, for choosing between candidates."""
     by_code = {check.code: check for check in checks}
     sharp = by_code.get("sharpness")
     palette = by_code.get("palette")
-    score = 0.5 * min((sharp.value or 0) / 1000, 1.0) if sharp and sharp.value else 0.0
+    score = 0.5 * _sharpness_term(sharp.value) if sharp is not None else 0.0
     if palette is not None and palette.value is not None:
         score += 0.3 * (1 - min(palette.value / 60, 1.0))
     else:

@@ -274,12 +274,151 @@ def test_the_booking_is_raised_to_what_runpod_measured_never_left_below(
     summary, meter, _seen = go(
         engine, made, [request("1", 0)], credits_for_seconds=lambda seconds: seconds * 0.1
     )
-    # (200 + 400) s + 1 s idle = 601 GPU-seconds = 60.1 credits, above the 15 estimated.
-    assert summary["billed_seconds"] == pytest.approx(601.0)
-    assert meter.committed == pytest.approx(60.1)
-    assert summary["reconciled_credits"] == pytest.approx(60.1 - 15.0)
+    # 400 s executing + the worker's start (the 200 s delay, at most the 120 s cold start
+    # budgeted) + 1 s idle = 521 GPU-seconds = 52.1 credits, above the 15 estimated.
+    assert summary["billed_seconds"] == pytest.approx(521.0)
+    assert meter.committed == pytest.approx(52.1)
+    assert summary["reconciled_credits"] == pytest.approx(52.1 - 15.0)
     with Session(engine) as s:
-        assert s.scalar(select(GenerationJob)).billed_seconds_value == "601.000"
+        assert s.scalar(select(GenerationJob)).billed_seconds_value == "521.000"
+
+
+def test_the_queue_wait_while_the_cached_model_downloads_is_not_booked(
+    engine, tmp_path, fake_session
+):
+    # 2026-10-09, «The Particle That Shouldn't Exist (But Does)»: the job waited 28 minutes in
+    # RunPod's queue while the endpoint's cached model downloaded (not billed: «You aren't
+    # billed for worker time while the model downloads»; the console read $0.00000/s), then
+    # the worker ran 340 s. RunPod charged 0.27 USD for the session; the studio booked
+    # (delayTime + executionTime) + idle = 2021 s, 2.25 USD at 4 USD/h, most of the step's cap.
+    cloud = Cloud()
+    made = adapter(engine, tmp_path, cloud)
+    made.core.transport = made.core.client.transport = timed(
+        cloud, delay_ms=28 * 60_000, execution_ms=340_000
+    )
+    summary, meter, _seen = go(
+        engine,
+        made,
+        [request("1", 0), request("1", 1)],
+        credits_for_seconds=lambda seconds: seconds * 4.00 / 3600 / 0.01,
+    )
+    # 340 s executing + at most 120 s of worker start + 1 s idle: never the queue wait.
+    config = made.config
+    ceiling = 340 + config.cold_start_seconds + config.idle_timeout_seconds
+    assert summary["billed_seconds"] == pytest.approx(461.0) == pytest.approx(ceiling)
+    # 461 s at 4.00 USD/h is 0.51 USD = 51.2 credits of 0.01 USD (2021 s would be 224.6).
+    assert meter.committed == pytest.approx(461 * 4.00 / 3600 / 0.01)
+    with Session(engine) as s:
+        rows = s.scalars(select(GenerationJob)).all()
+        assert sum(Decimal(row.billed_seconds_value) for row in rows) == Decimal("461.000")
+
+
+def per_job_times(cloud, times):
+    """A worker that finishes every item; /status answers each job's own (delay, execution)
+    and, when given, its final state (COMPLETED otherwise)."""
+    inner = finishing(cloud)
+
+    def call(host, method, path, headers, body=None, **kwargs):
+        if method == "GET" and "/status/" in path:
+            job = path.rsplit("/", 1)[1]
+            delay_ms, execution_ms, *state = times[job]
+            cloud.calls.append((host, method, path, body))
+            answer = {
+                "id": job,
+                "status": state[0] if state else "COMPLETED",
+                "delayTime": delay_ms,
+                "executionTime": execution_ms,
+            }
+            return answer, b"", "application/json"
+        return inner(host, method, path, headers, body, **kwargs)
+
+    return call
+
+
+def test_a_round_in_chunks_books_one_worker_start_and_one_idle_tail(engine, tmp_path, fake_session):
+    # A round longer than the executionTimeout cap goes as chunks POSTed back to back to the one
+    # worker (workers.max=1): the second chunk's delay is the time the worker spent on the
+    # first, already booked as the first one's execution; the worker started and idled once.
+    cloud = Cloud()
+    made = adapter(engine, tmp_path, cloud, execution_timeout_cap_seconds=300)
+    made.core.transport = made.core.client.transport = per_job_times(
+        cloud, {"job-1": (90_000, 50_000), "job-2": (140_000, 45_000)}
+    )
+    summary, _meter, _seen = go(
+        engine, made, [request("1", 0), request("1", 1)], credits_for_seconds=lambda s: s * 0.1
+    )
+    assert len(cloud.posts()) == 2  # one item per chunk under a 300 s cap
+    # 50 + 45 executing, the 90 s start of the first, 1 s idle: 186, never 50+90+45+140+2.
+    assert summary["billed_seconds"] == pytest.approx(186.0)
+    with Session(engine) as s:
+        by_job = {
+            row.remote_job_id.split(":")[0]: row.billed_seconds_value
+            for row in s.scalars(select(GenerationJob))
+        }
+    assert by_job == {"job-1": "141.000", "job-2": "45.000"}
+
+
+def test_a_worker_that_stopped_between_chunks_books_its_second_start(
+    engine, tmp_path, fake_session
+):
+    # «When exceeded, the job fails and the worker stops» (RunPod's executionTimeout): the first
+    # chunk ran into its 300 s timeout, the second needed a new worker (a 100 s start, billed).
+    # Its wait beyond what the first chunk's own wait and run explain is that start: booked,
+    # at most one cold start + one idle tail, on the job that paid it.
+    cloud = Cloud()
+    made = adapter(engine, tmp_path, cloud, execution_timeout_cap_seconds=300)
+    made.core.transport = made.core.client.transport = per_job_times(
+        cloud,
+        {"job-1": (90_000, 300_000, "TIMED_OUT"), "job-2": (490_000, 45_000)},
+    )
+    summary, _meter, _seen = go(
+        engine, made, [request("1", 0), request("1", 1)], credits_for_seconds=lambda s: s * 0.1
+    )
+    assert len(cloud.posts()) == 2
+    # job-1: 300 executing + its 90 s start + 1 s idle; job-2: 45 executing + the 100 s its
+    # wait (490) exceeds job-1's wait and run (90 + 300).
+    assert summary["billed_seconds"] == pytest.approx(391.0 + 145.0)
+    with Session(engine) as s:
+        by_job = {
+            row.remote_job_id.split(":")[0]: row.billed_seconds_value
+            for row in s.scalars(select(GenerationJob))
+        }
+    assert by_job == {"job-1": "391.000", "job-2": "145.000"}
+
+
+@pytest.mark.parametrize(
+    ("delay_ms", "billed"),
+    [
+        # The unanswered job ran 250 s on a worker that started in 90 s: all of it is billed.
+        (340_000, 340.0 + 45.0 + 1.0),
+        # A 2,000 s wait: at most one start (120 s) + the unanswered job's 300 s budget.
+        (2_000_000, 120.0 + 300.0 + 45.0 + 1.0),
+    ],
+)
+def test_an_unanswered_chunk_that_ran_is_counted_inside_the_next_jobs_wait(
+    engine, tmp_path, fake_session, delay_ms, billed
+):
+    # 2026-10-09 review: the first chunk's /run got no answer (no job id), yet RunPod queued
+    # and ran it; the second chunk was accepted and waited for it. That run is billed and has
+    # no /status of its own: it is inside the accepted job's wait, so that wait counts up to
+    # one worker start + the unanswered job's own executionTimeout, never capped at the start.
+    cloud = Cloud()
+    cloud.run_answers = [MediaProviderError("lost", unanswered=True)]
+    made = adapter(engine, tmp_path, cloud, execution_timeout_cap_seconds=300)
+    made.core.transport = made.core.client.transport = per_job_times(
+        cloud, {"job-1": (delay_ms, 45_000)}
+    )
+    summary, meter, seen = go(
+        engine, made, [request("1", 0), request("1", 1)], credits_for_seconds=lambda s: s * 0.1
+    )
+    assert len(cloud.posts()) == 2 and list(cloud.jobs) == ["job-1"]
+    assert sorted(str(o.error) for o in seen) == ["None", "SUBMISSION_UNCERTAIN"]
+    assert summary["billed_seconds"] == pytest.approx(billed)
+    # The meter never sits below what RunPod billed (the estimate was 2 x 10 + 5 credits).
+    assert meter.committed == pytest.approx(max(25.0, billed * 0.1))
+    with Session(engine) as s:
+        accepted = s.scalar(select(GenerationJob).where(GenerationJob.remote_job_id.is_not(None)))
+        assert Decimal(accepted.billed_seconds_value) == pytest.approx(Decimal(str(billed)))
 
 
 def test_a_measure_below_the_estimate_never_lowers_the_booking(engine, tmp_path, fake_session):

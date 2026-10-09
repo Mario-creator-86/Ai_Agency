@@ -404,6 +404,10 @@ def _is_record(node: ast.ClassDef) -> bool:
     ]
     if any(name.endswith(("Error", "Exception")) for name in names):
         return True
+    # A database table row (the declarative ``Base``): read and written, never a way to the
+    # vendor (2026-10-09: the never-queued proof reads GpuSessionRow and GenerationJob).
+    if "Base" in names[1:]:
+        return True
     return any(
         (decorator.id if isinstance(decorator, ast.Name) else getattr(decorator, "attr", ""))
         == "dataclass"

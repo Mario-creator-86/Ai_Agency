@@ -14,8 +14,11 @@ secunda, deci trebuie oprit imediat dupa generare». So:
   the QC between rounds costs nothing.
 * Before a round is sent it is priced whole (its items + one round overhead: cold start + idle
   tail, ``price_credits``); a round that does not fit what is left of the step's cap is cut in
-  a fixed order (scene, then candidate) until it does; an empty round stops the step. The
-  Owner's mode, the autonomy stop and the plan are read once before each round
+  a fixed order until it does (every scene's first candidates before any re-roll or retry,
+  then scene, then candidate); a scene the cut left out whole goes into the next round, where
+  the same order puts it ahead of the re-rolls (2026-10-09: no re-roll is bought before a
+  scene had its first try, and room given back after a cut is used); an empty round stops
+  the step. The Owner's mode, the autonomy stop and the plan are read once before each round
   (`PurchaseGuard.stop_reason`), never per item inside a batch.
 * While a round runs the studio polls: the mode, the stop, the session (`GpuSession.renew`:
   the Owner's «Oprește GPU acum», the guard or a shutdown raise `GpuForcedOff`). A stop cancels
@@ -74,9 +77,16 @@ def gpu_precheck(
     precheck(engine, adapter, purpose=purpose, integration_id=integration_id)
 
 
-def _order(request: BatchRequest) -> tuple[int, str, int]:
+def _order(request: BatchRequest) -> tuple[int, int, str, int]:
+    """First tries before re-tries (a re-roll, a retry: a later attempt), then scene, then
+    candidate: what a cut keeps first."""
     scene = request.scene_id
-    return (int(scene) if scene.isdigit() else 10**9, scene, request.candidate_index)
+    return (
+        request.attempt_number,
+        int(scene) if scene.isdigit() else 10**9,
+        scene,
+        request.candidate_index,
+    )
 
 
 def fit_round(
@@ -84,7 +94,9 @@ def fit_round(
     price_credits: Callable[[list[BatchRequest]], float],
     left: float,
 ) -> list[BatchRequest]:
-    """The round, cut from its end (highest scene, then candidate) until its price fits."""
+    """The round, cut from its end until its price fits. Every scene's first candidates come
+    before any re-roll or retry (a later attempt), then scene, then candidate (2026-10-09: a
+    scene's re-rolls never take the room of another scene's first still)."""
     fitted = sorted(requests, key=_order)
     while fitted and price_credits(fitted) > left + 1e-9:
         fitted.pop()
@@ -199,11 +211,13 @@ def run_rounds(
 
     ``credits_for_seconds`` turns billed GPU-seconds into the step's credits (the budget rate,
     `media.assembler.gpu_seconds_to_credits`). When a round's jobs report their times, the
-    round's billed estimate ((delayTime + executionTime)/1000 + idleTimeout per job, an upper
-    bound: queue and throttled time are counted too) is compared with what the meter kept for
-    the round, and the meter is RAISED to it when RunPod used more than estimated: the books
-    and the cap left for the next rounds never sit below what the GPU used. A measure below the
-    estimate never lowers it (the Owner approved the estimate; a billing read settles it).
+    round's billed seconds (`providers.runpod.batch.billed_seconds`: Σ executionTime + the
+    worker's start, at most ``cold_start_seconds``, + one idle tail; never the queue wait while
+    no worker ran or the cached model downloaded, which RunPod does not bill, 2026-10-09) are
+    compared with what the meter kept for the round, and the meter is RAISED to them when
+    RunPod used more than estimated: the books and the cap left for the next rounds never sit
+    below what the GPU used. A measure below the estimate never lowers it (the Owner approved
+    the estimate; a billing read settles it).
 
     A round whose /run failed with no job id (SUBMISSION_UNCERTAIN) stops the step. Once the
     session is closed (its off read the queue, `gpu_session.close_session`), the round asks
@@ -250,6 +264,12 @@ def run_rounds(
                 break
             left = float(cap_left())
             fitted = fit_round(requests, price_credits, left)
+            in_round = {request.scene_id for request in fitted}
+            # What the cap left out of this round whole (a scene none of whose requests fit)
+            # never had its turn: it goes ahead of the next round's re-rolls and retries, in
+            # `fit_round`'s order, if the cap then has room. A scene cut in half (one of its
+            # candidates sent) is decided on what it got, as before.
+            carried = [request for request in requests if request.scene_id not in in_round]
             if len(fitted) < len(requests):
                 summary["cap_stop"] = CAP_STOP.format(price=price_credits(requests), left=left)
             if not fitted:
@@ -359,7 +379,9 @@ def run_rounds(
                 # worker's manifest makes them a free reuse.
                 summary["stopped"] = summary["stopped"] or UNCERTAIN
                 break
-            requests = list(next_round(outcomes))
+            following = list(next_round(outcomes))
+            asked = {request.scene_id for request in following}
+            requests = [r for r in carried if r.scene_id not in asked] + following
     if uncertain_round is not None:
         _prove_unsent(
             engine,

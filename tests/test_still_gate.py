@@ -8,11 +8,16 @@ What is asserted, all at 0 credits and with every provider faked:
 - a face found by EITHER detector blocks the still: the local detector's face is not
   overruled by a vision model that says it saw none, and the reverse;
 - a vision model that gave no entry for the still blocks it as "nu a fost privită";
-- the Laplacian sharpness floor (250 at 1080 px) fails a blurred still and passes the real
-  Nepal stills; baked motion blur blocks a static shot; a degenerate still blocks; the
-  palette distance is a score and a warning, never a block;
-- the best passing candidate is chosen by its check score, a failing still is re-rolled at
-  most twice with its violation rewritten as a positive instruction, then goes to the Owner.
+- the sharpness check (at 1080 px: the trimmed Laplacian variance of the median of the
+  sharpest tenth of the tiles, floor 30, and the share of it a still keeps when halved and
+  restored, at most 48 %) passes a sharp subject before a dark, soft background (the five
+  stills of 2026-10-09 the old whole-picture pooling rejected) and fails a blurred still, a
+  blurred one carrying a hard line or a small box, and a half-resolution picture upscaled;
+  baked motion blur blocks a static shot; a degenerate still blocks; the palette distance is
+  a score and a warning, never a block;
+- the best passing candidate is chosen by its check score (the sharper of two passing takes
+  wins), a failing still is re-rolled at most twice with its violation rewritten as a
+  positive instruction, then goes to the Owner.
 
 Fixtures: tests/fixtures/nepal_1d530880/scene_0N.jpg are 540x960 JPEG (q 3) copies of the
 six stills Runway delivered for the second Nepal render (1530x2720 PNG, in
@@ -37,13 +42,16 @@ from app.media import faces, still_gate
 from app.media.faces import FaceCount, count_faces
 from app.media.picture_qc import StillJudgement, StillVerdict
 from app.media.still_gate import (
+    FINE_DETAIL_KEPT_MAX,
     MAX_REROLLS,
     MOTION_BLUR_ANISOTROPY,
     SHARPNESS_FLOOR,
+    CheckResult,
     StillPlan,
     choose_best,
     decide,
     local_checks,
+    measure_focus,
     measure_sharpness,
     next_step,
     positive_instruction,
@@ -52,6 +60,32 @@ from app.media.still_gate import (
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "tests" / "fixtures" / "nepal_1d530880"
 NEPAL_MEDIA = ROOT / "backend" / "storage" / "media" / "1d530880-c94a-48a1-baf5-6ad7c1796a6d"
+#: The five scene-1 stills RunPod delivered on 2026-10-09 for «The Particle That Shouldn't
+#: Exist (But Does)» (1530x2720 PNG), read only; the gate rejected them all at 70-182.
+PARTICLE_STILLS = (
+    ROOT / "backend" / "storage" / "media" / "babcf272-0667-41b9-ae70-27304eef92ca" / "stills"
+)
+#: What they read, measured 2026-10-09 (still_gate's docstring): (sharpness, fine detail kept).
+PARTICLE_READINGS = {
+    "scene_01_ac5b5e97_c1.png": (66.6, 0.157),
+    "scene_01_340ebcb1_c2.png": (255.4, 0.276),
+    "scene_01_14aec523_c1.png": (69.7, 0.167),
+    "scene_01_b5f88e79_c2.png": (66.8, 0.205),
+    "scene_01_d1e900d3_c1.png": (260.9, 0.201),
+}
+#: Drawn on a blurred picture, each is one hard line or a thin outline: letterbox bars (top and
+#: bottom, 12 % each) and a small white box in a corner (18 % x 5 % of the frame).
+LETTERBOX = (
+    "drawbox=x=0:y=0:w=iw:h=ih*0.12:color=black:t=fill,"
+    "drawbox=x=0:y=ih*0.88:w=iw:h=ih*0.12:color=black:t=fill"
+)
+SMALL_BOX = "drawbox=x=iw*0.78:y=ih*0.03:w=iw*0.18:h=ih*0.05:color=white:t=4"
+#: A dark background kept soft on purpose (a tunnel out of focus): its tiles vary (luma
+#: standard deviation 5-12), so the old pooling counted them, but nothing in it is sharp.
+SOFT_DARK = "color=c=black:s=1080x1920,format=gray,geq=lum='44+18*sin(X/70)+18*sin(Y/90)'"
+FLAT_DARK = "color=c=0x141414:s=1080x1920"
+#: The sharp subject: fine texture (a coverall's weave), 2 x 4 tiles of the 8 x 14 grid.
+SUBJECT = "color=c=0x6a6a6a:s=270x548,noise=alls=10:allf=t"
 FFMPEG = shutil.which("ffmpeg")
 
 needs_ffmpeg = pytest.mark.skipif(FFMPEG is None, reason="ffmpeg is not installed")
@@ -336,15 +370,177 @@ def test_no_vision_judgement_at_all_blocks_in_every_environment():
 
 @needs_ffmpeg
 @pytest.mark.skipif(not NEPAL_MEDIA.is_dir(), reason="the Nepal media folder is not here")
-def test_the_real_nepal_stills_pass_the_sharpness_floor():
-    """Measured 2026-09-27 on the six delivered PNGs at 1080 px, pooled over the tiles
-    that hold a picture: 592, 614, 870, 603, 893, 331 (scene 6 is half flat black)."""
-    readings = {scene: measure_sharpness(FFMPEG, original(scene)) for scene in range(1, 7)}
-    print(readings)
-    assert SHARPNESS_FLOOR == 250
-    for scene, reading in readings.items():
-        assert reading is not None and reading >= SHARPNESS_FLOOR, (scene, reading)
-    assert 540 <= readings[1] <= 650 and 800 <= readings[3] <= 950 and readings[6] < 400
+def test_the_real_nepal_stills_pass_the_sharpness_check():
+    """The six delivered 1530x2720 PNGs read 592, 614, 870, 603, 893 and 331 on the pooled
+    measure of 2026-09-27 (scene 6 is half flat black). Their folder was not on the machine
+    the measure of 2026-10-09 was written on, so they were not read with it; where it is,
+    they pass it, both readings (a false refusal starves a film: 2026-10-09)."""
+    for scene in range(1, 7):
+        (check,) = local_checks(
+            original(scene),
+            plan(scene),
+            environment="PRODUCTION",
+            face_counter=no_faces,
+            measure=("sharpness",),
+        )
+        print(scene, check.value, check.detail_ro)
+        assert check.status == "PASSED", (scene, check.detail_ro)
+
+
+def subject_on(
+    tmp_path: Path,
+    name: str,
+    background: str,
+    blur: float | None = None,
+    drawn: str | None = None,
+) -> Path:
+    """A 1080x1920 still: the sharp subject over ``background``, optionally all blurred, then
+    optionally with ``drawn`` (ffmpeg filters) drawn over it."""
+    target = tmp_path / name
+    graph = "[0][1]overlay=405:685,format=gray" + (f",gblur=sigma={blur}" if blur else "")
+    graph += f",{drawn}" if drawn else ""
+    subprocess.run(
+        [FFMPEG, "-v", "error", "-y", "-f", "lavfi", "-i", background, "-f", "lavfi", "-i"]
+        + [SUBJECT, "-filter_complex", graph, "-frames:v", "1", str(target)],
+        check=True,
+        capture_output=True,
+        timeout=60,
+    )
+    return target
+
+
+@needs_ffmpeg
+@pytest.mark.parametrize(("background", "label"), [(SOFT_DARK, "soft"), (FLAT_DARK, "flat")])
+def test_a_sharp_subject_on_a_dark_background_passes_and_the_same_blurred_fails(
+    tmp_path, background, label
+):
+    """2026-10-09: five good documentary stills (a sharp worker in a dark tunnel kept soft on
+    purpose) read 70-182 pooled over every tile that varied, under the old floor of 250, and
+    the film never got past scene 1. Measured here when this test was written: the subject
+    (8 of the 112 tiles) reads 576 before either background (73 and 528 pooled), keeping 2 %
+    when halved and restored; blurred with sigma 2 it reads 5, with sigma 4 1-2."""
+    sharp = subject_on(tmp_path, f"{label}_sharp.png", background)
+    focus = measure_focus(FFMPEG, sharp)
+    assert focus is not None and focus.sharpness >= 10 * SHARPNESS_FLOOR, focus
+    assert focus.fine_kept < FINE_DETAIL_KEPT_MAX / 10, focus
+    checks = local_checks(
+        sharp, plan(), environment="PRODUCTION", face_counter=no_faces, measure=("sharpness",)
+    )
+    (sharpness,) = checks
+    assert sharpness.status == "PASSED" and sharpness.blocking is False
+    for sigma in (2, 4):
+        blurred = subject_on(tmp_path, f"{label}_blur{sigma}.png", background, blur=sigma)
+        soft = measure_sharpness(FFMPEG, blurred)
+        assert soft is not None and soft < SHARPNESS_FLOOR / 5, (sigma, soft)
+        (check,) = local_checks(
+            blurred,
+            plan(),
+            environment="PRODUCTION",
+            face_counter=no_faces,
+            measure=("sharpness",),
+        )
+        assert check.status == "FAILED" and check.blocking is True
+        assert "neclară" in check.detail_ro and str(SHARPNESS_FLOOR) in check.detail_ro
+
+
+def sharpness_check(path: Path) -> CheckResult:
+    (check,) = local_checks(
+        path, plan(), environment="PRODUCTION", face_counter=no_faces, measure=("sharpness",)
+    )
+    return check
+
+
+@needs_ffmpeg
+@pytest.mark.parametrize(("drawn", "label"), [(LETTERBOX, "letterbox"), (SMALL_BOX, "box")])
+def test_a_blurred_still_with_one_hard_line_or_a_small_box_on_it_fails(tmp_path, drawn, label):
+    """A tile's variance is made by any single hard line in it: the five sharpest tiles of a
+    blurred still with letterbox bars (or a box drawn in a corner) read sharp on their mean
+    (2026-10-09 review: 262 and 1228 on a real still blurred with sigma 4). Each tile now
+    leaves out its strongest 5 %, and a subject's worth of tiles must be sharp: the blurred
+    picture reads 1.6-4.6 with them, as without them. On a sharp picture they change nothing."""
+    sharp = subject_on(tmp_path, f"sharp_{label}.png", SOFT_DARK, drawn=drawn)
+    assert sharpness_check(sharp).status == "PASSED"
+    for sigma in (2, 3, 4):
+        blurred = subject_on(tmp_path, f"g{sigma}_{label}.png", SOFT_DARK, blur=sigma, drawn=drawn)
+        check = sharpness_check(blurred)
+        assert check.value is not None and check.value < SHARPNESS_FLOOR / 5, (sigma, check)
+        assert check.status == "FAILED" and check.blocking is True and "neclară" in check.detail_ro
+
+
+@needs_ffmpeg
+@pytest.mark.parametrize("scene", range(1, 7))
+def test_a_half_resolution_still_upscaled_fails_however_much_texture_it_has(tmp_path, scene):
+    """The Nepal 540 px fixtures blown up to the vendor's 1530x2720 (bicubic) carry enough
+    texture to read 52-295 on the sharpness, over the floor (2026-10-09 review: they passed the
+    sharpest-tiles mean at 369-598), but halved and restored they keep 52-56 % of their
+    Laplacian energy: what they have is not fine detail. A sharp still keeps 16-28 %."""
+    upscaled = render(
+        tmp_path, f"up_{scene}.png", str(fixture(scene)), vf="scale=1530:2720:flags=bicubic"
+    )
+    focus = measure_focus(FFMPEG, upscaled)
+    assert focus is not None and focus.sharpness >= SHARPNESS_FLOOR, focus
+    assert focus.fine_kept > FINE_DETAIL_KEPT_MAX, focus
+    check = sharpness_check(upscaled)
+    assert check.status == "FAILED" and check.blocking is True
+    assert "moale" in check.detail_ro and f"{FINE_DETAIL_KEPT_MAX:.0%}" in check.detail_ro
+
+
+@needs_ffmpeg
+@pytest.mark.skipif(not PARTICLE_STILLS.is_dir(), reason="the 2026-10-09 stills are not here")
+def test_the_stills_the_old_floor_rejected_pass_and_their_softened_copies_fail(tmp_path):
+    """The five delivered PNGs, read only; their copies are written to tmp_path. Each copy is
+    a way a still arrives soft (still_gate's docstring has every reading)."""
+    for name, (sharpness, kept) in PARTICLE_READINGS.items():
+        still = PARTICLE_STILLS / name
+        focus = measure_focus(FFMPEG, still)
+        assert focus is not None, name
+        assert abs(focus.sharpness - sharpness) <= 0.05 * sharpness, (name, focus)
+        assert abs(focus.fine_kept - kept) <= 0.02, (name, focus)
+        assert focus.sharpness >= 2 * SHARPNESS_FLOOR, (name, focus)
+        assert focus.fine_kept <= FINE_DETAIL_KEPT_MAX / 1.5, (name, focus)
+        assert sharpness_check(still).status == "PASSED", name
+        softened = {
+            "sigma 1 at 1080": "scale=1080:-2,gblur=sigma=1",
+            "saved at 540 px": "scale=540:-2:flags=bicubic",
+        }
+        if name == "scene_01_340ebcb1_c2.png":  # the sharpest, and the most kept
+            softened |= {
+                "sigma 2 at 1080": "scale=1080:-2,gblur=sigma=2",
+                "sigma 4 at 1530": "gblur=sigma=4",
+                "512 px and back": "scale=512:-2:flags=bicubic,scale=1530:2720:flags=bicubic",
+                "sigma 4, letterbox": f"scale=1080:-2,gblur=sigma=4,{LETTERBOX}",
+                "sigma 4, small box": f"scale=1080:-2,gblur=sigma=4,{SMALL_BOX}",
+            }
+        for n, (how, vf) in enumerate(softened.items()):
+            copy = render(tmp_path, f"{n}_{name}", str(still), vf=vf)
+            check = sharpness_check(copy)
+            assert check.status == "FAILED" and check.blocking is True, (name, how, check)
+
+
+def test_the_sharper_of_two_passing_takes_wins_and_the_score_never_saturates():
+    """The score's sharpness term was value / 1000, sized for the old pooled readings: the
+    sharpest-tiles readings filled it for most stills. On a log scale from the floor nothing
+    in range fills it, and the sharper take of the same scene ranks first."""
+
+    def passing(scene: int, sharpness: float):
+        checks = [
+            CheckResult("degenerate", "PASSED", False, None, "structură de imagine"),
+            CheckResult("sharpness", "PASSED", False, sharpness, f"claritate {sharpness:.0f}"),
+            CheckResult("motion_blur", "PASSED", False, 1.4, "raport 1.4"),
+            CheckResult("faces", "PASSED", False, 0.0, "0 fețe"),
+        ]
+        report = decide(
+            fixture(scene), plan(scene), checks, clean_verdict(scene), environment="PRODUCTION"
+        )
+        assert report.decision == "PASSED", report.reasons_ro
+        return report
+
+    # The softest and the sharpest of the 2026-10-09 stills, then readings past the old scale.
+    softer, sharper = passing(1, 66.6), passing(2, 260.9)
+    assert choose_best([softer, sharper]) is sharper and choose_best([sharper, softer]) is sharper
+    scores = [passing(1, value).score for value in (66.6, 260.9, 1200.0, 2900.0)]
+    assert scores == sorted(scores) and len(set(scores)) == 4, scores
+    assert passing(1, SHARPNESS_FLOOR).score < scores[0]
 
 
 @needs_ffmpeg
@@ -369,7 +565,7 @@ def test_a_blurred_still_fails_the_sharpness_floor(tmp_path):
     )
     sharpness = next(c for c in checks if c.code == "sharpness")
     assert sharpness.status == "FAILED" and sharpness.blocking is True
-    assert "250" in sharpness.detail_ro
+    assert str(SHARPNESS_FLOOR) in sharpness.detail_ro
 
 
 @needs_ffmpeg

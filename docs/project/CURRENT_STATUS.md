@@ -1,5 +1,22 @@
 # CURRENT STATUS — State on 2026-10-09
 
+## RUNPOD_STILLS_GATE_BILLING_ORDER — complete on fakes (2026-10-09)
+
+First live RunPod stills (film babcf272): after the paused-endpoint retry (7f41468) the worker
+waited ~28 min for the cached model (unbilled: spend rate 0) and ran 340 s of GPU; RunPod charged
+0.27 USD. Three defects found and fixed (workflow wf_28c91707-cca, 3 adversarial reviewers):
+the local sharpness gate (global Laplacian, floor 250) rejected all five good stills (70-182);
+it now reads tile sharpness with the strongest 5% of pixels left out at the 6th of 112 tiles
+(floor 30) plus a «fine detail kept» check (max 48%), measured on the five real stills (pass)
+and on blurred, downscaled, letterboxed and Nepal-upscaled copies (fail). Billed seconds are
+execution + one worker start (first job's delay, capped at cold_start_seconds, plus budgets of
+unanswered chunks) + 1 s idle per round, never the cache-download wait (2074 s booked -> 461 s
+for the live job). The stills first round sends every scene; re-rolls come after, a scene a cap
+cut left out goes first next round. Sheet statuses read in Romanian. The Owner chose scene 1's
+still himself (take 76e59c5c, score 182). Open: the 2511 reference route still waits for scene
+1 (his card); docs/RUNPOD_INTEGRATION.md wording. Tests: 177 backend, 18 paid-path safety, 50
+frontend; ruff, mypy, tsc.
+
 ## RUNPOD_UNSENT_PROOF — complete on fakes, live retry pending a restart (2026-10-09)
 
 First live RunPod stills round (film babcf272, «The Particle That Shouldn't Exist (But Does)»):
