@@ -226,7 +226,8 @@ CATALOG = {
         ],
         "media",
         "GPU RunPod Serverless: pornește doar în pașii plătiți aprobați și se oprește imediat "
-        "după; rezultatele merg în bucketul tău. Activare prin RUNPOD_ENABLED. Păstrează "
+        "după; rezultatele merg în bucketul tău. Pornire din comutatorul «RunPod pornit» de pe "
+        "cardul conexiunii (înlocuiește RUNPOD_ENABLED din .env). Păstrează "
         "aprobările și bugetul. Simularea nu demonstrează o conexiune reală.",
         "https://docs.runpod.io/serverless/endpoints/send-requests",
         ["image", "video"],

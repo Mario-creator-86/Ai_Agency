@@ -52,7 +52,8 @@ DISCOVERED_KINDS: dict[str, dict[str, Any]] = {
         "refresh_label": "Verifică API și modelele",
         "syncing": "Se verifică RunPod…",
         "verify_hint": "Configurează cheia, endpointurile Serverless (imagini și mișcare), "
-        "bucketul pentru rezultate și RUNPOD_ENABLED=true în .env. MOCK este doar o simulare.",
+        "bucketul pentru rezultate, apoi pornește comutatorul «RunPod pornit» (înlocuiește "
+        "RUNPOD_ENABLED=true din .env). MOCK este doar o simulare.",
         "select_hint": "Alege modelele din catalogul cloud; vocea rămâne pe conexiunea existentă.",
         "unusable": "modelul nu este disponibil în backendul cloud",
     },
@@ -438,9 +439,11 @@ def refresh_catalog(
             from app.providers.runpod.config import RunPodConfig  # noqa: PLC0415
 
             # Verified without /run (a paid worker): the endpoints' settings and /health, the
-            # bucket, and the pinned catalogue (config/runpod_models.json) in serverless.
+            # bucket, and the pinned catalogue (config/runpod_models.json) in serverless. It
+            # only reads, so it runs whatever his switch «RunPod pornit» says (2026-10-09):
+            # the switch may go ON only once this check has passed.
             adapter = RunPodConnection(
-                RunPodConfig.from_integration(local_config or {}, secrets),
+                RunPodConfig.from_integration({**(local_config or {}), "enabled": "true"}, secrets),
                 engine,
                 integration_id=identifier,
                 storage_root=settings.media_root if settings else None,
@@ -590,6 +593,17 @@ def refresh_catalog(
         }
 
 
+def _runpod_switched_on(config: dict) -> bool:
+    """His RunPod switch (or RUNPOD_ENABLED): while it is off the background pass leaves his
+    RunPod alone; his own «Verifică» still checks it (2026-10-09)."""
+    from app.providers.runpod.config import RunPodConfig  # noqa: PLC0415
+
+    try:
+        return RunPodConfig.from_integration(config, {}).enabled
+    except ValueError:
+        return False
+
+
 def refresh_due_catalogs(
     engine: Engine,
     vault: CredentialVault,
@@ -599,9 +613,13 @@ def refresh_due_catalogs(
     settings: Settings | None = None,
 ) -> None:
     with Session(engine) as session:
-        identifiers = session.scalars(
-            select(Integration.id).where(Integration.kind.in_(tuple(DISCOVERED_KINDS)))
-        ).all()
+        identifiers = [
+            row.id
+            for row in session.scalars(
+                select(Integration).where(Integration.kind.in_(tuple(DISCOVERED_KINDS)))
+            )
+            if row.kind != "runpod" or _runpod_switched_on(dict(row.config or {}))
+        ]
     for identifier in identifiers:
         try:
             refresh_catalog(

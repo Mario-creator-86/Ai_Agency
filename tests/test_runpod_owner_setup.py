@@ -318,7 +318,7 @@ def test_the_runpod_verify_hint_names_what_serverless_needs():
 
     hint = DISCOVERED_KINDS["runpod"]["verify_hint"]
     assert "adresa cloud" not in hint
-    assert "endpoint" in hint and "bucket" in hint and "RUNPOD_ENABLED=true" in hint
+    assert "endpoint" in hint and "bucket" in hint and "«RunPod pornit»" in hint
 
 
 # ------------------------------------------- the weight pins are checksums, not credentials

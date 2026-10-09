@@ -81,6 +81,8 @@ _LOCK_PIN = re.compile(r'\s*"(?:sha256": "[0-9a-f]{64}|revision": "[0-9a-f]{40})
 #: mirrors.lock.json pins his private mirror's commit the same way (after the copy, 2026-10-09).
 _PINNED = {
     _INDEX: _INDEX_HASH,
+    # Public PNG content hashes; other values in this manifest are still scanned.
+    "config/pixel_actors.json": _INDEX_HASH,
     "backend/runpod_worker/models.lock.json": _LOCK_PIN,
     "backend/runpod_worker/mirrors.lock.json": _LOCK_PIN,
 }

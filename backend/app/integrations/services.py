@@ -155,6 +155,9 @@ def save(engine: Engine, vault: CredentialVault, identifier: str, command: SaveI
             # field: a save of the form keeps it (`decisions.sources.apply_runpod_infra`).
             if "allow_infra_actions" in row.config:
                 stored["allow_infra_actions"] = row.config["allow_infra_actions"]
+            # Nor is his switch «RunPod pornit» (`providers.runpod.setup`): a save keeps it.
+            if "enabled" in row.config:
+                stored["enabled"] = row.config["enabled"]
         row.config, row.encrypted_secrets = stored, encrypted
         row.secret_fields, row.version = sorted(secrets), version
         row.status, row.checked_at, row.event_id = "SAVED", None, event.event_id

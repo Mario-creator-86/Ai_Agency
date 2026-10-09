@@ -1,5 +1,39 @@
 # Changelog
 
+## 2026-10-09 — full street motion and detailed cars
+
+- Exact central 10% world character/chair reduction with existing floor anchors.
+- Remove left-edge street masks; normal travel/cadence, visible wall-time clock, brief cat
+  rests and full continuous patrols. Paused/hidden/stale/replay guards retained.
+- Four original transparent car profiles, rotating hubs, fixed bodies, whole roofs,
+  headlights and wet reflections. Source: art-source/pixel/street-vehicles-v6/.
+- 879 frontend/types, six bounded browser and 66 scoped backend/docs/secret checks pass;
+  31.958008 s actual live UI clip inspected. PIXEL_STREET_REFINEMENT.md.
+
+## 2026-10-09 — RunPod: the Owner's switch «RunPod pornit» and «Pașii configurării» (fakes only)
+
+- Setări → RunPod: the switch replaces `RUNPOD_ENABLED` in `.env` (stored with the connection,
+  event `runpod.switch_changed`, no restart). ON needs a verified connection and his key; OFF
+  is always allowed and switches the GPU off at once and ends a running copy pod.
+- A read-only checklist (API key, endpoint ids, each endpoint's settings by GET, the cached
+  model «se verifică la primul rezultat», the bucket by HEAD, HF token, mirrors, revisions,
+  his cards, the switch) with console links; «Verifică pașii» reads, never writes or spends.
+- The connection check reads while the switch is off; the background check skips it then.
+- A paid step whose adapter was built before his OFF can no longer switch the GPU on: the
+  GPU session re-reads the switch under the endpoint lock and refuses `RUNPOD_OFF`.
+- `providers/runpod/setup_steps.py`, routes in `providers/runpod/router.py`,
+  `frontend/src/runpod_setup.js`; ADR-RUNPOD-OWNER-SWITCH; docs/RUNPOD_INTEGRATION.md.
+
+## 2026-10-09 — whole seated characters, continuous motion
+
+- Generate each of eight people together with their chair/stool; uniform scaling, fixed
+  feet/base/pelvis, no stretched calves or full-body pose jumps.
+- Continuous small head/forearm joints and eased actual-state changes. Empty chairs are
+  cleared only through their silhouettes; the approved background file stays unchanged.
+- 863 frontend/types, five bounded browser and 62 scoped backend/docs/secret cases pass;
+  actual eight-agent/street/pause/hover verification and 19.916016 s live clip recorded.
+- Art sources/prompts: art-source/pixel/chair-ensembles-v5/; PIXEL_CHAIR_ENSEMBLES.md.
+
 ## 2026-10-09 — restore requested scene animation
 
 - Scene motion follows a persistent ANIMAȚII control; enabled by explicit Owner default,

@@ -9,8 +9,10 @@ din imaginea aprobată. Un etaj suplimentar oferă loc celor opt agenți existen
 angajat are un loc personal la mobilierul ilustrat și stă cu fața spre birou.
 Numele apare la trecerea mouse-ului sau selecție. Lista de jos și inspectorul arată numele
 și starea: în lucru, se gândește, verifică, în așteptare, blocaj, eroare sau în pauză.
-Stările vin din backend. Lucrul animă tastarea/scrisul, gândirea aduce mâna la bărbie;
-clipitul și respirația discretă dau viață și personajelor care așteaptă.
+Stările vin din backend. Fiecare personaj este desenat împreună cu scaunul său;
+picioarele și scaunul rămân stabile. Capul și mâinile au mișcări discrete, continue,
+mai active la lucru și cu schimbări line la gândire/verificare. Mișcările de repaus
+nu semnifică muncă efectuată de agent. Nu se mai schimbă brusc posturi întregi.
 Pauza angajatului, blocajul, datele vechi și reluarea opresc gesturile.
 Butonul **ANIMAȚII** din bara camerei pornește sau pune pe pauză mișcarea întregii scene.
 Animațiile sunt pornite implicit, conform cererii tale; alegerea se păstrează la reîncărcare.
@@ -21,6 +23,12 @@ Pentru mai mult de opt angajați apar birouri suplimentare, accesibile din lista
 sau butoanele de sus. Apasă un birou/nume pentru inspector și conversație; poți folosi
 și săgețile cu Enter. Coafurile, culorile și accesoriile păstrează identitatea existentă.
 Portretul din inspector arată fața personajului. Pe telefon, folosește zoomul pentru detalii.
+
+Personajele din scenă sunt cu 10% mai mici, păstrând proporțiile și sprijinul pe podea.
+Trecătorii traversează întregul trotuar, inclusiv stânga; bicicleta și mașinile au viteze
+potrivite străzii. Cele două pisici patrulează, fac pauze scurte și se întorc. Patru modele
+detaliate de mașină au roți animate, faruri noaptea și reflexii pe ploaie. Aceste mișcări
+țin de decor; activitatea și stările angajaților continuă să vină din backend.
 
 ## Ceasul și vremea de afară
 

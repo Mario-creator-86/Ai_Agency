@@ -21,8 +21,8 @@ test('original street sprites move within bounded cycles without making staff/wo
   assert.ok(first.people.every(p => p.kind === 'pedestrian' && !('agent_id' in p)));
   for (let t = 0; t < 300000; t += 5000) {
     const scene = streetFrame(t, clear, true);
-    assert.ok(scene.people.every(p => p.x >= -50 && p.x <= 1010));
-    assert.ok(scene.car.x >= -50 && scene.car.x <= 1010);
+    assert.ok(scene.people.every(p => p.x >= -80 && p.x <= 1040));
+    assert.ok(scene.car.x >= -80 && scene.car.x <= 1040);
   }
   assert.deepEqual(streetFrame(NaN, clear, true), first);
 });
@@ -36,15 +36,15 @@ test('umbrella, headlights and moths use actual weather/daylight without inventi
   assert.ok(unknown.people.every(p => !p.umbrella)); assert.equal(unknown.moths, false);
 });
 
-test('idle employees have visible breathing, glances, cup and stretch without fake work', () => {
+test('idle employees breathe continuously with small glances and no disruptive full-body jumps', () => {
   const agent = { id: 'idle-fixture', role_name: 'FactChecker', lifecycle: 'ACTIVE', runtime_state: 'IDLE' };
   const before = structuredClone(agent), gestures = new Set(), breaths = new Set();
   for (let t = 0; t <= 42000; t += 180) {
     const motion = characterMotion(agent, t, true); gestures.add(motion.gesture); breaths.add(motion.breath);
     assert.equal(motion.mode, 'IDLE');
   }
-  assert.deepEqual([...gestures].sort(), ['look', 'rest', 'sip', 'stretch']);
-  assert.equal(breaths.size, 3); assert.deepEqual(agent, before);
+  assert.deepEqual([...gestures].sort(), ['look', 'relax', 'rest']);
+  assert.ok(breaths.size > 100); assert.deepEqual(agent, before);
   assert.notDeepEqual(characterMotion(agent, 1000, true), characterMotion({ ...agent, id: 'another' }, 1000, true));
 });
 

@@ -2,6 +2,7 @@ import { PIXEL_LAYOUT } from './pixel_desks.js';
 import { weatherEffects } from './hq_weather.js';
 import { drawPedestrian, drawBicycle, drawCat, drawDog } from './pixel_town_people.js';
 import { pixelPen } from './pixel_art.js';
+import { drawCar } from './pixel_vehicle.js';
 const LIFE = PIXEL_LAYOUT.life;
 const W = PIXEL_LAYOUT.world.width;
 
@@ -14,40 +15,32 @@ export function streetFrame(elapsed, weather, night) {
   const t = Number.isFinite(elapsed) ? Math.max(0, elapsed) : 0;
   const effects = weatherEffects(weather);
   const wet = effects.rain > 0;
-  const progress = (period, offset) => ((t / period + offset) % 1) * (W + 100) - 50;
+  const progress = (period, offset) => ((t / period + offset) % 1) * (W + 2 * LIFE.street_margin) - LIFE.street_margin;
   const people = Array.from({ length: LIFE.pedestrian_count }, (_, i) => ({
-    kind: 'pedestrian', id: i, x: Math.round(i % 2 ? W - progress(LIFE.pedestrian_cycle_ms, (i + 1) / (LIFE.pedestrian_count + 1)) : progress(LIFE.pedestrian_cycle_ms, (i + 1) / (LIFE.pedestrian_count + 1))),
-    y: LIFE.sidewalk_y + (i % 2 ? 3 : -2), direction: i % 2 ? -1 : 1, step: Math.floor(t / 150 + i * 2) % 8, blink: (t + i * 997) % 5700 < 160, umbrella: wet,
+    kind: 'pedestrian', id: i, x: i % 2 ? W - progress(LIFE.pedestrian_cycle_ms, LIFE.pedestrian_offsets[i % LIFE.pedestrian_offsets.length]) : progress(LIFE.pedestrian_cycle_ms, LIFE.pedestrian_offsets[i % LIFE.pedestrian_offsets.length]),
+    y: LIFE.sidewalk_y + (i % 2 ? 3 : -2), direction: i % 2 ? -1 : 1, step: Math.floor(t / LIFE.pedestrian_step_ms + i * 2) % 8, blink: (t + i * 997) % 5700 < 160, umbrella: wet,
   }));
   return { people,
-    bicycle: { x: Math.round(progress(LIFE.cycle_cycle_ms, 0.63)), y: LIFE.sidewalk_y + 7, step: Math.floor(t / 140) % 8 },
-    car: { x: Math.round(W - progress(LIFE.car_cycle_ms, 0.3)), y: LIFE.road_y, lights: night },
+    bicycle: { x: progress(LIFE.cycle_cycle_ms, 0.63), y: LIFE.sidewalk_y + 7, direction: 1, step: Math.floor(t / LIFE.pedal_step_ms) % 8 },
+    car: { x: W - progress(LIFE.car_cycle_ms, 0), y: LIFE.road_y, direction: -1, variant: Math.floor(t / LIFE.car_cycle_ms) % 4, elapsed: t, lights: night },
     cat: catFrame(t, LIFE.cat, 0),
     cats: [LIFE.cat, ...LIFE.extra_cats].map((cat, id) => catFrame(t, cat, id)),
-    dog: people[2] ? { x: people[2].x + 29 * people[2].direction, y: people[2].y + 2, direction: people[2].direction, step: Math.floor(t / 140) % 8 } : null,
+    dog: people[2] ? { x: people[2].x + 29 * people[2].direction, y: people[2].y + 2, direction: people[2].direction, step: Math.floor(t / LIFE.dog_step_ms) % 8 } : null,
     bird: { x: Math.round(progress(LIFE.bird_cycle_ms, 0.3)), y: LIFE.bird_y + Math.round(Math.sin(t / 3000) * 3), step: Math.floor(t / 180) % 2 },
     moths: Boolean(night && weather?.available && !effects.rain && !effects.snow && !effects.fog), t };
 }
 
 function catFrame(t, position, id) {
-  const phase = (t + id * 9200) % 56000, part = phase % 28000;
-  const direction = phase < 28000 ? 1 : -1;
-  const travel = part < 8000 ? -10 + part / 8000 * 20 : 10;
-  return { id, x: position.x + Math.round(travel * direction), y: position.y, direction,
-    pose: part < 8000 ? 'walk' : part < 16000 ? 'sit' : part < 23000 ? 'groom' : 'stretch',
-    step: Math.floor(t / 140 + id) % 8, blink: (t + id * 1900) % 4900 < 160 };
-}
-
-function car(ctx, car, wet) {
-  const x = car.x, y = car.y, p = LIFE.palette;
-  const r = (dx, dy, w, h, colour) => { ctx.fillStyle = colour; ctx.fillRect(x + dx, y + dy, w, h); };
-  if (car.lights) { r(-25, -2, 19, 2, '#ffe5ac38'); r(-34, 0, 31, 1, '#ffe5ac20'); }
-  if (wet) r(-4, 5, 43, 1, '#b9af8640');
-  r(-2, -1, 46, 4, '#222637a0'); r(0, -10, 40, 10, p.ink); r(3, -12, 33, 3, p.car);
-  r(8, -19, 25, 8, p.ink); r(10, -18, 20, 7, p.car); r(9, -16, 11, 4, '#c8c5ac'); r(22, -16, 7, 4, '#8fa8b2');
-  r(2, -9, 35, 7, p.car); r(5, -8, 26, 1, '#809e9e'); r(18, -5, 5, 1, '#b8b7a1');
-  for (const wheel of [8, 32]) { r(wheel - 3, -3, 7, 6, p.ink); r(wheel - 1, -2, 3, 3, '#b1b5b3'); }
-  r(0, -7, 3, 3, car.lights ? p.light : '#b8bcbc'); r(38, -6, 2, 3, '#be7770');
+  const leg = LIFE.cat_walk_ms + LIFE.cat_sit_ms + LIFE.cat_groom_ms + LIFE.cat_stretch_ms;
+  const phase = (t + id * LIFE.cat_phase_offset_ms) % (2 * leg), part = phase % leg;
+  const direction = phase < leg ? 1 : -1;
+  const u = Math.min(1, part / LIFE.cat_walk_ms);
+  const start = direction === 1 ? position.min_x : position.max_x;
+  const end = direction === 1 ? position.max_x : position.min_x;
+  return { id, x: start + (end-start)*u, y: position.y, direction,
+    pose: part < LIFE.cat_walk_ms ? 'walk' : part < LIFE.cat_walk_ms + LIFE.cat_sit_ms ? 'sit'
+      : part < LIFE.cat_walk_ms + LIFE.cat_sit_ms + LIFE.cat_groom_ms ? 'groom' : 'stretch',
+    step: Math.floor(t / LIFE.cat_step_ms + id) % 8, blink: (t + id * 1900) % 4900 < 160 };
 }
 
 /** Original detailed pixel sprites, clipped to their own street/sky layers. */
@@ -55,7 +48,8 @@ export function drawOutdoorLife(ctx, weather, elapsed, moment) {
   const night = moment.daylight < 0.4;
   const frame = streetFrame(elapsed, weather, night);
   ctx.save(); ctx.beginPath(); ctx.rect(0, 0, W, PIXEL_LAYOUT.world.height); ctx.clip();
-  ctx.save(); ctx.beginPath(); ctx.rect(147, LIFE.sidewalk_y - 68, W - 165, 78); ctx.clip();
+  const sidewalk = LIFE.sidewalk_clip, road = LIFE.road_clip;
+  ctx.save(); ctx.beginPath(); ctx.rect(sidewalk.x, sidewalk.y, sidewalk.width, sidewalk.height); ctx.clip();
   if (frame.dog) {
     const owner = frame.people[2], d = frame.dog;
     pixelPen(ctx).line(owner.x + 4 * owner.direction, owner.y - 17, d.x - 5 * d.direction, d.y - 8, '#b39e88');
@@ -63,11 +57,11 @@ export function drawOutdoorLife(ctx, weather, elapsed, moment) {
   }
   const walkers = frame.people.map(p => ({ y: p.y, draw: () => drawPedestrian(ctx, p) }));
   walkers.push({ y: frame.bicycle.y, draw: () => drawBicycle(ctx, frame.bicycle) });
+  for (const cat of frame.cats) walkers.push({ y: cat.y, draw: () => drawCat(ctx, cat) });
   for (const actor of walkers.sort((a,b) => a.y - b.y)) actor.draw();
   ctx.restore();
-  ctx.save(); ctx.beginPath(); ctx.rect(156, LIFE.road_y - 21, W - 156, 30); ctx.clip();
-  car(ctx, frame.car, weatherEffects(weather).rain > 0); ctx.restore();
-  for (const cat of frame.cats) drawCat(ctx, cat);
+  ctx.save(); ctx.beginPath(); ctx.rect(road.x, road.y, road.width, road.height); ctx.clip();
+  drawCar(ctx, frame.car, weatherEffects(weather).rain > 0); ctx.restore();
   if (!night) {
     ctx.save(); ctx.beginPath(); ctx.rect(0, 0, W, 48); ctx.clip(); ctx.fillStyle = '#3a405d';
     for (let i = 0; i < 3; i++) {

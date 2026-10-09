@@ -1,17 +1,85 @@
 # CURRENT STATUS — State on 2026-10-09
 
+## PIXEL_DEPTH_PHYSICS — claimed (2026-10-09)
+
+Owner requests a complete front/back and ground-contact audit. Scope: original foreground
+foliage/fence occlusion, street actors/vehicle/pet/clock depth, indoor seating/furniture,
+speech/state overlays and DOM dialogs/controls. Preserve approved art, the 10% scale,
+motion/live/replay/pause guards, menus and backend reality. Verify pixel overlaps, full
+routes, actual live UI and controls with Playwright. No backend restart or production job.
+
 Current proof: the 2026-10-01/02 paid film readiness audit was proven on fakes only;
 AGENT_SCENARIO_ACCEPTANCE later used actual Ollama Cloud calls, with normal serial
 acceptance and real GPU/media/upload still pending. Current local UI evidence is reported
 separately below and does not prove those external workflows.
 
-## PIXEL_NATURAL_MOTION — claimed (2026-10-09)
+## RUNPOD_OWNER_SWITCH_SETUP — complete on fakes (2026-10-09)
 
-Subsystem: actor proportions, desk occlusion and continuous animation. Expected files:
-pixel actor/people/life renderer, actor/scene config, scoped Playwright verification and
-tracking docs. Outcome: grounded anatomically consistent seats, continuous subdued
-motion, pedestrian/pedal continuity, actual-state projection preserved. Inspect full
-cycles and close-ups before accepting; preserve approved building and concurrent work.
+Claim released. Owner card: «RunPod pornit» in Setări → RunPod replaces `RUNPOD_ENABLED` in
+`.env`; a read-only «Pașii configurării» checklist shows his remaining setup with console links.
+Switch stored with the RunPod integration (event `runpod.switch_changed`); effective value =
+switch, else environment, else false; readers see it without a restart. ON needs VERIFIED and
+the Owner's key; OFF always runs the GPU off (both endpoints) and ends a running copy pod. The
+connection check now reads with the switch off; the background check skips it then.
+Tests: tests/test_runpod_switch_setup.py (14), frontend runpod_setup + settings_runpod_card
+(9); RunPod/discovery/settings/decision suites 627 passed; frontend 876; ruff, format, mypy,
+tsc, check_docs, check_secrets green. Nothing called RunPod, a bucket, Hugging Face,
+Cloudflare or GitHub; no live studio restart; not proven against his real accounts.
+ADR-RUNPOD-OWNER-SWITCH; docs/RUNPOD_INTEGRATION.md.
+Owner-view verification (node tests + static render, no browser while he plays; the visual
+check at phone width stays pending): after a press the «Comutatorul» row follows the switch
+and the outcome is said once; step rows wrap long repo names/ids; a green endpoint row lists
+only what RunPod answered; an invalid connection's check says so instead of «apasă Verifică
+pașii»; a missing endpoint's link is labelled «Serverless». Console URL formats matched public
+docs (console.runpod.io user/settings, serverless/user/endpoint/<id>, user/billing; the R2 deep
+link); still unproven in his logged-in accounts. Tests +6 (backend 3, frontend 3).
+Adversary (security/money, 2026-10-09): one hole fixed. A paid step that built its adapter
+just before his OFF could still PATCH workers.max=1; `gpu_session.open_session` now re-reads
+his switch under the endpoint lock and refuses `RUNPOD_OFF` (row FAILED_OPEN, nothing sent).
++5 tests (strict GET/HEAD-only transport, 10 s timeouts, no retry, no secret in page/event/
+logs/links, wrong key 401, ON beats RUNPOD_ENABLED=false). RunPod+discovery+settings 601
+passed; ruff, format, mypy, check_docs, check_secrets green. Worker repo E:\amn-runpod-worker
+checked: 22 files = manifest, no remote, no secret.
+
+## PIXEL_STREET_REFINEMENT — complete, actual street verified (2026-10-09)
+
+Claim released. Exact central 10% human/chair scale reduction around the existing floor anchors.
+Full-width sidewalk/road masks fix left-edge exclusion; normal walking/cycling/traffic speeds,
+deadline animation cadence and wall-time tracking remove slow travel. Two cats patrol 280/320
+pixels with at most 3 s of rest. Four original transparent vehicle profiles, rotating hubs,
+fixed bodies, whole roofs, headlights and wet reflections replace the schematic car.
+
+879 frontend units/types, six bounded Playwright checks and 66 scoped backend/docs/secret
+checks pass. Tests cover 80 simulated street seconds/641 frames and 60 seated seconds/481
+frames, separate from the real UI. Actual read-only 31.958008 s clip at 10:18 Bucharest,
+partly cloudy 20°C: eight ACTIVE/IDLE staff, four pedestrians, bicycle/dog/two cats and all
+four vehicle variants visibly move. Scene/wall time ratio 1.000725; cats cover 274.542/320 px.
+Pause/reload/resume and no duplicate hover label/rectangle pass; zero page errors.
+Current combined build served identically; approved building/seats/identities/menus intact.
+Foundation health returns 200. Two built-in artwork calls; no production backend restart,
+policy/database command or GPU/media/upload job. External workflow acceptance stays separate.
+Report/source/rollback: PIXEL_STREET_REFINEMENT.md; output/playwright/street-refinement-2026-10-09/.
+
+## PIXEL_NATURAL_MOTION — complete, integrated chairs and actual UI verified (2026-10-09)
+
+Claim released. Owner requested each person generated together with their chair. Two new
+original staff sheets and an eight-chair clean plate replace the separate-body mounting.
+One uniform person/chair scale, grounded base; continuous head/forearm joints and 1000 ms
+real-state transitions. No shin stretching or automatic full-body cup/overhead-stretch
+swaps. Only traced empty-chair silhouettes sample the clean plate; approved background
+bytes, building details, reserved seats, Bible identities and backend truth are preserved.
+
+863 frontend units/types, five bounded Playwright checks and 62 scoped backend/docs/secret
+checks pass. The seating test covers 60 simulated seconds / 481 frames / eight people /
+four states: fixed shoes/base/backrest, continuously changing heads, pause remains frozen.
+Actual read-only UI at 09:27 Bucharest, cloudy 15°C: eight actual ACTIVE/IDLE staff visibly
+animate, four walkers/bicycle/dog/cats move, pause/reload/resume work, no duplicate name or
+hover rectangle, zero page errors. Real H.264 clip: 19.916016 s at 1700 × 1006.
+Current combined static build served; foundation readiness 200 HEALTHY. No backend restart,
+policy/data command or paid production job. This task used seven built-in art generations
+(four drafts, three selected assets). External workflow acceptance remains separate.
+Report/provenance/rollback: PIXEL_CHAIR_ENSEMBLES.md;
+output/playwright/natural-motion-2026-10-09/. Earlier seat reports are historical.
 
 ## PIXEL_MOTION_RESUME — complete, actual UI verified (2026-10-09)
 

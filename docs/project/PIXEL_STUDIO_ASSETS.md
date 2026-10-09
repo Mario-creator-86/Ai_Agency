@@ -1,5 +1,31 @@
 # Original pixel studio assets — 2026-10-08
 
+## Current original town vehicles v6 — 2026-10-09
+
+town-cars-v6.png: original 1536×1024 RGBA sheet, four independent detailed vehicle profiles.
+Two built-in imagegen calls: original art plus transparent extraction; the rejected opaque
+draft stays in art-source only. No third-party/game artwork copied. Source originals, exact
+prompts and applicable provider-output terms: art-source/pixel/street-vehicles-v6/README.md.
+Uniform scaling and registered wheel hubs; original PNG copied byte-for-byte. Body/tyres
+remain fixed while hubs rotate. Cars change only beyond the scene edge. Current humans and
+chair ensembles use a central 0.9 world scale; town walk/pet PNG bytes remain unchanged.
+Proof: PIXEL_STREET_REFINEMENT.md; hashes/registration: config/pixel_actors.json.
+
+## Current integrated person-and-chair v5 — 2026-10-09
+
+Active employee assets: staff-a-chair-v5.png and staff-b-chair-v5.png. Each employee has their
+chair or wooden stool included, coherent anatomy, one uniform scale and floor anchor.
+Production uses stable first ensemble + small continuous joint motion. Other authored
+state poses are source variations, not animation frames. The older seated-v3 description
+below is historical and superseded. Town walk/pedal/pet sheets remain unchanged.
+
+studio-chair-cleanplate-v5.png is a generated edit removing the eight empty chairs; runtime
+uses only traced chair silhouettes from it. The approved studio-detailed.png remains the
+unchanged background. Failed/mismatched art retains the original furniture/code fallback.
+Source IDs, provider-output terms and all seven prompts:
+[chair-ensembles-v5/README.md](../../art-source/pixel/chair-ensembles-v5/README.md).
+Registration, tests and actual proof: PIXEL_CHAIR_ENSEMBLES.md; hashes: config/pixel_actors.json.
+
 ## Current seated-v3 correction — 2026-10-09
 
 Active staff art: staff-a-seated-v3.png, staff-b-seated-v3.png, staff-idle-seated-v3.png.

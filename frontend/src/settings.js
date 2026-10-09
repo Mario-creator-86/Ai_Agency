@@ -1,6 +1,7 @@
 import { renderYouTubeConnections } from './youtube_connections.js';
 import { icon } from './icons.js';
 import { renderProviderProduction } from './provider_production.js';
+import { renderRunPodSetup } from './runpod_setup.js';
 import { connectionTitle, policyWord, providerName } from './dialog_words.js';
 import {
   DIRECTOR_RIGHT_LABEL, MODULE_STATE, channelFacts, directorRightAnswer, directorRightCommand,
@@ -264,6 +265,8 @@ export function initSettings(api, hooks = {}) {
       if (data.provider_catalogs?.[item.id]) {
         renderProviderProduction(card, item, data.provider_catalogs[item.id], { api, run });
       }
+      // His «RunPod pornit» switch and «Pașii configurării» (2026-10-09, runpod_setup.js).
+      if (item.kind === 'runpod') void renderRunPodSetup(card, item, { api });
       list.append(card);
     }
     content.append(list);

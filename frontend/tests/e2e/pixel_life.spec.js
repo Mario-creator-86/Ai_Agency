@@ -16,7 +16,7 @@ test('all seated staff/street visibly animate and every lifecycle guard holds', 
  const image = readFileSync(path.join(FRONTEND, 'public/assets/pixel/studio-detailed.png'));
  const characters = JSON.parse(readFileSync(path.join(FRONTEND, 'tests/fixtures/pixel_actors_bible.json'), 'utf8'));
  const manifest = JSON.parse(readFileSync(path.join(FRONTEND, '../config/pixel_actors.json'), 'utf8'));
- const atlasNames = new Set(Object.values(manifest.atlases).map(a=>path.basename(a.url)));
+ const atlasNames = new Set(Object.values({...manifest.atlases, chair_cleanplate:manifest.chair_cleanplate}).map(a=>path.basename(a.url)));
  const browser = await chromium.launch({ headless: true });
  const page = await browser.newPage({ viewport: { width: 1280, height: 950 } });
  const errors = []; page.on('pageerror', e => errors.push(e.message));
@@ -38,13 +38,13 @@ test('all seated staff/street visibly animate and every lifecycle guard holds', 
     infoElement: document.getElementById('scene-info'), dataLive: () => window.live, reducedMotion: () => window.reduced,
     fetchWeather: async () => ({ available: true, condition: 'clear', observed_at_utc: '2026-10-08T17:10:00Z' }) });
    await window.engine.ready;
-   if (PixelScene.actorAtlasStatus().loaded !== 5) throw new Error("All five detailed atlases must be loaded");
+   if (PixelScene.actorAtlasStatus().loaded !== Object.keys(manifest.atlases).length+1) throw new Error("All scene art must be loaded");
    window.engine.characters = new Map(characters.map(c=>[c.employee_id,c]));
    // A still-running backend serves its preceding visual config after a static page update.
    const preceding=structuredClone(window.engine.pixelLayout);
-   preceding.stations.forEach(s=>{delete s.seating;delete s.foreground_polygons;});
+   preceding.stations.forEach(s=>{delete s.seating;delete s.foreground_polygons;delete s.chair_clear_polygons;});
    window.engine.setLayout({pixel_office:preceding});
-   if(!window.engine.pixelLayout.stations.every(s=>s.seating&&s.foreground_polygons))throw Error('Current seating must survive preceding backend geometry');
+   if(!window.engine.pixelLayout.stations.every(s=>s.seating?.ensemble_height&&s.foreground_polygons&&s.chair_clear_polygons))throw Error('Current seating must survive preceding backend geometry');
    const roles = ['Director', 'LeadResearcher', 'FactChecker', 'Writer', 'VoiceArtist', 'VideoEditor', 'Publisher', 'Accountant'];
    window.engine.setAgents(roles.map((role_name, pixel_slot) => ({ id: manifest.staff[pixel_slot].employee_id, display_name: `Test ${role_name}`, role_name,
     pixel_slot, lifecycle: 'ACTIVE', runtime_state: ['IDLE', 'WORKING', 'THINKING', 'REVIEWING'][pixel_slot % 4] })));
@@ -57,7 +57,14 @@ test('all seated staff/street visibly animate and every lifecycle guard holds', 
     const bytes = e.ctx.getImageData(Math.round(a.x), Math.round(a.y), Math.round(r.w * e.viewport.zoom), Math.round(r.h * e.viewport.zoom)).data;
     let sum = 2166136261; for (const b of bytes) sum = Math.imul(sum ^ b, 16777619); return sum >>> 0;
    };
-   e.stop(); const rows = [];
+   e.stop();
+   e.lifeElapsed=0;e.lifeFrameAt=1000;e.draw(2000);
+   if(e.lifeElapsed!==1000)throw Error('Visible live time must not run in slow motion after a delayed paint');
+   e.park();e.draw(9000);
+   if(e.lifeElapsed!==1000)throw Error('Parking must freeze travel time');
+   e.parked=false;e.lifeFrameAt=null;e.draw(10000);
+   if(e.lifeElapsed!==1000)throw Error('Resuming must not catch up hidden/parked time');
+   const rows = [];
    for (const elapsed of [1000, 2400, 3700, 4600, 12000, 18000, 22000, 26000, 32000]) {
     e.lifeElapsed = elapsed; e.lifeFrameAt = null; e.draw();
     rows.push({ staff: e.visiblePositions().map(p => hash({ x: p.x - 32, y: p.y - 70, w: 64, h: 84 })),
@@ -67,7 +74,7 @@ test('all seated staff/street visibly animate and every lifecycle guard holds', 
   });
   for (let i = 0; i < 8; i++) assert.ok(new Set(raster.rows.map(r => r.staff[i])).size > 1, `staff ${i} has actual visible frame changes`);
   assert.ok(new Set(raster.rows.map(r => r.road)).size > 1, 'traffic actually moves in the canvas');
-  assert.ok(raster.rows.some(r => r.gestures.includes('sip'))); assert.ok(raster.rows.some(r => r.gestures.includes('stretch')));
+  assert.ok(raster.rows.every(r => !r.gestures.includes('sip') && !r.gestures.includes('stretch')), 'no full-body pose jumps');
   assert.equal(raster.ambient, true);
   if (EVIDENCE) { mkdirSync(EVIDENCE, { recursive: true }); await page.screenshot({ path: path.join(EVIDENCE, 'life-test-gestures.png'), fullPage: true }); }
   await page.evaluate(() => { window.engine.startEnvironment(); window.engine.schedule(); }); await page.waitForTimeout(200);

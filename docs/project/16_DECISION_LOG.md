@@ -1,5 +1,31 @@
 # Architectural / Product Decision Log v5
 
+## ADR-PIXEL-STREET-REFINEMENT — proportional actors and full-width travel (2026-10-09)
+
+Owner requests Playwright inspection, 10% smaller characters, normal street motion,
+unblocked cat routes/left pedestrians and replacement car graphics. Central world-only
+factor 0.9 preserves body/chair proportions and original floor anchors. Remove the x=147/156
+street exclusions; configure route/cadence bounds. Cosmetic travel follows live visible
+elapsed time without the paint-lag cap, retaining all pause/data/replay/hidden guards.
+Two cats walk full independent patrols with short endpoint rests. Four original imagegen
+vehicle silhouettes replace the old schematic; register uniform scale and rotate only
+clipped hubs. Change model beyond the viewport; keep actual weather/lighting inputs.
+No backend/identity/policy change. Actual and fixture proof: PIXEL_STREET_REFINEMENT.md.
+
+## ADR-PIXEL-CHAIR-ENSEMBLES — whole seating assets and fixed lower body (2026-10-09)
+
+Owner: «o mai buna abordare ar fi sa ii generzi cu tot cu scaun». This supersedes the separate
+upper-body/shin/shoe fitting in ADR-PIXEL-SEAT-CONTACT. Generate the eight established Bible
+identities together with their corresponding chair/stool. Register one uniform ensemble
+with a floor anchor; no independent lower-body deformation. Keep a stable source ensemble
+and continuously ease small head/forearm joints from the actual runtime state. Other drawn
+state variations are source art, not directly swappable animation frames; retire automatic
+cup/overhead-stretch switching. Remove the original empty chair only via its traced silhouette
+and a generated clean plate. Original approved background remains unchanged; original
+furniture/fallback returns if the ensemble or plate is unavailable. Keep all desk IDs/slots,
+menus, motion/live/lifecycle/replay guards and actual status projection. No backend migration
+or production policy change. Tests/evidence/provenance: PIXEL_CHAIR_ENSEMBLES.md.
+
 ## ADR-PIXEL-SCENE-MOTION — explicit animation preference (2026-10-09)
 
 Owner: «si de ce nu se misca ? Oamenii pe strada nu se misca ?». Windows disables
@@ -3996,3 +4022,7 @@ The Owner's cards of 2026-10-09, answered after the research of the same day (of
 **ADR-RUNPOD-REFERENCE-2511 — locked characters are drawn on RunPod by Qwen-Image-Edit-2511 from 1-3 pictures (RUNPOD_CACHE_STUDIO).** Decision: config/runpod_models.json gains `Qwen-Image-Edit-2511` (Apache-2.0; workflow `qwen_image_edit_2511_ref_seedvr2`; 75 GPU-s a still, an UNPROVEN estimate) with a `reference` binding (`reference_image`, `_2`, `_3`; min 1, max 3; `text_model` Qwen-Image-2512). A RunPod image adapter accepts a picture only when its selected model declares such a binding (`ACCEPTS_REFERENCE_IMAGE`, `MAX_REFERENCES`); the stills step sends the character's picture first and Figure 1 second (presigned URLs) and records `references_sent`; the journal records `reference_bindings`; an item with no picture is drawn by the text model and its row says so; pictures for a model without a binding, or more than it binds, are refused unsent. Consequence: Qwen-Image-2512 is no longer handed Figure 1 (its graph never read it). `REFERENCE_IMAGE_VERIFIED` stays false until the bake-off measures the identity hold. Rejected (licence): Qwen-Image-2.1 (research-only), HunyuanImage 3.0 (EU excluded), FLUX.1 Kontext dev / FLUX.2 dev, InsightFace-based routes.
 
 **ADR-RUNPOD-MIRROR-COPY — the one-time copy pod starts on his accept of its card, capped, and is always terminated (RUNPOD_CACHE_STUDIO).** Decision: the card «Copiez modelele în contul tău Hugging Face cu un server RunPod temporar?» (kind `runpod_mirror_copy`, proposed by the audit seed while a cache endpoint misses its mirror revision; options «Da, pornește copia acum (plafon 5.00 USD, 240 minute)» and «Nu încă»; clears when every endpoint knows its revision). His accept IS the press: `apply_runpod_mirror_copy` → `pods.start_copy`, which re-reads the card (a PENDING card counts only under its own inner command id; a retried accept finds the same copy) and refuses, with his reason and nothing started, a missing token, repo, bucket or key, a simulation, a second copy, or a cap above the card's. The pod: a CPU pod (`cpu5c`, 4 vCPU, 200 GB, `python:3.12-slim`) named `amn-mirror-copy-<id>`, the worker's files and result addresses through his bucket as presigned URLs (it holds no bucket key), `HF_TOKEN` only in its env, `build.py mirror --execute` per image. The guard terminates it on success, failure, one tick before the time or dollar cap (RunPod's reported cost per hour, else 1.00 USD/h), and at BOOT or SHUTDOWN, plus any `amn-mirror-copy` pod no running copy owns; success writes both mirrors' revisions into his settings. Table `runpod_copy_pod`, migration 0057 (downgrade drops it). Why one step and not «Pornește copia» on the settings page: the same consent asked twice, and a button can be pressed for a cap he never read, while the card carries the cap he reads. Left open: pinning the copied commit where the worker reads it (mirrors.lock.json + a release, or the endpoint's env) is his/the worker's step; the studio does not PATCH endpoint env (that makes a release).
+
+## The Owner's RunPod switch and setup checklist (2026-10-09)
+
+**ADR-RUNPOD-OWNER-SWITCH — «RunPod pornit» on the connection replaces RUNPOD_ENABLED in .env (his card, 2026-10-09).** The Owner asked the studio to do the whole RunPod setup and to ask him only for accounts and logins, and approved on a card: a switch in Setări → RunPod instead of editing `.env` (which no agent may open). Decision: the switch is stored with the RunPod integration (`config["enabled"]` "true"/"false", version bump, event `runpod.switch_changed` {on, before, by: owner}); effective `RunPodConfig.enabled` = the switch when set, else `RUNPOD_ENABLED` from the environment/.env, else false; every reader builds its config from the row per call, so no restart. ON is his act (`require_owner`, a second press on the page) and needs the connection VERIFIED, else 409 with his reason; OFF is always allowed and runs the existing GPU off at once (`force_off` OWNER_OFF on the connection's endpoints: purge, cancel, workers.max=0, verified) and ends a running copy pod by the existing shutdown rule (`watch_copies` SHUTDOWN, results kept). The form neither shows nor sets it, and a form save keeps it. Consequences: the connection check reads with `enabled` forced on (GET-only; otherwise the switch could never meet its own precondition), and the periodic background check skips a RunPod connection that is switched off. A read-only checklist «Pașii configurării» (GET/HEAD only, results kept as `runpod.setup_checked`, no secret returned) shows his remaining steps with console links. Rejected: a settings field in `.env` written by the studio (agents may not open `.env`; a restart would be needed); an ON without verification (a switch that promises a GPU the connection cannot reach). Rollback: press «Oprește RunPod», or remove `enabled` from the connection's config to fall back to `RUNPOD_ENABLED`. Proven on fakes only; nothing called RunPod, a bucket, Hugging Face, Cloudflare or GitHub.

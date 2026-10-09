@@ -32,7 +32,7 @@ export function drawPedestrian(ctx, p) {
   const coat = P.coat[p.id % P.coat.length], skin = SKINS[p.id % SKINS.length], hair = HAIR[p.id % HAIR.length];
   if(drawTownAtlas(ctx,'pedestrian',p)){
     if(p.umbrella){
-      ctx.save();ctx.translate(p.x,p.y);ctx.scale(p.direction,1);
+      ctx.save();ctx.translate(p.x,p.y);ctx.scale(p.direction*PIXEL_LAYOUT.life.character_scale,PIXEL_LAYOUT.life.character_scale);
       const {line,polygon:poly,rect:r}=pixelPen(ctx);
       line(7,-58,7,-28,'#bcb1a3');poly([[-11,-55],[-7,-60],[1,-63],[8,-64],[16,-61],[23,-56]],INK);
       poly([[-9,-56],[-5,-60],[2,-62],[8,-62],[16,-59],[21,-56]],shade(coat,24));
@@ -41,6 +41,7 @@ export function drawPedestrian(ctx, p) {
     }
     return;
   }
+  ctx.save();ctx.translate(p.x,p.y);ctx.scale(PIXEL_LAYOUT.life.character_scale,PIXEL_LAYOUT.life.character_scale);ctx.translate(-p.x,-p.y);
   blitActor(ctx, `walker:${p.id}:${p.step}:${p.umbrella}:${p.blink}`, humanBounds, p.x, p.y, p.direction, c => {
     const pen = pixelPen(c), { rect: r, line, polygon: poly, ellipse } = pen;
     const q = WALK[p.step % 8], bob = p.step % 4 === 1 ? -1 : 0;
@@ -78,10 +79,12 @@ export function drawPedestrian(ctx, p) {
       r(-6,-49,7,1,coat); r(3,-49,8,1,coat); r(14,-49,7,1,coat); r(7,-59,1,3,'#d2c4a9');
     }
   });
+  ctx.restore();
 }
 
 export function drawBicycle(ctx, b) {
   if(drawTownAtlas(ctx,'bicycle',b))return;
+  ctx.save();ctx.translate(b.x,b.y);ctx.scale(PIXEL_LAYOUT.life.character_scale,PIXEL_LAYOUT.life.character_scale);ctx.translate(-b.x,-b.y);
   blitActor(ctx, `cycle:${b.step}`, { width: 65, height: 57, ox: 29, oy: 54 }, b.x,b.y,1,c => {
     const pen = pixelPen(c), { rect:r,line,polygon:poly,ellipse } = pen;
     const theta = b.step * Math.PI / 4, pedal = [Math.round(Math.cos(theta)*5)-2, Math.round(Math.sin(theta)*5)-10];
@@ -112,6 +115,7 @@ export function drawBicycle(ctx, b) {
     for(let x=20;x<27;x+=2)line(x,-30,x,-25,'#ddd0a5'); line(18,-32,28,-32,'#d2bc92');
     line(-24,-14,-11,-14,'#989b95'); line(14,-17,22,-17,'#989b95');
   });
+  ctx.restore();
 }
 
 export function drawCat(ctx, cat) {

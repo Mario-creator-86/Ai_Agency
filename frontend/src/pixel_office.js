@@ -9,7 +9,7 @@ import { bubblePages, bubbleFrame } from './speech_bubble.js';
 import { sceneFrame } from './pixel_navigation.js';
 import { drawOutdoorSky } from './pixel_sky.js';
 import { ambientMoves, drawOutdoorLife } from './pixel_life.js';
-import { loadActorAtlases, actorAtlasStatus } from './pixel_actor_atlas.js';
+import { loadActorAtlases, actorAtlasStatus, clearEmptyChair } from './pixel_actor_atlas.js';
 export { staffPositions, identitySeed, characterMotion, actorAtlasStatus };
 
 export const WORLD_W = PIXEL_LAYOUT.world.width;
@@ -47,6 +47,7 @@ export class OfficeEngine {
     this.weatherFrameAt = null;
     this.lifeElapsed = 0;
     this.lifeFrameAt = null;
+    this.nextFrameAt = null;
     this.weather = new WeatherManager(async () => {
       const epoch = this.weatherEpoch;
       const data = await this.options.fetchWeather?.();
@@ -173,6 +174,7 @@ export class OfficeEngine {
     cancelAnimationFrame(this.raf); clearTimeout(this.tickTimer); clearTimeout(this.environmentTimer);
     this.raf = 0; this.tickTimer = 0; this.environmentTimer = 0; this.weatherFrameAt = null;
     this.lifeFrameAt = null;
+    this.nextFrameAt = null;
   }
   async refreshWeather() {
     if (this.parked || document.hidden || this.replay || this.weather._pending) return;
@@ -208,12 +210,18 @@ export class OfficeEngine {
     const moving = this.visiblePositions().some(p => this.motionFor(p.agent).animate);
     const speaking = this.bubbles.some(b => b.expiresAt > Date.now()) && (this.replay || this.options.dataLive?.());
     if (!moving && !speaking && !this.weatherAnimating() && !this.ambientAnimating()) return;
-    // At most twelve paints per second, no busy RAF loop between paints or while hidden.
+    // Keep a timed cadence without a busy RAF loop or accumulating paint-time slowdown.
+    const interval = 1000 / PIXEL_LAYOUT.life.frame_rate;
+    const delay = Math.max(0, (this.nextFrameAt ?? performance.now()) - performance.now());
     this.tickTimer = window.setTimeout(() => {
       this.tickTimer = 0;
       if (this.parked || document.hidden) return;
-      this.raf = requestAnimationFrame(at => { this.raf = 0; this.draw(at); this.schedule(); });
-    }, Math.ceil(1000 / PIXEL_LAYOUT.life.frame_rate));
+      this.raf = requestAnimationFrame(at => {
+        this.raf = 0;
+        this.nextFrameAt = Math.max(at, (this.nextFrameAt ?? at) + interval);
+        this.draw(at); this.schedule();
+      });
+    }, Math.ceil(delay));
   }
   setLayout(layout) {
     this.layout = layout;
@@ -224,7 +232,7 @@ export class OfficeEngine {
     // slots/desk metadata and apply current artwork calibration to the same illustrated desks.
     this.pixelLayout = { ...this.pixelLayout, stations: (this.pixelLayout.stations || PIXEL_LAYOUT.stations).map(station => {
       const painted = PIXEL_LAYOUT.stations.find(s => s.desk_id === station.desk_id && s.x === station.x && s.y === station.y);
-      return painted ? { ...station, seating: painted.seating, foreground_polygons: painted.foreground_polygons } : station;
+      return painted ? { ...station, seating: painted.seating, foreground_polygons: painted.foreground_polygons, chair_clear_polygons: painted.chair_clear_polygons } : station;
     }) };
     this.draw();
   }
@@ -305,7 +313,7 @@ export class OfficeEngine {
     const weather = this.currentWeather(now.getTime());
     const animate = this.weatherAnimating(weather);
     const ambient = this.ambientAnimating();
-    if (ambient && this.lifeFrameAt !== null) this.lifeElapsed += Math.max(0, Math.min(250, at - this.lifeFrameAt));
+    if (ambient && this.lifeFrameAt !== null) this.lifeElapsed += Math.max(0, at - this.lifeFrameAt);
     this.lifeFrameAt = ambient ? at : null;
     if (animate && this.weatherFrameAt !== null) this.weatherElapsed += Math.max(0, Math.min(250, at - this.weatherFrameAt));
     this.weatherFrameAt = animate ? at : null;
@@ -317,9 +325,12 @@ export class OfficeEngine {
       const selected = p.id === this.selected || p.id === this.hover;
       const profile = this.profileFor(p.agent);
       const motion = this.motionFor(p.agent);
+      const ensemble = clearEmptyChair(ctx, profile, p, this.pixelLayout);
       drawSeatedPerson(ctx, profile, motion, p.x, p.y, p.scale || 1.5, false, p.orientation, p.seating);
-      restoreFurniture(ctx, this.background, p, this.pixelLayout);
-      drawDeskGesture(ctx, profile, motion, p.x, p.y, p.scale || 1.5, p.seating);
+      if (!ensemble) {
+        restoreFurniture(ctx, this.background, p, this.pixelLayout);
+        drawDeskGesture(ctx, profile, motion, p.x, p.y, p.scale || 1.5, p.seating);
+      }
       // A tiny real-state indicator keeps the detailed furniture and room readable.
       ctx.fillStyle = '#222538'; ctx.fillRect(p.x + 17, p.y - 61, 5, 5);
       ctx.fillStyle = motion.color; ctx.fillRect(p.x + 18, p.y - 60, 3, 3);

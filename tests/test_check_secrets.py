@@ -200,3 +200,20 @@ def test_the_workers_mirror_pin_passes_as_a_commit_line_only(tmp_path, capsys):
     lock.write_text(lock.read_text(encoding="utf-8") + f'"token": "{fake_key()}"\n', "utf-8")
     code, output = run_gate(root, empty_baseline(tmp_path), capsys)
     assert code == 1 and "mirrors.lock.json" in output
+
+
+def test_public_pixel_content_hashes_pass_but_credentials_and_other_fields_do_not(tmp_path, capsys):
+    root = tmp_path / "tree"
+    folder = root / "config"
+    folder.mkdir(parents=True)
+    manifest = folder / "pixel_actors.json"
+    digest = secrets.token_hex(32)
+    manifest.write_text('{\n  "sha256": "' + digest + '"\n}\n', encoding="utf-8")
+    assert run_gate(root, empty_baseline(tmp_path), capsys)[0] == 0
+    manifest.write_text(
+        '{\n  "sha256": "' + digest + '",\n  "token": "' + fake_key() + '"\n}\n', encoding="utf-8"
+    )
+    code, output = run_gate(root, empty_baseline(tmp_path), capsys)
+    assert code == 1 and "pixel_actors.json:3" in output
+    manifest.write_text('{\n  "token": "' + digest + '"\n}\n', encoding="utf-8")
+    assert run_gate(root, empty_baseline(tmp_path), capsys)[0] == 1

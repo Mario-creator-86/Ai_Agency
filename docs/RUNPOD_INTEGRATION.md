@@ -75,7 +75,8 @@ is documented in [backend/runpod_worker/README.md](../backend/runpod_worker/READ
 - **His yes is never spent on a GPU that cannot start:** a RunPod step checks the connection,
   the bucket and his card «Agenții pot porni singuri GPU-ul RunPod …» before it asks for or
   spends his approval (`gpu_session.precheck`, called through `gpu_batch.gpu_precheck`).
-- **Still his:** `RUNPOD_ENABLED=true` in `.env` (the form has no switch for it); where the two
+- **Still his:** turning RunPod on (2026-10-09: the switch «RunPod pornit» on the connection's
+  card replaced `RUNPOD_ENABLED=true` in `.env`, see «The Owner's switch» below); where the two
   images (~39 GB and ~78 GB of weights) are built and pushed; the registry credentials in
   RunPod; the endpoints; the bucket; the Hugging Face licence and token; the card.
 - **Known limits for the test:** Qwen-Image-2512 is text-to-image, so a character with a locked
@@ -84,6 +85,50 @@ is documented in [backend/runpod_worker/README.md](../backend/runpod_worker/READ
   --live` makes read-only GETs only. (2026-10-09: superseded for the route below — the
   Qwen-Image-Edit-2511 route takes the character's picture and Figure 1; Qwen-Image-2512 is
   now handed no picture at all.)
+
+## The Owner's switch «RunPod pornit» and «Pașii configurării» (2026-10-09, fakes only)
+
+His card of 2026-10-09: he no longer edits `RUNPOD_ENABLED` in `.env`; the studio does the
+setup and asks him only for accounts and logins. Code: `providers/runpod/setup_steps.py`,
+routes in `providers/runpod/router.py`, the page `frontend/src/runpod_setup.js` (drawn on the
+RunPod connection's card in Setări → Video și sunet). ADR-RUNPOD-OWNER-SWITCH in
+[16_DECISION_LOG.md](project/16_DECISION_LOG.md).
+
+- **The switch** is stored with the RunPod integration (`config["enabled"]`, "true"/"false",
+  version bump, event `runpod.switch_changed` {on, before, by: owner}). Effective value of
+  `RunPodConfig.enabled` = the switch when set, else `RUNPOD_ENABLED` from the environment /
+  `.env`, else false. Every reader (factory, guard, pricing, readiness, GPU session) builds its
+  config from the row per call (`from_integration`, where the stored value is an init argument
+  and beats the environment), so a change needs **no restart**. A form save keeps the switch,
+  and the form cannot set it (not a form field).
+- **ON** (`PUT /api/v1/runpod/integrations/{id}/switch` {schema_version 1, on true}, behind the
+  Owner's key, a second press on the page) needs the connection VERIFIED, else 409 «Conexiunea
+  RunPod nu este verificată. …». It buys nothing: every paid step still asks his yes and his
+  card «Agenții pot porni singuri GPU-ul RunPod …».
+- **OFF** (on false) is always allowed and immediate: `gpu_session.force_off(reason=OWNER_OFF)`
+  on the connection's endpoints (purge, cancel, workers.max=0, verified), then
+  `pods.watch_copies(reason=SHUTDOWN)`: a running copy pod is terminated by the existing
+  shutdown rule (a finished copy keeps its revisions).
+- **Verification while off.** The connection check («Verifică API și modelele») builds its
+  config with `enabled` forced on: it only reads (endpoint settings + /health, the pinned
+  catalogue), and the switch may go ON only after it passed. The periodic background check
+  skips a RunPod connection whose switch is off (no background reads of his account).
+- **«Pașii configurării»** (`GET .../setup`: the last check, nothing called; `POST
+  .../setup/check`: «Verifică pașii»). One row per step, status `green` / `red` / `grey`
+  («nu se poate verifica încă»), one Romanian sentence, a console link (links only): API key
+  saved; both endpoint ids saved; each endpoint read by `GET /v2/serverless/{id}` (10 s, no
+  retry) with workers min 0 / max 0 (max 1 allowed while a GPU session is open) / idleTimeout
+  1 / flashboot / timeout as configured; the cached Model field (always grey: «se verifică la
+  primul rezultat (weights_revision)»); the bucket by a presigned `HEAD /<bucket>` (nothing
+  written); the HF token saved; the LTX-2.5 licence (grey, the gate page); both mirror repos
+  named; both revisions pinned; the cards GPU on/off, copy pod, bake-off (no bake-off card
+  exists yet: grey); the worker's GitHub repo (grey, github.com/new); the RunPod balance (grey,
+  billing page); the switch. The check never creates, PATCHes or POSTs, never starts a worker,
+  and never returns a secret («salvată» / «lipsește»). Its network rows are kept as the event
+  `runpod.setup_checked`, which the page shows on open. Console links: console.runpod.io
+  (user/settings, serverless, serverless/user/endpoint/<id>, user/billing), huggingface.co
+  (settings/tokens, new, the mirror repos, Lightricks/LTX-2.5), dash.cloudflare.com R2,
+  github.com/new — UNPROVEN until he opens them (consoles move pages).
 
 ## Where the weights live — the studio side (2026-10-09, fakes only)
 
@@ -221,7 +266,7 @@ configuration. Empty environment values use those defaults.
 
 | Variable | Default / meaning |
 |---|---|
-| RUNPOD_ENABLED | false; blocks cloud calls and factory activation |
+| RUNPOD_ENABLED | false; blocks cloud calls and factory activation. Since 2026-10-09 only the fallback: the connection's switch «RunPod pornit», once pressed, wins over it |
 | RUNPOD_MOCK | false; explicit offline simulation, excluded from PRODUCTION |
 | RUNPOD_MODE | serverless (phase 1, 2026-10-08); pod stays possible |
 | RUNPOD_STILLS_ENDPOINT_ID / RUNPOD_MOTION_ENDPOINT_ID | empty; the stills and motion endpoints (fallback: RUNPOD_ENDPOINT_ID) |
@@ -249,7 +294,8 @@ configuration. Empty environment values use those defaults.
 Copy the environment example to the ignored `.env` and fill only real values. Alternatively,
 save the API key through Settings → RunPod; the existing credential vault encrypts it. Public
 connection fields can override mode, endpoint, backend URL and mock mode; the global enable
-switch remains an environment setting. Never put a key in a URL, repository file or screenshot.
+switch is the Owner's «RunPod pornit» on the connection's card (2026-10-09), with
+`RUNPOD_ENABLED` only the fallback until he first presses it. Never put a key in a URL, repository file or screenshot.
 `.env`, credential stores and runtime data are excluded by Git.
 
 The Agency sends Bearer authentication. The custom API must enforce that authentication on
@@ -468,8 +514,11 @@ one 5-second I2V test and estimate time/cost from real backend forecasts; do not
 Run nothing paid before that approval. Validate submit/status, downloads/local hashes, costs,
 logs and existing QA handoff. This has not been performed during local implementation.
 
-To disable new RunPod activity, set RUNPOD_ENABLED=false, MOCK=false, ALLOW_INFRA_ACTIONS=false,
-AUTO_START=false and AUTO_STOP=false, then reload the Agency. Remove/deselect its image/video
+To disable new RunPod activity, press «Oprește RunPod» on the connection's card (2026-10-09:
+no reload; it also switches the GPU off and ends a running copy pod), or set
+RUNPOD_ENABLED=false, MOCK=false, ALLOW_INFRA_ACTIONS=false, AUTO_START=false and
+AUTO_STOP=false and reload the Agency (the environment counts only while the switch was never
+pressed). Remove/deselect its image/video
 selections if desired. Disabling does not terminate work already running remotely; reconcile
 or explicitly cancel existing work through its configured transport before disabling access.
 Do not enable paid fallback as part of a disable/connection failure.

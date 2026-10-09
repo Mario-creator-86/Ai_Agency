@@ -166,3 +166,17 @@
 .settings-check-result { padding: .6rem .8rem; border-left: 3px solid var(--ink-3); background: var(--surface-sunk); }
 .settings-check-result[data-status="VERIFIED"], .settings-check-result[data-status="ACCESS_VERIFIED"] { border-color: var(--teal); }
 .settings-check-result.settings-error { border-color: var(--alert-ink); }
+
+/* His «RunPod pornit» switch and «Pașii configurării» on the RunPod card (runpod_setup.js). */
+.runpod-setup { margin-top: 1rem; padding-top: .8rem; border-top: 1px solid var(--line); display: grid; gap: .5rem; }
+.runpod-setup h4 { margin: 0; }
+.runpod-switch { display: grid; gap: .4rem; padding: .7rem; border: 1px solid var(--line); border-radius: .5rem; }
+.runpod-switch[data-on="yes"] { border-color: var(--ok-line); background: var(--ok-bg); }
+.runpod-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: .4rem; }
+.runpod-step { display: grid; gap: .15rem; padding: .45rem .6rem; border-left: 3px solid var(--line); font-size: var(--fs-meta); min-width: 0; overflow-wrap: anywhere; }
+.runpod-step a { justify-self: start; }
+.runpod-step-status { font-weight: var(--w-med); color: var(--ink-3); }
+.runpod-step-green { border-left-color: var(--ok-line); }
+.runpod-step-green .runpod-step-status { color: var(--ok-ink); }
+.runpod-step-red { border-left-color: var(--alert-line); }
+.runpod-step-red .runpod-step-status { color: var(--alert-ink); }

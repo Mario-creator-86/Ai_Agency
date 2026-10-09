@@ -575,6 +575,30 @@ def _refuse_held(
         raise GpuSessionRefused("WEIGHTS_MISMATCH", held)
 
 
+RUNPOD_OFF_WORDS = (
+    "RunPod este oprit din comutatorul «RunPod pornit»: GPU-ul nu se pornește; nu s-a trimis "
+    "și nu s-a cheltuit nimic."
+)
+
+
+def _switched_off_now(engine: Engine, integration_id: str | None) -> bool:
+    """His switch (or RUNPOD_ENABLED) as the integration row says it NOW, not as the step's
+    adapter read it. No row (a test adapter, a removed connection): nothing to read."""
+    if not integration_id:
+        return False
+    from app.integrations.models import Integration  # noqa: PLC0415
+
+    with Session(engine) as session:
+        row = session.get(Integration, integration_id)
+        stored = dict(row.config or {}) if row is not None and row.kind == "runpod" else None
+    if stored is None:
+        return False
+    try:
+        return not RunPodConfig.from_integration(stored, {}).enabled
+    except ValueError:
+        return True  # a config that no longer reads never switches a GPU on
+
+
 def _kernel(engine: Engine, permit: StepPermit) -> dict[str, Any]:
     from app.services import may_act  # noqa: PLC0415 - services imports providers
 
@@ -717,6 +741,19 @@ def open_session(
         time.sleep(BUSY_POLL_SECONDS)
     control = EndpointControl(config, endpoint_id, transport)
     with endpoint_lock(endpoint_id):
+        if _switched_off_now(engine, integration_id):
+            # His «RunPod pornit» went OFF after this step built its adapter (adversary
+            # 2026-10-09). Read under the endpoint lock his OFF's GPU off also takes: a step
+            # that gets here after his OFF never switches the GPU on.
+            _update(
+                engine,
+                identifier,
+                status=FAILED_OPEN,
+                close_reason="OPEN_FAILED",
+                closed_at=utc_now(),
+                error_code="RUNPOD_OFF",
+            )
+            raise GpuSessionRefused("RUNPOD_OFF", RUNPOD_OFF_WORDS)
         with Session(engine) as session:
             shared = bool(
                 [r for r in _other_live(session, endpoint_id, identifier) if r.status == OPEN]

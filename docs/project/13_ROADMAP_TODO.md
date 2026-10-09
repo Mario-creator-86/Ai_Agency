@@ -1,5 +1,23 @@
 # Roadmap / TODO v3
 
+## Street refinement — 2026-10-09
+
+- [x] PIXEL_STREET_REFINEMENT — exact 10% human/chair scale reduction, full-width street,
+  corrected speeds/cadence, two full cat patrols, four original detailed car profiles.
+- [x] 879 frontend/types, six bounded Playwright and 66 scoped backend/docs/secret cases;
+  actual 31.958008 s live clip, four vehicle variants, all street actors and eight staff moving.
+
+Proof, source and rollback: PIXEL_STREET_REFINEMENT.md. External workflows remain separate.
+
+## Integrated chairs and natural joint motion — 2026-10-09
+
+- [x] PIXEL_NATURAL_MOTION — generate eight people together with their own chair/stool;
+  one scale and floor anchor, selective empty-chair clean plate, continuous small joints.
+- [x] 863 frontend/types, five browser checks including 60 simulated seconds at all eight
+  seats, and 62 scoped backend/docs/secret cases; actual 19.916016 s live UI clip inspected.
+
+Proof and rollback: PIXEL_CHAIR_ENSEMBLES.md. This supersedes the separate-body seating below.
+
 ## Scene motion resume — 2026-10-09
 
 - [x] PIXEL_MOTION_RESUME — reproduce reduced-motion freeze; explicit Owner animation
@@ -63,6 +81,10 @@ Source, provenance, evidence and rollback: PIXEL_ACTOR_REFINEMENT.md.
   1 s honoured, GPU seconds per still/clip (replace config/runpod_models.json estimates),
   quality against Runway, LTX-2.5 provenance boxes, Restricted key access, R2 If-None-Match.
 - [ ] RUNPOD_BALANCE — phase 2: read RunPod's balance/billing once its API field is confirmed.
+- [x] RUNPOD_OWNER_SWITCH — «RunPod pornit» on the connection replaces RUNPOD_ENABLED in .env
+  (verified-only ON, immediate OFF) and the read-only «Pașii configurării» checklist (fakes only).
+- [ ] RUNPOD_OWNER_SWITCH_LIVE — his first press and «Verifică pașii» against his real accounts
+  (console links and the HEAD-bucket read on R2 are UNPROVEN until then).
 
 ## Living pixel studio — 2026-10-08
 

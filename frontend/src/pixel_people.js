@@ -69,14 +69,14 @@ export function characterMotion(agent, time = 0, live = false, reduced = false, 
   if (mode === 'WORKING') gesture = [primary, primary, 'mouse', 'read'][workPhase];
   else if (mode === 'THINKING') gesture = workPhase < 2 ? 'chin' : 'look';
   else if (mode === 'REVIEWING') gesture = workPhase < 3 ? 'read' : 'write';
-  else if (mode === 'IDLE' && animate) gesture = cycle > 28500 ? 'stretch' : cycle > 23500 ? 'sip' : cycle > 18000 ? 'look' : 'rest';
+  else if (mode === 'IDLE' && animate) gesture = cycle > 28500 ? 'relax' : cycle > 18000 ? 'look' : 'rest';
   const glance = animate && gesture === 'look' ? (workPhase % 2 ? -1 : 1) : 0;
   return {
-    mode, animate,
+    mode, animate, elapsed,
     gesture, gestureFrame: animate ? Math.floor(elapsed / 240) % 4 : 0,
     sway: animate && ['look', 'stretch'].includes(gesture) ? (Math.floor(elapsed / 900) % 3) - 1 : 0,
     frame: animate ? Math.floor(elapsed / (mode === 'WORKING' ? 180 : 650)) % 4 : 0,
-    breath: animate ? [0, 1, 2, 1][Math.floor(elapsed / (LIFE.breath_cycle_ms / 4)) % 4] : 0,
+    breath: animate ? 0.5 + 0.5 * Math.sin(elapsed * Math.PI * 2 / LIFE.breath_cycle_ms) : 0,
     blink: animate && elapsed % (6800 + seed % 1400) < 140,
     glance,
     color: mode === 'ERROR' ? '#dc847b' : ['BLOCKED', 'PAUSED'].includes(mode) ? '#d4b273'
@@ -88,6 +88,7 @@ export function characterMotion(agent, time = 0, live = false, reduced = false, 
 /** Cache compact sprite frames; device scaling stays crisp and repeated poses allocate no canvas. */
 export function drawSeatedPerson(ctx, profile, motion, center, floor, scale = 1.6, portrait = false, orientation = 'side', seating = null) {
   if(drawStaffAtlas(ctx,profile,motion,center,floor,scale,portrait,false,seating))return;
+  if (!portrait) scale *= LIFE.character_scale;
   const back = orientation === 'back' && !portrait;
   const key = `${profile.key}:${motion.mode}:${motion.frame}:${motion.breath}:${motion.blink}:${motion.glance}:${motion.gesture}:${motion.gestureFrame}:${motion.sway}:${portrait}:${back}`;
   let sprite = frames.get(key);
@@ -107,6 +108,7 @@ export function drawSeatedPerson(ctx, profile, motion, center, floor, scale = 1.
 /** Hands and small tools belong above the chair's foreground, while the body stays seated. */
 export function drawDeskGesture(ctx, profile, motion, center, floor, scale = 1.5, seating = null) {
   if(drawStaffAtlas(ctx,profile,motion,center,floor,scale,false,true,seating))return;
+  scale *= LIFE.character_scale;
   ctx.save(); ctx.translate(Math.round(center - 16 * scale), Math.round(floor - 40 * scale));
   ctx.scale(scale * 2 / 3, scale * 2 / 3); paintDeskHands(ctx, profile, motion); ctx.restore();
 }
