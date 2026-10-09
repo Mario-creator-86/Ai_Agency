@@ -196,7 +196,12 @@ def test_his_accept_starts_one_cpu_pod_with_the_token_only_in_its_environment(
     (body,) = cloud.created()
     assert body["name"].startswith("amn-mirror-copy-")
     assert body["cpu"] == {"id": "cpu5c", "vcpuCount": 4} and "gpu" not in body
-    assert body["image"] == "python:3.12-slim" and body["disk"] >= 160
+    assert body["image"] == "python:3.12-slim"
+    # The pod holds one weight at a time (build.py), and RunPod gives a cpu5c pod at most
+    # 15 GB of container disk per vCPU: 200 GB was refused with HTTP 400 (2026-10-09).
+    lock = json.loads((pods.WORKER_DIR / "models.lock.json").read_text(encoding="utf-8"))
+    largest_gb = max(entry["size_bytes"] for entry in lock) / 1e9
+    assert largest_gb + 10 <= body["disk"] <= 15 * body["cpu"]["vcpuCount"]
     assert body["env"]["HF_TOKEN"] == HF_TOKEN and body["env"]["AMN_MIRROR_HOST"] == "pod"
     plan = json.loads(body["env"]["AMN_MIRROR_PLAN"])
     assert [job["image"] for job in plan["images"]] == ["stills", "motion"]
@@ -691,6 +696,34 @@ def test_a_refused_create_that_echoes_the_body_leaks_no_token(engine, monkeypatc
     assert HF_TOKEN not in str(refused.value) and HF_TOKEN not in caplog.text
     with Session(engine) as session:
         assert HF_TOKEN not in (session.get(OwnerDecision, card.id).apply_error_ro or "")
+
+
+def test_a_refused_create_tells_him_runpods_own_reason(engine, monkeypatch, cloud, caplog):
+    # 2026-10-09: his first accept met a bare «HTTP 400»; RunPod's reason was dropped, so
+    # neither he nor the studio could tell a bad field from a full data center.
+    import logging
+
+    from app.decisions.services import DecisionApplyFailed
+
+    caplog.set_level(logging.DEBUG)
+    cloud.create_error = MediaProviderError(
+        "api.runpod.io refused the request (HTTP 400)",
+        http_status=400,
+        detail=f"no cpu5c capacity for this disk, token {HF_TOKEN}",
+        issues=[{"path": "/disk", "message": "must be at most 100"}],
+    )
+    studio(engine, monkeypatch)
+    card = the_card(engine)
+    with pytest.raises(DecisionApplyFailed) as refused:
+        accept(engine, card)
+    words = str(refused.value)
+    assert "HTTP 400" in words and "no cpu5c capacity for this disk" in words
+    assert "/disk: must be at most 100" in words
+    assert HF_TOKEN not in words and HF_TOKEN not in caplog.text
+    logged = [r for r in caplog.records if r.getMessage() == "runpod_mirror_copy_refused"]
+    assert logged and "no cpu5c capacity" in logged[0].reason
+    assert HF_TOKEN not in logged[0].reason
+    assert copy_row(engine).error_code == "CREATE_REFUSED_400"
 
 
 def test_the_card_tells_him_the_token_is_visible_in_the_runpod_console(engine, monkeypatch, cloud):

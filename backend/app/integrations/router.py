@@ -1,3 +1,4 @@
+import logging
 from time import perf_counter
 from typing import Literal
 from uuid import UUID, uuid4
@@ -37,6 +38,8 @@ from app.publishing.models import ChannelRecord
 from app.security import require_owner
 from app.services import append_event, utc_now
 from app.youtube.models import YouTubeConnection
+
+logger = logging.getLogger("studio.settings")
 
 
 def check_failure(exc: Exception) -> dict:
@@ -119,6 +122,18 @@ class ChannelBindingCommand(BaseModel):
     #: a catalog entry someone filled in by hand.
     connection_id: UUID | None
     expected_event_id: UUID | None
+
+
+def _propose_cards(request: Request) -> None:
+    """The cards a connection needs, proposed when it is saved rather than at the next start
+    (2026-10-09: his RunPod cards waited for a restart). Each card is still proposed once
+    (`seed_owner_decisions`); a failure is logged and never fails his save."""
+    from app.decisions.seed import seed_owner_decisions  # noqa: PLC0415
+
+    try:
+        seed_owner_decisions(request.app.state.engine, request.app.state.settings)
+    except Exception as exc:  # noqa: BLE001 - logged; the save already succeeded
+        logger.warning("owner_decisions_seed_failed", exc_info=exc)
 
 
 def create_settings_router() -> APIRouter:
@@ -205,6 +220,7 @@ def create_settings_router() -> APIRouter:
                 str(identifier),
                 command,
             )
+            _propose_cards(request)
             if command.kind in DISCOVERED_KINDS:
                 checked = refresh_catalog(
                     request.app.state.engine,

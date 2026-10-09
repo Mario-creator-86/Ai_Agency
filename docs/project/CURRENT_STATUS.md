@@ -1,5 +1,21 @@
 # CURRENT STATUS — State on 2026-10-09
 
+## RUNPOD_COPY_POD_FIRST_ACCEPT — fixed on fakes, live retry pending (2026-10-09)
+
+Live setup done with the Owner today (his accounts, his keys pasted by him): RunPod key
+(Restricted), both Serverless endpoints read back with min 0 / max 0 / idle 1 s / FlashBoot,
+bucket `amn-out` answers HEAD with his R2 keys, RunPod Secrets `amn_s3_*` referenced in both
+endpoints' env, HF fine-grained token (write on both mirrors, gated read), HF PRO, LTX-2.5
+access granted, commercial use «da». Cards accepted: agents may switch the GPU on only inside
+approved paid steps; the copy (cap 5.00 USD, 240 min). RunPod refused the copy pod with a bare
+HTTP 400; nothing started, nothing spent. Probable cause (documented cpu5c rule: at most 15 GB
+container disk per vCPU): 200 GB asked on 4 vCPU; now 60 GB (one weight at a time, largest
+21.5 GB). RunPod's own reason (detail and per-field issues, sanitised, token cut) now reaches
+his card and the log `runpod_mirror_copy_refused`. A connection save now proposes its cards at
+once (his RunPod cards had waited for a restart). Tests: RunPod copy/switch/policy (69),
+integration settings and every decision-card test file pass. The live retry needs a studio
+restart and his accept; the first film on RunPod follows the copy.
+
 ## PIXEL_DEPTH_PHYSICS — claimed (2026-10-09)
 
 Owner requests a complete front/back and ground-contact audit. Scope: original foreground

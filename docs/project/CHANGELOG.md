@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-10-09 — RunPod copy pod: a disk RunPod accepts, its refusal in his words
+
+- The copy pod asks 60 GB of container disk instead of 200: RunPod gives cpu5c at most 15 GB per
+  vCPU and refused the Owner's first accept with HTTP 400 (nothing started, nothing spent).
+- A refused create now tells him RunPod's own reason (sanitised, token cut) on the card and in
+  the log `runpod_mirror_copy_refused`.
+- Saving a connection proposes its cards at once; the RunPod cards had waited for a restart.
+
 ## 2026-10-09 — full street motion and detailed cars
 
 - Exact central 10% world character/chair reduction with existing floor anchors.

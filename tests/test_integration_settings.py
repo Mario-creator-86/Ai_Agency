@@ -96,6 +96,34 @@ def test_vault_survives_restart_and_loads_runtime_adapter(client, headers, engin
         assert restarted.app.app.state.registry.get(identifier) is not None
 
 
+def test_a_connection_saved_while_the_studio_runs_gets_its_cards_at_once(
+    client, headers, engine, monkeypatch
+):
+    # 2026-10-09: the Owner's RunPod cards waited for a restart; his save now proposes them.
+    import app.integrations.router as router_module
+    from app.decisions.models import OwnerDecision
+
+    monkeypatch.setattr(router_module, "refresh_catalog", lambda *args, **kwargs: {})
+    identifier, response = put(
+        client,
+        headers,
+        command(
+            "runpod",
+            name="RunPod Serverless",
+            config={"stills_endpoint_id": "ep-stills", "motion_endpoint_id": "ep-motion"},
+            secrets={"api_key": "fake-runpod-key"},  # pragma: allowlist secret - synthetic
+        ),
+    )
+    assert response.status_code == 200, response.text
+    with Session(engine) as session:
+        kinds = {
+            card.kind
+            for card in session.scalars(select(OwnerDecision))
+            if card.subject_id == identifier
+        }
+    assert "runpod_infra_actions" in kinds
+
+
 def test_verification_loads_real_response_models_and_marks_failure(client, headers, monkeypatch):
     identifier, _ = put(client, headers, command())
 

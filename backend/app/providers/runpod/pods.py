@@ -756,9 +756,15 @@ def start_copy(
             _close(
                 engine, copy_id, FAILED, error=f"CREATE_REFUSED_{exc.http_status}", verified=True
             )
+            reason = _vendor_reason(exc, config.hf_token.get_secret_value())
+            logger.warning(
+                "runpod_mirror_copy_refused",
+                extra={"copy_id": copy_id, "http_status": exc.http_status, "reason": reason},
+            )
             raise CopyRefused(
-                f"RunPod a refuzat serverul de copiere (HTTP {exc.http_status}); nu s-a pornit "
-                "nimic."
+                f"RunPod a refuzat serverul de copiere (HTTP {exc.http_status}"
+                + (f": {reason}" if reason else "")
+                + "); nu s-a pornit nimic."
             ) from None
         # No answer: the pod may exist. The guard finds it by its name and terminates it.
         _close(engine, copy_id, FAILED, error="CREATE_UNCERTAIN", verified=False)
@@ -944,6 +950,20 @@ async def _sweep(
             ended.append(pod_id)
             alive.discard(pod_id)
     return ended, alive
+
+
+def _vendor_reason(exc: MediaProviderError, secret: str) -> str:
+    """RunPod's own words for a refused create: its ``detail`` and per-field ``issues``, already
+    sanitised by ``media_http``, the token cut once more and capped. Without them a bare
+    «HTTP 400» could be a bad field or a full data center (2026-10-09, his first accept)."""
+    parts = [str(exc.detail or "").strip()]
+    parts += [
+        f"{issue.get('path', '')}: {issue.get('message', '')}".strip(": ") for issue in exc.issues
+    ]
+    text = " · ".join(part for part in parts if part)
+    if secret:
+        text = text.replace(secret, "[hf_token]")
+    return _TOKEN.sub("[hf_token]", " ".join(text.split()))[:300]
 
 
 def _scrubbed(value: Any, secret: str) -> Any:

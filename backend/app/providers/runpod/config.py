@@ -182,7 +182,10 @@ class RunPodConfig(BaseSettings):
     mirror_pod_image: str = Field(default="python:3.12-slim", min_length=1, max_length=200)
     mirror_pod_cpu_flavor: str = Field(default="cpu5c", min_length=1, max_length=40)
     mirror_pod_vcpus: int = Field(default=4, ge=2, le=64)
-    mirror_pod_disk_gb: int = Field(default=200, ge=20, le=1000)
+    #: The pod holds one weight at a time (largest 21.5 GB); RunPod gives a cpu5c pod at most
+    #: 15 GB of container disk per vCPU (docs.runpod.io/flash/configuration/cpu-types): 4 vCPU
+    #: allow 60. The first accept asked 200 and RunPod refused it with HTTP 400 (2026-10-09).
+    mirror_pod_disk_gb: int = Field(default=60, ge=20, le=1000)
     #: The rate assumed until RunPod reports the pod's own (CPU pod prices are undocumented).
     mirror_pod_cost_per_hour: Decimal = Field(default=Decimal("1.00"), ge=0)
     #: The cap his card proposes: the copy is terminated before either is reached.
