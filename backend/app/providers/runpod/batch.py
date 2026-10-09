@@ -1304,10 +1304,11 @@ def submit_round(
     return run
 
 
-#: RunPod's /run answers 409 «Endpoint is paused (max_workers=0)» for a moment after the
-#: switch-on PATCH was applied (2026-10-09, live: the /run left 0.1 s after it). A 409 is a
-#: refusal, nothing queued, so the same body goes again after each wait (about 30 s in all).
-PAUSED_RETRY_SECONDS: tuple[float, ...] = (1.0, 2.0, 4.0, 8.0, 15.0)
+#: RunPod's /run answers 409 «Endpoint is paused (max_workers=0)» for a while after the
+#: switch-on PATCH was applied: live 2026-10-09 the queue saw it after ~3 s (stills), ~15 s
+#: (test shot) and more than 30 s (motion). A 409 is a refusal, nothing queued and no worker
+#: running, so the same body goes again after each wait (about 3 minutes in all).
+PAUSED_RETRY_SECONDS: tuple[float, ...] = (1.0, 2.0, 4.0, 8.0, 15.0, 30.0, 30.0, 30.0, 30.0, 30.0)
 
 
 def _endpoint_paused(exc: MediaProviderError) -> bool:
