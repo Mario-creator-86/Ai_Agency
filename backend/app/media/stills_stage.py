@@ -94,6 +94,8 @@ from app.media.assembler import (
     DEFAULT_STORAGE_ROOT,
     FREE_FAILURE_KINDS,
     LIVE_KIND,
+    NOT_QUEUED_DETAIL,
+    NOT_QUEUED_REASON,
     STILL_HOLD_EVENT,
     STUDIO_DEFECT_KIND,
     UNANSWERED_FAILURE_CODE,
@@ -112,7 +114,9 @@ from app.media.assembler import (
     max_paid_attempts_per_scene,
     outcome_unknown,
     possibly_charged,
+    recode_not_queued,
     record_take,
+    runpod_hold_items,
     scene_kind_of,
     scene_memory,
     scene_reference,
@@ -963,6 +967,10 @@ class _SceneRound:
     uncertain: bool = False
     cancelled: bool = False
     intents: dict[str, str | None] = field(default_factory=dict)
+    #: The REFUSED take of each item whose /run got no job id (journal row id -> take id).
+    refused: dict[str, str] = field(default_factory=dict)
+    #: Its /run was proven never queued (`gpu_batch.run_rounds`' proof): nothing was bought.
+    not_queued: bool = False
 
 
 @dataclass
@@ -997,6 +1005,8 @@ class _StillRounds:
     waiting: list[int] = field(default_factory=list)
     stop: str | None = None
     unverified: bool = False
+    #: A one-scene still redo (`assembler._redo_still`): its hold event says so.
+    redo: bool = False
 
     # ------------------------------------------------------------------ requests
 
@@ -1126,29 +1136,54 @@ class _StillRounds:
         uncertain = error == UNCERTAIN
         state.uncertain = state.uncertain or uncertain
         state.cancelled = state.cancelled or outcome.state == "CANCELLED"
-        self.ledger.take_ids.append(
-            record_take(
-                self.engine,
-                take_id=intent,
-                storyboard_id=self.storyboard_id,
-                scene_number=state.scene.index,
-                kind="still",
-                prompt_hash=state.identity,
-                model_id=self.model_id,
-                resolution=STILL_RATIO,
-                status="REFUSED",
-                correlation_id=self.correlation_id,
-                credits_quoted=float(self.per_image) if uncertain else None,
-                failure_code=UNANSWERED_FAILURE_CODE if uncertain else f"RUNPOD.{error}"[:100],
-                failure_detail=(
-                    "Nu s-a cumpărat: pasul s-a oprit înainte de această imagine."
-                    if outcome.state == "CANCELLED"
-                    else None
-                ),
-                remote_task_id=outcome.item.remote_item_id,
-            )
+        take_id = record_take(
+            self.engine,
+            take_id=intent,
+            storyboard_id=self.storyboard_id,
+            scene_number=state.scene.index,
+            kind="still",
+            prompt_hash=state.identity,
+            model_id=self.model_id,
+            resolution=STILL_RATIO,
+            status="REFUSED",
+            correlation_id=self.correlation_id,
+            credits_quoted=float(self.per_image) if uncertain else None,
+            failure_code=UNANSWERED_FAILURE_CODE if uncertain else f"RUNPOD.{error}"[:100],
+            failure_detail=(
+                "Nu s-a cumpărat: pasul s-a oprit înainte de această imagine."
+                if outcome.state == "CANCELLED"
+                else None
+            ),
+            remote_task_id=outcome.item.remote_item_id,
         )
+        self.ledger.take_ids.append(take_id)
+        if uncertain:
+            state.refused[outcome.item.job_row_id] = take_id
         state.failed.append(error)
+
+    def unsent(self, outcomes: list[ItemOutcome], proof: dict[str, Any]) -> None:
+        """The GPU-off proved these items never queued (`gpu_batch.run_rounds`): their takes
+        are re-recorded as not queued (no credits) and a scene whose every uncertain item was
+        proven is no longer uncertain: nothing was bought, so nothing is held for the Owner."""
+        touched: dict[int, _SceneRound] = {}
+        for outcome in outcomes:
+            state = self.states[int(outcome.item.request.scene_id)]
+            take = state.refused.pop(outcome.item.job_row_id, None)
+            if take is not None:
+                with Session(self.engine) as session, session.begin():
+                    lock_for_write(session)
+                    recode_not_queued(
+                        session,
+                        [take],
+                        detail=NOT_QUEUED_DETAIL,
+                        correlation_id=self.correlation_id,
+                        by="proof",
+                    )
+            touched[state.scene.index] = state
+        for state in touched.values():
+            if not state.refused:
+                state.uncertain = False
+                state.not_queued = True
 
     # ------------------------------------------------------------------- deciding
 
@@ -1168,6 +1203,13 @@ class _StillRounds:
             state.entry.update(failure_kind="UNANSWERED", failure_code=UNANSWERED_FAILURE_CODE)
             self.stop = UNANSWERED_REASON.format(scene=state.scene.index)
             state.outcome = {"status": "NEEDS_OWNER", "reason": self.stop}
+            return None
+        if state.not_queued and not reports:
+            # RunPod never queued its /run (proven at the GPU-off): not bought, not held.
+            state.outcome = {
+                "status": "NOT_BOUGHT",
+                "reason": NOT_QUEUED_REASON.format(scene=state.scene.index),
+            }
             return None
         if state.cancelled:
             state.outcome = {
@@ -1297,6 +1339,7 @@ class _StillRounds:
                 credits_for_seconds=gpu_seconds_to_credits(
                     self.adapter, credit_usd=self.credit_usd
                 ),
+                on_unsent=self.unsent,
             )
         if summary.get("stopped") and summary.get("stopped") != UNCERTAIN:
             self.stop = self.stop or summary["stopped"]
@@ -1330,6 +1373,8 @@ class _StillRounds:
                         "failure_kind": state.entry.get("failure_kind"),
                         "identity": identity_key(state.scene.identity),
                         "holds": not free,
+                        **({"redo": True} if self.redo else {}),
+                        **runpod_hold_items(state.refused),
                     },
                     self.correlation_id,
                 )

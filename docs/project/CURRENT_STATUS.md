@@ -1,5 +1,21 @@
 # CURRENT STATUS — State on 2026-10-09
 
+## RUNPOD_UNSENT_PROOF — complete on fakes, live retry pending a restart (2026-10-09)
+
+First live RunPod stills round (film babcf272, «The Particle That Shouldn't Exist (But Does)»):
+the /run for scene 1's two candidates failed in 0.12 s, not proven unsent, so both items were
+SUBMISSION_UNCERTAIN, the takes REFUSED VENDOR.UNANSWERED, scene 1 held for the Owner and the
+whole stills step refused; RunPod showed no job, no worker, no log, $0. The Owner's only way out
+(«Refă imaginea») refused on RunPod. Built (workflow wf_6757ce8e-344, 2 adversarial reviewers, 6
+findings fixed): a /run failure is now proven never-queued only with the queue read before the
+purge (0/0/0), the purge's own removed count 0, a verified off, no overlapping session and no
+worker claim/manifest in the bucket; then UNSENT at 0 cost, the round given back, no hold. A
+legacy hold without that evidence becomes his card «Nu s-a trimis nimic la RunPod: eliberez
+scena?» (seed + watchdog). The next switch-on purges first after a never-queued close. The still
+redo on a RunPod model now runs one GPU round under its own cap. runpod_run_failed logs RunPod's
+answer (08029b6). Tests: 380 targeted cases pass; full suite not run (shared memory, the Owner
+playing).
+
 ## OWNER_CLOSE_FILM — complete on fakes, live use pending a restart (2026-10-09)
 
 Why no new film: `_selection` keeps «Un subiect este deja în producție» while any selected topic

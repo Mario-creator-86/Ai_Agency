@@ -395,6 +395,36 @@ def _runpod_cards(session: Session) -> list[dict[str, Any]]:
     return cards
 
 
+def _runpod_unsent_cards(session: Session) -> list[dict[str, Any]]:
+    """A scene held by a RunPod /run that got no job id, whose GPU session recorded a clean off
+    but not the proof that nothing was queued (2026-10-09): his card, once per hold
+    (`media.runpod_unsent`). A failure to read is logged and asks nothing."""
+    from app.media.runpod_unsent import release_cards  # noqa: PLC0415 - media reads decisions
+
+    try:
+        return release_cards(session)
+    except Exception as exc:  # noqa: BLE001 - the audit's other cards still go up
+        logger.warning("runpod_unsent_cards_unread", extra={"error": type(exc).__name__})
+        return []
+
+
+def _settle_runpod_unsent(engine: Engine) -> None:
+    """At boot, before the cards: a hold every request of which a later round's proof covered
+    (a redo sent the same keys) is released without asking him (`media.runpod_unsent.
+    settle_proven_holds`). Local writes only; a failure is logged and the watchdog retries."""
+    from uuid import uuid4  # noqa: PLC0415
+
+    from app.media.runpod_unsent import settle_proven_holds  # noqa: PLC0415 - media reads us
+
+    try:
+        released = settle_proven_holds(engine, correlation_id=str(uuid4()))
+    except Exception as exc:  # noqa: BLE001 - the audit's cards still go up
+        logger.warning("runpod_unsent_settle_failed", extra={"error": type(exc).__name__})
+        return
+    if released:
+        logger.info("runpod_unsent_holds_settled", extra={"holds": len(released)})
+
+
 def _needs_mirror_copy(integration: Any) -> bool:
     """A connection reading RunPod's cache whose configured endpoints miss a mirror revision
     (2026-10-09): the one-time copy has not been done."""
@@ -645,6 +675,7 @@ def seed_owner_decisions(engine: Engine, settings: Any = None) -> list[str]:
     reopened = reopen_unconfirmed_done(engine, settings)
     if reopened:
         logger.info("owner_decisions_reopened", extra={"cards": reopened})
+    _settle_runpod_unsent(engine)
     with Session(engine) as session:
         proposals: list[dict[str, Any]] = []
         if not _ever_seen(session, "audit:daily_budget"):
@@ -654,6 +685,7 @@ def seed_owner_decisions(engine: Engine, settings: Any = None) -> list[str]:
         proposals += _commercial_cards(session)
         proposals += _music_cards()
         proposals += _runpod_cards(session)
+        proposals += _runpod_unsent_cards(session)
         proposals += _paid_rule_cards(session)
         proposals += _editorial_cards(settings)
         if not _ever_seen(session, "audit:old_test_films"):

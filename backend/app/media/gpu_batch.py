@@ -39,6 +39,7 @@ from sqlalchemy import Engine
 
 from app.providers.media_http import MediaProviderError
 from app.providers.runpod.batch import (
+    NOT_QUEUED_STOP,
     UNCERTAIN,
     UNSENT,
     BatchRequest,
@@ -99,6 +100,78 @@ def _keep_alive(session: Any) -> str | None:
     return None
 
 
+def _settle_earlier_holds(engine: Engine, session: Any) -> None:
+    """A scene an earlier unanswered /run held, whose items this proof just covered (a redo
+    sends the same keys): no claim and no manifest for those keys and nothing queued means
+    that earlier /run made nothing either, so its hold is released now (`media.runpod_unsent.
+    settle_proven_holds`). Local writes only; a failure is logged and the watchdog's pass (and
+    the boot's) does it later."""
+    from uuid import uuid4  # noqa: PLC0415
+
+    from app.media.runpod_unsent import settle_proven_holds  # noqa: PLC0415 - it reads us
+
+    try:
+        settle_proven_holds(
+            engine, correlation_id=str(getattr(session, "correlation_id", None) or uuid4())
+        )
+    except Exception as exc:  # noqa: BLE001 - the step's own result stands; the pass retries
+        logger.warning("runpod_unsent_settle_failed", extra={"error": type(exc).__name__})
+
+
+def _prove_unsent(
+    engine: Engine,
+    session: Any,
+    uncertain_round: tuple[Any, list[ItemOutcome], float],
+    summary: dict[str, Any],
+    *,
+    meter: Any,
+    price_credits: Callable[[list[BatchRequest]], float],
+    overhead: float,
+    on_unsent: Callable[[list[ItemOutcome], dict[str, Any]], None] | None,
+) -> None:
+    """The proof of nothing queued for the round that ended the step (`BatchRun.prove_unsent`),
+    read after the session's close. Never sends anything."""
+    run, outcomes, kept = uncertain_round
+    prove = getattr(run, "prove_unsent", None)
+    proof = prove(session) if callable(prove) else None
+    if proof is None:
+        return
+    summary["unsent_proof"] = {
+        "proven": bool(proof.get("proven")),
+        "problems": list(proof.get("problems") or []),
+        "gpu_session_id": proof.get("gpu_session_id"),
+    }
+    if not proof.get("proven"):
+        return
+    ids = {str(item["job_row_id"]) for item in proof.get("items") or []}
+    proven = [o for o in outcomes if o.error == UNCERTAIN and o.item.job_row_id in ids]
+    if not proven:
+        return
+    every_uncertain = all(o.item.job_row_id in ids for o in outcomes if o.error == UNCERTAIN)
+    whole = len(proven) == len(outcomes) and not list(getattr(run, "remote_job_ids", []) or [])
+    # Nothing of the round reached RunPod: what the meter kept for it goes back, its GPU start
+    # included (no worker started for it). Otherwise only the proven items' share.
+    given_back = (
+        kept
+        if whole
+        else max(0.0, float(price_credits([o.item.request for o in proven])) - overhead)
+    )
+    # The stage's takes first, the journal rows second: a process that stops in between leaves
+    # rows still uncertain (the next step sends the same keys again: a free reuse at worst)
+    # and takes that no longer hold the scene, never a scene held by a round proven unsent.
+    if on_unsent is not None:
+        on_unsent(proven, proof)
+    mark = getattr(run, "mark_unsent", None)
+    if callable(mark):
+        mark(proof)
+        _settle_earlier_holds(engine, session)
+    meter.committed -= given_back
+    summary["not_queued_items"] = len(proven)
+    summary["not_queued_credits"] = given_back
+    if every_uncertain and summary.get("stopped") == UNCERTAIN:
+        summary["stopped"] = NOT_QUEUED_STOP
+
+
 def run_rounds(
     engine: Engine,
     adapter: Any,
@@ -116,6 +189,7 @@ def run_rounds(
     meter: Any,
     sleep: Callable[[float], None] = time.sleep,
     credits_for_seconds: Callable[[float], float] | None = None,
+    on_unsent: Callable[[list[ItemOutcome], dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     """Buy the step's rounds inside one GPU session; returns what happened.
 
@@ -129,7 +203,15 @@ def run_rounds(
     bound: queue and throttled time are counted too) is compared with what the meter kept for
     the round, and the meter is RAISED to it when RunPod used more than estimated: the books
     and the cap left for the next rounds never sit below what the GPU used. A measure below the
-    estimate never lowers it (the Owner approved the estimate; a billing read settles it)."""
+    estimate never lowers it (the Owner approved the estimate; a billing read settles it).
+
+    A round whose /run failed with no job id (SUBMISSION_UNCERTAIN) stops the step. Once the
+    session is closed (its off read the queue, `gpu_session.close_session`), the round asks
+    `BatchRun.prove_unsent` whether RunPod queued and made nothing (2026-10-09). Proven: those
+    items were never bought, so their credits go back to the meter (the whole round's, its GPU
+    start too, when no job of the round was accepted), the stop says so (`NOT_QUEUED_STOP`)
+    and ``on_unsent(outcomes, proof)`` lets the stage re-record its takes. Not proven: today's
+    behaviour, the items counted and nothing sent again. ``summary['unsent_proof']`` says which."""
     summary: dict[str, Any] = {
         "rounds": 0,
         "items_sent": 0,
@@ -149,6 +231,9 @@ def run_rounds(
     billed: list[float | None] = []
     overhead = float(price_credits([]))
     poll_every = float(getattr(getattr(adapter, "config", None), "poll_interval", 2.0))
+    # The round that ended the step with an uncertain /run: its run, outcomes and what the
+    # meter kept for it, for the proof read once the session is closed.
+    uncertain_round: tuple[Any, list[ItemOutcome], float] | None = None
 
     def stop_reason() -> str | None:
         reason = stopped()
@@ -264,15 +349,28 @@ def run_rounds(
                 if measured > kept + 1e-9:
                     meter.committed += measured - kept
                     summary["reconciled_credits"] += measured - kept
+            if any(o.error == UNCERTAIN for o in outcomes):
+                uncertain_round = (run, outcomes, kept)
             if halted is not None:
                 break
-            if any(o.error == UNCERTAIN for o in outcomes):
+            if uncertain_round is not None:
                 # A round whose answer was lost: its items may have been served. Nothing more
                 # is sent in this step; the same keys go out again in a later step, where the
                 # worker's manifest makes them a free reuse.
                 summary["stopped"] = summary["stopped"] or UNCERTAIN
                 break
             requests = list(next_round(outcomes))
+    if uncertain_round is not None:
+        _prove_unsent(
+            engine,
+            session,
+            uncertain_round,
+            summary,
+            meter=meter,
+            price_credits=price_credits,
+            overhead=overhead,
+            on_unsent=on_unsent,
+        )
     if problem is not None:
         # After the close (workers.max=0): the card in his Decisions window, once per endpoint.
         from app.providers.runpod.weights import raise_weights_card  # noqa: PLC0415

@@ -423,7 +423,12 @@ def test_a_serverless_request_outside_a_round_is_never_sent(engine, tmp_path):
     assert not cloud.calls  # workers.max is 0 outside a session: a /run would wait and bill later
 
 
-def test_a_still_redo_on_runpod_is_refused_before_his_yes_is_asked_or_spent(engine, tmp_path):
+def test_a_still_redo_on_runpod_whose_gpu_may_not_switch_on_asks_and_spends_nothing(
+    engine, tmp_path
+):
+    # 2026-10-09: the still redo on RunPod is one GPU round (tests/test_runpod_unsent_proof.py).
+    # A GPU that could not be switched on (here: no connection whose card lets agents switch it
+    # on) refuses before his yes is asked or spent, nothing sent.
     from uuid import uuid4
 
     from app.media.assembler import SceneRedoRefused, redo_plan, redo_scene
@@ -447,6 +452,6 @@ def test_a_still_redo_on_runpod_is_refused_before_his_yes_is_asked_or_spent(engi
             table=table,
             storage_root=tmp_path / "media",
         )
-    assert refused.value.status == "NEEDS_GPU_ROUND" and not cloud.calls
+    assert refused.value.status == "BLOCKED_INFRA_DISABLED" and not cloud.calls
     with Session(engine) as s:
         assert s.scalar(select(ApprovalRequest)) is None

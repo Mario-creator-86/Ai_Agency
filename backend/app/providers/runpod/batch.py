@@ -25,7 +25,10 @@ once, makes every item in index order, and scales to zero 1 s (idleTimeout) afte
   as long as the bucket does. A /status 404 with no manifest is EXPIRED_UNDELIVERED.
 * An uncertain /run (sent, no answer) leaves its items SUBMISSION_UNCERTAIN: never sent again
   outside a GPU session, re-included with the SAME keys in the next round or step, where the
-  worker's manifest/claim makes it a free reuse, never a second generation.
+  worker's manifest/claim makes it a free reuse, never a second generation. Once the session
+  is closed, `BatchRun.prove_unsent` reads what its off recorded (the queue before the purge,
+  RunPod's purge count, the verified off) and the worker's bucket record: proven never queued
+  and never made, the items are UNSENT at 0 cost (2026-10-09); otherwise they stay uncertain.
 
 Nothing here switches the GPU on or off: that is `gpu_session` (the caller's ``session``).
 """
@@ -73,6 +76,15 @@ UNCERTAIN = "SUBMISSION_UNCERTAIN"
 EXPIRED = "EXPIRED_UNDELIVERED"
 #: The Owner's line for what a round costs besides its items.
 OVERHEAD_LINE_RO = "GPU: pornire și încărcarea modelelor"
+#: Why a step stopped when its /run failed and the GPU-off proved RunPod queued nothing
+#: (`BatchRun.prove_unsent`, 2026-10-09): nothing was bought, nothing is sent again by itself.
+NOT_QUEUED_STOP = (
+    "RunPod nu a primit cererea: la oprirea GPU-ului coada era goală (nicio lucrare scoasă, "
+    "nimic în lucru, niciun worker pornit), iar lucrătorul nu a început nimic din ea. Nu s-a "
+    "cumpărat nimic și nu se retrimite automat; pasul se poate porni din nou."
+)
+#: The event of each proof attempt, proven or not (aggregate: the GPU session).
+PROOF_EVENT = "runpod.run_queue_proof"
 #: The item states an outcome takes.
 OutcomeState = Literal["COMPLETED", "FAILED", "CANCELLED", "PENDING"]
 
@@ -220,6 +232,44 @@ def route_references(request: BatchRequest) -> BatchRequest:
     return request
 
 
+def _count(value: Any) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def queue_problems(evidence: Any) -> list[str]:
+    """Why the GPU-off evidence of a session does NOT prove that RunPod queued nothing; an
+    empty list when it does (`BatchRun.prove_unsent`). Each count must have been read and be 0:
+    an unread count, or a purge answer without its count, is never taken for zero."""
+    if not isinstance(evidence, dict):
+        return ["NO_EVIDENCE"]
+    problems: list[str] = []
+    if evidence.get("shared") or evidence.get("other_sessions"):
+        problems.append("SHARED_ENDPOINT")
+    before = evidence.get("before_purge")
+    if not isinstance(before, dict):
+        problems.append("QUEUE_UNREAD_BEFORE_PURGE")
+    else:
+        for field_name, code in (
+            ("in_queue", "QUEUED"),
+            ("in_progress", "IN_PROGRESS"),
+            ("running", "RUNNING"),
+        ):
+            value = _count(before.get(field_name))
+            if value is None:
+                problems.append(f"{code}_UNREAD")
+            elif value != 0:
+                problems.append(f"{code}_BEFORE_PURGE:{value}")
+    removed = _count(evidence.get("purge_removed"))
+    if removed is None:
+        problems.append("PURGE_UNANSWERED")
+    elif removed != 0:
+        problems.append(f"PURGE_REMOVED:{removed}")
+    off = evidence.get("off")
+    if not isinstance(off, dict) or off.get("off") is not True:
+        problems.append("OFF_NOT_VERIFIED")
+    return problems
+
+
 def item_budget(config: RunPodConfig, operation: str) -> int:
     return int(
         config.still_item_budget_seconds
@@ -335,6 +385,14 @@ def reserve_item(
                 if row.remote_job_id:
                     return row, "TRACK", current
                 if row.error_code == UNCERTAIN:
+                    # Which session left it uncertain is kept before the send names another
+                    # (2026-10-09): a scene that /run held is still found by its hold after a
+                    # redo sent the same keys again (`media.runpod_unsent`).
+                    previous = list(dict(row.output or {}).get("resent") or [])
+                    previous.append(
+                        {"gpu_session_id": row.gpu_session_id, "error_code": UNCERTAIN, "at": now()}
+                    )
+                    row.output = {**dict(row.output or {}), "resent": previous[-20:]}
                     return row, "RESEND", current
                 # Reserved and never sent (a crash before /run): send it now, same key.
                 return row, "RESEND", current
@@ -513,6 +571,128 @@ class BatchRun:
                     _book_batch(self.engine, self.config, chunk)
 
         asyncio.run(read())
+
+    # ------------------------------------------------------------ the proof of nothing queued
+
+    def prove_unsent(self, session: Any) -> dict[str, Any] | None:
+        """After the GPU session closed: are this round's SUBMISSION_UNCERTAIN items (a /run
+        that failed with no job id and no proof it never left) proven never queued and never
+        made? None when the round has no such item.
+
+        2026-10-09: the first live stills /run failed in 0.12 s; RunPod showed no job, no
+        worker and $0, but the items stayed uncertain and the film could not move. The proof
+        reads nothing new from RunPod's API and guesses nothing:
+
+        * the session's close (`gpu_session.close_session`) read the endpoint's queue BEFORE
+          its purge (inQueue 0, inProgress 0, workers.running 0), RunPod's own purge answer
+          removed exactly 0 jobs («Remove all pending jobs from the queue»: a job of ours still
+          waiting would have been one of them), the endpoint then read OFF (max 0, nothing
+          queued, in progress or running), and no other session used the endpoint meanwhile;
+        * the worker's own record says it never started an item: it writes
+          ``claims/<key>.json`` before any GPU work and ``manifests/<key>.json`` after (the
+          worker contract), and neither exists for any of the keys (free GETs on his bucket).
+
+        The first says nothing of ours waits or runs; the second that nothing of ours was ever
+        made, even by a job that ran and ended before the close looked (the queue counts alone
+        cannot see that). Only both together are a proof (``proven``); anything less (a count
+        unread, a purge that removed something, a claim, an unreadable bucket, a shared
+        endpoint) proves nothing and the items stay uncertain, counted and held, as before.
+        This reads and judges only: `mark_unsent` writes the rows, after the stage has
+        re-recorded its takes (`gpu_batch.run_rounds`). Nothing is ever sent again from here.
+        The outcome is logged (``runpod_run_proof``) and written as `PROOF_EVENT`."""
+        uncertain: list[GenerationJob] = []
+        for item in self.items:
+            row = self.store.read(item.job_row_id)
+            if row.error_code == UNCERTAIN and not row.remote_job_id and row.status not in TERMINAL:
+                uncertain.append(row)
+        if not uncertain:
+            return None
+        evidence = getattr(session, "off_evidence", None)
+        problems = queue_problems(evidence)
+        if not problems:
+            problems = asyncio.run(self._worker_records(uncertain))
+        proven = not problems
+        record: dict[str, Any] = {
+            "proven": proven,
+            "problems": problems,
+            "gpu_session_id": self.session_id,
+            "endpoint_id": self.config.endpoint_for(self._operation()),
+            "items": [
+                {"job_row_id": row.id, "idempotency_key": row.idempotency_key} for row in uncertain
+            ],
+            "evidence": evidence if isinstance(evidence, dict) else None,
+            "checked_at": now(),
+        }
+        before = (evidence or {}).get("before_purge") if isinstance(evidence, dict) else None
+        logger.log(
+            logging.INFO if proven else logging.WARNING,
+            "runpod_run_proof",
+            extra={
+                "proven": proven,
+                "problems": problems,
+                "items": len(uncertain),
+                "gpu_session_id": self.session_id,
+                "purge_removed": (evidence or {}).get("purge_removed")
+                if isinstance(evidence, dict)
+                else None,
+                "before_purge": before,
+                "off": (evidence or {}).get("off") if isinstance(evidence, dict) else None,
+            },
+        )
+        if self.session_id:
+            from app.providers.runpod.gpu_session import _write_event  # noqa: PLC0415 - cycle
+
+            _write_event(self.engine, PROOF_EVENT, self.session_id, record, self.session_id)
+        return record
+
+    def mark_unsent(self, proof: dict[str, Any]) -> list[str]:
+        """The items a proof (`prove_unsent`) found never queued: FAILED/UNSENT at 0 cost, the
+        proof on the row. Their keys stay reusable (`reserve_item`: «proven never served»), so
+        a job that somehow ran anyway would be a free reuse, never a second purchase. Only a
+        row still uncertain is changed. Returns the rows changed."""
+        if not proof.get("proven"):
+            return []
+        note = {key: proof.get(key) for key in ("proven", "gpu_session_id", "checked_at")}
+        changed: list[str] = []
+        for item in proof.get("items") or []:
+            row = self.store.read(str(item["job_row_id"]))
+            if row.error_code != UNCERTAIN or row.remote_job_id or row.status in TERMINAL:
+                continue
+            self.store.update(
+                row.id,
+                status="FAILED",
+                error_code=UNSENT,
+                finished_at=now(),
+                cost_value="0",
+                gpu_seconds_value="0",
+                output={**dict(row.output or {}), "not_queued": {**note, "by": "proof"}},
+            )
+            changed.append(row.id)
+        return changed
+
+    async def _worker_records(self, rows: Sequence[GenerationJob]) -> list[str]:
+        """What the worker left in his bucket for these keys: a claim (GPU work started) or a
+        manifest (an item made). A read that fails is a problem too, never «nothing there»."""
+        bucket = self.config.bucket()
+        if bucket is None:
+            return ["NO_BUCKET"]
+        transport = self.transport or _default()
+        problems: list[str] = []
+        for row in rows:
+            for kind, key in (
+                ("CLAIM", contract.claim_key(bucket.prefix, row.idempotency_key)),
+                ("MANIFEST", contract.manifest_key(bucket.prefix, row.idempotency_key)),
+            ):
+                try:
+                    found = await s3.get_json(bucket, key, transport)
+                except MediaProviderError as exc:
+                    problems.append(
+                        f"BUCKET_UNREADABLE:{kind}:{exc.http_status or type(exc).__name__}"
+                    )
+                    continue
+                if found is not None:
+                    problems.append(f"WORKER_{kind}:{row.idempotency_key[:12]}")
+        return problems
 
     # ----------------------------------------------------------------- remote collection
 
@@ -1244,7 +1424,13 @@ async def _submit_remote(
                         gpu_seconds_value="0",
                     )
                 else:
-                    store.update(row.id, error_code=UNCERTAIN)
+                    # The session is named on the row (2026-10-09): what its close reads about
+                    # RunPod's queue is the evidence for these items (`BatchRun.prove_unsent`).
+                    store.update(row.id, error_code=UNCERTAIN, gpu_session_id=run.session_id)
+            if not proven:
+                note = getattr(session, "note_uncertain", None)
+                if callable(note):
+                    note([row.idempotency_key for _item, row in pairs])
             run.chunks.append(_Chunk(None, chunk_items_list, policy, time.monotonic()))
             uncertain_any = uncertain_any or not proven
             if not sent_any and not uncertain_any and proven:

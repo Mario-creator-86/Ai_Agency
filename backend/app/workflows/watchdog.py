@@ -737,6 +737,19 @@ def run_watchdog(
         logger.error("watchdog_defect_holds_failed", extra={"error": type(exc).__name__})
         defect_holds = {"released": [], "error": True}
 
+    # A scene held by a RunPod /run that got no job id (2026-10-09): released when a later
+    # round with the same keys proved nothing was queued or made; otherwise, when its GPU
+    # session recorded a clean off but not that proof, the Owner's card, once per hold (his
+    # yes releases it). Local reads and writes; nothing sent, nothing bought.
+    unsent_holds: dict[str, Any]
+    try:
+        from app.media.runpod_unsent import propose_release_cards  # noqa: PLC0415
+
+        unsent_holds = propose_release_cards(engine, correlation_id=correlation)
+    except Exception as exc:  # noqa: BLE001 - one part's failure must not lose the others'
+        logger.error("watchdog_runpod_unsent_failed", extra={"error": type(exc).__name__})
+        unsent_holds = {"cards": [], "released": [], "error": True}
+
     # The seventh, only when the Owner turned it on: a failed render's shots, deleted.
     try:
         intermediates = _sweep_failed_intermediates(engine, settings, correlation)
@@ -757,6 +770,7 @@ def run_watchdog(
         "days": days,
         "intermediates": intermediates,
         "defect_holds": defect_holds,
+        "runpod_unsent_holds": unsent_holds,
         "correlation_id": correlation,
     }
     logger.info(
@@ -773,6 +787,8 @@ def run_watchdog(
             "days_interrupted": len(days["interrupted"]),
             "intermediates_swept": len(intermediates["files"]),
             "defect_holds_released": len(defect_holds["released"]),
+            "runpod_unsent_cards": len(unsent_holds["cards"]),
+            "runpod_unsent_released": len(unsent_holds.get("released") or []),
         },
     )
     return result

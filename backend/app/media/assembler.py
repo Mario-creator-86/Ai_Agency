@@ -6348,6 +6348,20 @@ UNANSWERED_REASON = (
     "taxată. Nu se trimite din nou automat; creditele ei sunt numărate. Decide Proprietarul "
     "pe foaia de filmare."
 )
+#: A RunPod item whose /run failed with no job id and that the GPU-off then proved never
+#: queued and never made (`providers.runpod.batch.BatchRun.prove_unsent`, 2026-10-09), or that
+#: the Owner released on his card (`media.runpod_unsent`): a refusal that cost nothing and says
+#: nothing about the scene, so it holds nothing and counts as no paid attempt.
+NOT_QUEUED_FAILURE_CODE = "RUNPOD.NOT_QUEUED"
+NOT_QUEUED_DETAIL = (
+    "RunPod nu a pus cererea la coadă: la oprirea GPU-ului coada era goală și lucrătorul nu "
+    "a început nimic din ea. Nu s-a făcut și nu s-a plătit nimic."
+)
+#: What the Owner reads about such a scene in the step's result.
+NOT_QUEUED_REASON = (
+    "Scena {scene}: RunPod nu a pus cererea la coadă (dovedit la oprirea GPU-ului); nu s-a "
+    "cumpărat nimic. Scena se poate cumpăra din nou, cu aprobarea ta."
+)
 #: The account dropped more than the step counted: something it does not know was charged.
 UNCOUNTED_DROP_STOP = (
     "Soldul furnizorului a scăzut cu {drop:.0f} credite de la începutul pasului, iar pasul a "
@@ -6516,6 +6530,35 @@ STUDIO_DEFECT_KIND = "STUDIO_DEFECT"
 #: watchdog pass: {released_event_id, released_sequence, hold_event, scene_number, take_id,
 #: model_id, failure_code, failure_detail, reason_ro}. `scene_memory` skips a released hold.
 STUDIO_DEFECT_RELEASED_EVENT = "media.studio_defect_hold_released"
+#: A hold an unanswered RunPod /run left, released (once) because the GPU-off proved nothing
+#: was queued, or on the Owner's own card (`media.runpod_unsent`). Same payload keys as
+#: `STUDIO_DEFECT_RELEASED_EVENT` (``released_event_id`` first); `scene_memory` skips it too.
+RUNPOD_UNSENT_RELEASED_EVENT = "media.runpod_unsent_hold_released"
+#: The key under which a hold left by an unanswered RunPod /run names what it rests on (since
+#: 2026-10-09): {"job_row_ids": [...], "take_ids": [...]}, the journal rows with no job id and
+#: their REFUSED takes. `media.runpod_unsent` finds them by it even after a redo sent the same
+#: keys again (the rows then name the redo's GPU session).
+RUNPOD_HOLD_ITEMS = "runpod_items"
+
+
+def runpod_hold_items(refused: dict[str, str] | None) -> dict[str, Any]:
+    """The hold event's `RUNPOD_HOLD_ITEMS` entry for a scene whose items got no job id (journal
+    row id -> its REFUSED take), or nothing when it has none."""
+    if not refused:
+        return {}
+    return {
+        RUNPOD_HOLD_ITEMS: {
+            "job_row_ids": list(refused),
+            "take_ids": list(refused.values()),
+        }
+    }
+
+
+#: Every event that releases a hold, read by `_released_holds`.
+HOLD_RELEASED_EVENTS: tuple[str, ...] = (
+    STUDIO_DEFECT_RELEASED_EVENT,
+    RUNPOD_UNSENT_RELEASED_EVENT,
+)
 #: The failure kinds a REFUSED take may carry as its code when the vendor named none.
 _KIND_CODES: tuple[str, ...] = (
     "SAFETY",
@@ -6601,6 +6644,9 @@ def take_failure(row: SceneTake) -> FailureRecord | None:
     if row.status != "REFUSED":
         return None
     charged = row.credits_quoted is not None or row.credits_measured is not None
+    if code == NOT_QUEUED_FAILURE_CODE and not charged:
+        # RunPod never queued it (proven, or released by the Owner): nothing was made.
+        return None
     if code == UNANSWERED_FAILURE_CODE:
         kind = "UNKNOWN"
     elif code in _KIND_CODES:
@@ -6801,10 +6847,9 @@ def scene_memory(
 
 
 def _released_holds(session: Session, storyboard_id: str | None = None) -> set[str]:
-    """The event ids of the holds a release pass let go (`release_studio_defect_holds`)."""
-    query = select(DomainEvent.payload).where(
-        DomainEvent.event_type == STUDIO_DEFECT_RELEASED_EVENT
-    )
+    """The event ids of the holds a release pass let go (`release_studio_defect_holds`, and
+    `media.runpod_unsent` for a RunPod /run proven or released as never queued)."""
+    query = select(DomainEvent.payload).where(DomainEvent.event_type.in_(HOLD_RELEASED_EVENTS))
     if storyboard_id is not None:
         query = query.where(DomainEvent.aggregate_id == storyboard_id)
     found: set[str] = set()
@@ -6900,6 +6945,55 @@ def release_studio_defect_holds(engine: Engine, *, correlation_id: str) -> list[
                 correlation_id,
             )
     return released
+
+
+def recode_not_queued(
+    session: Session,
+    take_ids: Sequence[str],
+    *,
+    detail: str,
+    correlation_id: str,
+    by: str,
+) -> list[str]:
+    """REFUSED takes of a RunPod /run that was never queued (proven by the GPU-off, or released
+    on the Owner's card): «unanswered, maybe paid» (VENDOR.UNANSWERED, credits counted) becomes
+    `NOT_QUEUED_FAILURE_CODE` with no credits, so the take neither holds its scene nor counts as
+    a paid attempt (`take_failure`, `_charged`). In the caller's transaction; a take that is not
+    such a refusal any more (a file, another code) is left alone. Returns the takes changed."""
+    changed: list[str] = []
+    for take_id in take_ids:
+        row = session.get(SceneTake, take_id)
+        if (
+            row is None
+            or row.status != "REFUSED"
+            or row.failure_code != UNANSWERED_FAILURE_CODE
+            or row.sha256
+            or row.credits_measured is not None
+        ):
+            continue
+        quoted = row.credits_quoted
+        row.failure_code = NOT_QUEUED_FAILURE_CODE
+        row.failure_detail = detail[:TAKE_DETAIL_MAX]
+        row.credits_quoted = None
+        row.updated_at = utc_now()
+        append_event(
+            session,
+            "media.scene_take_not_queued",
+            "scene_take",
+            row.id,
+            1,
+            {
+                "storyboard_id": row.storyboard_id,
+                "scene_number": row.scene_number,
+                "kind": row.kind,
+                "previous_failure_code": UNANSWERED_FAILURE_CODE,
+                "credits_quoted_before": quoted,
+                "by": by,
+            },
+            correlation_id,
+        )
+        changed.append(row.id)
+    return changed
 
 
 def _bought_shots(
@@ -8578,6 +8672,10 @@ class _ShotRound:
     uncertain: bool = False
     cancelled: bool = False
     failed: str | None = None
+    #: The REFUSED take of each item whose /run got no job id (journal row id -> take id).
+    refused: dict[str, str] | None = None
+    #: Its /run was proven never queued (`gpu_batch.run_rounds`' proof): nothing was bought.
+    not_queued: bool = False
 
 
 class _ShotRounds:
@@ -8740,7 +8838,7 @@ class _ShotRounds:
         state.uncertain = state.uncertain or uncertain
         state.cancelled = state.cancelled or outcome.state == "CANCELLED"
         state.failed = error
-        record_take(
+        take_id = record_take(
             self.engine,
             take_id=intent,
             storyboard_id=self.storyboard_id,
@@ -8762,6 +8860,34 @@ class _ShotRounds:
             ),
             remote_task_id=outcome.item.remote_item_id,
         )
+        if uncertain:
+            if state.refused is None:
+                state.refused = {}
+            state.refused[outcome.item.job_row_id] = take_id
+
+    def unsent(self, outcomes: list[Any], proof: dict[str, Any]) -> None:
+        """The GPU-off proved these items never queued (`gpu_batch.run_rounds`): their takes
+        are re-recorded as not queued (no credits) and a scene whose every uncertain item was
+        proven is no longer uncertain: nothing was bought, nothing is held."""
+        touched: dict[int, _ShotRound] = {}
+        for outcome in outcomes:
+            state = self.states[int(outcome.item.request.scene_id)]
+            take = (state.refused or {}).pop(outcome.item.job_row_id, None)
+            if take is not None:
+                with Session(self.engine) as session, session.begin():
+                    lock_for_write(session)
+                    recode_not_queued(
+                        session,
+                        [take],
+                        detail=NOT_QUEUED_DETAIL,
+                        correlation_id=self.correlation_id,
+                        by="proof",
+                    )
+            touched[state.index] = state
+        for state in touched.values():
+            if not state.refused:
+                state.uncertain = False
+                state.not_queued = True
 
     def _check(self, state: _ShotRound, clip: Path, take_id: str, seed: int) -> None:
         """Clip QC on a landed clip. The first clip's one retry is not bought here: it is
@@ -8842,6 +8968,13 @@ class _ShotRounds:
             self.stop = UNANSWERED_REASON.format(scene=state.index)
             state.outcome = {"status": "NEEDS_OWNER", "reason": self.stop}
             return []
+        if state.not_queued:
+            # RunPod never queued its /run (proven at the GPU-off): not bought, not held.
+            state.outcome = {
+                "status": "NOT_BOUGHT",
+                "reason": NOT_QUEUED_REASON.format(scene=state.index),
+            }
+            return []
         if state.cancelled:
             state.outcome = {
                 "status": "NOT_BOUGHT",
@@ -8908,6 +9041,7 @@ class _ShotRounds:
                 credits_for_seconds=gpu_seconds_to_credits(
                     shots[0].adapter, credit_usd=self.credit_usd
                 ),
+                on_unsent=self.unsent,
             )
         if summary.get("stopped") and summary.get("stopped") != UNCERTAIN:
             self.stop = self.stop or summary["stopped"]
@@ -8947,6 +9081,7 @@ class _ShotRounds:
                         "clip_qc": (state.entry.get("clip_qc") or {}).get("verdict"),
                         "identity": state.hold_identity,
                         "holds": not free,
+                        **runpod_hold_items(state.refused),
                     },
                     self.correlation_id,
                 )
@@ -10638,7 +10773,12 @@ def _still_redo_plan(
         row = prices.row(model_id, STILLS_RESOLUTION)
     except UnpricedError as exc:
         raise SceneRedoRefused("UNPRICED", f"Nu se cumpără imagini: {exc}.", plan=plan) from exc
-    cap = per_request * (1 + MAX_REROLLS)
+    # RunPod Serverless (2026-10-09): the redo is one GPU round per purchase (its pair, then
+    # each re-roll), and every round pays a GPU start (cold start + idle tail) as the stills
+    # step prices it. 0 for a per-image vendor, so its plan (and its hash) is unchanged.
+    overhead = int(prices.round_overhead("image", model_id))
+    per_round = per_request + overhead
+    cap = per_round * (1 + MAX_REROLLS)
     first_live = next((s for s in scenes if not is_composed(s)), None)
     figure_one: str | None = None
     with Session(engine) as session:
@@ -10675,9 +10815,9 @@ def _still_redo_plan(
         buyable=True,
         model_id=model_id,
         resolution=STILLS_RESOLUTION,
-        credits=per_request,
+        credits=per_round,
         cap_credits=cap,
-        cost_usd=round(per_request * prices.credit_usd, 6),
+        cost_usd=round(per_round * prices.credit_usd, 6),
         cap_usd=round(cap * prices.credit_usd, 6),
         price_source=source_label(row),
         candidates=STILL_CANDIDATES,
@@ -10687,9 +10827,12 @@ def _still_redo_plan(
         replaces=replaces,
         invalidates=invalidates,
     )
+    if overhead:
+        plan.update(credits_per_request=per_request, round_overhead_credits=overhead)
+    gpu_start = f" și pornirea GPU-ului ({overhead} credite pe rundă)" if overhead else ""
     reason = (
-        f"Imaginea scenei {index}: {STILL_CANDIDATES} variante la 2K pe {model_id}, "
-        f"{per_request} credite (plafon {cap}, cu cel mult {MAX_REROLLS} reluări). "
+        f"Imaginea scenei {index}: {STILL_CANDIDATES} variante la 2K pe {model_id}{gpu_start}, "
+        f"{per_round} credite (plafon {cap}, cu cel mult {MAX_REROLLS} reluări). "
         "Imaginea veche și cadrul filmat din ea se retrag abia după aprobare; mișcarea scenei "
         "se reface apoi separat. Celelalte scene nu se ating."
     )
@@ -10707,8 +10850,9 @@ def _still_redo_plan(
             "resolution": STILLS_RESOLUTION,
             "candidates": STILL_CANDIDATES,
             "max_rerolls": MAX_REROLLS,
-            "credits": per_request,
+            "credits": per_round,
             "cap_credits": cap,
+            **({"round_overhead_credits": overhead} if overhead else {}),
             "still_prompt": words,
             "identity": next(iter(still_options(engine, scene)), None),
             "figure_one_sha256": figure_one,
@@ -12190,19 +12334,9 @@ def _redo_still(
         )
     from app.providers.runpod.batch import supports_batch  # noqa: PLC0415 - runpod reads media
 
-    if supports_batch(image_adapter) and not getattr(
-        getattr(image_adapter, "config", None), "mock", False
-    ):
-        # RunPod Serverless buys only in rounds inside a GPU session, and this redo is still
-        # the per-request purchase: refused here, before his yes is asked or spent, nothing
-        # sent (2026-10-08 adversary; a round-based still redo is phase-2 work).
-        raise SceneRedoRefused(
-            "NEEDS_GPU_ROUND",
-            f"Refacerea imaginii scenei {index} pe RunPod nu trece încă printr-o rundă GPU: nu "
-            "se trimite și nu se cheltuie nimic. Refă imaginile din pasul «Imaginile scenelor» "
-            "sau alege alt model de imagine pentru refacere.",
-            plan=plan,
-        )
+    # RunPod Serverless buys only in rounds inside a GPU session (2026-10-09): the redo is
+    # bought as the stills step buys, one scene in one GPU round (`_redo_still_rounds`).
+    batching = supports_batch(image_adapter)
     bible, scenes = stills._read_scenes(engine, storyboard_id)
     scene = next(s for s in scenes if s.index == index)
     live = [s for s in scenes if s.kind == LIVE_KIND]
@@ -12249,6 +12383,19 @@ def _redo_still(
             plan=plan,
             findings=blocks,
         )
+    if batching:
+        # A GPU that could not be switched on anyway (his card not accepted, no bucket, the
+        # weights not ready) refuses here, before his yes is asked for or spent (as the
+        # stills step does): nothing sent, nothing spent.
+        from app.media import gpu_batch  # noqa: PLC0415 - gpu_batch reads runpod
+        from app.providers.runpod.gpu_session import GpuSessionRefused  # noqa: PLC0415
+
+        try:
+            gpu_batch.gpu_precheck(
+                engine, image_adapter, purpose="image", integration_id=integration_id
+            )
+        except GpuSessionRefused as exc:
+            raise SceneRedoRefused(str(exc.code), exc.reason_ro, plan=plan) from exc
     cap = int(plan["cap_credits"])
     margin = margin_of(settings)
     asked_about = {"plan_hash": plan_hash, "cap_credits": cap}
@@ -12337,6 +12484,32 @@ def _redo_still(
     figure_one: bytes | None = None
     if first is not None and first.index != index and first.reuse is not None and first.reuse.path:
         figure_one = Path(str(first.reuse.path)).read_bytes()
+    if batching:
+        return _redo_still_rounds(
+            engine,
+            storyboard_id,
+            correlation_id,
+            plan,
+            scene=scene,
+            bible=bible,
+            first_index=first.index if first is not None else None,
+            figure_one=figure_one,
+            image_adapter=image_adapter,
+            plan_hash=plan_hash,
+            verdict=verdict,
+            guard=guard,
+            registry=registry,
+            judge=judge,
+            face_counter=face_counter,
+            measure=measure,
+            environment=environment,
+            ffmpeg_path=ffmpeg_path,
+            storage_root=storage_root,
+            integration_id=integration_id,
+            requester=requester,
+            meter=meter,
+            unasked=unasked,
+        )
     # The character's reference first (when the vendor takes one), the film's look second.
     references, with_character, with_figure = stills._references(
         scene, figure_one, image_adapter, first=first is None or first.index == index
@@ -12401,6 +12574,129 @@ def _redo_still(
         "retired": list(plan["replaces"]),
         "invalidated": list(plan["invalidates"]),
         "reference_unverified": buyer.unverified,
+    }
+
+
+def _redo_still_rounds(
+    engine: Engine,
+    storyboard_id: str,
+    correlation_id: str,
+    plan: dict[str, Any],
+    *,
+    scene: Any,
+    bible: dict[str, Any],
+    first_index: int | None,
+    figure_one: bytes | None,
+    image_adapter: Any,
+    plan_hash: str,
+    verdict: dict[str, Any],
+    guard: Any,
+    registry: Any,
+    judge: Callable[..., Any] | None,
+    face_counter: Callable[..., Any] | None,
+    measure: tuple[str, ...] | None,
+    environment: str,
+    ffmpeg_path: str | None,
+    storage_root: Path | None,
+    integration_id: str | None,
+    requester: str,
+    meter: SpendMeter | None,
+    unasked: bool,
+) -> dict[str, Any]:
+    """One scene's still redo on RunPod Serverless (2026-10-09): the stills step's own rounds
+    (`stills_stage._StillRounds`, `gpu_batch.run_rounds`) for this one scene, under the yes
+    `_redo_still` has just spent. One GPU session switched on for the redo (the Policy Kernel's
+    ``infra.gpu_on`` for ``media.scene_redo``, this plan, this approval) and off right after its
+    last result; each round (the pair, then a re-roll) is one batch job, priced with its GPU
+    start and cut to what is left of the redo's cap; his mode and the autonomy stop are read
+    before every round (``guard``); the film's purchase lease and the step's budget hold are
+    `redo_scene`'s. A /run with no answer is proven unsent or held, as in the stills step."""
+    from app.media import stills_stage as stills  # noqa: PLC0415 - stills_stage imports us
+    from app.media.picture_qc import judge_still  # noqa: PLC0415
+    from app.media.prompt_lint import bible_face_rule  # noqa: PLC0415
+    from app.media.still_gate import ALL_CHECKS  # noqa: PLC0415
+    from app.providers.runpod.gpu_session import StepPermit  # noqa: PLC0415
+    from app.runbook.services import stop_requested  # noqa: PLC0415
+
+    index = int(scene.index)
+    cap = int(plan["cap_credits"])
+    per_request = int(plan.get("credits_per_request") or plan["credits"])
+    work_dir = (storage_root or DEFAULT_STORAGE_ROOT) / storyboard_id / "stills"
+    work_dir.mkdir(parents=True, exist_ok=True)
+    ledger = stills._Ledger(cap=cap, meter=meter if meter is not None else SpendMeter())
+    rounds = stills._StillRounds(
+        engine=engine,
+        storyboard_id=storyboard_id,
+        correlation_id=correlation_id,
+        adapter=image_adapter,
+        model_id=str(plan["model_id"]),
+        # The scene goes as the film's first when it is, or while the film has no Figure 1
+        # (the per-request redo's rule): it is never left waiting for a scene not bought here.
+        first_live=index if first_index in (None, index) or figure_one is None else first_index,
+        figure_one=figure_one,
+        per_image=per_request / STILL_CANDIDATES,
+        overhead=float(plan.get("round_overhead_credits") or 0),
+        credit_usd=float(plan["credit_usd"]),
+        ledger=ledger,
+        # His press is his decision on the scene: the redo's own bound is its cap (the pair
+        # and its re-rolls), not the attempt limit of a step nobody pressed.
+        limit=10**9,
+        work_dir=work_dir,
+        environment=environment,
+        registry=registry,
+        judge=judge or judge_still,
+        face_counter=face_counter,  # type: ignore[arg-type]
+        measure=measure or ALL_CHECKS,
+        ffmpeg_path=ffmpeg_path,
+        faces_forbidden=bible_face_rule(bible) is not None,
+        rules=stills._bible_rules(bible),
+        redo=True,
+    )
+    entry: dict[str, Any] = {"scene_index": index, "scene_kind": LIVE_KIND}
+    try:
+        gpu = rounds.run(
+            [(scene, entry)],
+            permit=StepPermit.from_guard(
+                guard,
+                verdict,
+                action=REDO_ACTION,
+                step=REDO_STEP,
+                storyboard_id=storyboard_id,
+                plan_hash=plan_hash,
+                requester=requester,
+                correlation_id=correlation_id,
+                integration_id=integration_id,
+                unasked=unasked,
+            ),
+            guard=guard,
+            stopped=lambda: STOP_REASON if stop_requested(engine) else None,
+        )
+    except MediaProviderError as exc:
+        if not exc.unsent:
+            raise
+        # The GPU was not switched on, or the round could not even be sent: nothing bought.
+        raise SceneRedoRefused(
+            str(exc.code or "COMPUTE_NOT_READY"),
+            str(getattr(exc, "reason_ro", None) or exc),
+            plan=plan,
+        ) from exc
+    state = rounds.states.get(index)
+    kept = ("status", "reason", "reasons", "take_id", "score", "failure_kind", "failure_code")
+    return {
+        **{key: entry[key] for key in kept if key in entry},
+        "scene_index": index,
+        "model_id": plan["model_id"],
+        "rerolls": state.rerolls if state is not None else 0,
+        "bought_images": ledger.images,
+        "spent_credits_quoted": round(ledger.committed, 4),
+        "spent_credits_measured": None,
+        "balance_before": None,
+        "balance_after": None,
+        "cap_credits": cap,
+        "retired": list(plan["replaces"]),
+        "invalidated": list(plan["invalidates"]),
+        "reference_unverified": rounds.unverified,
+        "gpu": gpu,
     }
 
 

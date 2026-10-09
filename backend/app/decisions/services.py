@@ -335,6 +335,8 @@ APPLIERS: dict[str, Applier] = {
     "runpod_infra": _from_sources("apply_runpod_infra"),
     # His accept of «Copiez modelele în contul tău Hugging Face …» starts the copy (2026-10-09).
     "runpod_mirror_copy": _from_sources("apply_runpod_mirror_copy"),
+    # His accept of «Nu s-a trimis nimic la RunPod: eliberez scena N?» (2026-10-09).
+    "runpod_unsent_release": _from_sources("apply_runpod_unsent_release"),
 }
 
 
@@ -501,6 +503,8 @@ CONDITIONS: dict[str, Condition] = {
     "runpod_infra_enabled": _condition_from_sources("runpod_infra_enabled"),
     # Every configured endpoint knows its mirror's revision (2026-10-09).
     "runpod_mirrors_ready": _condition_from_sources("runpod_mirrors_ready"),
+    # The scene is no longer held by that unanswered RunPod /run (2026-10-09).
+    "runpod_unsent_hold_cleared": _condition_from_sources("runpod_unsent_hold_cleared"),
 }
 
 
@@ -612,6 +616,9 @@ MISSING_RO: dict[str, Missing] = {
     ),
     "runpod_mirrors_ready": _missing_words(
         "Lipsește: copiile modelelor din contul tău Hugging Face nu au încă revizia scrisă."
+    ),
+    "runpod_unsent_hold_cleared": _missing_words(
+        "Lipsește: scena este încă ținută de cererea RunPod fără răspuns."
     ),
 }
 

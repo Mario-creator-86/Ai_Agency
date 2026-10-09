@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-09 — a refused RunPod /run no longer strands a film
+
+- A /run RunPod refused without a job is proven never queued (queue before the purge, the
+  purge's removed count, the bucket) and costs 0; the scene is not held.
+- Today's held scene becomes the Owner's card with what was recorded; his yes frees it.
+- «Refă imaginea» on a RunPod model now runs one GPU round under its own cap.
+
 ## 2026-10-09 — the Owner can close a stuck film («Închide filmul»)
 
 - A film waiting on his decision held the studio: no new topic was chosen. His shooting sheet

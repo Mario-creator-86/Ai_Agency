@@ -1260,6 +1260,29 @@ def apply_runpod_mirror_copy(
     return {"command": "StartRunPodMirrorCopy", "result": result, "event_id": result["event_id"]}
 
 
+def apply_runpod_unsent_release(
+    engine: Engine, spec: Mapping[str, Any], inner: str, words: Mapping[str, Any]
+) -> dict[str, Any]:
+    """His accept of «Nu s-a trimis nimic la RunPod: eliberez scena N?» (2026-10-09): the scene
+    held by a /run that got no job id is released (`media.runpod_unsent.apply_release`): the
+    rows UNSENT at 0 cost, the takes not queued, one release event. Buys and sends nothing."""
+    from app.media.runpod_unsent import apply_release  # noqa: PLC0415 - media reads us
+
+    return apply_release(engine, dict(spec), inner)
+
+
+def runpod_unsent_hold_cleared(
+    session: Session, row: OwnerDecision, params: Mapping[str, Any], settings: Any
+) -> bool:
+    """The scene is no longer held by that unanswered RunPod /run (released, his own decision
+    on the scene since, or RunPod answered its request since): his card's question has gone
+    away. Never merely because a redo's proof covered the same keys: that releases the hold
+    first (`media.runpod_unsent.hold_cleared`)."""
+    from app.media.runpod_unsent import hold_cleared  # noqa: PLC0415 - media reads us
+
+    return hold_cleared(session, str(params.get("hold_event_id") or ""))
+
+
 def runpod_mirrors_ready(
     session: Session, row: OwnerDecision, params: Mapping[str, Any], settings: Any
 ) -> bool:

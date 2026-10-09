@@ -8,12 +8,19 @@ motion, a one-scene redo) that runs on RunPod Serverless:
    step, under its cap, never asking him and never spending a yes), the one-GPU rule (a session
    on another endpoint waits, then GPU_BUSY), then ``PATCH workers {min 0, max 1, idleTimeout
    1}`` whose answer is checked. A failure before anything was sent refuses the step with
-   COMPUTE_NOT_READY: nothing sent, nothing spent, the journal keys stay reusable;
+   COMPUTE_NOT_READY: nothing sent, nothing spent, the journal keys stay reusable. While a
+   session on the endpoint whose /run was booked as never queued closed less than the longest
+   job ttl ago (`booked_unsent_sessions`), the queue is purged before that PATCH: a job RunPod
+   queued late never runs on the new GPU;
 2. sends its rounds (the step's own code, `app.media.gpu_batch`), renewing the session;
 3. closes it in ``finally``: purge the queue, cancel what is left, ``PATCH workers {0, 0, 1}``,
    verify OFF (max 0, running 0, inProgress 0, inQueue 0; ``idle`` only logged). A close that
    cannot verify never breaks the step: it is recorded, told to the Owner once, and the guard
-   (`gpu_guard`) tries again every minute.
+   (`gpu_guard`) tries again every minute. When a /run of the session failed with no job id
+   (2026-10-09), the close first reads the queue (GET /health, one short try that never holds
+   back the off) and keeps RunPod's own purge count: the evidence, with the off reading, on
+   the session row (``off_reading.evidence``) and on the session (``off_evidence``), for
+   `batch.BatchRun.prove_unsent`.
 
 Switching OFF is always allowed (``infra.gpu_off``, T0), under STOP AUTONOMIE too: `force_off`
 never consults the kernel. «Oprirea GPU-ului nu este o acțiune autonomă: nu cheltuie, doar
@@ -99,6 +106,11 @@ BUSY_POLL_SECONDS = 5.0
 FRESH_READ_SECONDS = 10.0
 #: The window-close path: each request at most this long, no retry.
 FAST_REQUEST_SECONDS = 2.0
+#: The queue read a close makes BEFORE its purge when a /run had no job id (2026-10-09): one
+#: try, this long at most, no retry. It sits ahead of the purge and the max=0, which must not
+#: wait on it (the Owner: the GPU off right after); a read that fails or is slow is recorded
+#: unread, which only makes the proof fail (the safe side), never the off.
+EVIDENCE_READ_SECONDS = 5.0
 
 OFF_UNVERIFIED_LETTER = (
     "Am trimis oprirea GPU-ului RunPod, dar nu a confirmat că s-a oprit; verific din nou la "
@@ -234,6 +246,19 @@ class GpuSession:
     correlation_id: str
     transport: Any = None
     closed: bool = field(default=False)
+    #: The idempotency keys of items whose /run failed without a job id and was not proven
+    #: unsent (`batch`, 2026-10-09): the close then reads the queue BEFORE its purge and keeps
+    #: RunPod's own purge count, the evidence `batch.BatchRun.prove_unsent` reads.
+    uncertain_keys: list[str] = field(default_factory=list)
+    #: What the close read for those items (None when there were none, or the close failed).
+    off_evidence: dict[str, Any] | None = None
+
+    def note_uncertain(self, keys: Sequence[str]) -> None:
+        """A /run of this session got no job id and no proof that nothing left: its close
+        collects the queue evidence (`close_session`)."""
+        for key in keys:
+            if key not in self.uncertain_keys:
+                self.uncertain_keys.append(str(key))
 
     def _status(self) -> str | None:
         with Session(self.engine) as session:
@@ -374,6 +399,114 @@ def owner_letter(engine: Engine, subject: str, text_ro: str, kind: str, correlat
         )
 
 
+def _moment(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        moment = datetime.fromisoformat(str(value))
+    except ValueError:
+        return None
+    return moment if moment.tzinfo else moment.replace(tzinfo=UTC)
+
+
+def overlapping_sessions(
+    session: Session,
+    endpoint_id: str,
+    own: str,
+    opened_at: str | None,
+    closed_at: str | None = None,
+) -> list[str]:
+    """The other sessions that had this endpoint switched on (or could have sent to it) while
+    ``own`` was open: their jobs would be in the same queue counts and the same purge. A
+    session refused at its open (FAILED_OPEN) sent nothing and is not one of them."""
+    start = _moment(opened_at)
+    end = _moment(closed_at) or _now()
+    found: list[str] = []
+    for row in session.scalars(
+        select(GpuSessionRow).where(
+            GpuSessionRow.endpoint_id == endpoint_id, GpuSessionRow.id != own
+        )
+    ):
+        if row.status == FAILED_OPEN:
+            continue
+        other_start = _moment(row.opened_at)
+        other_end = _moment(row.closed_at) if row.closed_at else None
+        if other_start is None or start is None:
+            found.append(row.id)  # unreadable times: counted, never assumed apart
+            continue
+        if other_start <= end and (other_end is None or other_end >= start):
+            found.append(row.id)
+    return found
+
+
+def longest_job_ttl_seconds(config: RunPodConfig) -> int:
+    """How long a job RunPod queued may still wait to run: the longest round's ttl (its
+    execution cap, the queue wait and, under the cached-model source, the unbilled cache wait;
+    `batch.chunk_policy`)."""
+    cache = (
+        int(config.model_cache_wait_seconds)
+        if config.model_source == "cache" and not config.mock
+        else 0
+    )
+    return int(config.execution_timeout_cap_seconds) + int(config.queue_wait_seconds) + cache
+
+
+def booked_unsent_sessions(
+    session: Session, endpoint_id: str, own: str | None, config: RunPodConfig
+) -> list[str]:
+    """The sessions on this endpoint, closed within the longest job ttl, whose /run with no job
+    id was then booked as never queued (rows FAILED/UNSENT with ``not_queued``: the GPU-off's
+    proof, `batch.BatchRun.mark_unsent`, or the Owner's release, `media.runpod_unsent`).
+
+    The proof is one reading at the close. A /run that RunPod answered late (a 502/504, the
+    client's deadline) could still be queued AFTER that reading, wait at max=0, and run at the
+    next switch-on, billed and booked nowhere (2026-10-09 review). The next switch-on purges
+    the queue first while such a session is that recent (`open_session`)."""
+    from app.providers.runpod.jobs import GenerationJob  # noqa: PLC0415 - jobs is a leaf
+
+    cutoff = _now() - timedelta(seconds=longest_job_ttl_seconds(config))
+    named: set[str] = set()
+    for row in session.scalars(
+        select(GenerationJob).where(
+            GenerationJob.status == "FAILED",
+            GenerationJob.error_code == "UNSENT",
+            GenerationJob.finished_at >= cutoff.isoformat(),
+        )
+    ):
+        mark = (row.output or {}).get("not_queued")
+        if not isinstance(mark, dict):
+            continue
+        for identifier in (mark.get("gpu_session_id"), row.gpu_session_id):
+            if identifier:
+                named.add(str(identifier))
+    found: list[str] = []
+    if not named:
+        return found
+    for gpu in session.scalars(
+        select(GpuSessionRow).where(
+            GpuSessionRow.id.in_(sorted(named)), GpuSessionRow.endpoint_id == endpoint_id
+        )
+    ):
+        if gpu.id == own:
+            continue
+        closed = _moment(gpu.closed_at)
+        if closed is None or closed >= cutoff:
+            found.append(gpu.id)
+    return found
+
+
+async def _switch_on(control: EndpointControl, maximum: int, *, purge: bool) -> int | None:
+    """PATCH workers.max to the one GPU; with ``purge`` the queue is purged first (a late job
+    of a /run booked as never queued must not run on this GPU). RunPod's purge count is
+    returned (None when not purged, or the answer had none)."""
+    removed: int | None = None
+    if purge:
+        await control.purge_queue()
+        removed = control.last_purge_removed
+    await control.set_workers(maximum)
+    return removed
+
+
 def _other_live(session: Session, endpoint_id: str, own: str | None) -> list[GpuSessionRow]:
     query = select(GpuSessionRow).where(
         GpuSessionRow.endpoint_id == endpoint_id, GpuSessionRow.status.in_(LIVE)
@@ -428,6 +561,18 @@ async def _cancel_jobs(control: EndpointControl, jobs: Sequence[str]) -> list[st
     return errors
 
 
+def _health_record(health: EndpointHealth) -> dict[str, Any]:
+    return {
+        "in_queue": health.in_queue,
+        "in_progress": health.in_progress,
+        "running": health.running,
+        "idle": health.idle,
+        "completed": health.completed,
+        "failed": health.failed,
+        "read_at": utc_now(),
+    }
+
+
 async def _switch_off(
     control: EndpointControl,
     jobs: Sequence[str],
@@ -435,11 +580,38 @@ async def _switch_off(
     verify: bool,
     cancel: bool = True,
     fast: bool = False,
+    evidence: dict[str, Any] | None = None,
 ) -> tuple[OffReading, list[str]]:
     """Purge, cancel, max=0, verify. Every part is tried; the errors are returned. ``fast``
     (the window closing, ~4 s in all): purge and max=0 are sent together, so a slow purge
-    never holds back the max=0."""
+    never holds back the max=0.
+
+    ``evidence`` (a dict, filled in place) is asked for when a /run of the session failed with
+    no job id (2026-10-09): the queue is read once BEFORE anything is taken out of it (GET
+    /health: inQueue, inProgress, workers.running), and RunPod's own purge count is kept. A
+    read that fails is recorded as unread, never as zero; the off itself goes on regardless.
+    That read is ONE try of at most `EVIDENCE_READ_SECONDS`, never the control's retries (up to
+    4 x 60 s with backoff): it comes exactly when RunPod's API is failing, and the purge and the
+    max=0 behind it must not wait (2026-10-09 review)."""
     errors: list[str] = []
+    if evidence is not None and not fast:
+        reader = EndpointControl(
+            control.config,
+            control.endpoint_id,
+            control.transport,
+            request_timeout=EVIDENCE_READ_SECONDS,
+            retries=0,
+        )
+        try:
+            health = await asyncio.wait_for(reader.health(), EVIDENCE_READ_SECONDS + 1.0)
+            evidence["before_purge"] = _health_record(health)
+        except Exception as exc:  # noqa: BLE001 - unread, never zero, and never the off's problem
+            evidence["before_purge"] = None
+            evidence["before_purge_problem"] = str(
+                getattr(exc, "code", None)
+                or getattr(exc, "http_status", None)
+                or type(exc).__name__
+            )
     if fast:
         answers = await asyncio.gather(
             control.purge_queue(), control.set_workers(0), return_exceptions=True
@@ -453,6 +625,10 @@ async def _switch_off(
             await control.purge_queue()
         except MediaProviderError as exc:
             errors.append("PURGE:" + str(exc.code or exc.http_status or type(exc).__name__))
+        if evidence is not None:
+            evidence["purge_removed"] = control.last_purge_removed
+            evidence["purged_at"] = utc_now()
+            evidence["cancelled"] = list(jobs) if cancel else []
         if cancel:
             errors += await _cancel_jobs(control, jobs)
         try:
@@ -758,9 +934,16 @@ def open_session(
             shared = bool(
                 [r for r in _other_live(session, endpoint_id, identifier) if r.status == OPEN]
             )
+            # A recent /run booked as never queued: its job, queued late, must not run on this
+            # GPU (`booked_unsent_sessions`). While the endpoint is off nothing of ours waits in
+            # its queue, so the purge removes only such a job. A shared endpoint is already on.
+            recent = (
+                [] if shared else booked_unsent_sessions(session, endpoint_id, identifier, config)
+            )
+        removed: int | None = None
         try:
             if not shared:
-                asyncio.run(control.set_workers(config.max_workers))
+                removed = asyncio.run(_switch_on(control, config.max_workers, purge=bool(recent)))
         except Exception as exc:  # noqa: BLE001 - every failure here refuses the step unsent
             code = str(
                 getattr(exc, "code", None)
@@ -792,6 +975,13 @@ def open_session(
                 "COMPUTE_NOT_READY",
                 "GPU-ul RunPod nu a putut fi pornit; nu s-a trimis și nu s-a cheltuit nimic.",
             ) from None
+        if recent:
+            # A job removed here was a late one of a /run booked as never queued: it never ran.
+            logger.log(
+                logging.WARNING if removed else logging.INFO,
+                "runpod_queue_purged_before_on",
+                extra={"endpoint_id": endpoint_id, "removed": removed, "after_sessions": recent},
+            )
         with Session(engine) as session, session.begin():
             lock_for_write(session)
             row = session.get(GpuSessionRow, identifier)
@@ -809,6 +999,11 @@ def open_session(
                     "storyboard_id": permit.storyboard_id,
                     "workers_max": config.max_workers,
                     "shared": shared,
+                    **(
+                        {"purged_first": {"after_sessions": recent, "removed": removed}}
+                        if recent
+                        else {}
+                    ),
                 },
                 permit.correlation_id,
             )
@@ -842,6 +1037,11 @@ def close_session(
         _update(engine, session.id, status=CLOSED, close_reason=reason, closed_at=utc_now())
         return None
     transport = transport or session.transport
+    # A /run of this session failed with no job id (2026-10-09): the off below also keeps what
+    # proves whether RunPod queued anything (`_switch_off`'s evidence, `batch.prove_unsent`).
+    evidence: dict[str, Any] | None = (
+        {"uncertain_items": len(session.uncertain_keys)} if session.uncertain_keys else None
+    )
     try:
         with endpoint_lock(session.endpoint_id):
             with Session(engine) as db, db.begin():
@@ -852,8 +1052,14 @@ def close_session(
                     return None
                 row.status = CLOSING
                 jobs = list(row.remote_job_ids or [])
+                opened_at = row.opened_at
                 others = [r for r in _other_live(db, session.endpoint_id, session.id)]
+            if evidence is not None:
+                evidence["remote_job_ids"] = list(jobs)
             if others:
+                if evidence is not None:
+                    # No purge while another step uses the GPU: nothing here can be proven.
+                    session.off_evidence = {**evidence, "shared": True}
                 # The GPU stays on for the other step (refcount): no purge, no max=0. But this
                 # step's own jobs that are not finished (it failed or stopped mid-batch) would
                 # keep the one worker busy and billed for nobody: they are cancelled.
@@ -875,7 +1081,18 @@ def close_session(
             with Session(engine) as db:
                 to_cancel = _open_jobs(db, session.endpoint_id, jobs)
             control = EndpointControl(session.config, session.endpoint_id, transport)
-            reading, errors = asyncio.run(_switch_off(control, to_cancel, verify=True))
+            reading, errors = asyncio.run(
+                _switch_off(control, to_cancel, verify=True, evidence=evidence)
+            )
+            stored: dict[str, Any] = reading.as_dict()
+            if evidence is not None:
+                with Session(engine) as db:
+                    evidence["other_sessions"] = overlapping_sessions(
+                        db, session.endpoint_id, session.id, opened_at
+                    )
+                evidence["errors"] = list(errors)
+                stored = {**stored, "evidence": evidence}
+                session.off_evidence = {**evidence, "off": reading.as_dict()}
             _update(
                 engine,
                 session.id,
@@ -883,7 +1100,7 @@ def close_session(
                 close_reason=reason,
                 closed_at=utc_now(),
                 verified_off=reading.off,
-                off_reading=reading.as_dict(),
+                off_reading=stored,
                 error_code=(";".join(errors)[:100] or None),
             )
     except Exception as exc:  # noqa: BLE001 - the close never breaks the step; the guard retries
@@ -891,6 +1108,7 @@ def close_session(
             "runpod_gpu_close_failed",
             extra={"endpoint_id": session.endpoint_id, "error": type(exc).__name__},
         )
+        session.off_evidence = None  # a close that failed proves nothing
         reading = _unreadable(
             session.endpoint_id, "Oprirea GPU-ului RunPod nu a putut fi trimisă sau verificată."
         )
@@ -904,7 +1122,10 @@ def close_session(
             off_reading=reading.as_dict(),
             error_code=type(exc).__name__[:100],
         )
-    _tell_off(engine, session.id, reading, session.correlation_id, extra={"reason": reason})
+    extra: dict[str, Any] = {"reason": reason}
+    if session.off_evidence is not None:
+        extra["evidence"] = {k: v for k, v in session.off_evidence.items() if k != "off"}
+    _tell_off(engine, session.id, reading, session.correlation_id, extra=extra)
     return reading
 
 

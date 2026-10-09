@@ -188,6 +188,9 @@ class EndpointControl:
         self.retries = config.max_retries if retries is None else retries
         self.last_settings: EndpointSettings | None = None
         self.last_health: EndpointHealth | None = None
+        #: RunPod's own count from the last ``/purge-queue`` answer, None when it was not read
+        #: or the answer carried none (a missing count is never read as 0: 2026-10-09).
+        self.last_purge_removed: int | None = None
 
     async def _call(
         self, host: str, method: str, path: str, data: dict[str, Any] | None = None
@@ -310,8 +313,13 @@ class EndpointControl:
         return health
 
     async def purge_queue(self) -> int:
+        """POST /purge-queue: RunPod removes every job still IN_QUEUE («jobs already in progress
+        continue to run») and answers {removed, status}. The count is also kept, as RunPod gave
+        it, in `last_purge_removed`: the proof that a failed /run queued nothing reads it."""
+        self.last_purge_removed = None
         answer = await self._call(QUEUE_HOST, "POST", self._queue("purge-queue"))
-        return _optional_int(answer.get("removed")) or 0
+        self.last_purge_removed = _optional_int(answer.get("removed"))
+        return self.last_purge_removed or 0
 
     async def cancel(self, remote_job_id: str) -> str:
         """Cancel one RunPod job. A batch item id "<job>:<index>" cancels its job. A job RunPod
