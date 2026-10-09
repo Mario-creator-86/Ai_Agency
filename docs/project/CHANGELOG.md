@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-10-09 — the Owner can close a stuck film («Închide filmul»)
+
+- A film waiting on his decision held the studio: no new topic was chosen. His shooting sheet
+  now has «Închide filmul» (two presses): the film is closed, nothing more is bought for it,
+  what was bought stays in the books, and his open questions about it are withdrawn.
+- Refused while a purchase or a GPU session is live, for a rendered film and for a serial
+  episode. Every paid path, the day's assembly and the sheet repairs skip a closed film.
+
 ## 2026-10-09 — RunPod copy pod: a disk RunPod accepts, its refusal in his words
 
 - The copy pod asks 60 GB of container disk instead of 200: RunPod gives cpu5c at most 15 GB per

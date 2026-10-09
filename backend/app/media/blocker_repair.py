@@ -28,7 +28,13 @@ from app.media.models import Storyboard
 from app.media.prompt_agent import PROMPT_ROLE, PromptError, write_shot_prompts
 from app.media.sheet_story_repair import progress as story_progress
 from app.media.sheet_story_repair import repair_story
-from app.media.shooting_sheet import build_sheet, current_lease, film_purchase_lease
+from app.media.shooting_sheet import (
+    FilmClosed,
+    build_sheet,
+    current_lease,
+    film_is_closed,
+    film_purchase_lease,
+)
 from app.models import OwnerPolicy
 from app.runbook.services import safe_mode_state, shutdown_requested
 from app.services import append_event
@@ -48,6 +54,10 @@ logger = logging.getLogger("studio.sheet_repair")
 # language model is failing, and tells him once when it pauses.
 #: Letters to the Owner when the automatic repair of a sheet pauses.
 PAUSED_KIND = "sheet_repair_paused"
+#: The end of a repair whose film is closed («Închide filmul», or the Director's retirement).
+CLOSED_FILM_NOTE = (
+    "Filmul a fost închis: foaia lui nu se mai remediază și nu se cumpără nimic pentru el."
+)
 #: Attempts in 24 hours on the same blockers (the same sheet and the same issues).
 MAX_SAME_ISSUES_PER_DAY = 5
 #: The wait before the second retry of the same blockers; it doubles after each one.
@@ -552,15 +562,19 @@ def _finish(
     correlation: str,
     details: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    result = {
-        "status": status,
-        "remaining": remaining,
-        "reason": note,
-        "storyboard_id": payload["storyboard_id"],
-        **(details or {}),
-    }
     with Session(engine) as session, session.begin():
         lock_for_write(session)
+        if status == "WAITING_OWNER" and film_is_closed(session, payload["storyboard_id"]):
+            # Closed while the repair ran outside its lease (the Director's assignment): a
+            # sheet nobody films any more asks him nothing («Închide filmul»).
+            status, remaining, note = "STALE", [], CLOSED_FILM_NOTE
+        result = {
+            "status": status,
+            "remaining": remaining,
+            "reason": note,
+            "storyboard_id": payload["storyboard_id"],
+            **(details or {}),
+        }
         report = session.get(AgentMessage, payload["message_id"])
         director = agent_for_role(session, "Director")
         editor = agent_for_role(session, PROMPT_ROLE)
@@ -635,6 +649,15 @@ def process_sheet_repair(
         return {"status": "BLOCKED", "reason": "Oprit de politica Ownerului sau de modul sigur."}
     correlation = correlation_id or str(uuid4())
     identifier = payload["storyboard_id"]
+    with Session(engine) as session:
+        closed = film_is_closed(session, identifier)
+    if closed:
+        # A film the Owner closed (or the Director retired) is not repaired: a story repair
+        # would write a replacement storyboard of its topic, and the topic would hold the
+        # studio again. Queued before the close, the task ends here without a model run.
+        # Closed while it runs (the Director's assignment holds no lease), it meets the closed
+        # film at the repair's own lease (`FilmClosed`, below) and ends the same way.
+        return _finish(engine, payload, "STALE", [], CLOSED_FILM_NOTE, correlation)
     context = dict(sheet_context or {})
     context.pop("read_live", None)
 
@@ -810,6 +833,9 @@ def process_sheet_repair(
             else "blocajele de mai jos rămân deschise. Nu s-a cumpărat media."
         )
         return _finish(engine, payload, status, remaining, note, correlation)
+    except FilmClosed:
+        # Closed during the Director's assignment: nothing of the repair was written.
+        return _finish(engine, payload, "STALE", [], CLOSED_FILM_NOTE, correlation)
     except Exception as error:
         # The state says unresolved; a failed model/tool never becomes a conversational success.
         logger.warning(

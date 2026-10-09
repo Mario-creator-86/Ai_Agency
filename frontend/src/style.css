@@ -5941,6 +5941,20 @@ details[open].pf-ok .pf-ok-line .pf-message { white-space: normal; overflow: vis
 .sheet-confirm-actions { display: flex; flex-wrap: wrap; gap: var(--s2); }
 .sheet-yes { min-height: var(--hit-lg, 44px); font-weight: var(--w-bold); }
 
+/* «Închide filmul» (2026-10-09): the close after the production steps, its two-press confirmation, and
+   a closed film's words under the summary bar. Built by shooting_sheet.js closeFilmHtml. */
+.sheet-close { display: grid; gap: var(--s2); justify-items: start; padding: var(--s3) var(--s4); border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface-quiet); }
+.sheet-close .sheet-section-heading { margin-bottom: 0; }
+.sheet-close .sheet-confirm { justify-self: stretch; border-color: var(--alert-line); }
+.sheet-close-btn { min-height: var(--hit); font-weight: var(--w-semi); color: var(--alert-ink); }
+.sheet-close-btn:disabled, .sheet-close-btn[disabled] { color: var(--ink-3); cursor: not-allowed; }
+.sheet-close-why, .sheet-close-meta { margin: 0; font-size: var(--fs-micro); color: var(--ink-3); }
+.sheet-close-effects { margin: 0; padding-left: var(--s4); display: grid; gap: var(--s1); font-size: var(--fs-meta); color: var(--ink); }
+.sheet-close-yes { border-color: var(--alert-line); background: var(--alert-bg); color: var(--alert-ink); }
+.sheet-close-closed { border-color: var(--warn-line); background: var(--warn-bg); color: var(--warn-ink); }
+.sheet-close-closed h2 { margin: 0; font-size: var(--fs-h3); font-weight: var(--w-semi); }
+.sheet-close-closed p { margin: 0; font-size: var(--fs-meta); max-width: 72ch; }
+
 /* DRAWER_COMPLETE (2026-10-01): the «Refă» buttons with their prices, the SAFETY suggestion, each
    shot's clip QC, «Asamblează filmul» with the QC verdict and letter, and his paid-media rule. */
 .sheet-redos { display: grid; gap: var(--s2); padding-top: var(--s2); border-top: 1px solid var(--line); }

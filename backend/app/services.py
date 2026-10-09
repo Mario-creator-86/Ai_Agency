@@ -1143,6 +1143,53 @@ def withdraw_superseded_approvals(
     return withdrawn
 
 
+def withdraw_subject_approvals(
+    session: Session, *, subject: str, reason: str, correlation_id: str
+) -> list[str]:
+    """Close every unanswered question about one subject: a film the Owner closed.
+
+    Nothing about the subject can be bought any more, so no question about it can buy
+    anything: each PENDING request with this ``subject`` (whatever its action, plan or expiry)
+    is closed as EXPIRED, never answered, with ``reason`` as its note and an
+    ``APPROVAL_WITHDRAWN_EVENT``, as `withdraw_superseded_approvals` closes a question about a
+    replaced plan. An answered request is left as it is: his answer is history. Only this
+    module, the Owner's command kernel, touches the row; the caller decides *that* the subject
+    is closed and words the reason. Returns the ids withdrawn, oldest first.
+    """
+    if not subject:
+        return []
+    withdrawn: list[str] = []
+    for request in session.scalars(
+        select(ApprovalRequest)
+        .where(
+            ApprovalRequest.subject == subject,
+            ApprovalRequest.result == "PENDING",
+            ApprovalRequest.decided_at.is_(None),
+        )
+        .order_by(ApprovalRequest.created_at)
+    ):
+        request.result = "EXPIRED"
+        request.note = reason
+        append_event(
+            session,
+            APPROVAL_WITHDRAWN_EVENT,
+            "owner_approval_request",
+            request.id,
+            2,
+            {
+                "action": request.action,
+                "subject": subject,
+                "previous_result": "PENDING",
+                "reason": reason,
+                "why": "SUBJECT_CLOSED",
+                "withdrawn_at": utc_now(),
+            },
+            correlation_id,
+        )
+        withdrawn.append(request.id)
+    return withdrawn
+
+
 def paid_media_policy(policy: OwnerPolicy | None) -> tuple[str, float | None]:
     """The Owner's `paid_media_approval` as `may_act` reads it: (value, threshold in USD).
 

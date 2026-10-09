@@ -7421,14 +7421,25 @@ def decide_take(
     The hero test shot is approved this way before the rest of the motion may be bought; a
     rejected take is never used in a film again. Raises PermissionError for anyone else.
     """
+    from app.db import lock_for_write  # noqa: PLC0415
+    from app.media.shooting_sheet import FilmClosed, film_is_closed  # noqa: PLC0415 - it imports us
+
     if decided_by != TAKE_DECIDER:
         raise PermissionError("Doar Proprietarul aprobă sau respinge o înregistrare plătită.")
     if decision not in TAKE_DECISIONS:
         raise ValueError(f"Decizie necunoscută: {decision}")
     with Session(engine) as session, session.begin():
+        # Behind the write lock the Owner's «Închide filmul» takes: a look decided here either
+        # landed before the close or meets the closed film below.
+        lock_for_write(session)
         row = session.get(SceneTake, take_id)
         if row is None:
             raise ValueError("Înregistrarea nu există.")
+        if film_is_closed(session, row.storyboard_id):
+            # A closed film asks him nothing more: approving a take would queue a FILM_CONTINUE
+            # that buys nothing (`continue_film` skips the film), and the answer would promise
+            # a continuation that never comes. Nothing is changed (409 FILM_CLOSED).
+            raise FilmClosed(row.storyboard_id)
         if row.status not in ("PAID", "APPROVED", "REJECTED"):
             raise ValueError(f"O înregistrare {row.status} nu se aprobă și nu se respinge.")
         if decision == "APPROVED" and (not row.path or not Path(row.path).is_file()):
@@ -11539,7 +11550,6 @@ def redo_scene(
     if no_room:
         raise SceneRedoRefused(LOW_DISK, no_room, plan=plan)
     from app.media.shooting_sheet import (  # noqa: PLC0415 - it imports us
-        FILM_BUSY,
         FilmBusy,
         PurchaseGateRefused,
         check_film_ceiling,
@@ -11631,7 +11641,8 @@ def redo_scene(
                 release_step_hold(engine, reservation_id, "refacerea refuzată", correlation_id)
                 raise
     except FilmBusy as exc:
-        raise SceneRedoRefused(FILM_BUSY, exc.reason_ro, plan=plan) from exc
+        # FILM_BUSY, or FILM_CLOSED for a film the Owner closed (`FilmClosed`).
+        raise SceneRedoRefused(exc.status, exc.reason_ro, plan=plan) from exc
 
 
 def _paid_redo(

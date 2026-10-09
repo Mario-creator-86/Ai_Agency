@@ -48,6 +48,7 @@ from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
 from app.agents.memory import agent_for_role, remember
+from app.db import lock_for_write
 from app.factual.editorial import SCENE_PURPOSES
 from app.factual.models import FactualClaim, ScriptDraft
 from app.factual.sanitizer import wrap_in_inert_boundary
@@ -121,6 +122,12 @@ MAX_SHOTS_PAYLOAD_CHARS = 16000
 #: A storyboard whose model shot plan could not be read, even after the one re-ask. It is
 #: not rendered until a plan is written: template prompts are a TEST convenience only.
 NEEDS_SHOT_PLAN = "NEEDS_SHOT_PLAN"
+#: Why a closed film («Închide filmul», `shooting_sheet.film_is_closed`) is not described
+#: again: its status stays REJECTED, so its topic no longer holds the studio.
+FILM_CLOSED_PROMPTS_RO = (
+    "Filmul este închis: planul lui de cadre nu se mai scrie, iar filmul rămâne închis. "
+    "Nimic nu s-a schimbat."
+)
 
 #: Where each scene's package came from: the video editor's model, the studio's template
 #: (no model reachable; TEST only), or the office serial's fixed look with no model.
@@ -1021,12 +1028,16 @@ def write_shot_prompts(
     package, so the render, the costing and quality control need to know nothing about this.
     """
     from app.factual.story_review import story_gate  # noqa: PLC0415
+    from app.media.shooting_sheet import film_is_closed  # noqa: PLC0415 - it imports us
 
     correlation = correlation_id or str(uuid4())
     with Session(engine) as session:
         board = session.get(Storyboard, storyboard_id)
         if board is None:
             raise PromptError(f"Storyboard {storyboard_id} not found")
+        if film_is_closed(session, storyboard_id):
+            # «Închide filmul»: a closed film is not described again, and no model is run for it.
+            raise PromptError(FILM_CLOSED_PROMPTS_RO)
         # Describing the shots is the last step before money, so it is where the story gate
         # is enforced: a film whose story nobody judged does not get described, and one the
         # review sent back waits for the rewrite.
@@ -1131,6 +1142,12 @@ def write_shot_prompts(
     kept_from_before: list[int] = []
     moves: list[str] = []
     with Session(engine) as session, session.begin():
+        # Behind the write lock the Owner's close takes: a film closed while the model wrote is
+        # left as it is (REJECTED, its scenes untouched). Setting it NEEDS_SHOT_PLAN or APPROVED
+        # here would reopen it, and its topic would hold the studio again.
+        lock_for_write(session)
+        if film_is_closed(session, storyboard_id):
+            raise PromptError(FILM_CLOSED_PROMPTS_RO)
         scenes = list(
             session.scalars(
                 select(StoryboardScene)
@@ -1285,8 +1302,17 @@ def hold_for_shot_plan(engine: Engine, storyboard_id: str, correlation_id: str) 
     Returns the scenes without a model package; an empty list means the film may go on and
     nothing was changed. Template prompts are a TEST convenience; in PRODUCTION the media
     stage asks this before anything is bought.
+
+    A closed film (`shooting_sheet.film_is_closed`) is never held, which would reopen it: the
+    answer is an empty list and nothing is changed; every buyer meets it closed at its lease.
     """
+    from app.media.shooting_sheet import film_is_closed  # noqa: PLC0415 - it imports us
+
     with Session(engine) as session, session.begin():
+        # Behind the write lock the Owner's close takes, so a close is seen or comes after.
+        lock_for_write(session)
+        if film_is_closed(session, storyboard_id):
+            return []
         gaps = shot_plan_gaps(session, storyboard_id)
         board = session.get(Storyboard, storyboard_id)
         if not gaps or board is None:

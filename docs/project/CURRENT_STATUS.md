@@ -1,5 +1,23 @@
 # CURRENT STATUS — State on 2026-10-09
 
+## OWNER_CLOSE_FILM — complete on fakes, live use pending a restart (2026-10-09)
+
+Why no new film: `_selection` keeps «Un subiect este deja în producție» while any selected topic
+is live, and `retire_stale_films` never retires a film with a question of his PENDING; three old
+films (Nepal, LHC, Moon) each waited on one scene decision, so the day chose nothing new. Owner
+card: a new action «Închide filmul», then close the three and run the day once. Built (workflow
+wf_93d173b8-60a: implement, two adversarial reviewers, fixes): `POST /media/storyboards/{id}/
+close` (Owner, command id, idempotent) sets REJECTED under the film's purchase lease, records
+`runbook.film_retired` {retired_by: Owner, bought, spent, topic}, withdraws his pending approvals
+(`withdraw_subject_approvals`, EXPIRED), cards and asking letters about the film; refuses while a
+GPU session, a claimed FILM_CONTINUE or a render is live (FILM_BUSY), a rendered/published film
+(FILM_RENDERED) and a serial episode (SERIAL_EPISODE). Every paid path refuses a closed film
+(lease → FilmClosed: steps, assemble incl. the day's assembly now under the lease, redo, take
+choice, sheet repairs, shot-plan writers). Shooting sheet: «Închide filmul» with a two-press
+confirmation; a closed sheet disables steps, takes and redo. Tests: test_film_close (30), ~700
+neighbouring backend cases and 896 frontend cases pass; the full backend suite was not run
+(the Owner was playing; shared commit memory).
+
 ## RUNPOD_COPY_POD_FIRST_ACCEPT — fixed on fakes, live retry pending (2026-10-09)
 
 Live setup done with the Owner today (his accounts, his keys pasted by him): RunPod key

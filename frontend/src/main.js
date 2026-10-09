@@ -51,7 +51,7 @@ import {
   RESOLVABLE_STATES, demoCaseShown, gateChecksHtml, privacyBadgeHtml, privacyWord, quickPublishQuestion, resolvePublicationCommand,
 } from './owner_controls.js';
 import {
-  ASSEMBLE_STEP, SHEET_TITLE, approveAssemble, approveRedo, approveStep, buyingNotice, redoKey, requestRender, sceneModelPath, sheetHtml,
+  ASSEMBLE_STEP, CLOSE_FILM, SHEET_TITLE, approveAssemble, approveRedo, approveStep, buyingNotice, closeFilm, redoKey, requestRender, sceneModelPath, sheetHtml,
   sheetKeyFor, sheetPath, sheetStatusText, takeDecisionPath, withdrawnWords,
 } from './shooting_sheet.js';
 import { bannersKey, pageBanners } from './build_banner.js';
@@ -3348,6 +3348,15 @@ function sheetCommand(node, id) {
       return `${redoDoneWords(kind, scene)}${withdrawnNote(result)}`;
     };
   }
+  if (action === 'confirm-close-film') {
+    // «Închide filmul», the second press: one POST with its own command id; the drawer reads the
+    // sheet again after it (the closed film, or the 409's reason in the status line).
+    return async () => {
+      const result = await closeFilm(api, { storyboardId: id, commandId: crypto.randomUUID() });
+      if (result.status !== 'CLOSED') throw refusalError(result, 'Filmul nu a fost închis.');
+      return result.message;
+    };
+  }
   if (action === 'take') {
     const decision = node.dataset.decision === 'APPROVED' ? 'APPROVED' : 'REJECTED';
     return async () => {
@@ -3385,6 +3394,8 @@ async function onSheetClick(event) {
   if (action === 'close') { sheetDialog().close(); return; }
   if (!id || !sheetDrawer.sheet) return;
   if (action === 'step') { sheetDrawer.confirm = node.dataset.step || null; sheetNotice(''); paintSheet(); return; }
+  // «Închide filmul», the first press: it only opens «Confirmă închiderea filmului».
+  if (action === 'close-film') { sheetDrawer.confirm = CLOSE_FILM; sheetNotice(''); paintSheet(); return; }
   if (action === 'redo') { sheetDrawer.confirm = redoKey(node.dataset.kind || '', node.dataset.scene || null); sheetNotice(''); paintSheet(); return; }
   if (action === 'cancel-step') { sheetDrawer.confirm = null; paintSheet(); return; }
   if (action === 'to-steps') {

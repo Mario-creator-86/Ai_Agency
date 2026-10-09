@@ -493,6 +493,8 @@ def decide_sheet_take(
     The answer carries ``outcome`` (`sheet_words.decision_outcome`): what the choice did and
     what the continuation it queued will do. ``sheet_reader(storyboard_id)`` reads the sheet
     with no live call so the next step can be named; without it the step goes unnamed.
+
+    A closed film (`film_is_closed`) is refused: `SheetStepRefused` FILM_CLOSED, nothing changed.
     """
     from uuid import uuid4  # noqa: PLC0415
 
@@ -509,9 +511,14 @@ def decide_sheet_take(
             take.prompt_hash,
         )
     correlation = correlation_id or str(uuid4())
-    result = decide_take(
-        engine, take_id, decision, decided_by=OWNER, note=note, correlation_id=correlation
-    )
+    try:
+        result = decide_take(
+            engine, take_id, decision, decided_by=OWNER, note=note, correlation_id=correlation
+        )
+    except FilmClosed as exc:
+        # «Închide filmul»: a closed film's takes are no longer chosen, and nothing continues
+        # (409). The page hides their buttons; this answers a press from an older page.
+        raise SheetStepRefused(exc.status, exc.reason_ro) from exc
     superseded: list[str] = []
     if decision == "APPROVED" and kind == "still":
         with Session(engine) as session, session.begin():
@@ -1822,7 +1829,22 @@ LEASE_WORDS_RO: dict[str, str] = {
     ASSEMBLE_STEP: "asamblarea",
     "scene_redo": "o refacere de scenă",
     "staircase": "rularea zilei",
+    "close": "închiderea filmului",
+    "story_repair": "remedierea poveștii foii",
+    "prompt_repair": "remedierea prompturilor foii",
 }
+#: The lease step of the Owner's «Închide filmul» (`film_close.close_film`): it holds the film
+#: while it closes, so no purchase of it can start or be running meanwhile. It is the one step
+#: a closed film's lease is still taken for: every other holder (a purchase, the day's
+#: staircase and assembly, a redo, the sheet's story and prompt repairs, which would write a
+#: replacement storyboard or reopen the film as NEEDS_SHOT_PLAN) meets `FilmClosed`.
+CLOSE_LEASE_STEP = "close"
+#: A purchase refused because the film is closed (409; the day skips the film).
+FILM_CLOSED = "FILM_CLOSED"
+FILM_CLOSED_RO = (
+    "Filmul este închis: pentru el nu se mai cumpără nimic și nu ți se mai cere nimic. Ce s-a "
+    "cumpărat pentru el rămâne în registre."
+)
 #: How long a lease stands when the settings do not say (STUDIO_FILM_PURCHASE_LEASE_SECONDS).
 #: The ceiling of one purchase's hold: its holder renews it up to this, never beyond.
 DEFAULT_LEASE_SECONDS = 10_800
@@ -1849,6 +1871,38 @@ class FilmBusy(RuntimeError):
         self.status = FILM_BUSY
         self.reason_ro = reason_ro
         self.lease = lease
+
+
+class FilmClosed(FilmBusy):
+    """The film is closed (`film_is_closed`): no purchase of it starts; nothing was bought.
+
+    A FilmBusy, so every buyer that already stops on a busy film (a press, a redo, the day's
+    staircase, FILM_CONTINUE) stops on a closed one as well, before anything is priced or
+    asked; each says which by ``status`` (FILM_CLOSED)."""
+
+    def __init__(self, storyboard_id: str) -> None:
+        super().__init__(FILM_CLOSED_RO, {"storyboard_id": storyboard_id})
+        self.status = FILM_CLOSED
+
+
+def film_is_closed(session: Session, storyboard_id: str) -> bool:
+    """Whether nothing more is bought for this film: REJECTED, with no finished render.
+
+    That is a film the Owner closed («Închide filmul»), one the Director retired after it stood
+    still, or one a newer storyboard of its script replaced. A REJECTED film that has a
+    finished render is a viewing the Director refused: its redos are the way back to a film,
+    so it is not closed here."""
+    from app.media.models import VideoRenderJob  # noqa: PLC0415
+
+    board = session.get(Storyboard, storyboard_id)
+    if board is None or board.status != "REJECTED":
+        return False
+    rendered = session.scalar(
+        select(VideoRenderJob.id)
+        .where(VideoRenderJob.storyboard_id == storyboard_id, VideoRenderJob.status == "COMPLETED")
+        .limit(1)
+    )
+    return rendered is None
 
 
 class PurchaseGateRefused(RuntimeError):
@@ -1968,6 +2022,10 @@ def film_purchase_lease(
             # No film: nothing to buy and nothing to hold. The step itself says it is not found.
             missing = True
             view = {"storyboard_id": storyboard_id, "holder": holder, "step": step}
+        elif step != CLOSE_LEASE_STEP and film_is_closed(session, storyboard_id):
+            # Read behind the write lock the Owner's close also takes (it holds this lease
+            # while it closes): a holder either finished before the close or meets it here.
+            raise FilmClosed(storyboard_id)
         elif row is not None and live:
             nested_step = row.step
             row.step = step[:20]
@@ -3141,7 +3199,8 @@ def run_sheet_step(
                 unasked=unasked,
             )
     except FilmBusy as exc:
-        raise SheetStepRefused(FILM_BUSY, exc.reason_ro) from exc
+        # FILM_BUSY, or FILM_CLOSED for a film the Owner closed (`FilmClosed`).
+        raise SheetStepRefused(exc.status, exc.reason_ro) from exc
 
 
 def _run_sheet_step(
@@ -3649,7 +3708,8 @@ def _leased(step: str) -> Callable[[Callable[..., dict[str, Any]]], Callable[...
                 ):
                     return function(engine, storyboard_id, *args, **kwargs)
             except FilmBusy as exc:
-                raise SheetStepRefused(FILM_BUSY, exc.reason_ro) from exc
+                # FILM_BUSY, or FILM_CLOSED for a closed film (`FilmClosed`).
+                raise SheetStepRefused(exc.status, exc.reason_ro) from exc
 
         return leased
 

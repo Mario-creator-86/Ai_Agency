@@ -42,6 +42,13 @@ from app.media.factory import (
     render_plan,
     tts_provider,
 )
+from app.media.film_close import (
+    CloseFilmCommand,
+    FilmCloseNotFound,
+    FilmCloseRefused,
+    close_film,
+    closure_view,
+)
 from app.media.models import MediaAsset, SceneTake, Storyboard, StoryboardScene, VideoRenderJob
 from app.media.production_policy import (
     IdentityChangeCommand,
@@ -103,6 +110,8 @@ from app.media.services import (
 )
 from app.media.shooting_sheet import (
     ASSEMBLE_STEP,
+    FILM_CLOSED,
+    FILM_CLOSED_RO,
     SHEET_STEPS,
     SheetChoiceRefused,
     SheetNotFound,
@@ -113,6 +122,7 @@ from app.media.shooting_sheet import (
     connection_capabilities,
     connection_video_adapters,
     decide_sheet_take,
+    film_is_closed,
     recall_purchase,
     remember_purchase,
     run_assemble_step,
@@ -526,6 +536,11 @@ def create_media_router() -> APIRouter:
             board = session.get(Storyboard, storyboard_id)
             if board is None:
                 raise HTTPException(status_code=404, detail="Storyboard-ul nu există.")
+            if film_is_closed(session, storyboard_id):
+                # «Închide filmul»: nothing is made for a closed film, not even locally.
+                raise HTTPException(
+                    status_code=409, detail={"status": FILM_CLOSED, "message": FILM_CLOSED_RO}
+                )
             script_id = board.script_draft_id
         # In PRODUCTION nothing is bought from this button any more. The second Nepal render
         # (2026-09-26) started here: no price, no prompt, no model shown, no question asked,
@@ -834,9 +849,34 @@ def create_media_router() -> APIRouter:
             from app.media.blocker_repair import repair_status  # noqa: PLC0415
 
             sheet["remediation"] = repair_status(request.app.state.engine, storyboard_id)
+            # «Închide filmul»: whether the film is closed, or can be closed now (a read).
+            sheet["closure"] = closure_view(request.app.state.engine, storyboard_id)
             return sheet
-        except SheetNotFound as exc:
+        except (SheetNotFound, FilmCloseNotFound) as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @router.post("/storyboards/{storyboard_id}/close")
+    def post_close_film(
+        request: Request,
+        storyboard_id: Annotated[str, FPath(min_length=36, max_length=36)],
+        cmd: CloseFilmCommand,
+    ) -> dict:
+        """«Închide filmul», the Owner's: the film is closed (REJECTED, as the Director's
+        retirement), every question still asking him about it is withdrawn, and nothing more is
+        bought for it (`film_close.close_film`). 200 with what it did (the same answer for the
+        same command id; ``already_closed`` for a film closed before), 404 for no such film,
+        409 with the Romanian reason while a purchase of it is in flight, for a rendered film,
+        for an episode of the serial, or for a command id reused for another command."""
+        try:
+            return close_film(request.app.state.engine, storyboard_id, cmd)
+        except FilmCloseNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except FilmCloseRefused as exc:
+            raise HTTPException(status_code=409, detail=exc.as_dict()) from exc
+        except CommandConflict as exc:
+            raise HTTPException(
+                status_code=409, detail={"status": "COMMAND_REUSED", "message": str(exc)}
+            ) from exc
 
     @router.post("/storyboards/{storyboard_id}/steps/{step}")
     def post_sheet_step(
@@ -1054,6 +1094,9 @@ def create_media_router() -> APIRouter:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except SheetStepRefused as exc:
+            # FILM_CLOSED: «Închide filmul» closed the film; nothing was decided or queued.
+            raise HTTPException(status_code=exc.http_status, detail=exc.as_dict()) from exc
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 

@@ -433,6 +433,120 @@ export function sheetStatusText(notice, code, failed, sheet) {
   return { text, tone: text && failed ? 'error' : 'ok' };
 }
 
+/*
+ * «ÎNCHIDE FILMUL» (2026-10-09). Three old films each waited for his look at one scene, and the day
+ * chose no new topic while any of them stood. The backend's `sheet.closure` (film_close.py
+ * closure_view) says whether the film is closed, or can be closed now and why not; the first press
+ * of «Închide filmul» only opens «Confirmă închiderea filmului» with what closing does, and the
+ * confirmation posts POST /media/storyboards/{id}/close once (closeFilm). A closed film's paid
+ * buttons say it is closed; the backend refuses them anyway (409 FILM_CLOSED).
+ */
+
+/** The drawer's confirm key for the close (`sheetDrawer.confirm`), as a step's name is for a step. */
+export const CLOSE_FILM = 'close-film';
+
+/** What closing does, said on its confirmation; the backend's answer says it again with figures. */
+export const CLOSE_FILM_EFFECTS = /** @type {const} */ ([
+  'Nimic nu se mai cumpără pentru el.',
+  'Ce s-a cumpărat rămâne în registre.',
+  'Subiectul nu mai ține studioul pe loc: rularea următoare alege alt subiect.',
+]);
+
+/**
+ * The confirmation's three effects: the third is what the backend read about the film's topic
+ * (`closure.topic_ro`: a newer film of the same topic may still hold the studio), the default
+ * only for an older studio that does not say it. @param {any} closure @returns {string[]}
+ */
+export function closeFilmEffects(closure) {
+  const topic = typeof closure?.topic_ro === 'string' && closure.topic_ro.trim() ? closure.topic_ro.trim() : '';
+  return [CLOSE_FILM_EFFECTS[0], CLOSE_FILM_EFFECTS[1], topic || CLOSE_FILM_EFFECTS[2]];
+}
+
+/** Why a closed film's paid buttons cannot be pressed; '' while the film is not closed. @param {any} sheet */
+function closedReason(sheet) {
+  const closure = sheet?.closure;
+  if (!closure || typeof closure !== 'object' || !closure.closed) return '';
+  return 'Filmul este închis: pentru el nu se mai cumpără nimic.';
+}
+
+/** @param {string} storyboardId */
+export function closeFilmPath(storyboardId) {
+  return `/media/storyboards/${storyboardId}/close`;
+}
+
+/** @param {string} commandId @returns {{schema_version: 1, command_id: string}} */
+export function closeFilmCommand(commandId) {
+  return { schema_version: 1, command_id: commandId };
+}
+
+/** «Închis de tine, pe 9 oct. 2026, 13:00.» @param {any} closure */
+function closedByWords(closure) {
+  const by = closure?.closed_by === 'Owner' ? 'de tine' : closure?.closed_by === 'Director' ? 'de Directoare' : '';
+  const at = new Date(String(closure?.closed_at || ''));
+  const when = Number.isNaN(at.getTime()) ? '' : `, pe ${at.toLocaleString('ro-RO', { dateStyle: 'medium', timeStyle: 'short' })}`;
+  return by ? `Închis ${by}${when}.` : '';
+}
+
+/**
+ * The close on the sheet: the closed film's words, or «Închide filmul» (disabled with the reason
+ * it cannot close now), or, once armed (`o.confirm === CLOSE_FILM`), its confirmation. '' for an
+ * older studio that sends no `closure`.
+ * @param {any} sheet @param {SheetOptions} o
+ */
+export function closeFilmHtml(sheet, o) {
+  const closure = sheet?.closure;
+  if (!closure || typeof closure !== 'object') return '';
+  const e = o.escape;
+  if (closure.closed) {
+    const by = closedByWords(closure);
+    return '<section class="sheet-close sheet-close-closed" aria-label="Filmul este închis">'
+      + '<h2>Filmul este închis</h2>'
+      + `<p>${e(String(closure.words_ro || 'Pentru el nu se mai cumpără nimic; ce s-a cumpărat rămâne în registre.'))}</p>`
+      + (by ? `<p class="sheet-close-meta">${e(by)}</p>` : '')
+      + '</section>';
+  }
+  const busy = inProgressReason(sheet);
+  const reason = closure.closable === false
+    ? String(closure.reason_ro || 'Filmul nu se poate închide de aici.')
+    : busy ? BUSY_SEE_BAR : '';
+  if (o.confirm === CLOSE_FILM && !reason) {
+    const title = String(sheet?.title || '').replace(/^Storyboard:\s*/i, '');
+    return '<section class="sheet-close" aria-label="Închide filmul">'
+      + '<div class="sheet-confirm" role="group" aria-label="Confirmă închiderea filmului">'
+      + `<p class="sheet-confirm-q">Închizi filmul${title ? ` «${e(title)}»` : ''}?</p>`
+      + `<ul class="sheet-close-effects">${closeFilmEffects(closure).map((effect) => `<li>${e(effect)}</li>`).join('')}</ul>`
+      + '<div class="sheet-confirm-actions">'
+      + '<button type="button" class="sheet-yes sheet-close-yes" data-sheet-action="confirm-close-film">Confirmă închiderea filmului</button>'
+      + '<button type="button" class="quiet" data-sheet-action="cancel-step">Nu acum</button>'
+      + '</div></div></section>';
+  }
+  return '<section class="sheet-close" aria-label="Închide filmul">'
+    + '<div class="sheet-section-heading"><h2>Închide filmul</h2><p>Dacă nu mai vrei acest film: nu se mai cumpără nimic pentru el și nu ți se mai cere nimic despre el.</p></div>'
+    + `<button type="button" class="quiet sheet-close-btn" data-sheet-action="close-film"${reason ? ' disabled' : ''}>Închide filmul</button>`
+    + (reason ? `<p class="sheet-close-why">${e(reason)}</p>` : '')
+    + '</section>';
+}
+
+/**
+ * The Owner's «Confirmă închiderea filmului»: one POST with its own command id (the same press sent
+ * again answers what it did). A refusal (409: a purchase in flight, a rendered film, a serial
+ * episode) comes back in the backend's own words.
+ * @param {(path: string, options?: any) => Promise<any>} api
+ * @param {{storyboardId: string, commandId: string}} o
+ * @returns {Promise<{status: 'CLOSED', message: string, result: any} | {status: 'REFUSED', code: string|null, message: string, scenes: string[]}>}
+ */
+export async function closeFilm(api, o) {
+  try {
+    const result = await api(closeFilmPath(o.storyboardId), { method: 'POST', body: JSON.stringify(closeFilmCommand(o.commandId)) });
+    return { status: 'CLOSED', message: String(result?.words_ro || 'Filmul este închis.'), result };
+  } catch (error) {
+    if (error && /** @type {any} */ (error).network) {
+      return { status: 'REFUSED', code: 'NETWORK', message: 'Răspunsul nu a ajuns; filmul poate fi închis deja. Reîncarcă foaia înainte de a apăsa din nou.', scenes: [] };
+    }
+    return refused(error);
+  }
+}
+
 /**
  * The step buttons: label, price and cap, and every Romanian reason it cannot be pressed now.
  * @param {any} sheet
@@ -449,6 +563,9 @@ export function stepButtons(sheet) {
     const cap = Number(step.cap_credits) || 0;
     /** @type {string[]} */
     const reasons = [];
+    // «Închide filmul»: a closed film buys nothing more (the backend answers 409 FILM_CLOSED).
+    const closed = closedReason(sheet);
+    if (closed) reasons.push(closed);
     // PAGE-06: a purchase of this film is running (the day, or another press): nothing is
     // pressed until it ends; the backend would answer 409 FILM_BUSY anyway.
     if (busy) reasons.push(busy);
@@ -527,6 +644,8 @@ export function assembleButton(sheet) {
   else if (narration.priced === false) voice = 'narațiunea: preț necunoscut, te întreabă înainte';
   /** @type {string[]} */
   const reasons = [];
+  const closed = closedReason(sheet);
+  if (closed) reasons.push(closed);
   const busy = inProgressReason(sheet);
   if (busy) reasons.push(busy);
   else if (step.in_progress) reasons.push('Asamblarea este deja în curs; foaia se reîncarcă singură când se termină.');
@@ -656,9 +775,11 @@ function runpodCostRows(reading) {
 /**
  * @param {(value: unknown) => string} e @param {any} take @param {string} what
  * @param {TakePress|null} [pressed] the take button pressed, while the studio answers
+ * @param {boolean} [closed] the film is closed («Închide filmul»): its takes are no longer chosen
+ *   (the backend answers 409 FILM_CLOSED and queues no continuation), so no button is offered
  */
-function takeButtons(e, take, what, pressed = null) {
-  if (!take || take.status !== 'PAID') return '';
+function takeButtons(e, take, what, pressed = null, closed = false) {
+  if (!take || take.status !== 'PAID' || closed) return '';
   const approve = what === 'shot' && take.kind === 'test_shot' ? 'Aprobă cadrul de probă după ce l-ai văzut' : what === 'shot' ? 'Aprobă cadrul' : 'Alege imaginea aceasta';
   const reject = what === 'shot' ? 'Respinge cadrul' : 'Respinge';
   // TAKE_CHOICE_SEEN: the pressed button says it is working, and both of its take's buttons hold
@@ -761,7 +882,7 @@ function choiceNoteHtml(e, scene, choice) {
 export function redoConfirmHtml(sheet, key, o) {
   const e = o.escape;
   const b = redoFor(sheet, key);
-  if (!b || b.disabled || redoWaitsForLease(sheet, b)) return '';
+  if (!b || b.disabled || redoWaitsForLease(sheet, b) || closedReason(sheet)) return '';
   const paid = PAID_REDOS.includes(b.kind);
   const lines = [];
   if (b.replaces.length) {
@@ -795,7 +916,16 @@ export function redoConfirmHtml(sheet, key, o) {
 function redoBlockHtml(sheet, buttons, title, o) {
   const e = o.escape;
   if (!buttons.length) return '';
+  // «Închide filmul»: a closed film is redone no more (the backend answers 409 FILM_CLOSED), so
+  // every «Refă» is disabled and the reason is said once for the block.
+  const closed = closedReason(sheet);
   const rows = buttons.map((b) => {
+    if (closed) {
+      return '<div class="sheet-redo-box">'
+        + `<button type="button" class="quiet sheet-redo-btn" data-sheet-action="redo" data-kind="${e(b.kind)}" data-scene="${e(b.scene ?? '')}" title="${e(closed)}" disabled>${e(b.label)}</button>`
+        + `<span class="sheet-redo-price">${e(b.cap_ro ? `${b.price_ro} · ${b.cap_ro}` : b.price_ro)}</span>`
+        + '</div>';
+    }
     const balanceReason = redoBalanceReason(sheet, b);
     return '<div class="sheet-redo-box">'
     + `<button type="button" class="quiet sheet-redo-btn" data-sheet-action="redo" data-kind="${e(b.kind)}" data-scene="${e(b.scene ?? '')}" title="${e(b.reason_ro)}"${b.disabled || redoWaitsForLease(sheet, b) || balanceReason ? ' disabled' : ''}>${e(b.label)}</button>`
@@ -806,8 +936,8 @@ function redoBlockHtml(sheet, buttons, title, o) {
     // the sound's plan is one short sentence (what it remasters, or that there is no film yet)
     + (!b.disabled && b.kind === 'audio' && b.reason_ro ? `<p class="sheet-redo-why">${e(b.reason_ro)}</p>` : '')
     + '</div>'; }).join('');
-  const open = buttons.map((b) => redoKey(b.kind, b.scene)).includes(String(o.confirm || '')) ? redoConfirmHtml(sheet, o.confirm, o) : '';
-  return `<div class="sheet-redos"><p class="sheet-sub">${e(title)}</p>${rows}${open}</div>`;
+  const open = !closed && buttons.map((b) => redoKey(b.kind, b.scene)).includes(String(o.confirm || '')) ? redoConfirmHtml(sheet, o.confirm, o) : '';
+  return `<div class="sheet-redos"><p class="sheet-sub">${e(title)}</p>${rows}${closed ? `<p class="sheet-step-why">${e(closed)}</p>` : ''}${open}</div>`;
 }
 
 /**
@@ -860,10 +990,11 @@ function liveSceneHtml(sheet, scene, o) {
       + `<figcaption><span class="sheet-chosen-mark">Imaginea aleasă</span> Aprobată de ${e(scene.still.approved_by || '—')} · ${e(scene.still.model_id || '')}</figcaption></figure>`
     : '<p class="sheet-still-missing">Nicio imagine aprobată încă: scena intră în pasul imaginilor.</p>';
   const pressed = o.pressed || null;
+  const closed = Boolean(closedReason(sheet));
   const all = Array.isArray(scene.candidates) ? scene.candidates : [];
   const candidates = all.filter((/** @type {any} */ c) => !freeRefusal(c)).map((/** @type {any} */ c) => `<li class="sheet-candidate">`
     + (c.file_url ? `<img class="sheet-thumb" data-sheet-src="${e(c.file_url)}" alt="Candidat pentru scena ${e(index)}">` : '')
-    + `<p>${takeWords(e, c)}</p>${vendorTextHtml(e, c)}${takeButtons(e, c, 'still', pressed)}</li>`).join('');
+    + `<p>${takeWords(e, c)}</p>${vendorTextHtml(e, c)}${takeButtons(e, c, 'still', pressed, closed)}</li>`).join('');
   const refused = freeRefusalsHtml(e, all.filter(freeRefusal));
   const allShots = Array.isArray(scene.shots) ? scene.shots : [];
   /** @param {any} s */
@@ -872,7 +1003,7 @@ function liveSceneHtml(sheet, scene, o) {
     + vendorTextHtml(e, s)
     + (s.file_url ? `<p class="sheet-clip-qc" data-verdict="${e(s.clip_qc?.verdict || 'NONE')}">${e(clipQcWords(s.clip_qc))}</p>` : '')
     + (s.file_url ? `<button type="button" class="quiet sheet-play" data-sheet-action="play" data-sheet-src="${e(s.file_url)}">Redă clipul</button>` : '')
-    + `${takeButtons(e, s, 'shot', pressed)}</li>`;
+    + `${takeButtons(e, s, 'shot', pressed, closed)}</li>`;
   const current = allShots.filter((/** @type {any} */ s) => s.for_current_prompt !== false && ['PAID', 'APPROVED', 'SUBMITTED'].includes(s.status));
   const history = allShots.filter((/** @type {any} */ s) => !current.includes(s));
   const shots = current.map(shotHtml).join('');
@@ -1174,7 +1305,11 @@ export function sheetHtml(sheet, o) {
     DEAD_LETTER: 'Remedierea s-a oprit', BLOCKED: 'Remedierea este oprită de politica studioului',
   };
   const remediation = repair ? `<details class="sheet-warning"><summary>${e(repairWords[repair.status] || 'Starea remedierii: ' + repair.status)}</summary><p>${e(repair.reason || '')}</p></details>` : '';
-  return `${sheetSummaryHtml(sheet, o)}${head}${workflowHtml(sheet, o)}${remediation}`
+  // «Închide filmul»: a closed film says so under the summary; an open one has the button after
+  // its production steps.
+  const close = closeFilmHtml(sheet, o);
+  const closed = Boolean(sheet?.closure?.closed);
+  return `${sheetSummaryHtml(sheet, o)}${closed ? close : ''}${head}${workflowHtml(sheet, o)}${closed ? '' : close}${remediation}`
     + `<section class="sheet-scenes-section" aria-label="Scenele filmului"><div class="sheet-section-heading"><h2>Scenele filmului</h2><p>Imaginea aleasă, starea clipului și acțiunile fiecărei scene.</p></div><ol class="sheet-scenes">${list}</ol></section>`
     + `<details class="sheet-budget"><summary>Costuri, bugete și alternative</summary><div class="sheet-details-content"><dl class="sheet-rows">${rows}</dl>`
     + (sheet?.footer?.summary_ro ? `<p class="sheet-summary">${e(sheet.footer.summary_ro)}</p>` : '')

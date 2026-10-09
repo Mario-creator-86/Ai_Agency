@@ -1505,6 +1505,7 @@ def _film_staircase(
     """
     from app.media.shooting_sheet import (  # noqa: PLC0415 - media imports runbook
         FILM_BUSY,
+        FILM_CLOSED,
         FilmBusy,
         film_purchase_lease,
         lease_seconds,
@@ -1522,13 +1523,15 @@ def _film_staircase(
                 engine, settings, registry, storyboard_id, wiring, environment, correlation
             )
     except FilmBusy as exc:
+        # A closed film (`FilmClosed`: the Owner closed it, or the Director retired it, after
+        # the day read it) is HELD for good; a film another buyer holds WAITs.
         return {
-            "status": "WAITING",
+            "status": "HELD" if exc.status == FILM_CLOSED else "WAITING",
             "step": None,
             "reason": exc.reason_ro,
             "sheet": {},
             "bought": [],
-            "refusal": FILM_BUSY,
+            "refusal": exc.status if exc.status == FILM_CLOSED else FILM_BUSY,
         }
 
 
@@ -2067,6 +2070,79 @@ def retire_stale_films(
     return retired
 
 
+def film_spent_micros(engine: Engine, storyboard_id: str) -> int:
+    """What the books hold for the film (`film_spend_micros`), or 0 when they cannot be read:
+    the figure a closed film's event and letter carry, never a reason not to close it."""
+    from app.media.shooting_sheet import film_spend_micros  # noqa: PLC0415 - media imports runbook
+
+    try:
+        return int(film_spend_micros(engine, storyboard_id))
+    except (SQLAlchemyError, ValueError, TypeError):
+        return 0
+
+
+def bought_takes_of(session: Session, storyboard_id: str) -> dict[str, int]:
+    """The film's takes that cost, or may have cost, credits, counted by kind."""
+    from app.media.models import SceneTake  # noqa: PLC0415
+
+    bought: dict[str, int] = {}
+    for kind, number in session.execute(
+        select(SceneTake.kind, func.count())
+        .where(
+            SceneTake.storyboard_id == storyboard_id,
+            SceneTake.status.in_(BOUGHT_TAKE_STATUSES),
+        )
+        .group_by(SceneTake.kind)
+    ).all():
+        bought[str(kind)] = int(number)
+    return bought
+
+
+def close_film_books(
+    session: Session,
+    board: Storyboard,
+    *,
+    spent: int,
+    retired_by: str,
+    correlation: str,
+    details: dict[str, Any],
+) -> dict[str, Any]:
+    """Close one film, in the caller's transaction: what both the Director's retirement
+    (`_retire_film`) and the Owner's «Închide filmul» (`app.media.film_close`) do.
+
+    Counts what was bought for it (its takes that cost, or may have cost, credits, by kind),
+    sets it REJECTED (its topic then counts as stalled and selection moves on; nothing more is
+    bought for it, `shooting_sheet.film_is_closed`) and writes one `FILM_RETIRED_EVENT` with
+    ``details``, those takes, ``spent`` (`film_spent_micros`, read by the caller before its
+    transaction) and who closed it. The caller checks the film may be closed, and writes its
+    own letter, or none. Returns ``bought_takes``, ``items`` (in the Owner's words),
+    ``spent_usd_micros`` and the event's ``event_id`` and ``closed_at``."""
+    bought = bought_takes_of(session, board.id)
+    items = [count(bought[kind], *TAKE_WORDS[kind]) for kind in TAKE_WORDS if bought.get(kind)]
+    board.status = "REJECTED"
+    event = append_event(
+        session,
+        FILM_RETIRED_EVENT,
+        "storyboard",
+        board.id,
+        1,
+        {
+            **details,
+            "bought_takes": bought,
+            "spent_usd_micros": int(spent),
+            "retired_by": retired_by,
+        },
+        correlation,
+    )
+    return {
+        "bought_takes": bought,
+        "items": items,
+        "spent_usd_micros": int(spent),
+        "event_id": event.event_id,
+        "closed_at": event.timestamp,
+    }
+
+
 def _retire_film(
     engine: Engine,
     storyboard_id: str,
@@ -2078,53 +2154,31 @@ def _retire_film(
 ) -> dict[str, Any] | None:
     """The Director's retirement of one film: REJECTED, an event, and his letter."""
     from app.agents.messages import post_message  # noqa: PLC0415
-    from app.media.models import SceneTake  # noqa: PLC0415
-    from app.media.shooting_sheet import (  # noqa: PLC0415 - media imports runbook
-        film_spend_micros,
-        sheet_url,
-    )
+    from app.media.shooting_sheet import sheet_url  # noqa: PLC0415 - media imports runbook
 
-    try:
-        spent = int(film_spend_micros(engine, storyboard_id))
-    except (SQLAlchemyError, ValueError, TypeError):
-        spent = 0
+    spent = film_spent_micros(engine, storyboard_id)
     correlation = str(uuid4())
     reason = _no_stop(last.get("reason")) or "fără un motiv înregistrat"
     with Session(engine) as session, session.begin():
         board = session.get(Storyboard, storyboard_id)
         if board is None or board.status not in ("APPROVED", NEEDS_SHOT_PLAN):
             return None
-        bought: dict[str, int] = {}
-        for kind, number in session.execute(
-            select(SceneTake.kind, func.count())
-            .where(
-                SceneTake.storyboard_id == storyboard_id,
-                SceneTake.status.in_(BOUGHT_TAKE_STATUSES),
-            )
-            .group_by(SceneTake.kind)
-        ).all():
-            bought[str(kind)] = int(number)
-        items = [count(bought[kind], *TAKE_WORDS[kind]) for kind in TAKE_WORDS if bought.get(kind)]
-        board.status = "REJECTED"
-        append_event(
+        closed = close_film_books(
             session,
-            FILM_RETIRED_EVENT,
-            "storyboard",
-            storyboard_id,
-            1,
-            {
+            board,
+            spent=spent,
+            retired_by="Director",
+            correlation=correlation,
+            details={
                 "since": since,
                 "days": days,
                 "film_wait_days": limit,
                 "last_status": last.get("status"),
                 "last_refusal": last.get("refusal"),
                 "reason": reason[:300],
-                "bought_takes": bought,
-                "spent_usd_micros": spent,
-                "retired_by": "Director",
             },
-            correlation,
         )
+        bought, items = closed["bought_takes"], closed["items"]
         url = sheet_url(storyboard_id)
         lines = [
             f"Către Owner. Filmul «{title}» a fost retras de Director: stă pe loc de "
@@ -2179,9 +2233,16 @@ def _sheet_letter(
     own facts, never a model's account of them.
     """
     from app.agents.messages import post_message  # noqa: PLC0415
+    from app.db import lock_for_write  # noqa: PLC0415
     from app.decisions.sources import film_budget  # noqa: PLC0415
-    from app.media.shooting_sheet import sheet_url  # noqa: PLC0415
+    from app.media.shooting_sheet import film_is_closed, sheet_url  # noqa: PLC0415
 
+    with Session(engine) as session:
+        closed = film_is_closed(session, storyboard_id)
+    if closed:
+        # «Închide filmul» pressed after the day gave the film's lease back: nothing more asks
+        # him about it (no letter, no budget card, no repair of its sheet).
+        return None
     sheet = film.get("sheet") or {}
     step = film.get("step")
     status = str(film.get("refusal") or film["status"])
@@ -2251,6 +2312,10 @@ def _sheet_letter(
         "film_cap_usd_micros": (plan_cost or {}).get("usd_micros"),
     }
     with Session(engine) as session, session.begin():
+        # Behind the write lock the Owner's close takes: a film closed meanwhile gets no letter.
+        lock_for_write(session)
+        if film_is_closed(session, storyboard_id):
+            return None
         for existing in session.scalars(
             select(AgentMessage).where(AgentMessage.to_agent_id.is_(None))
         ):
@@ -2495,6 +2560,15 @@ def _media_staircase(
     question asked, a film assembled) or one stopped by the account itself (no money, no
     budget), which the next film would meet as well: one factual film a day, as before, and
     never one standing in front of all the others."""
+    from app.media.shooting_sheet import (  # noqa: PLC0415 - media imports runbook
+        ASSEMBLE_STEP,
+        FILM_BUSY,
+        FILM_CLOSED,
+        FilmBusy,
+        film_purchase_lease,
+        lease_seconds,
+    )
+
     wiring = sheet_wiring(engine, vault, settings)
     skipped = skipped if skipped is not None else []
     today = today or business_date(settings.timezone)
@@ -2536,6 +2610,13 @@ def _media_staircase(
         film = _film_staircase(
             engine, settings, registry, storyboard_id, wiring, environment, correlation
         )
+        if film.get("refusal") == FILM_CLOSED:
+            # Closed after the day read it (the Owner's «Închide filmul», or the Director's
+            # retirement): nothing was bought or asked, and nobody is written to about it.
+            films.append(
+                {"storyboard_id": storyboard_id, "status": "CLOSED", "refusal": film["refusal"]}
+            )
+            continue
         sheet = film.get("sheet") or {}
         if factual_film:
             if _passed_over(film):
@@ -2592,17 +2673,39 @@ def _media_staircase(
         if stop_requested(engine):
             return stopped_outcome(storyboard_id, "Scara filmului s-a oprit.")
         if film["status"] == "READY" and plan_cost is not None:
-            made = _assemble_from_takes(
-                engine,
-                settings,
-                vault,
-                storyboard_id,
-                wiring,
-                environment,
-                plan_cost,
-                correlation,
-                sheet_hash=str(sheet.get("sheet_hash") or "") or None,
-            )
+            try:
+                # Under the film's purchase lease again, as the sheet's own assembly
+                # (`run_assemble_step`): the staircase gave it back when it returned READY,
+                # and the assembly asks and buys the narration. A film closed in between
+                # («Închide filmul») meets `FilmClosed` here, and a close pressed during the
+                # assembly is refused FILM_BUSY until it ends.
+                with film_purchase_lease(
+                    engine,
+                    storyboard_id,
+                    holder=correlation,
+                    step=ASSEMBLE_STEP,
+                    ttl_seconds=lease_seconds(settings),
+                ):
+                    made = _assemble_from_takes(
+                        engine,
+                        settings,
+                        vault,
+                        storyboard_id,
+                        wiring,
+                        environment,
+                        plan_cost,
+                        correlation,
+                        sheet_hash=str(sheet.get("sheet_hash") or "") or None,
+                    )
+            except FilmBusy as exc:
+                if exc.status == FILM_CLOSED:
+                    films.append(
+                        {"storyboard_id": storyboard_id, "status": "CLOSED", "refusal": exc.status}
+                    )
+                    continue
+                # Another buyer took the film between its staircase and its assembly (his
+                # own press on the sheet): it WAITs, as a film whose staircase was busy.
+                made = {"status": "WAITING", "reason": exc.reason_ro, "refusal": FILM_BUSY}
             costs_recorded += int(made.get("costs_recorded") or 0)
             if factual_film and made["status"] in ("ASSEMBLED", "REFUSED"):
                 _note_film_state(
