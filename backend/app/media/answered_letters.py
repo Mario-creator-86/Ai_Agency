@@ -14,6 +14,10 @@ closed by him at 17:12). The studio now closes an OPEN letter to him when:
 Every other letter stays for him: a letter about the books or money (``paid_step_interrupted``,
 a purchase abandoned, takes lost) reports a fact, not a question. Local reads and writes;
 nothing sent, nothing bought.
+
+Whether a question still waits is read through the Owner's command module
+(`services.pending_approvals`), never from his approval rows directly: only that module may
+reach them (tests/test_phase_dg_closure_adversary.py).
 """
 
 from __future__ import annotations
@@ -24,8 +28,7 @@ from uuid import uuid4
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
-from app.models import ApprovalRequest
-from app.services import utc_now
+from app.services import pending_approvals
 
 #: Who closed it, in the letter's record (the stage reports' archive uses the same word).
 RESOLVED_BY = "system"
@@ -34,29 +37,14 @@ RESOLVED_BY = "system"
 SHEET_LETTER = "owner_shooting_sheet"
 WAITING_LETTER = "owner_waiting"
 
-ANSWERED_RO = "Închisă de studio: pasul din scrisoare nu mai așteaptă răspunsul tău ({why})."
+ANSWERED_RO = (
+    "Închisă de studio: întrebarea din scrisoare nu mai așteaptă răspunsul tău (ai răspuns, "
+    "a fost retrasă sau a expirat)."
+)
 SUPERSEDED_RO = (
     "Închisă de studio: o scrisoare mai nouă despre același film spune unde a ajuns acum."
 )
 LIST_ANSWERED_RO = "Închisă de studio: nicio întrebare din listă nu mai așteaptă răspunsul tău."
-WHY_RO = {
-    "APPROVED": "ai aprobat-o",
-    "REFUSED": "a fost refuzată sau retrasă",
-    "EXPIRED": "a expirat",
-    "MISSING": "cererea nu mai există",
-}
-
-
-def _still_waiting(request: ApprovalRequest | None, now: str) -> bool:
-    return request is not None and request.result == "PENDING" and request.expires_at > now
-
-
-def _why(request: ApprovalRequest | None, now: str) -> str:
-    if request is None:
-        return WHY_RO["MISSING"]
-    if request.result == "PENDING" and request.expires_at <= now:
-        return WHY_RO["EXPIRED"]
-    return WHY_RO.get(request.result, WHY_RO["REFUSED"])
 
 
 def retire_answered_letters(engine: Engine, correlation_id: str | None = None) -> dict[str, Any]:
@@ -70,7 +58,9 @@ def retire_answered_letters(engine: Engine, correlation_id: str | None = None) -
     closed: dict[str, list[str]] = {"answered": [], "superseded": [], "lists": []}
     with Session(engine) as session, session.begin():
         lock_for_write(session)
-        now = utc_now()
+        # Read after the lock: a question asked (and its letter written) before it is in the
+        # list, and nothing new can be asked until this pass commits.
+        waiting = {view.id for view in pending_approvals(engine)}
         letters = [
             row
             for row in session.scalars(
@@ -94,12 +84,11 @@ def retire_answered_letters(engine: Engine, correlation_id: str | None = None) -
             kind = body.get("kind")
             if kind == SHEET_LETTER:
                 approval_id = str(body.get("approval_id") or "")
-                request = session.get(ApprovalRequest, approval_id) if approval_id else None
-                if approval_id and not _still_waiting(request, now):
+                if approval_id and approval_id not in waiting:
                     resolve_message(
                         session,
                         row.id,
-                        resolution=ANSWERED_RO.format(why=_why(request, now)),
+                        resolution=ANSWERED_RO,
                         resolved_by=RESOLVED_BY,
                         correlation_id=correlation,
                     )
@@ -122,7 +111,7 @@ def retire_answered_letters(engine: Engine, correlation_id: str | None = None) -
                 ids = [str(q.get("id") or "") for q in questions if isinstance(q, dict)]
                 if len(ids) != len(questions) or not all(ids):
                     continue  # a list the studio cannot read whole is left for him
-                if any(_still_waiting(session.get(ApprovalRequest, i), now) for i in ids):
+                if any(i in waiting for i in ids):
                     continue
                 resolve_message(
                     session,

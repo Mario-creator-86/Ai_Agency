@@ -106,7 +106,7 @@ def test_a_sheet_letter_closes_once_its_question_is_answered(engine):
     assert closed["answered"] == [asking]
     state, by, resolution = status(engine, asking)
     assert (state, by) == ("RESOLVED", "system")
-    assert "ai aprobat-o" in resolution
+    assert "nu mai așteaptă răspunsul tău" in resolution
     # Idempotent: a closed letter is not closed again.
     assert retire_answered_letters(engine)["answered"] == []
 
@@ -125,8 +125,8 @@ def test_a_refused_or_expired_question_closes_its_letter_too(engine):
     closed = retire_answered_letters(engine)
 
     assert sorted(closed["answered"]) == sorted([refused_letter, expired_letter])
-    assert "refuzată" in status(engine, refused_letter)[2]
-    assert "a expirat" in status(engine, expired_letter)[2]
+    assert "a fost retrasă sau a expirat" in status(engine, refused_letter)[2]
+    assert "a fost retrasă sau a expirat" in status(engine, expired_letter)[2]
 
 
 def test_a_newer_letter_about_the_same_film_moves_past_the_older_one(engine):
