@@ -175,6 +175,41 @@ def test_his_choice_of_a_still_the_local_gate_rejected_starts_its_paid_shot(engi
     assert [take.scene_number for take in takes(engine, storyboard_id, "test_shot")] == [1]
 
 
+def test_a_scene_released_after_the_test_shot_joins_the_remaining_motion(engine, tmp_path):
+    """Film babcf272: scene 1 was held, so scene 2 became the test shot and the Owner accepted
+    it. Choosing scene 1's still afterwards must not ask for a second test shot (a second
+    approval, a second GPU start): the bought test shot stays the film's test shot and scene 1
+    is bought with the rest of the motion."""
+    storyboard_id = a_film(engine, tmp_path, scenes=3)
+    take_id = gate_rejected(engine, storyboard_id)
+    before = motion_plan(engine, storyboard_id, capabilities=[SEEDANCE])
+    assert before["hero_scene"] == 2
+    assert before["steps"]["test_shot"]["to_buy"] == [2]
+
+    account = Account(10_000)
+    models = Models(SpyVideo("seedance2_5", account))
+    result = approved(engine, storyboard_id, tmp_path, "test_shot", models, account)
+    assert by_scene(result)[2]["status"] == "PAID"
+    (hero,) = takes(engine, storyboard_id, "test_shot")
+    decide_take(engine, hero.id, "APPROVED", decided_by="owner", note="Cadrul e bun.")
+    decide_take(engine, take_id, "APPROVED", decided_by="owner", note="O aleg eu.")
+
+    plan = motion_plan(engine, storyboard_id, capabilities=[SEEDANCE])
+    assert plan["hero_scene"] == 2
+    assert scene_of(plan, 1)["status"] == "PLANNED"
+    assert plan["steps"]["test_shot"]["to_buy"] == []
+    assert plan["steps"]["motion"]["to_buy"] == [1, 3]
+    sheet = build_sheet(engine, storyboard_id, capabilities=[SEEDANCE], read_live=False)
+    assert sheet["steps"]["test_shot"]["to_buy"] == []
+    assert sheet["steps"]["motion"]["to_buy"] == [1, 3]
+
+    posts = models.posts()
+    result = approved(engine, storyboard_id, tmp_path, "motion", models, account)
+    assert models.posts() == posts + 2
+    assert {by_scene(result)[index]["status"] for index in (1, 3)} == {"PAID"}
+    assert [take.scene_number for take in takes(engine, storyboard_id, "test_shot")] == [2]
+
+
 def test_the_rehearsals_adoption_alone_never_lifts_the_hold(engine, tmp_path):
     """The adoption keeps an earlier 'owner' on the row (the Owner's full approval is never
     narrowed): approved_by says 'owner', yet no decision of his names the take."""

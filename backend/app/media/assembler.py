@@ -7296,9 +7296,15 @@ def _motion_state(
     findings = lint_film(lint_scenes, bible=bible)
     raw_hero = policy.get("hero_scene")
     held = sorted(index for index, memory in remembered.items() if memory.hold_ro)
-    # A test shot that failed and waits for the Owner stays the film's test shot: another
-    # scene does not become the hero (and is not bought as one) in its place.
-    if not any(take.kind == "test_shot" for take in shots.values()):
+    bought_hero = next((index for index, take in shots.items() if take.kind == "test_shot"), None)
+    if bought_hero is not None:
+        # A bought test shot stays the film's test shot: a scene released after it (film
+        # babcf272, 2026-10-09: scene 1's still chosen by the Owner once scene 2's test shot
+        # was accepted) joins the remaining motion, never a second test shot of its own.
+        raw_hero = bought_hero
+    else:
+        # A test shot that failed and waits for the Owner stays the film's test shot: another
+        # scene does not become the hero (and is not bought as one) in its place.
         raw_hero = next((index for index in held if remembered[index].test_shot), raw_hero)
     hero: int | None = int(raw_hero) if raw_hero is not None else None
     by_index = {item["scene_index"]: item for item in view}
