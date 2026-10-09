@@ -6996,6 +6996,57 @@ def recode_not_queued(
     return changed
 
 
+#: The code family of a failed local check on a still (the stills gate, a degenerate picture,
+#: the rehearsal's faces or sharpness): such a still never starts a paid shot on its own.
+LOCAL_FAILURE_PREFIX = "LOCAL."
+#: What a take's recording writes (`record_take`, the rehearsal's adoption `_upsert_take`); its
+#: payload names the failure code the take carries from then on.
+TAKE_RECORDED_EVENT = "media.scene_take_recorded"
+
+
+def owner_chose_flagged_still(session: Session, take: SceneTake) -> bool:
+    """Whether the Owner himself chose this still after its local check failed (LOCAL.*).
+
+    Proven only by his own look at THIS take (`decide_take`'s TAKE_DECIDED_EVENT, the take's
+    id as its aggregate): his newest decision on it is APPROVED, no recording of the take since
+    then (TAKE_RECORDED_EVENT, the rehearsal's adoption among them) names a LOCAL.* failure, and
+    the row was not written after it. ``approved_by`` proves nothing here: the rehearsal's
+    adoption may leave the Owner's name on a still it keeps 'doar pentru repetiție'.
+
+    Film babcf272, 2026-10-09: scene 1's still, REJECTED by the old sharpness gate
+    (LOCAL.STILL_GATE), was chosen by the Owner on the sheet, and the motion step still refused
+    to animate it. Reads only: 0 credits, no network."""
+    last = session.scalar(
+        select(DomainEvent)
+        .where(
+            DomainEvent.event_type == TAKE_DECIDED_EVENT,
+            DomainEvent.aggregate_id == take.id,
+        )
+        .order_by(DomainEvent.sequence.desc())
+        .limit(1)
+    )
+    if last is None:
+        return False
+    said = last.payload if isinstance(last.payload, dict) else {}
+    if said.get("decision") != "APPROVED" or said.get("decided_by") != TAKE_DECIDER:
+        return False
+    decided = _stamp(last.timestamp)
+    written = _stamp(take.updated_at)
+    if decided is None or written is None or written > decided:
+        return False  # the take was written again after his look
+    for payload in session.scalars(
+        select(DomainEvent.payload).where(
+            DomainEvent.event_type == TAKE_RECORDED_EVENT,
+            DomainEvent.aggregate_id == take.id,
+            DomainEvent.sequence > last.sequence,
+        )
+    ):
+        code = payload.get("failure_code") if isinstance(payload, dict) else None
+        if str(code or "").startswith(LOCAL_FAILURE_PREFIX):
+            return False  # a failure recorded after his look: he has not seen this one
+    return True
+
+
 def _bought_shots(
     engine: Engine, storyboard_id: str, scenes: list[dict[str, Any]], redo: int | None = None
 ) -> tuple[dict[int, SceneTake], dict[int, SceneTake], dict[int, dict[str, Any]], dict[int, str]]:
@@ -7043,12 +7094,16 @@ def _bought_shots(
                 )
                 continue
             # A still adopted with a failed local check (LOCAL.*) is approved only so the
-            # zero-credit rehearsal can show it; a paid shot never starts from it.
-            if str(still.failure_code or "").startswith("LOCAL."):
+            # zero-credit rehearsal can show it; a paid shot never starts from it, unless the
+            # Owner himself chose THAT take after the failure (`owner_chose_flagged_still`).
+            if str(still.failure_code or "").startswith(
+                LOCAL_FAILURE_PREFIX
+            ) and not owner_chose_flagged_still(session, still):
                 holds[index] = (
                     f"Scena {index}: imaginea ei a fost păstrată doar pentru repetiție "
                     f"({still.failure_code}); mișcarea plătită pornește doar dintr-o imagine "
-                    "nouă, aprobată."
+                    "nouă, aprobată, sau din aceasta după ce o alege Proprietarul pe foaia de "
+                    "filmare."
                 )
                 continue
             session.expunge(still)
