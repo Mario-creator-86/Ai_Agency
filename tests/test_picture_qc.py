@@ -259,13 +259,22 @@ def seen_frames(monkeypatch):
     return asked
 
 
+def scene_answer(scene, reason="", **changes):
+    """One scene's answer as the model writes it: a picture, ONE picture, the scene asked for."""
+    entry = {
+        "scene": scene,
+        "is_a_picture": True,
+        "one_picture": True,
+        "shows_the_scene": True,
+        "reason": reason,
+    }
+    return {**entry, **changes}
+
+
 def all_good(scenes=3, characters=()):
     return json.dumps(
         {
-            "scenes": [
-                {"scene": i, "is_a_picture": True, "shows_the_scene": True, "reason": "as asked"}
-                for i in range(1, scenes + 1)
-            ],
+            "scenes": [scene_answer(i, "as asked") for i in range(1, scenes + 1)],
             "characters": [
                 {"scene": scene, "character": name, "matches": True, "reason": "as the bible says"}
                 for scene, name in characters
@@ -283,11 +292,12 @@ def test_a_blank_third_scene_fails_the_film_and_names_the_scene(engine, staffed,
     answer = json.dumps(
         {
             "scenes": [
-                {"scene": 1, "is_a_picture": True, "shows_the_scene": True, "reason": ""},
-                {"scene": 2, "is_a_picture": True, "shows_the_scene": True, "reason": ""},
+                scene_answer(1),
+                scene_answer(2),
                 {
                     "scene": 3,
                     "is_a_picture": False,
+                    "one_picture": True,
                     "shows_the_scene": False,
                     "reason": "an empty beige field, nothing in it",
                 },
@@ -324,6 +334,45 @@ def test_pictures_that_show_the_scene_pass_and_the_film_is_looked_at_once(
     prompt = model.calls[0]["prompt"]
     assert "golden mirror" in prompt and "A line of water." in prompt
     assert seen_frames["scene_seconds"] == [6.0, 6.0, 6.0]
+
+
+def test_a_scene_made_of_panels_fails_the_film_and_names_the_scene(engine, staffed, seen_frames):
+    """2026-10-09: scene 5 was three stacked panels and a model told the plan's three moments
+    found it matched. The look now asks whether each frame is ONE picture."""
+    ids = a_film(engine)
+    give_vision(engine, staffed["agents"]["VideoEditor"].id)
+    triptych = scene_answer(2, "a tunnel, a black band, another tunnel, stacked", one_picture=False)
+    answer = json.dumps({"scenes": [scene_answer(1), triptych, scene_answer(3)]})
+    registry, model = registry_with(staffed, lambda p: answer)
+
+    result = evaluate_pictures(engine, registry, ids["asset"], str(uuid4()))
+
+    picture = result["picture_qc"]
+    assert picture["status"] == "MEASURED" and picture["passed"] is False
+    (failure,) = result["failures"]
+    assert failure.startswith("Scene 2:") and "not one picture" in failure
+    assert "black band" in failure
+    records = {entry["scene"]: entry for entry in picture["scenes"]}
+    assert records[2]["one_picture"] is False and records[1]["one_picture"] is True
+    prompt = model.calls[0]["prompt"]
+    assert "ONE picture" in prompt and '"one_picture": true' in prompt
+
+
+def test_a_look_that_leaves_the_one_picture_question_out_certifies_nothing(
+    engine, staffed, seen_frames
+):
+    ids = a_film(engine)
+    give_vision(engine, staffed["agents"]["VideoEditor"].id)
+    silent = [
+        {key: value for key, value in scene_answer(i).items() if key != "one_picture"}
+        for i in (1, 2, 3)
+    ]
+    registry, _ = registry_with(staffed, lambda p: json.dumps({"scenes": silent}))
+
+    result = evaluate_pictures(engine, registry, ids["asset"], str(uuid4()))
+
+    assert result["picture_qc"]["status"] == "NOT_APPLICABLE"
+    assert result["picture_qc"]["passed"] is None and result["failures"] == []
 
 
 def test_without_a_vision_model_the_check_certifies_nothing(engine, staffed, seen_frames):
@@ -391,10 +440,7 @@ def test_a_character_in_the_wrong_outfit_fails_and_names_them(engine, staffed, s
     give_vision(engine, staffed["agents"]["VideoEditor"].id)
     answer = json.dumps(
         {
-            "scenes": [
-                {"scene": i, "is_a_picture": True, "shows_the_scene": True, "reason": ""}
-                for i in (1, 2, 3)
-            ],
+            "scenes": [scene_answer(i) for i in (1, 2, 3)],
             "characters": [
                 {"scene": 1, "character": "Sarah Director", "matches": True, "reason": "the suit"},
                 {
@@ -499,11 +545,12 @@ def test_quality_control_fails_a_film_whose_picture_is_not_a_picture(engine, sta
         lambda p: json.dumps(
             {
                 "scenes": [
-                    {"scene": 1, "is_a_picture": True, "shows_the_scene": True, "reason": ""},
-                    {"scene": 2, "is_a_picture": True, "shows_the_scene": True, "reason": ""},
+                    scene_answer(1),
+                    scene_answer(2),
                     {
                         "scene": 3,
                         "is_a_picture": False,
+                        "one_picture": True,
                         "shows_the_scene": False,
                         "reason": "vertical stripes",
                     },
@@ -547,11 +594,12 @@ def test_a_refused_picture_fails_the_film_in_production_as_well_as_in_test(
         lambda p: json.dumps(
             {
                 "scenes": [
-                    {"scene": 1, "is_a_picture": True, "shows_the_scene": True, "reason": ""},
-                    {"scene": 2, "is_a_picture": True, "shows_the_scene": True, "reason": ""},
+                    scene_answer(1),
+                    scene_answer(2),
                     {
                         "scene": 3,
                         "is_a_picture": False,
+                        "one_picture": True,
                         "shows_the_scene": False,
                         "reason": "an empty grey field",
                     },
@@ -614,11 +662,12 @@ def test_the_owners_own_quality_control_looks_at_the_pictures(
         lambda p: json.dumps(
             {
                 "scenes": [
-                    {"scene": 1, "is_a_picture": True, "shows_the_scene": True, "reason": ""},
-                    {"scene": 2, "is_a_picture": True, "shows_the_scene": True, "reason": ""},
+                    scene_answer(1),
+                    scene_answer(2),
                     {
                         "scene": 3,
                         "is_a_picture": False,
+                        "one_picture": True,
                         "shows_the_scene": False,
                         "reason": "an empty grey field",
                     },
@@ -828,10 +877,7 @@ def test_a_guessed_name_is_looked_at_and_can_never_fail_the_film(engine, staffed
     give_vision(engine, staffed["agents"]["VideoEditor"].id)
     answer = json.dumps(
         {
-            "scenes": [
-                {"scene": i, "is_a_picture": True, "shows_the_scene": True, "reason": "as asked"}
-                for i in (1, 2)
-            ],
+            "scenes": [scene_answer(i, "as asked") for i in (1, 2)],
             "characters": [
                 {
                     "scene": 1,
@@ -898,6 +944,7 @@ def a_still_answer(scene=1, **changes):
         "scene": scene,
         "faces_visible": False,
         "readable_text": False,
+        "one_picture": True,
         "matches_plan": True,
         "look_ok": True,
         "technical_ok": True,
@@ -945,19 +992,31 @@ def test_judge_still_sends_the_still_at_1080_px_in_one_call(engine, staffed):
     prompt = model.calls[0]["prompt"]
     assert "No human faces appear" in prompt and "bible_violations" in prompt
     assert "name the violation or write none" in prompt
+    # 2026-10-09: a still is one moment, and one picture (scene 5 was three stacked panels).
+    assert "one_picture" in prompt and "ONE moment" in prompt
+    assert "judge the still against the first moment only" in prompt
+    assert judged.verdict.one_picture is True
     with Session(engine) as session:
         runs = list(session.scalars(select(AgentRun).where(AgentRun.task_type == STILL_TASK)))
     assert len(runs) == 1 and judged.run_id == runs[0].id
 
 
 def test_the_still_verdict_has_no_field_that_passes_by_default():
-    from app.media.picture_qc import StillVerdict
+    from app.media.picture_qc import StillJudgeReport, StillVerdict
     from pydantic import ValidationError
 
-    assert all(field.is_required() for field in StillVerdict.model_fields.values())
+    # one_picture is asked of the model like every other field (the report a model's answer is
+    # read into refuses an entry without it, below); only a verdict built in code, the stills
+    # step's fakes written before the question, may leave it out.
+    assert all(
+        field.is_required()
+        for name, field in StillVerdict.model_fields.items()
+        if name != "one_picture"
+    )
     assert set(StillVerdict.model_fields) >= {
         "faces_visible",
         "readable_text",
+        "one_picture",
         "matches_plan",
         "look_ok",
         "technical_ok",
@@ -972,7 +1031,14 @@ def test_the_still_verdict_has_no_field_that_passes_by_default():
     with pytest.raises(ValidationError):
         StillVerdict.model_validate({**good, "faces_visible": "no"})
     with pytest.raises(ValidationError):
+        StillVerdict.model_validate({**good, "one_picture": "yes"})
+    with pytest.raises(ValidationError):
         StillVerdict.model_validate({**good, "verdict": "looks fine"})
+    # The model's answer must say whether the still is one picture.
+    silent = {key: value for key, value in good.items() if key != "one_picture"}
+    with pytest.raises(ValidationError):
+        StillJudgeReport.model_validate({"stills": [silent]})
+    assert StillJudgeReport.model_validate({"stills": [good]}).stills[0].one_picture is True
 
 
 @pytest.mark.skipif(__import__("shutil").which("ffmpeg") is None, reason="ffmpeg is not installed")
@@ -982,8 +1048,19 @@ def test_the_still_verdict_has_no_field_that_passes_by_default():
         json.dumps({"stills": []}),
         a_still_answer(scene=2),
         "I looked and it is lovely.",
+        json.dumps(
+            {
+                "stills": [
+                    {
+                        key: value
+                        for key, value in json.loads(a_still_answer())["stills"][0].items()
+                        if key != "one_picture"
+                    }
+                ]
+            }
+        ),
     ],
-    ids=["no-entry", "another-scene", "prose"],
+    ids=["no-entry", "another-scene", "prose", "one-picture-unanswered"],
 )
 def test_judge_still_without_an_entry_for_this_still_is_not_run(engine, staffed, answer):
     from app.media.picture_qc import judge_still
@@ -1071,10 +1148,67 @@ def _span_film(tmp_path):
     return out
 
 
-def _spanned_film(engine, tmp_path, *, bible=None):
+#: The 2026-10-09 triptych (tests/fixtures/panels, test_still_gate's docstring): a tunnel with
+#: a glowing atom, a flat black band, an empty tunnel.
+TRIPTYCH = NEPAL_STILL.parents[1] / "panels" / "scene_05_c7c55abb_c1.jpg"
+
+
+def _panel_film(tmp_path):
+    """_span_film's shape, its first LIVE scene the triptych: 2 s of the panels, 2 s of a test
+    card, 1 s of black, at 24 fps, 1080x1920."""
+    import shutil
+    import subprocess
+
+    out = tmp_path / "panel_film.mp4"
+    result = subprocess.run(
+        [
+            shutil.which("ffmpeg"),
+            "-v",
+            "error",
+            "-nostdin",
+            "-y",
+            "-loop",
+            "1",
+            "-framerate",
+            "24",
+            "-t",
+            "2",
+            "-i",
+            str(TRIPTYCH),
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=s=1080x1920:r=24:d=2",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=black:s=1080x1920:r=24:d=1",
+            "-filter_complex",
+            "[0:v]scale=1080:1920:flags=lanczos,fps=24,format=yuv420p,setsar=1[a];"
+            "[1:v]format=yuv420p,setsar=1[b];[2:v]format=yuv420p,setsar=1[c];"
+            "[a][b][c]concat=n=3:v=1:a=0[v]",
+            "-map",
+            "[v]",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-pix_fmt",
+            "yuv420p",
+            str(out),
+        ],  # fmt: skip
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr[-1500:]
+    return out
+
+
+def _spanned_film(engine, tmp_path, *, bible=None, film=None):
     """a_film's three scenes on a real file: two LIVE scenes of 2 s and a 1 s black card."""
     ids = a_film(engine)
-    film = _span_film(tmp_path)
+    film = film or _span_film(tmp_path)
     spans = [
         {"scene_index": 1, "start": 0.0, "end": 2.0, "dissolve_seconds": 0.0, "composed": False},
         {"scene_index": 2, "start": 2.0, "end": 4.0, "dissolve_seconds": 0.0, "composed": False},
@@ -1111,6 +1245,7 @@ def _keep(scene, **changes):
         "look_ok": True,
         "technical_ok": True,
         "same_shot": True,
+        "one_picture": True,
         "bible_violations": "none",
         "verdict": "keep",
         "reason": "the mirror against the dark",
@@ -1264,18 +1399,78 @@ def test_a_look_that_did_not_happen_certifies_nothing_and_fails_nothing(engine, 
     assert all(entry["passed"] is None for entry in record["scenes"])
 
 
-def test_with_nobody_to_look_and_faces_allowed_no_frame_is_cut(engine, staffed, monkeypatch):
+def test_with_no_film_on_disk_no_frame_is_cut(engine, staffed, monkeypatch):
     from app.media.qc import span_picture_qc
 
     ids = a_film(engine)
 
     def refuse(*args, **kwargs):
-        raise AssertionError("no frame should be cut when nothing would look at it")
+        raise AssertionError("no frame should be cut from a film that is not on disk")
 
     monkeypatch.setattr("app.media.qc.frames_at", refuse)
     record = span_picture_qc(engine, None, ids["asset"], str(uuid4()))
     assert record["status"] == "NOT_APPLICABLE" and record["passed"] is None
-    assert record["detail"]
+    assert "nu este pe disc" in record["detail"]
+
+
+@requires_ffmpeg
+def test_with_nobody_to_look_and_faces_allowed_the_band_still_fails_a_panel_scene(
+    engine, staffed, tmp_path
+):
+    """Review of 2026-10-09: with no model that can see and a bible that allows faces, the
+    span check stood down before cutting a frame, so the band, which is free, was never read
+    on the film: the rehearsal's QC (registry None) and the Owner's re-QC could pass a film
+    with the triptych in it. The band is read whoever looks."""
+    from app.media.qc import span_picture_qc
+
+    ids = _spanned_film(engine, tmp_path, film=_panel_film(tmp_path))
+
+    record = span_picture_qc(engine, None, ids["asset"], str(uuid4()))
+
+    assert record["faces_forbidden"] is False
+    assert record["status"] == "MEASURED" and record["passed"] is False, record
+    scenes = {entry["scene_index"]: entry for entry in record["scenes"]}
+    assert scenes[1]["passed"] is False and scenes[1]["panels"]["status"] == "FAILED"
+    assert "nu e o singură fotografie" in scenes[1]["reason"]
+    # The scene with no band was read, not looked at: it certifies nothing.
+    assert scenes[2]["passed"] is None and scenes[2]["status"] == "NOT_RUN"
+    assert scenes[2]["panels"]["status"] == "PASSED"
+    assert scenes[2]["picture"]["status"] == "NOT_RUN"
+    (failure,) = record["failures"]
+    assert failure.startswith("Scena 1:")
+    assert "nimeni nu se uită" in record["detail"] and "banda plată" in record["detail"]
+
+
+@requires_ffmpeg
+def test_with_nobody_to_look_a_film_without_panels_is_read_and_certifies_nothing(
+    engine, staffed, tmp_path
+):
+    from app.media.qc import span_picture_qc
+
+    ids = _spanned_film(engine, tmp_path)
+
+    record = span_picture_qc(engine, None, ids["asset"], str(uuid4()))
+
+    assert record["passed"] is None and record["failures"] == []
+    filmed = [entry for entry in record["scenes"] if entry["kind"] == "LIVE"]
+    assert len(filmed) == 2
+    assert all(entry["panels"]["status"] == "PASSED" for entry in filmed)
+    assert all(entry["passed"] is None for entry in filmed)
+
+
+@requires_ffmpeg
+def test_quality_control_without_a_seeing_model_fails_a_panel_scene_and_asks_for_still_and_motion(
+    engine, staffed, tmp_path
+):
+    """The rehearsal's own QC: evaluate_media_qc with no registry and no judge of its own."""
+    ids = _spanned_film(engine, tmp_path, film=_panel_film(tmp_path))
+
+    report = evaluate_media_qc(engine, ids["asset"], str(uuid4()))
+
+    assert report["status"] == "FAILED"
+    assert report["checks_json"]["picture_spans_qc"]["passed"] is False
+    assert report["checks_json"]["picture_qc"]["passed"] is None
+    assert _scene_redos(report) == {1: {"still", "motion"}}
 
 
 @requires_ffmpeg
@@ -1351,3 +1546,95 @@ def test_quality_control_fails_a_film_with_a_face_in_a_scene_and_keeps_the_one_f
     assert any("Scena 1" in r and "YuNet" in r for r in report["failure_reasons_json"])
     # The film-wide look and the character check are still the picture_qc they were.
     assert report["checks_json"]["picture_qc"]["status"] == "NOT_APPLICABLE"
+
+
+# ------------------------------------------------------ one picture, not panels, in the film
+#
+# 2026-10-09: scene 5 of «The Particle That Shouldn't Exist (But Does)» was three stacked
+# panels, its clip animated them, and every check passed it. The film's own QC reads each
+# filmed scene's three frames for a flat band (qc.flat_band) and asks the look whether each is
+# ONE picture; a scene made of panels fails, and the studio's own report asks for a new still
+# and new motion for that scene, nothing else.
+
+
+def _scene_redos(report) -> dict[int, set[str]]:
+    from app.media.qc_report import redo_proposals
+
+    redos: dict[int, set[str]] = {}
+    for proposal in redo_proposals(report):
+        if proposal.scene_index is not None:
+            redos.setdefault(proposal.scene_index, set()).add(proposal.redo)
+    return redos
+
+
+@requires_ffmpeg
+def test_a_scene_made_of_panels_fails_the_span_check_on_the_band_alone(engine, staffed, tmp_path):
+    """The look is the lenient one of 2026-10-09: it keeps everything. The band does not."""
+    from app.media.qc import span_picture_qc
+
+    ids = _spanned_film(engine, tmp_path, film=_panel_film(tmp_path))
+
+    record = span_picture_qc(engine, None, ids["asset"], str(uuid4()), judge=_Judge())
+
+    assert record["status"] == "MEASURED" and record["passed"] is False
+    scenes = {entry["scene_index"]: entry for entry in record["scenes"]}
+    panel, card = scenes[1], scenes[2]
+    assert panel["passed"] is False and panel["panels"]["status"] == "FAILED"
+    assert "nu e o singură fotografie" in panel["reason"] and "la mijloc" in panel["reason"]
+    assert all(frame["splits_the_picture"] for frame in panel["panels"]["frames"])
+    assert card["passed"] is True and card["panels"]["status"] == "PASSED"
+    (failure,) = record["failures"]
+    assert failure.startswith("Scena 1:")
+
+
+@requires_ffmpeg
+def test_quality_control_fails_a_panel_scene_and_the_studio_asks_for_a_new_still_and_motion(
+    engine, staffed, tmp_path
+):
+    ids = _spanned_film(engine, tmp_path, film=_panel_film(tmp_path))
+
+    report = evaluate_media_qc(
+        engine, ids["asset"], str(uuid4()), span_judge=_Judge(), face_counter=_Faces()
+    )
+
+    assert report["status"] == "FAILED"
+    assert report["checks_json"]["picture_spans_qc"]["passed"] is False
+    assert any(
+        "Scena 1" in reason and "singură fotografie" in reason
+        for reason in report["failure_reasons_json"]
+    ), report["failure_reasons_json"]
+    # The studio's own redo: a new still and new motion for scene 1, and nothing for the
+    # scene that passed. Never the whole film.
+    assert _scene_redos(report) == {1: {"still", "motion"}}
+
+
+@requires_ffmpeg
+def test_panels_the_band_cannot_see_fail_the_scene_on_the_looks_one_picture(
+    engine, staffed, tmp_path
+):
+    """scene_05_0d900cbd_c2 was three tunnels stacked with no band between them: the look's
+    one_picture is its net, on the film as on the still."""
+    from app.media.qc import span_picture_qc
+
+    ids = _spanned_film(engine, tmp_path)
+    judge = _Judge(
+        lambda scene: (
+            _keep(
+                scene,
+                one_picture=False,
+                verdict="back_to_still",
+                reason="three tunnels stacked one above another",
+            )
+            if scene == 2
+            else _keep(scene)
+        )
+    )
+
+    record = span_picture_qc(engine, None, ids["asset"], str(uuid4()), judge=judge)
+
+    scenes = {entry["scene_index"]: entry for entry in record["scenes"]}
+    assert scenes[1]["passed"] is True
+    assert scenes[2]["passed"] is False and scenes[2]["panels"]["status"] == "PASSED"
+    assert "nu sunt o singură fotografie" in scenes[2]["reason"]
+    assert "three tunnels" in scenes[2]["reason"]
+    assert _scene_redos({"checks_json": {"picture_spans_qc": record}}) == {2: {"still", "motion"}}

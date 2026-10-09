@@ -265,3 +265,48 @@ def test_a_failed_motion_check_that_counts_its_scenes_still_gets_the_owners_lett
     }
     text = qc_summary_ro(report, nepal["credits_measured"])
     assert "Mișcare" in text and "4 scene" in text
+
+
+def test_a_scene_the_films_qc_found_made_of_panels_gets_a_new_still_and_new_motion():
+    """2026-10-09: scene 5 of «The Particle That Shouldn't Exist (But Does)» was three stacked
+    panels. The film's span check (qc.span_picture_qc) fails such a scene, and the studio's own
+    report proposes what fixes it, priced from the sheet: a new still and new motion for that
+    scene, nothing for the scene that passed, never the whole film."""
+    reason = (
+        "nu e o singură fotografie: cadrul first are o bandă plată pe toată lățimea, la "
+        "mijloc, între două imagini (rândurile 159-320 din 480, 34% din înălțime; prag 15%)"
+    )
+    report = {
+        "status": "FAILED",
+        "score": 0.75,
+        "checks_json": {
+            "picture_spans_qc": {
+                "status": "MEASURED",
+                "passed": False,
+                "detail": "2 din 2 scene filmate privite pe primul, mijlocul și ultimul cadru",
+                "scenes": [
+                    {"scene_index": 3, "kind": "LIVE", "status": "PASSED", "passed": True},
+                    {
+                        "scene_index": 4,
+                        "kind": "LIVE",
+                        "status": "FAILED",
+                        "passed": False,
+                        "reason": reason,
+                        "panels": {"status": "FAILED", "detail_ro": reason},
+                    },
+                ],
+                "failures": [f"Scena 4: {reason}"],
+            }
+        },
+        "failure_reasons_json": [f"Scena 4: {reason}"],
+    }
+
+    proposals = redo_proposals(report, sheet=_sheet())
+
+    assert {(p.scene_index, p.redo) for p in proposals} == {(4, "still"), (4, "motion")}
+    by = {p.redo: p for p in proposals}
+    assert by["still"].credits == 18 and by["motion"].credits == 60
+    assert "singură fotografie" in by["still"].reason
+    paid = _section(qc_summary_ro(report, None, sheet=_sheet()), PAID_HEADING)
+    assert "Scena 4: imagine nouă" in paid and "Scena 4: mișcare nouă" in paid
+    assert "Scena 3" not in paid

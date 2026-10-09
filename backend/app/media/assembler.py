@@ -10817,6 +10817,196 @@ def redo_plan(
     )
 
 
+# ------------------------------------------ a redone still is bought on today's prompt
+#
+# 2026-10-09 (film babcf272, «The Particle That Shouldn't Exist (But Does)»): scene 5's still
+# came back as three stacked panels (an atom in the tunnel, a flat black band, the empty
+# tunnel) and its clip animated the triptych. Its stored still prompt described a sequence of
+# moments ("..., then the empty accelerator tunnel from scene 1. First the near-black void of
+# scenes 2 and 3, then the identical tunnel ..."). A scene's package is compiled once, when the
+# shots are written (`prompt_agent.write_shot_prompts`), and «Refă imaginea» bought the STORED
+# words again: a compiler fixed since could never reach a film already planned, and the redo
+# would have bought the same triptych. A still redo now compiles that one scene again from its
+# stored plan with today's compiler (deterministic, 0 credits, no language model). When the
+# still prompt differs, the Owner's plan shows the new words and its hash is bound to them,
+# and the package is rewritten in the transaction that spends his yes; the motion redo that
+# follows reads the rewritten package. No other scene is touched, so every other bought take
+# keeps matching its prompt. An episode of the serial (its prompt is composed from the series'
+# look, `compose_serial_prompt`) and a package with no plan to compile keep their words.
+
+#: A scene whose prompts the studio compiled again for a redo: {storyboard_id, scene_index,
+#: old_still_prompt, still_prompt, old_motion_prompt, motion_prompt, reason, plan_hash}. A
+#: «media.prompt*» type: the claim checker (`agents.reviews.check_work_claims`) proves «am
+#: rescris promptul» only by one, and an agent's true report of this repair was labelled
+#: NEEFĂCUT under the first name, "media.scene_prompts_rewritten" (review 2026-10-09).
+SCENE_PROMPTS_REWRITTEN_EVENT = "media.prompts_rewritten"
+#: The plan fields the compiler builds a still from; a package with none of them (made by
+#: hand, or from before the compiler) has nothing to compile again and keeps its words.
+_REDO_PLAN_FIELDS: tuple[str, ...] = ("subject", "action", "environment")
+#: How much of a rewritten sentence the Owner's plan quotes.
+_REWRITE_EXCERPT_CHARS = 160
+
+
+def _scene_prompt_rewrite(
+    session: Session, storyboard_id: str, scene_index: int, still_model: str
+) -> dict[str, Any] | None:
+    """One filmed scene's prompts compiled again from its stored plan, as the studio writes
+    them today, when the still prompt differs from the stored one; None when it does not (or
+    there is nothing to compile). Reads only; 0 credits, no language model.
+
+    Compiled as `write_shot_prompts` compiles it (the scene's kind and shot type, the film's
+    bible, the factual look, the camera moves of the filmed scenes before it as stored), with
+    the still compiled for the model it is bought on. Raises `SceneRedoRefused`
+    (PROMPT_NOT_COMPILED) when the compiler cannot read the package: stale words are never
+    bought in silence."""
+    from app.agents.editorial import is_serial_film  # noqa: PLC0415 - agents import media
+    from app.factual.models import ScriptDraft  # noqa: PLC0415
+    from app.media.prompt_agent import compile_prompts  # noqa: PLC0415 - it imports us
+    from app.media.series_look import load_factual_look  # noqa: PLC0415
+
+    board = session.get(Storyboard, storyboard_id)
+    if board is None:
+        return None
+    script = session.get(ScriptDraft, board.script_draft_id) if board.script_draft_id else None
+    if is_serial_film(board, script):
+        return None
+    moves: list[str] = []
+    target: StoryboardScene | None = None
+    for row in session.scalars(
+        select(StoryboardScene)
+        .where(StoryboardScene.storyboard_id == storyboard_id)
+        .order_by(StoryboardScene.scene_index)
+    ):
+        if int(row.scene_index) == scene_index:
+            target = row
+            break
+        if scene_kind_of({"scene_kind": row.scene_kind}) == LIVE_KIND:
+            move = str((row.prompt_json or {}).get("camera_move") or "").strip()
+            if move:
+                moves.append(move)
+    if target is None or scene_kind_of({"scene_kind": target.scene_kind}) != LIVE_KIND:
+        return None
+    stored = dict(target.prompt_json or {})
+    if not any(str(stored.get(name) or "").strip() for name in _REDO_PLAN_FIELDS):
+        return None
+    old_still = " ".join(str(stored.get("still_prompt") or target.visual_prompt or "").split())
+    source = {**stored, "scene_kind": LIVE_KIND, "shot_type": target.shot_type}
+    try:
+        compiled = compile_prompts(
+            source,
+            dict(board.visual_bible_json or {}),
+            {"still_model_id": still_model},
+            previous_moves=moves,
+            look=load_factual_look(),
+        )
+    except (ValueError, TypeError, KeyError) as exc:
+        raise SceneRedoRefused(
+            "PROMPT_NOT_COMPILED",
+            f"Promptul imaginii scenei {scene_index} nu a putut fi scris din nou din planul "
+            f"scenei ({type(exc).__name__}); nu se cumpără o imagine pe cuvintele vechi.",
+        ) from exc
+    new_still = " ".join(str(compiled.get("still_prompt") or "").split())
+    if not new_still or new_still == old_still:
+        return None
+    return {
+        "scene_index": scene_index,
+        "old_still_prompt": old_still,
+        "still_prompt": new_still,
+        "old_motion_prompt": " ".join(str(stored.get("motion_prompt") or "").split()),
+        "motion_prompt": " ".join(str(compiled.get("motion_prompt") or "").split()),
+        # What the purchase writes, and what it must still find there to write it.
+        "package": {**source, **compiled},
+        "visual_prompt": str(compiled["still_prompt"]),
+        "stored_package": stored,
+        "stored_visual": target.visual_prompt,
+    }
+
+
+#: What a redo plan shows of a rewrite (the rest is the purchase's).
+_REWRITE_SHOWN: tuple[str, ...] = (
+    "old_still_prompt",
+    "still_prompt",
+    "old_motion_prompt",
+    "motion_prompt",
+)
+
+
+def _excerpt(text: str, limit: int = _REWRITE_EXCERPT_CHARS) -> str:
+    """At most ``limit`` characters of ``text``, cut at a word with an ellipsis."""
+    text = " ".join(text.split())
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1].rsplit(" ", 1)[0].rstrip(",;:") + "…"
+
+
+def _rewrite_note_ro(rewrite: dict[str, Any]) -> str:
+    """The Owner's line for a rewritten still prompt: the sentences taken out and put in."""
+    sentence = re.compile(r"(?<=[.!?])\s+")
+    old = [s for s in sentence.split(str(rewrite["old_still_prompt"])) if s]
+    new = [s for s in sentence.split(str(rewrite["still_prompt"])) if s]
+    removed = " ".join(s for s in old if s not in new)
+    added = " ".join(s for s in new if s not in old)
+    parts = [
+        f"scos „{_excerpt(removed)}”" if removed else "",
+        f"pus „{_excerpt(added)}”" if added else "",
+    ]
+    if not removed and not added:  # the same sentences in another order
+        parts = [f"acum „{_excerpt(str(rewrite['still_prompt']))}”"]
+    return (
+        "Promptul imaginii a fost rescris de studio din planul scenei, cu compilatorul de azi "
+        "(0 credite, fără model de limbaj): "
+        + "; ".join(part for part in parts if part)
+        + ". Imaginea se cumpără cu promptul nou, iar pachetul scenei se rescrie la cumpărare."
+    )
+
+
+def _rewrite_scene_prompts(
+    session: Session,
+    storyboard_id: str,
+    rewrite: dict[str, Any],
+    *,
+    plan: dict[str, Any],
+    plan_hash: str,
+    correlation_id: str,
+) -> None:
+    """The one redone scene's package rewritten, inside the transaction that spends the
+    Owner's yes, with its event. A package changed since the plan was read refuses the redo
+    (STALE_PLAN): the caller's transaction is rolled back and his yes stays unspent."""
+    row = session.scalar(
+        select(StoryboardScene).where(
+            StoryboardScene.storyboard_id == storyboard_id,
+            StoryboardScene.scene_index == int(rewrite["scene_index"]),
+        )
+    )
+    if (
+        row is None
+        or dict(row.prompt_json or {}) != rewrite["stored_package"]
+        or row.visual_prompt != rewrite["stored_visual"]
+    ):
+        raise SceneRedoRefused(
+            "STALE_PLAN",
+            f"Pachetul scenei {rewrite['scene_index']} s-a schimbat de când a fost arătat "
+            "planul refacerii: nu se cumpără nimic. Deschideți refacerea din nou.",
+            plan=plan,
+        )
+    row.prompt_json = dict(rewrite["package"])
+    row.visual_prompt = str(rewrite["visual_prompt"])
+    append_event(
+        session,
+        SCENE_PROMPTS_REWRITTEN_EVENT,
+        "storyboard",
+        storyboard_id,
+        1,
+        {
+            "storyboard_id": storyboard_id,
+            **{key: rewrite[key] for key in ("scene_index", *_REWRITE_SHOWN)},
+            "reason": "redo",
+            "plan_hash": plan_hash,
+        },
+        correlation_id,
+    )
+
+
 def _still_redo_plan(
     engine: Engine,
     plan: dict[str, Any],
@@ -10867,8 +11057,17 @@ def _still_redo_plan(
                 statuses=("APPROVED",),
             )
             figure_one = reference.sha256 if reference is not None else None
+        # The words the studio writes for the scene today (2026-10-09, film babcf272): the
+        # plan shows them, its hash binds the Owner's yes to them, and the purchase sends them.
+        rewrite = _scene_prompt_rewrite(session, plan["storyboard_id"], index, model_id)
     package = scene.get("prompt_json") or {}
     words = " ".join(str(package.get("still_prompt") or scene.get("visual_prompt") or "").split())
+    pictured = scene
+    shown: dict[str, Any] | None = None
+    if rewrite is not None:
+        words = str(rewrite["still_prompt"])
+        pictured = {**scene, "visual_prompt": rewrite["visual_prompt"]}
+        shown = {key: rewrite[key] for key in _REWRITE_SHOWN}
     plan.update(
         action=REDO_ACTION,
         tier=REDO_TIER,
@@ -10888,6 +11087,8 @@ def _still_redo_plan(
         replaces=replaces,
         invalidates=invalidates,
     )
+    if shown is not None:
+        plan.update(prompt_rewrite=shown)
     if overhead:
         plan.update(credits_per_request=per_request, round_overhead_credits=overhead)
     gpu_start = f" și pornirea GPU-ului ({overhead} credite pe rundă)" if overhead else ""
@@ -10897,6 +11098,8 @@ def _still_redo_plan(
         "Imaginea veche și cadrul filmat din ea se retrag abia după aprobare; mișcarea scenei "
         "se reface apoi separat. Celelalte scene nu se ating."
     )
+    if shown is not None:
+        reason = f"{_rewrite_note_ro(shown)} {reason}"
     if in_flight:
         plan.update(buyable=False, in_flight=in_flight)
         reason = (
@@ -10915,11 +11118,14 @@ def _still_redo_plan(
             "cap_credits": cap,
             **({"round_overhead_credits": overhead} if overhead else {}),
             "still_prompt": words,
-            "identity": next(iter(still_options(engine, scene)), None),
+            # The identity the new still is recorded under: its words as they will be stored.
+            "identity": next(iter(still_options(engine, pictured)), None),
             "figure_one_sha256": figure_one,
             "replaces": replaces,
             "invalidates": invalidates,
             **({"in_flight": in_flight} if in_flight else {}),
+            # Only a rewritten plan says so: a plan with current words keeps its hash.
+            **({"prompt_rewrite": shown} if shown is not None else {}),
         },
         reason,
     )
@@ -11733,19 +11939,22 @@ def redo_scene(
         # Pictures of this scene already paid for and not yet judged (an interrupted redo's,
         # collected later by its task id) are judged first, free; one the gate approves ends
         # the press with nothing bought (review 2026-10-03: they were bought again blind).
+        # Under a plan that rewrites the scene's words they were bought on the words it
+        # retires: collected, never judged against them (review 2026-10-09, below).
         judged = _judge_paid_stills_first(
             engine,
             storyboard_id,
             correlation_id,
             int(plan["scene_index"]),
             image_adapter=image_adapter,
+            storage_root=storage_root,
+            judging=not plan.get("prompt_rewrite"),
             registry=registry,
             judge=judge,
             face_counter=face_counter,
             measure=measure,
             environment=environment,
             ffmpeg_path=ffmpeg_path,
-            storage_root=storage_root,
         )
         if judged is not None:
             raise SceneRedoRefused(PAID_PICTURES_JUDGED, judged, plan=current())
@@ -12133,13 +12342,23 @@ def _judge_paid_stills_first(
     *,
     image_adapter: Any,
     storage_root: Path | None,
+    judging: bool = True,
     **wiring: Any,
 ) -> str | None:
     """The scene's paid, unjudged still candidates (and its accepted tasks, collected by id)
     judged by the stills gate before anything is bought; nothing here buys or asks a yes.
 
     Returns the Owner's reason when the gate approved one of them (the press ends there),
-    or None when there was nothing waiting or nothing passed (the redo goes on as asked)."""
+    or None when there was nothing waiting or nothing passed (the redo goes on as asked).
+
+    ``judging`` False: the redo's plan rewrites the scene's prompt (`_scene_prompt_rewrite`).
+    The pictures waiting were bought on the stored words it retires, and the gate would judge
+    them against those words (review 2026-10-09: on babcf272 the vision check matched a
+    triptych to a plan of three moments), so one could end the press as the scene's still,
+    with nothing rewritten, against the plan he was shown. Its accepted tasks are only
+    collected (free, by id: nothing paid is lost) and nothing is judged; the redo goes on
+    and buys on the new words, and the old pictures stay PAID and unjudged under the identity
+    the rewrite leaves."""
     from app.media import stills_stage as stills  # noqa: PLC0415 - stills_stage imports us
 
     def approved_and_waiting() -> tuple[set[str], bool]:
@@ -12169,6 +12388,16 @@ def _judge_paid_stills_first(
         # Under the film's purchase lease: a buyer at work polls its own tasks, and a second
         # collector beside it would land the same candidates twice.
         with film_purchase_lease(engine, storyboard_id, holder=correlation_id, step=REDO_STEP):
+            if not judging:
+                collect_submitted_takes(
+                    engine,
+                    collector_for=lambda _take: image_adapter,
+                    correlation_id=correlation_id,
+                    storyboard_id=storyboard_id,
+                    kinds=("still",),
+                    storage_root=storage_root,
+                )
+                return None
             stills.settle_stills(
                 engine,
                 storyboard_id,
@@ -12379,7 +12608,11 @@ def _redo_still(
     unasked: bool = False,
 ) -> dict[str, Any]:
     """One scene's still bought again: one pair of candidates (at most two re-rolls within the
-    cap), judged as the stills step judges them, under the Owner's yes for this redo."""
+    cap), judged as the stills step judges them, under the Owner's yes for this redo.
+
+    Bought on the words today's compiler writes for the scene (`_scene_prompt_rewrite`), the
+    words his plan showed; when they are not the stored ones, the scene's package is rewritten
+    in the transaction that spends his yes (`_rewrite_scene_prompts`), and no other scene's."""
     from app.media import stills_stage as stills  # noqa: PLC0415 - stills_stage imports us
     from app.media.mode_guard import PurchaseGuard, unasked_refusal  # noqa: PLC0415
     from app.media.prompt_lint import bible_face_rule  # noqa: PLC0415
@@ -12401,6 +12634,26 @@ def _redo_still(
     bible, scenes = stills._read_scenes(engine, storyboard_id)
     scene = next(s for s in scenes if s.index == index)
     live = [s for s in scenes if s.kind == LIVE_KIND]
+    # The words bought are the words the Owner's plan showed (2026-10-09, film babcf272): the
+    # scene compiled again as its plan was, and refused when they are no longer the plan's.
+    with Session(engine) as session:
+        rewrite = _scene_prompt_rewrite(session, storyboard_id, index, str(plan["model_id"]))
+    if (rewrite or {}).get("still_prompt") != (plan.get("prompt_rewrite") or {}).get(
+        "still_prompt"
+    ):
+        raise SceneRedoRefused(
+            "STALE_PLAN",
+            f"Promptul imaginii scenei {index} nu mai este cel din planul arătat: nu se cumpără "
+            "nimic. Deschideți refacerea din nou și aprobați planul de acum.",
+            plan=plan,
+        )
+    if rewrite is not None:
+        # This one scene, as it will be stored: the new words, the identity its still is
+        # recorded under, its look and its camera move (for the gate's checks).
+        scene.words = str(rewrite["still_prompt"])
+        scene.identity = still_fields(str(rewrite["visual_prompt"]), scene.reference)
+        scene.look_block = str(rewrite["package"].get("look_block") or "")
+        scene.camera_move = str(rewrite["package"].get("camera_move") or "")
     if environment == "PRODUCTION" and scene.source not in shot_plan_sources(engine, storyboard_id):
         raise SceneRedoRefused(
             "NEEDS_SHOT_PLAN",
@@ -12486,22 +12739,38 @@ def _redo_still(
             ),
             plan=plan,
         )
+    evidence = (
+        f"imaginea scenei {index}: {STILL_CANDIDATES} variante la 2K, "
+        f"{plan['credits']} credite, plafon {cap}; cost estimat "
+        f"{_usd_ro(plan['cost_usd'])}, plafon {_usd_ro(plan['cap_usd'])}"
+    )
+    if rewrite is not None:
+        # His card says what his yes buys (review 2026-10-09): the governance window shows
+        # only the evidence, and a repair nobody pressed (the day's QC) reaches him only there.
+        evidence = f"{evidence}. {_rewrite_note_ro(plan['prompt_rewrite'])}"
     with Session(engine) as session, session.begin():
         verdict = may_act(
             session,
             REDO_ACTION,
             requester=requester,
             subject=storyboard_id,
-            evidence=(
-                f"imaginea scenei {index}: {STILL_CANDIDATES} variante la 2K, "
-                f"{plan['credits']} credite, plafon {cap}; cost estimat "
-                f"{_usd_ro(plan['cost_usd'])}, plafon {_usd_ro(plan['cap_usd'])}"
-            ),
+            evidence=evidence,
             # The redo's cap, with its re-rolls (MONEY-08): what OVER_USD compares.
             cost_usd=plan["cap_usd"],
             context=asked_about,
         )
         if verdict["allowed"]:
+            if rewrite is not None:
+                # The scene's package is rewritten with the yes that buys on it, or not at
+                # all: a package changed meanwhile rolls this back and the yes stays unspent.
+                _rewrite_scene_prompts(
+                    session,
+                    storyboard_id,
+                    rewrite,
+                    plan=plan,
+                    plan_hash=plan_hash,
+                    correlation_id=correlation_id,
+                )
             # The yes is spent and the old picture retired together, with every shot that
             # started from it: a shot never outlives the still it was filmed from.
             _retire_takes(
@@ -12546,7 +12815,7 @@ def _redo_still(
     if first is not None and first.index != index and first.reuse is not None and first.reuse.path:
         figure_one = Path(str(first.reuse.path)).read_bytes()
     if batching:
-        return _redo_still_rounds(
+        rounds = _redo_still_rounds(
             engine,
             storyboard_id,
             correlation_id,
@@ -12571,6 +12840,7 @@ def _redo_still(
             meter=meter,
             unasked=unasked,
         )
+        return {**rounds, "prompt_rewritten": rewrite is not None}
     # The character's reference first (when the vendor takes one), the film's look second.
     references, with_character, with_figure = stills._references(
         scene, figure_one, image_adapter, first=first is None or first.index == index
@@ -12635,6 +12905,8 @@ def _redo_still(
         "retired": list(plan["replaces"]),
         "invalidated": list(plan["invalidates"]),
         "reference_unverified": buyer.unverified,
+        # The scene's prompts compiled again and stored with this redo (2026-10-09).
+        "prompt_rewritten": rewrite is not None,
     }
 
 

@@ -99,6 +99,179 @@ THEN_CHAIN = re.compile(
 )
 NEGATION = re.compile(r"\b(?:no|not|without|never|avoid|don't|do\s+not)\s+[\w-]+", re.IGNORECASE)
 
+# A still is one moment, the first frame of its shot. Film babcf272 (2026-10-09), scene 5:
+# the still prompt said "Glowing white spheres ... holding together as atoms, then the empty
+# accelerator tunnel from scene 1. First the near-black void of scenes 2 and 3, then the
+# identical tunnel from scene 1", and the image model drew all of it: three stacked panels
+# in one 9:16 picture (tunnel with an atom, a flat black band, an empty tunnel), which the
+# clip then animated. Every check passed it. These patterns say where a later moment begins
+# and where a prompt points at another scene, which no image or video model can see.
+
+#: Opens a later moment when it starts a clause: "finally", "later", "at the end" (not "at
+#: the end of the corridor", which is a place), "moments later", "next" and "second(ly)"
+#: (not "next to the window" or "the second floor": a place again).
+_LATER_OPENER = (
+    r"(?:(?:and|but)\s+)?(?:finally|eventually|later|afterwards?|in\s+the\s+end|at\s+last"
+    r"|at\s+the\s+end(?!\s+of\s+(?:(?:the|this|a)\s+)?+"
+    r"(?!(?:shot|scene|clip|sequence|film|video|moment)\b)\w)"
+    r"|(?:(?:a|an|some|a\s+few|few|\d+)\s+)?(?:moments?|seconds?|minutes?|hours?|days?|weeks?"
+    r"|months?|years?|decades?|centuries)\s+later|soon\s+after(?:wards?)?"
+    r"|next(?!\s+(?:to|door)\b)|secondly|second(?=\s*,|\s+(?:the|a|an)\b))\b"
+)
+SEQUENCE_OPENER = re.compile(rf"^\s*{_LATER_OPENER}", re.IGNORECASE)
+#: The same opener, or a "then", with the comma after it: what the compiler takes off a field
+#: that opens with it ("Finally, the cluster settles" is said after the scene before).
+LATER_START = re.compile(
+    rf"^\s*(?:{_LATER_OPENER}|(?:and\s+)?then\b|after\s+that\b)\s*,?\s*", re.IGNORECASE
+)
+#: How a field says its first moment when a later one follows: "First the near-black void",
+#: "First, the void" (a clause of its own once split at the comma), "Initially the void".
+#: "First light" (dawn) and "First Nations" are pictures and stay.
+_FIRST_WORDS = (
+    r"(?:at\s+first|initially|in\s+the\s+beginning|to\s+begin(?:\s+with)?|first(?=\s*,"
+    r"|\s+(?:the|a|an|its|their|his|her|our|this|that|these|those)\b))"
+)
+FIRST_OPENER = re.compile(
+    rf"^(?:{_FIRST_WORDS}|first\s*$)\s*,?\s*",
+    re.IGNORECASE,
+)
+_FIRST_IN_PROMPT = re.compile(rf"(?:^|(?<=[.;:!?,]))\s*{_FIRST_WORDS}", re.IGNORECASE)
+#: A "then" chain as a still reads it. "Followed by" is where things stand in one picture
+#: ("a mother elephant followed by her calf"), and "since then", "back then", "by then" are
+#: about the past, not a later moment: the motion prompt's THEN_CHAIN keeps both.
+STILL_THEN = re.compile(
+    r"(?<!\bsince )(?<!\buntil )(?<!\btill )(?<!\bby )(?<!\bback )(?<!\beven )(?<!\bjust )"
+    r"\bthen\b(?!-)|\bnext,|\bafter\s+that\b|\bafterwards\b",
+    re.IGNORECASE,
+)
+#: A change over time inside one clause: "eventually", "dissolves into", "cuts to". Said in
+#: the present only: "transformed into a museum", "replaced by palm oil plantations" and "the
+#: transition to renewable energy" are how a place is now, one picture. "Fades into the
+#: distance" and "gives way to" are left alone: landscapes are described that way.
+LATER_MOMENT = re.compile(
+    r"\b(?:eventually|finally)\b"
+    r"|\b(?:dissolv(?:e|es|ing)|morph(?:s|ing)?|transform(?:s|ing))\s+(?:in)?to\b"
+    r"|\b(?:cuts?|cutting)\s+(?:back\s+)?to\b",
+    re.IGNORECASE,
+)
+#: The same, read across a whole prompt: an opener after a sentence or clause break.
+_LATER_IN_PROMPT = re.compile(rf"(?:^|(?<=[.;:!?,]))\s*{_LATER_OPENER}", re.IGNORECASE)
+_SCENE_NUMBER = r"(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)"
+#: Another scene by its number ("scene 1", "scenes 2 and 3", "scene 4's").
+SCENE_NUMBERED = (
+    rf"\bscenes?\s+(?:no\.?\s*|#\s*)?{_SCENE_NUMBER}\b"
+    rf"(?:\s*(?:,|and|&|or|to|-|–)\s*{_SCENE_NUMBER}\b)*"
+)
+#: Another scene named by its number or by its place in the film ("the previous scene").
+#: Not "the opening shot": a scene names itself that way ("The opening shot shows a glacier").
+SCENE_REFERENCE = re.compile(
+    rf"(?:{SCENE_NUMBERED}"
+    r"|\b(?:previous|preceding|prior|earlier|next|following)\s+(?:scenes?|shots?)\b)(?:'s)?",
+    re.IGNORECASE,
+)
+#: Words that ask an image model for several pictures in one frame: babcf272's scene 5 came
+#: back as three stacked panels from a plain list of moments, and a plan that says "split
+#: screen" or "Before: ... After: ..." asks for exactly that. "Side by side" alone, "solar
+#: panels" and "a control panel" are things in one picture and stay.
+PANEL_LAYOUT = re.compile(
+    r"\bsplit[- ]?(?:screens?|frames?|images?|views?|panels?)\b"
+    r"|\b(?:diptych|triptych|polyptych)s?\b"
+    r"|\bbefore[- ]and[- ]after\b"
+    r"|\bside[- ]by[- ]side\s+(?:comparisons?|views?|images?|pictures?|photos?|shots?|frames?"
+    r"|panels?)\b"
+    r"|\b(?:shown|seen|displayed|presented)\s+side[- ]by[- ]side\b"
+    r"|\bphoto\s+collage\b|\bcollage\s+of\s+(?:images|photos|pictures|shots|scenes|views)\b"
+    r"|\bmontage\b|\b(?:stacked|separate|comic|multiple|several)\s+panels\b"
+    r"|\bpanels?\s+(?:\d+|one|two|three)\b"
+    r"|\bpicture[- ]in[- ]picture\b|\binset\s+(?:images?|pictures?|photos?|shots?|frames?)\b",
+    re.IGNORECASE,
+)
+_PANEL_LABEL_WORDS = (
+    r"(?:before|after|top|bottom|upper|lower|left|right)"
+    r"(?:\s+(?:half|third|panel|frame|image|side|part))?|panel\s*(?:\d+|one|two|three)"
+)
+#: A clause labelled as one picture of a layout: "Before:", "Top half:", "Panel 2:".
+PANEL_LABEL = re.compile(rf"^\s*(?:{_PANEL_LABEL_WORDS})\s*:", re.IGNORECASE)
+_PANEL_LABEL_IN_PROMPT = re.compile(
+    rf"(?:^|(?<=[.;\n]))\s*((?:{_PANEL_LABEL_WORDS})\s*:)", re.IGNORECASE
+)
+#: The head of a broken sentence: a clause that ends in an article, a preposition, a
+#: conjunction or "is" ("The film exists in two interconnected spaces: the", babcf272).
+#: Lower-case "a" only, so "Plan A" stays whole. Read it through dangling().
+DANGLING_END = re.compile(
+    r"(?:\b(?i:the|an|of|in|on|at|to|and|or|with|from|by|for|is|are)|\ba)\s*$"
+)
+#: "In", "on" and "by" after a verb of motion are adverbs, and the clause is whole: "fog
+#: rolling in", "clouds drift by", "the lamps switched on" are the world motion a clip wants.
+_PARTICLE_END = re.compile(
+    r"\b(?:(?:roll|drift|pass|sweep|creep|blow|sail|float|walk|stroll|rush|flood|pour|seep"
+    r"|switch|turn|flick|click|look|pull|crowd|stream|wash|flash|roar|march|spill|kick|burst"
+    r"|drop|lean|zoom|wander|sneak|glow|soak|crawl|ebb|swirl|swarm|sink|speed|fall|press"
+    r"|push|hold|stand|spread|break|bring|step|light|run|set|hang)\w*"
+    r"|(?:tumbl|trickl|rumbl|settl|glid|surg|clos|fad|mov|rac|rid|pil|wav|shin)(?:e|es|ed|ing)"
+    r"|(?:hurr|carr)(?:y|ies|ied|ying)|com(?:e|es|ing)|go(?:es|ing|ne)?|fl(?:y|ies|ying|own)"
+    r"|came|went|flew|blew|swept|crept|ran|rode|sped|slid|sank|broke|fell|held|stood|hung"
+    r"|brought|lit)\s+(?:in|on|by)\s*$",
+    re.IGNORECASE,
+)
+
+
+def dangling(text: str) -> bool:
+    """Whether a clause breaks off: it ends in a function word that needs what follows."""
+    return bool(DANGLING_END.search(text)) and not _PARTICLE_END.search(text)
+
+
+_ASIDE = re.compile(r"\s*\(([^()]*)\)")
+#: The first word of a new phrase after an aside: a participle ("salvaging belongings",
+#: "lined with magnets"), an article, a preposition, a conjunction. Nouns that end like a
+#: participle ("ceiling", "building") are the phrase's own head word.
+_PHRASE_START = re.compile(
+    r"^(?:(?!(?:building|ceiling|clothing|railing|housing|lighting|painting|morning|evening"
+    r"|opening|setting|crossing|dwelling|clearing|awning|landing|wedding|scaffolding|paving"
+    r"|fencing|wiring|piping|mooring|string|spring|thing|wing|ring|king|swing)s?\b)"
+    r"\w{2,}ing|\w{3,}ed|the|a|an|this|that|these|those|its|their|his|her|our|with|without"
+    r"|in|on|at|by|for|from|to|of|into|onto|under|over|near|beside|behind|across|along"
+    r"|through|and|or|but|as|while|where|which|who)\b",
+    re.IGNORECASE,
+)
+
+
+def without_asides(text: str) -> str:
+    """The text with the parenthetical asides that would break a clause closed up.
+
+    Film babcf272 (2026-10-09): splitting a value at "(" left "The film exists in two
+    interconnected spaces: the" in every still prompt, and "lined with (blue-painted)
+    magnets" lost its tunnel. An aside after words that break off ("the (physical) tunnel",
+    "located in (Geneva)") is opened, without its commas. An aside inside a phrase ("a
+    controlled (indoor, climate-stable) space") is taken out: the phrase is whole again. An
+    aside that ends a phrase ("debris (wooden beams, furniture)", "figures (farmer and child)
+    salvaging ...") stays, and a clause split says it as clauses of its own, as it always
+    has: the plan's details are kept. An unbalanced bracket stays too.
+    """
+
+    def close(match: re.Match[str]) -> str:
+        if dangling(match.string[: match.start()]):
+            opened = " ".join(re.sub(r"[,;]", " ", match.group(1)).split())
+            return f" {opened}" if opened else ""
+        after = match.string[match.end() :].lstrip()
+        if after[:1].isalnum() and not _PHRASE_START.match(after):
+            return ""
+        return match.group(0)
+
+    while True:
+        closed = _ASIDE.sub(close, text)
+        if closed == text:
+            return text
+        text = closed
+
+
+#: A value that says there is nothing: the bible's weather "None" reached a still prompt.
+NONE_WORD = re.compile(
+    r"^\s*(?:none|null|nil|n/?a|not\s+applicable|not\s+specified|unspecified"
+    r"|none\s+specified|tbd|-+)\s*[.!]?\s*$",
+    re.IGNORECASE,
+)
+
 # Phrases that ask for something a photo or video generator cannot draw truthfully. They
 # force the scene's kind: the Nepal bar chart (100 vs 83) and black screen became women.
 KIND_PHRASES: tuple[tuple[str, re.Pattern[str]], ...] = (
@@ -312,6 +485,28 @@ def prompt_cap(contract: Mapping[str, Any] | None, target: str) -> int:
             if numbers:
                 return min(numbers)
     return DEFAULT_PROMPT_MAX_UTF16
+
+
+def _sequence_in(text: str) -> str:
+    """The earliest words of a still prompt that begin a later moment, else ""."""
+    found = [
+        (match.start(), match.group(0).strip(" .;:!?,"))
+        for pattern in (STILL_THEN, LATER_MOMENT, _LATER_IN_PROMPT, _FIRST_IN_PROMPT)
+        for match in [pattern.search(text)]
+        if match and match.group(0).strip(" .;:!?,")
+    ]
+    return min(found)[1] if found else ""
+
+
+def _panels_in(text: str) -> str:
+    """The earliest words of a still prompt that ask for several pictures in one, else ""."""
+    found = [
+        (match.start(), match.group(match.lastindex or 0).strip())
+        for pattern in (PANEL_LAYOUT, _PANEL_LABEL_IN_PROMPT)
+        for match in [pattern.search(text)]
+        if match
+    ]
+    return min(found)[1] if found else ""
 
 
 def classify_kind_phrase(text: str) -> tuple[str, str] | None:
@@ -530,6 +725,51 @@ def lint_still_prompt(
                     f"desenează corect. Se compune local, gratuit, ca {KIND_RO[forced_kind]}.",
                 )
             )
+
+    # WARN, not BLOCK: a BLOCK on a stored prompt makes the sheet LINT_BLOCKED, and the sheet
+    # repair then rewrites every scene's package, which would orphan takes already bought.
+    # The compiler is what keeps a still to one moment; this tells the Owner when it did not.
+    sequence = _sequence_in(text)
+    if sequence:
+        findings.append(
+            _finding(
+                "STILL_SEQUENCE",
+                WARN,
+                scene,
+                sequence,
+                f"Promptul imaginii înșiră mai multe momente („{sequence}”). O imagine este "
+                "un singur moment, primul cadru al planului: cu „apoi” modelul de imagine "
+                "desenează mai multe tablouri într-unul, ca panouri suprapuse. Descrieți doar "
+                "primul moment.",
+            )
+        )
+    panels = _panels_in(text)
+    if panels:
+        findings.append(
+            _finding(
+                "STILL_PANELS",
+                WARN,
+                scene,
+                panels,
+                f"Promptul imaginii cere mai multe tablouri într-o singură imagine („{panels}”): "
+                "ecran împărțit, „înainte și după” sau panouri. Modelul de imagine le desenează "
+                "suprapuse în cadrul vertical. O imagine este un singur moment: descrieți doar "
+                "primul tablou.",
+            )
+        )
+    pointer = SCENE_REFERENCE.search(text)
+    if pointer:
+        findings.append(
+            _finding(
+                "SCENE_REFERENCE",
+                WARN,
+                scene,
+                pointer.group(0),
+                f"Promptul imaginii trimite la altă scenă („{pointer.group(0)}”). Modelul de "
+                "imagine nu știe cum arată „scena N” și poate desena mai multe tablouri "
+                "într-unul; descrieți locul în cuvinte.",
+            )
+        )
 
     rule = bible_face_rule(bible)
     if rule:

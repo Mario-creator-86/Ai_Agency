@@ -15,6 +15,12 @@ What is asserted, all at 0 credits and with every provider faked:
   blurred one carrying a hard line or a small box, and a half-resolution picture upscaled;
   baked motion blur blocks a static shot; a degenerate still blocks; the palette distance is
   a score and a warning, never a block;
+- a still made of panels blocks and is re-rolled with "one single continuous photograph":
+  the flat-band reading fails the 2026-10-09 triptych, the still with a black lower third, a
+  black still with a strip of picture and a blank still (a film's frame alone is read with a
+  waiver for captions over a blank field) and passes the good stills and the Nepal fixtures;
+  the vision model's one_picture false blocks the triptych that has no band, and contradicts
+  a buy_motion;
 - the best passing candidate is chosen by its check score (the sharper of two passing takes
   wins), a failing still is re-rolled at most twice with its violation rewritten as a
   positive instruction, then goes to the Owner.
@@ -26,6 +32,15 @@ and 2 have no people; scene 3 three villagers with faces, scene 4 a farmer in th
 profile, scene 5 two panels of seated women and children, scene 6 a woman's face filling
 the right half. The sharpness measurements need the full-resolution stills and read them
 from the media folder, read-only; they skip where that folder is absent.
+
+tests/fixtures/panels/*.jpg are 270x480 JPEG (q 2, area-scaled with ffmpeg) copies of stills
+RunPod delivered on 2026-10-09 for «The Particle That Shouldn't Exist (But Does)»
+(backend/storage/media/babcf272-.../stills/*.png, 1530x2720, read only). Looked at by eye:
+scene_05_c7c55abb_c1 three stacked panels (a tunnel with a glowing atom, a flat black band,
+an empty tunnel); scene_02_a1d8d1bf_c1 glowing spheres in a tunnel over a black lower third;
+scene_05_0d900cbd_c2 three stacked tunnels with no band between them; scene_02_cc3a68a6_c2,
+scene_04_f606d968_c2 and scene_01_d1e900d3_c1 one photograph each. The copies read the same
+bands as the originals (still_gate's docstring).
 """
 
 from __future__ import annotations
@@ -41,10 +56,13 @@ import pytest
 from app.media import faces, still_gate
 from app.media.faces import FaceCount, count_faces
 from app.media.picture_qc import StillJudgement, StillVerdict
+from app.media.qc import FRAME_PICTURE_FLOOR, PANEL_BAND_SHARE, flat_band, still_is_degenerate
 from app.media.still_gate import (
+    ALL_CHECKS,
     FINE_DETAIL_KEPT_MAX,
     MAX_REROLLS,
     MOTION_BLUR_ANISOTROPY,
+    POSITIVE_WORDS,
     SHARPNESS_FLOOR,
     CheckResult,
     StillPlan,
@@ -59,6 +77,18 @@ from app.media.still_gate import (
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "tests" / "fixtures" / "nepal_1d530880"
+PANELS = ROOT / "tests" / "fixtures" / "panels"
+#: The longest flat full-width band each panel fixture reads at 270x480, as (first row, last
+#: row), measured 2026-10-09 on the PNGs and on these copies alike; None: no flat row at all.
+PANEL_BANDS = {
+    "scene_05_c7c55abb_c1": (159, 320),  # the triptych: 162 rows, 34 %
+    "scene_02_a1d8d1bf_c1": (321, 479),  # a black lower third: 159 rows, 33 %
+    "scene_02_cc3a68a6_c2": (0, 27),  # a good still's dark ceiling: 28 rows, 6 %
+    "scene_05_0d900cbd_c2": (159, 159),  # the triptych without a band: 1 row
+    "scene_04_f606d968_c2": None,
+    "scene_01_d1e900d3_c1": None,
+}
+SPLIT = ("scene_05_c7c55abb_c1", "scene_02_a1d8d1bf_c1")
 NEPAL_MEDIA = ROOT / "backend" / "storage" / "media" / "1d530880-c94a-48a1-baf5-6ad7c1796a6d"
 #: The five scene-1 stills RunPod delivered on 2026-10-09 for «The Particle That Shouldn't
 #: Exist (But Does)» (1530x2720 PNG), read only; the gate rejected them all at 70-182.
@@ -116,6 +146,7 @@ def clean_verdict(scene: int = 1, **changes) -> StillJudgement:
         "scene": scene,
         "faces_visible": False,
         "readable_text": False,
+        "one_picture": True,
         "matches_plan": True,
         "look_ok": True,
         "technical_ok": True,
@@ -305,6 +336,7 @@ def test_a_verdict_that_contradicts_its_own_answers_does_not_pass():
     )
     for change in (
         {"readable_text": True},
+        {"one_picture": False},
         {"matches_plan": False},
         {"look_ok": False},
         {"technical_ok": False},
@@ -525,6 +557,7 @@ def test_the_sharper_of_two_passing_takes_wins_and_the_score_never_saturates():
     def passing(scene: int, sharpness: float):
         checks = [
             CheckResult("degenerate", "PASSED", False, None, "structură de imagine"),
+            CheckResult("panels", "PASSED", False, 0.0, "o singură imagine"),
             CheckResult("sharpness", "PASSED", False, sharpness, f"claritate {sharpness:.0f}"),
             CheckResult("motion_blur", "PASSED", False, 1.4, "raport 1.4"),
             CheckResult("faces", "PASSED", False, 0.0, "0 fețe"),
@@ -624,9 +657,245 @@ def test_without_an_encoder_the_picture_checks_are_not_run_and_block_in_producti
     production = local_checks(fixture(1), plan(), environment="PRODUCTION", face_counter=no_faces)
     test = local_checks(fixture(1), plan(), environment="TEST", face_counter=no_faces)
 
-    sharp = next(c for c in production if c.code == "sharpness")
-    assert sharp.status == "NOT_RUN" and sharp.blocking is True
-    assert next(c for c in test if c.code == "sharpness").blocking is False
+    for code in ("sharpness", "panels"):
+        unmeasured = next(c for c in production if c.code == code)
+        assert unmeasured.status == "NOT_RUN" and unmeasured.blocking is True, code
+        assert next(c for c in test if c.code == code).blocking is False, code
+    # "Could not measure" is never re-rolled: another still meets the same missing encoder.
+    report = decide(fixture(1), plan(), production, clean_verdict(), environment="PRODUCTION")
+    assert "panels" in report.unmeasured and "panels" not in report.violations
+    assert next_step(report, rerolls_done=0).action == "needs_owner"
+
+
+# ------------------------------------------------------------- one picture, not panels
+
+
+def panel(name: str) -> Path:
+    return PANELS / f"{name}.jpg"
+
+
+def panels_check(path: Path, environment: str = "PRODUCTION") -> CheckResult:
+    (check,) = local_checks(
+        path, plan(5), environment=environment, face_counter=no_faces, measure=("panels",)
+    )
+    return check
+
+
+def test_panels_is_one_of_the_gates_checks_with_positive_words():
+    assert "panels" in ALL_CHECKS
+    assert POSITIVE_WORDS["panels"] == (
+        "one single continuous photograph filling the whole frame from edge to edge"
+    )
+
+
+@needs_ffmpeg
+def test_the_panel_fixtures_are_downscaled_270x480_jpeg_copies():
+    ffprobe = shutil.which("ffprobe")
+    assert ffprobe
+    for name in PANEL_BANDS:
+        probed = subprocess.run(
+            [ffprobe, "-v", "error", "-show_entries", "stream=codec_name,width,height"]
+            + ["-of", "json", str(panel(name))],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        stream = json.loads(probed.stdout)["streams"][0]
+        assert (stream["codec_name"], stream["width"], stream["height"]) == ("mjpeg", 270, 480)
+
+
+@needs_ffmpeg
+def test_the_flat_band_reads_the_measured_rows_on_every_panel_fixture():
+    for name, rows in PANEL_BANDS.items():
+        band = flat_band(FFMPEG, panel(name))
+        assert band is not None, name
+        assert band.height == 480
+        assert ((band.start, band.end) if band.rows else None) == rows, (name, band)
+        assert band.splits_the_picture is (name in SPLIT), (name, band)
+        assert band.splits_a_still is (name in SPLIT), (name, band)
+        # Beside the band, two thirds of each panel still is picture.
+        assert band.picture_share > 0.6, (name, band)
+    assert flat_band(FFMPEG, PANELS / "absent.jpg") is None
+    assert flat_band(None, panel("scene_01_d1e900d3_c1")) is None
+
+
+@needs_ffmpeg
+@pytest.mark.parametrize("name", SPLIT)
+def test_the_triptych_and_the_black_lower_third_fail_the_panels_check(name):
+    check = panels_check(panel(name))
+
+    assert check.status == "FAILED" and check.blocking is True
+    assert check.value is not None and check.value >= 2 * PANEL_BAND_SHARE
+    assert "nu e o singură fotografie" in check.detail_ro
+    start, end = PANEL_BANDS[name]
+    assert f"rândurile {start}-{end} din 480" in check.detail_ro
+    # Between two pictures, or a blank strip to the bottom edge.
+    assert ("la mijloc" if start > 0 and end < 479 else "jos") in check.detail_ro
+    # A measured violation blocks in TEST as well.
+    assert panels_check(panel(name), environment="TEST").blocking is True
+
+
+@needs_ffmpeg
+def test_the_good_stills_and_the_nepal_fixtures_pass_the_panels_check():
+    """The widest flat band a good still reads: 28 rows (a dark ceiling), and 49 on the Nepal
+    scene 5, whose two pictures stand side by side: a row reading cannot see a vertical split,
+    nor the stacked tunnels of scene_05_0d900cbd_c2, which meet without a band. Those two are
+    the vision checklist's (test_one_picture_false_blocks_the_triptych_the_band_cannot_see)."""
+    good = [panel(name) for name in PANEL_BANDS if name not in SPLIT]
+    good += [fixture(scene) for scene in range(1, 7)]
+    for path in good:
+        check = panels_check(path)
+        assert check.status == "PASSED" and check.blocking is False, (path.name, check)
+        assert check.value is not None and check.value < PANEL_BAND_SHARE / 1.4, path.name
+    band = flat_band(FFMPEG, fixture(5))
+    assert band is not None and (band.start, band.end) == (0, 48)
+
+
+@needs_ffmpeg
+def test_a_blank_still_is_refused_as_panels_too_but_a_blank_frame_under_captions_is_not(
+    tmp_path,
+):
+    """A blank still is a band of the whole height: refused by this check as by the
+    degenerate one, since nothing on a still is burned in or fades. A film's frame is read
+    with a waiver: two lines of captions over a blank field (a white box where they sit,
+    y 1300-1440) leave a band of over half the height beside 7 % of rows that are not flat,
+    the caption's, and a blank field has no pictures to hold apart. It is the look's and the
+    editorial check's; refused as panels it would buy a new still for a fade to black."""
+    blank = render(tmp_path, "blank.png", "color=c=0x202020:s=1080x1920", lavfi=True)
+    band = flat_band(FFMPEG, blank)
+    assert band is not None and (band.start, band.end) == (0, 479)
+    assert band.picture_share == 0
+    assert band.splits_a_still is True and band.splits_the_picture is False
+    check = panels_check(blank)
+    assert check.status == "FAILED" and check.blocking is True
+    assert "pe toată înălțimea" in check.detail_ro
+    (degenerate,) = local_checks(
+        blank, plan(), environment="PRODUCTION", face_counter=no_faces, measure=("degenerate",)
+    )
+    assert degenerate.status == "FAILED" and degenerate.blocking is True
+
+    captioned = render(
+        tmp_path, "captioned.png", str(blank), vf="drawbox=x=240:y=1300:w=600:h=140:c=white:t=fill"
+    )
+    band = flat_band(FFMPEG, captioned)
+    assert band is not None and band.share >= 4 * PANEL_BAND_SHARE
+    assert band.picture_share < FRAME_PICTURE_FLOOR, band
+    assert band.splits_the_picture is False and band.splits_a_still is True
+
+
+def strip_still(tmp_path: Path, rows: int) -> Path:
+    """A black 1530x2720 still (RunPod's size) with a full-width strip `rows` px tall cut from
+    a good still (scene_04_f606d968_c2) across its middle."""
+    target = tmp_path / f"strip_{rows}.png"
+    subprocess.run(
+        [FFMPEG, "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=black:s=1530x2720"]
+        + ["-i", str(panel("scene_04_f606d968_c2")), "-filter_complex"]
+        + [
+            f"[1]scale=1530:2720:flags=lanczos,crop=1530:{rows}:0:1100[strip];"
+            f"[0][strip]overlay=0:{(2720 - rows) // 2}"
+        ]
+        + ["-frames:v", "1", str(target)],
+        check=True,
+        capture_output=True,
+        timeout=60,
+    )
+    return target
+
+
+@needs_ffmpeg
+@pytest.mark.parametrize(("rows", "splits_a_frame"), ((260, False), (300, True)))
+def test_a_still_mostly_black_beside_a_strip_of_picture_is_panels(tmp_path, rows, splits_a_frame):
+    """Review of 2026-10-09: a black still with a strip of picture 260 or 300 px tall (9.6 %
+    and 11 % of the height) passed both local checks. The degenerate check's structure stays
+    under its line while that much picture is there (it refuses a strip of 200 px, 7.5 %), and
+    the panels check waived any band beside less than 15 % of picture, a waiver meant for a
+    film's frames (captions over a blank field, a fade to black). A still carries neither:
+    on a still any band of PANEL_BAND_SHARE blocks."""
+    still = strip_still(tmp_path, rows)
+    band = flat_band(FFMPEG, still)
+    assert band is not None and band.share >= 2 * PANEL_BAND_SHARE
+    assert band.picture_share < PANEL_BAND_SHARE, band
+    assert still_is_degenerate(FFMPEG, still) is None
+
+    check = panels_check(still)
+    assert check.status == "FAILED" and check.blocking is True, check
+    assert "nu e o singură fotografie" in check.detail_ro
+    report = decide(still, plan(5), [check], clean_verdict(5), environment="TEST")
+    assert report.decision == "BLOCKED" and report.violations == ("panels",)
+    assert POSITIVE_WORDS["panels"] in next_step(report, rerolls_done=0).instruction
+    # On a film's frame the band needs FRAME_PICTURE_FLOOR of picture beside it (two caption
+    # lines read 7.3 %): the wider strip splits a frame too, the narrower one is the still
+    # gate's and the look's.
+    assert band.splits_a_still is True
+    assert band.splits_the_picture is splits_a_frame
+    assert (band.picture_share >= FRAME_PICTURE_FLOOR) is splits_a_frame
+
+
+@pytest.mark.skipif(not PARTICLE_STILLS.is_dir(), reason="the 2026-10-09 stills are not here")
+@needs_ffmpeg
+def test_the_delivered_pngs_read_the_same_bands_as_their_copies():
+    for name, rows in PANEL_BANDS.items():
+        band = flat_band(FFMPEG, PARTICLE_STILLS / f"{name}.png")
+        assert band is not None, name
+        assert ((band.start, band.end) if band.rows else None) == rows, (name, band)
+
+
+@needs_ffmpeg
+def test_a_panel_band_blocks_the_still_and_is_rerolled_with_one_continuous_photograph():
+    """The triptych, with a vision model that passed it (as on 2026-10-09): the band blocks."""
+    name = "scene_05_c7c55abb_c1"
+    checks = local_checks(
+        panel(name), plan(5), environment="TEST", face_counter=no_faces, measure=("panels",)
+    )
+    report = decide(panel(name), plan(5), checks, clean_verdict(5), environment="TEST")
+
+    assert report.decision == "BLOCKED" and report.outcome == "regenerate_still"
+    assert report.violations == ("panels",) and report.unmeasured == ()
+    assert report.measured["panels"] == pytest.approx(0.338, abs=0.002)
+    step = next_step(report, rerolls_done=0)
+    assert step.action == "reroll"
+    assert "one single continuous photograph filling the whole frame" in step.instruction
+    assert next_step(report, rerolls_done=MAX_REROLLS).action == "needs_owner"
+
+
+@needs_ffmpeg
+def test_one_picture_false_blocks_the_triptych_the_band_cannot_see():
+    """scene_05_0d900cbd_c2: three tunnels stacked with no band between them. The band passes
+    it; the vision model's one_picture is its net, and it outweighs the model's own
+    buy_motion."""
+    name = "scene_05_0d900cbd_c2"
+    checks = local_checks(
+        panel(name), plan(5), environment="PRODUCTION", face_counter=no_faces, measure=("panels",)
+    )
+    assert checks[0].status == "PASSED"
+    triptych = clean_verdict(
+        5, one_picture=False, verdict="buy_motion", reason="three tunnels stacked in one frame"
+    )
+
+    report = decide(panel(name), plan(5), checks, triptych, environment="PRODUCTION")
+
+    assert report.decision == "BLOCKED"
+    assert "panels" in report.violations
+    assert any("singură fotografie" in r and "three tunnels" in r for r in report.reasons_ro)
+    step = next_step(report, rerolls_done=0)
+    assert step.action == "reroll" and POSITIVE_WORDS["panels"] in step.instruction
+    # Positive words only, as for every other violation.
+    assert not any(w in step.instruction.lower().split() for w in ("no", "avoid", "without"))
+
+
+def test_a_missing_panels_check_blocks_in_production_and_warns_in_test():
+    checks = [
+        CheckResult("degenerate", "PASSED", False, None, "structură de imagine"),
+        CheckResult("sharpness", "PASSED", False, 120.0, "claritate 120"),
+        CheckResult("motion_blur", "PASSED", False, 1.4, "raport 1.4"),
+        CheckResult("faces", "PASSED", False, 0.0, "0 fețe"),
+    ]
+    production = decide(fixture(1), plan(), checks, clean_verdict(), environment="PRODUCTION")
+    test = decide(fixture(1), plan(), checks, clean_verdict(), environment="TEST")
+
+    assert production.decision == "BLOCKED" and production.unmeasured == ("panels",)
+    assert test.decision == "PASSED"
+    assert any("panels" in warning for warning in test.warnings_ro)
 
 
 # ---------------------------------------------------------------------------- palette

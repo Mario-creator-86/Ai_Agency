@@ -11,6 +11,10 @@ What is asserted, at 0 credits and with every provider faked:
   the bible forbids faces;
 - a failing clip gets ONE retry on the same model with seed + 1 and a stronger motion
   prompt, only when what is left under the approved cap covers it; otherwise it escalates;
+- a clip made of panels (a flat band on its first frame, the still it was animated from, or
+  the look's one_picture false or back_to_still) goes back to its still and is never bought
+  again on it (2026-10-09: scene 5's clip animated a triptych); a band that appears only on a
+  later frame is the motion's fault and gets the one retry;
 - in PRODUCTION no LIVE scene may be a still unless the Owner chose it for that scene, and
   assembly is refused for one he did not choose;
 - technical QC holds the delivered file to the encoder's own spec (1080x1920, H.264 High,
@@ -67,6 +71,8 @@ from sqlalchemy.orm import Session
 
 FFMPEG = shutil.which("ffmpeg")
 FIXTURES = Path(__file__).parent / "fixtures" / "nepal_1d530880"
+#: The 2026-10-09 triptych, 270x480 (test_still_gate's docstring): rows 159-320 a flat band.
+TRIPTYCH = Path(__file__).parent / "fixtures" / "panels" / "scene_05_c7c55abb_c1.jpg"
 requires_ffmpeg = pytest.mark.skipif(FFMPEG is None, reason="ffmpeg is not installed")
 requires_yunet = pytest.mark.skipif(
     not detector_available(), reason="the YuNet detector is not installed"
@@ -151,6 +157,7 @@ def _passing_judge(scene: int = 1):
                 look_ok=True,
                 technical_ok=True,
                 same_shot=True,
+                one_picture=True,
                 bible_violations="none",
                 verdict="keep",
                 reason="a valley under cloud, the camera moving in",
@@ -431,6 +438,7 @@ def test_judge_clip_sends_three_frames_at_1080_px_in_one_call(engine, clips):
                     "look_ok": True,
                     "technical_ok": True,
                     "same_shot": True,
+                    "one_picture": True,
                     "bible_violations": "none",
                     "verdict": "keep",
                     "reason": "a valley under low cloud",
@@ -462,6 +470,7 @@ def test_judge_clip_sends_three_frames_at_1080_px_in_one_call(engine, clips):
         assert b"\x07\x80\x04\x38" in data  # SOF: 1920 high, 1080 wide
     prompt = model.calls[0]["prompt"]
     assert "No human faces appear" in prompt and "same_shot" in prompt
+    assert "one_picture" in prompt and "always when one_picture is false" in prompt
 
     # No entry for this clip: nobody looked.
     registry, _ = registry_with(staffed, lambda prompt: json.dumps({"clips": []}))
@@ -471,23 +480,31 @@ def test_judge_clip_sends_three_frames_at_1080_px_in_one_call(engine, clips):
 
 
 def test_the_clip_verdict_has_no_field_that_passes_by_default():
+    from app.media.picture_qc import ClipJudgeReport
+
+    good = {
+        "scene": 1,
+        "faces_visible": False,
+        "readable_text": False,
+        "matches_plan": True,
+        "look_ok": True,
+        "technical_ok": True,
+        "same_shot": True,
+        "one_picture": True,
+        "bible_violations": "none",
+        "verdict": "keep",
+        "reason": "x",
+    }
     with pytest.raises(ValueError):
         ClipVerdict.model_validate({"scene": 1, "verdict": "keep", "reason": "x"})
+    for word in ({"faces_visible": "no"}, {"one_picture": "yes"}):
+        with pytest.raises(ValueError):
+            ClipVerdict.model_validate({**good, **word})
+    # The model's answer must say whether every frame is one picture.
+    silent = {key: value for key, value in good.items() if key != "one_picture"}
     with pytest.raises(ValueError):
-        ClipVerdict.model_validate(
-            {
-                "scene": 1,
-                "faces_visible": "no",
-                "readable_text": False,
-                "matches_plan": True,
-                "look_ok": True,
-                "technical_ok": True,
-                "same_shot": True,
-                "bible_violations": "none",
-                "verdict": "keep",
-                "reason": "x",
-            }
-        )
+        ClipJudgeReport.model_validate({"clips": [silent]})
+    assert ClipJudgeReport.model_validate({"clips": [good]}).clips[0].one_picture is True
 
 
 # ------------------------------------------------------ 4. one retry, inside the cap
@@ -621,6 +638,180 @@ def test_the_stronger_prompt_keeps_the_dialect_of_its_model():
     assert veo.endswith(VEO_MOTION_CLOSING)
     assert " no " not in f" {veo.lower()} " and "not " not in veo.lower()
     assert "pan left" in veo
+
+
+# ---------------------------------------- 4b. a clip made of panels goes back to its still
+
+
+@pytest.fixture(scope="module")
+def panel_clips(clips):
+    """The 2026-10-09 triptych held still for 5 s (the still a vendor animates is the clip's
+    first frame); the Nepal push-in with a black strip over its lower 40 % in its last second;
+    and the same push-in faded to black, its last frame flat from edge to edge."""
+    work = clips["work"]
+    triptych = work / "triptych.png"
+    _ffmpeg("-i", str(TRIPTYCH), "-vf", "scale=1080:1920:flags=lanczos", str(triptych))
+    encode = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "16", "-pix_fmt", "yuv420p"]
+    panels = work / "panels.mp4"
+    _ffmpeg(
+        "-loop", "1", "-i", str(triptych), "-vf", "fps=24", "-frames:v", "120",
+        *encode, str(panels),
+    )  # fmt: skip
+    late = work / "late_band.mp4"
+    strip = "drawbox=x=0:y=ih*0.6:w=iw:h=ih*0.4:color=black:t=fill:enable='gte(t,4)'"
+    _ffmpeg("-i", str(clips["push"]), "-vf", strip, *encode, str(late))
+    faded = work / "faded.mp4"
+    _ffmpeg("-i", str(clips["push"]), "-vf", "fade=t=out:st=4:d=1", *encode, str(faded))
+    return {"panels": panels, "late_band": late, "faded": faded}
+
+
+def _clip_report(clip: Path, tmp_path: Path, *, scene: int, move: str, judge) -> qc.ClipReport:
+    return check_clip(
+        clip,
+        scene=scene,
+        camera_move=move,
+        faces_forbidden=False,
+        environment="PRODUCTION",
+        ffmpeg_path=FFMPEG,
+        face_counter=_no_faces,
+        judge=judge,
+        work_dir=tmp_path,
+    )
+
+
+@requires_ffmpeg
+def test_a_clip_animated_from_a_panel_still_goes_back_to_the_still_and_buys_nothing(
+    panel_clips, tmp_path
+):
+    report = _clip_report(
+        panel_clips["panels"], tmp_path, scene=5, move="static", judge=_passing_judge(5)
+    )
+
+    panels = report.check("panels")
+    assert panels.status == "FAILED" and panels.blocking
+    assert "cadrul first" in panels.detail_ro and "la mijloc" in panels.detail_ro
+    frames = report.measured["panels"]["frames"]
+    assert [frame["at"] for frame in frames] == ["first", "middle", "last"]
+    assert all(frame["splits_the_picture"] for frame in frames)
+    # The look kept it, as on 2026-10-09; the band alone sends it back to its still.
+    assert report.check("picture").status == "PASSED"
+    assert report.passed is False and report.back_to_still is True
+
+    bought: list[int] = []
+    outcome = qc_clip_with_retry(
+        Path(report.path),
+        check=lambda path: report,
+        buy=lambda seed, prompt: bought.append(seed),
+        seed=5,
+        motion_prompt=PROMPT,
+        camera_move="static",
+        model_id="seedance2_5",
+        price_credits=100,
+        committed_credits=0,
+        cap_credits=10_000,
+    )
+    assert bought == [], "the same still was animated again"
+    assert outcome.status == "BACK_TO_STILL" and outcome.clip is None
+    assert outcome.attempts == 1 and outcome.retry_credits == 0
+    assert "nu se mai animă" in outcome.reason_ro and "imagine nouă" in outcome.reason_ro
+    assert "nu e o singură fotografie" in outcome.reason_ro
+
+
+@requires_ffmpeg
+@pytest.mark.parametrize(
+    ("changes", "words"),
+    [
+        ({"one_picture": False, "verdict": "back_to_still"}, "o singură fotografie"),
+        ({"one_picture": False, "verdict": "keep"}, "o singură fotografie"),
+        ({"verdict": "back_to_still"}, "back_to_still"),
+    ],
+    ids=["panels", "panels-but-keep", "back-to-still"],
+)
+def test_a_clip_the_look_sends_back_to_its_still_is_not_retried_on_it(
+    clips, tmp_path, changes, words
+):
+    """The band cannot see three similar tunnels stacked (scene_05_0d900cbd_c2): the look's
+    one_picture, or its own back_to_still, routes the clip the same way."""
+
+    def judge(frames):
+        judgement = _passing_judge()(frames)
+        verdict = judgement.verdict.model_copy(
+            update={**changes, "reason": "three tunnels stacked one above another"}
+        )
+        return ClipJudgement(**{**judgement.__dict__, "verdict": verdict})
+
+    report = _clip_report(clips["push"], tmp_path, scene=1, move="slow push-in", judge=judge)
+
+    assert report.check("panels").status == "PASSED"
+    picture = report.check("picture")
+    assert picture.status == "FAILED" and words in picture.detail_ro
+    assert report.back_to_still is True
+    decision = clip_retry_decision(
+        report, seed=1, retries_done=0, committed_credits=0, price_credits=100, cap_credits=10_000
+    )
+    assert decision.action == "BACK_TO_STILL" and decision.seed is None
+
+
+@requires_ffmpeg
+def test_a_band_on_the_last_frame_only_is_the_motions_fault_and_gets_the_one_retry(
+    panel_clips, tmp_path
+):
+    """The still (the first frame) is one picture; the clip grew a blank strip at its end.
+    Another seed on the same still can fix that, so it is the one retry, not a new still."""
+    report = _clip_report(
+        panel_clips["late_band"], tmp_path, scene=1, move="slow push-in", judge=_passing_judge()
+    )
+
+    panels = report.check("panels")
+    assert panels.status == "FAILED", panels
+    assert "cadrul last" in panels.detail_ro and "cadrul first" not in panels.detail_ro
+    assert "jos" in panels.detail_ro
+    assert report.back_to_still is False
+    decision = clip_retry_decision(
+        report, seed=1, retries_done=0, committed_credits=0, price_credits=100, cap_credits=10_000
+    )
+    assert decision.action == "RETRY" and decision.seed == 2
+
+
+@requires_ffmpeg
+def test_a_frame_flat_from_edge_to_edge_is_not_panels(panel_clips, tmp_path):
+    """A fade to black leaves nothing to hold apart: a blank field is not pictures pasted
+    together, and the panels check does not send a good still back for it."""
+    report = _clip_report(
+        panel_clips["faded"], tmp_path, scene=1, move="slow push-in", judge=_passing_judge()
+    )
+
+    last = report.measured["panels"]["frames"][-1]
+    assert last["band_rows"] == last["height"] == 480 and last["splits_the_picture"] is False
+    assert report.check("panels").status == "PASSED"
+    assert report.back_to_still is False
+
+
+def test_a_retry_that_shows_the_still_at_fault_comes_back_to_the_still(tmp_path):
+    from dataclasses import replace
+
+    bought: list[int] = []
+    reports = iter([_failed_report(), replace(_failed_report("picture"), back_to_still=True)])
+
+    def buy(seed, prompt):
+        bought.append(seed)
+        return tmp_path / "retry.mp4"
+
+    outcome = qc_clip_with_retry(
+        tmp_path / "first.mp4",
+        check=lambda path: next(reports),
+        buy=buy,
+        seed=10,
+        motion_prompt=PROMPT,
+        camera_move="slow push-in",
+        model_id="seedance2_5",
+        price_credits=100,
+        committed_credits=0,
+        cap_credits=10_000,
+    )
+    assert bought == [11]
+    assert outcome.status == "BACK_TO_STILL" and outcome.attempts == 2
+    assert "imagine nouă" in outcome.reason_ro
 
 
 # --------------------------------------------- 5. no still in PRODUCTION without his choice

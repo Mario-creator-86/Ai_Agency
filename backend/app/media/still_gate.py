@@ -9,6 +9,37 @@ up to 68 credits a second. So the still is checked first, twice, at no credit co
 1. Local checks (`local_checks`), measured with the encoder the studio already has and the
    YuNet face detector (`app.media.faces`):
    - degenerate: stripes, bands or a blank field (`app.media.qc.still_is_degenerate`);
+   - panels: one picture, not several. On 2026-10-09 scene 5 of «The Particle That Shouldn't
+     Exist (But Does)» was compiled into a still prompt that described a sequence of moments
+     ("... holding together as atoms, then the empty accelerator tunnel from scene 1. First
+     the near-black void of scenes 2 and 3, then the identical tunnel ..."), and the still
+     came out as THREE STACKED PANELS: a tunnel with a glowing atom, a flat black band, an
+     empty tunnel. Its clip animated the triptych. The prompt lint, this gate, the vision
+     checklist (told the plan, it found a triptych matched a plan that lists three moments)
+     and clip QC all passed it. Pictures pasted together are held apart by a flat band, so
+     the still is read in grey at 270x480 (area scaling): a row is flat when its standard
+     deviation is under 4 and its range under 24, and a run of flat full-width rows of at
+     least 15 % of the height blocks the still, between two pictures or at an edge (a
+     letterbox, a blank lower third), whatever is beside it. Clip QC and the film's QC make
+     the same reading on their frames with one waiver a still does not get: a frame flat but
+     for two lines of burned-in captions (under 10 % of rows not flat,
+     `app.media.qc.FRAME_PICTURE_FLOOR`), or flat from edge to edge (a fade to black), has
+     no pictures to hold apart. The first version waived that on stills too, beside under
+     15 % of picture, and its review (2026-10-09) passed a black 1530x2720 still with a strip
+     of a good still 260 or 300 px tall (9.6 % and 11 % of rows not flat, a band of about
+     half the height) through this check and the degenerate one (which refuses a strip of
+     200 px, 7.5 %, and passes these); a blank still now fails both. Read by
+     `app.media.qc.flat_band`. Measured with it on that film's stills (1530x2720 PNG, read
+     only; tests/fixtures/panels keeps 270x480 JPEG copies, which read the same):
+       scene_05_c7c55abb_c1   rows 159-320, 34 %    the triptych (fails)
+       scene_02_a1d8d1bf_c1   rows 321-479, 33 %    a black lower third, to the edge (fails)
+       every good still       28 rows at most, 6 %  scene_02_cc3a68a6_c2's dark ceiling, 0-27
+       the Nepal fixtures     49 rows at most, 10 % scene_05.jpg: 0-48 and 444-479
+     The threshold sits 1.5x over the widest real band and 2.2x under the triptych's. The
+     second scene-5 candidate, scene_05_0d900cbd_c2, is a triptych of three similar tunnels
+     with no flat band (2 flat rows): neither a single full-width seam (a natural edge in the
+     good scene_04_f606d968_c2 crosses 88 % of the columns) nor the correlation of adjacent
+     rows separates it, so its net is the vision checklist's one_picture question below;
    - sharpness (`measure_focus`), two readings at 1080 px width on an 8 x 14 grid of tiles. A
      still is in focus when its subject is: a documentary frame with a sharp subject before a
      dark, soft background (shallow depth of field) is not a blurred frame. Until 2026-10-09
@@ -50,14 +81,18 @@ up to 68 credits a second. So the still is checked first, twice, at no credit co
      model's look_ok and the Owner's eye are the real judges of a look;
    - faces: the YuNet count, when the bible forbids faces.
 2. The vision checklist (`app.media.picture_qc.judge_still`): one call per still at
-   1080 px, with a verdict schema that has no field a silent model could pass by.
+   1080 px, with a verdict schema that has no field a silent model could pass by. Since
+   2026-10-09 it asks whether the still is ONE continuous photograph (one_picture), and tells
+   the model a still is one moment, the shot's first frame: a plan that lists several
+   moments is judged on its first, and a picture of several moments does not match it.
 
 Everything fails closed. A check that could not run is NOT_RUN, and a NOT_RUN of a
 required check blocks in PRODUCTION and warns in TEST — except the vision checklist, whose
 silence blocks everywhere ("nu a fost privită"): a still nobody looked at is never bought
-into motion. A face from EITHER detector blocks when the bible forbids faces. A verdict of
-buy_motion whose own answers contradict it (text seen, plan not matched, a violation named)
-does not pass: the answers win over the summary.
+into motion. A face from EITHER detector blocks when the bible forbids faces; panels from
+EITHER reading (the flat band, or one_picture false) block and are re-rolled. A verdict of
+buy_motion whose own answers contradict it (text seen, more than one picture, plan not
+matched, a violation named) does not pass: the answers win over the summary.
 
 What happens next is `next_step`: a passing still buys motion; a still that should have
 been a card is routed to the local compositor; a failing still is re-rolled at most twice,
@@ -81,7 +116,7 @@ from sqlalchemy import Engine
 
 from app.media.faces import FaceCount, FaceCounter, count_faces
 from app.media.picture_qc import StillJudgement, judge_still
-from app.media.qc import still_is_degenerate
+from app.media.qc import PANEL_BAND_SHARE, flat_band, still_is_degenerate
 from app.media.toolchain import find_ffmpeg
 
 #: The width every picture check measures at: the final film's width.
@@ -112,7 +147,7 @@ PALETTE_WARN_DELTA_E = 30.0
 #: How many times a failing still is bought again before the Owner decides.
 MAX_REROLLS = 2
 
-ALL_CHECKS = ("degenerate", "sharpness", "motion_blur", "palette", "faces")
+ALL_CHECKS = ("degenerate", "panels", "sharpness", "motion_blur", "palette", "faces")
 
 #: The camera moves on which baked motion blur is a defect, not a choice.
 STATIC_MOVES = frozenset({"static", "locked", "locked camera", "locked-off"})
@@ -166,6 +201,7 @@ POSITIVE_WORDS: dict[str, str] = {
     "sharpness": "sharp focus, fine natural detail across the subject",
     "motion_blur": "crisp and still, as if on a tripod",
     "degenerate": "a full, detailed scene filling the frame",
+    "panels": "one single continuous photograph filling the whole frame from edge to edge",
     "look": "light, palette and grain exactly as the film's look describes",
     "plan": "the subject exactly as the scene's plan describes it",
     "technical": "natural anatomy, clean edges, clean texture",
@@ -532,6 +568,39 @@ def local_checks(
                 if broken
                 else CheckResult("degenerate", "PASSED", False, None, "structură de imagine")
             )
+    if "panels" in measure:
+        band = flat_band(ffmpeg, path)
+        if band is None:
+            checks.append(
+                _unmeasured(
+                    "panels", f"Benzile imaginii nu au fost măsurate: {no_encoder}", environment
+                )
+            )
+        elif band.splits_a_still:
+            # A measured violation, so it is re-rolled with the positive words, unlike a
+            # check that could not run. The frames' waiver for captions and fades
+            # (qc.FRAME_PICTURE_FLOOR) is not a still's: a black still with a strip of
+            # picture 9.6 % tall passed both local checks under it.
+            checks.append(
+                CheckResult(
+                    "panels",
+                    "FAILED",
+                    True,
+                    round(band.share, 3),
+                    f"Imaginea nu e o singură fotografie: {band.detail_ro()}",
+                )
+            )
+        else:
+            checks.append(
+                CheckResult(
+                    "panels",
+                    "PASSED",
+                    False,
+                    round(band.share, 3),
+                    f"o singură imagine: cea mai lată bandă plată are {band.rows} rânduri din "
+                    f"{band.height} ({band.share:.0%}, prag {PANEL_BAND_SHARE:.0%})",
+                )
+            )
     if "sharpness" in measure:
         focus = measure_focus(ffmpeg, path)
         if focus is None:
@@ -635,7 +704,7 @@ def local_checks(
 
 
 def _required(plan: StillPlan) -> tuple[str, ...]:
-    base = ("degenerate", "sharpness", "motion_blur")
+    base = ("degenerate", "panels", "sharpness", "motion_blur")
     return base + (("faces",) if plan.faces_forbidden else ())
 
 
@@ -731,6 +800,14 @@ def decide(
         if verdict.readable_text:
             reasons.append(f"Modelul de vedere a văzut text lizibil în imagine {said}")
             violations.append("readable_text")
+        if not verdict.one_picture:
+            # 2026-10-09: scene 5's triptych of three similar tunnels had no flat band to
+            # measure; the model's eye is its net. A measured violation: re-rolled.
+            reasons.append(
+                "Modelul de vedere nu vede o singură fotografie (panouri, colaj, ecran împărțit "
+                f"sau o bandă goală) {said}"
+            )
+            violations.append("panels")
         if not verdict.matches_plan:
             reasons.append(f"Imaginea nu arată ce cere planul scenei {said}")
             violations.append("plan")

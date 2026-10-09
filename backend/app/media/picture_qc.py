@@ -9,9 +9,12 @@ thing from the picture the scene asked for, and it never looked at the people in
 `character_drift_qc` said NOT_IMPLEMENTED in as many words.
 
 So the gate that measures the film now also looks at it. One frame from the middle of every
-scene goes to a model the provider says can see, in one call for the whole film, with two
+scene goes to a model the provider says can see, in one call for the whole film, with three
 questions per scene: is this a picture at all (a blank field, stripes, noise, garbled
-writing is not), and does it show what the scene's visual prompt and narration asked for.
+writing is not), is it ONE picture (panels pasted together or a picture with a blank band
+is not: scene 5 of «The Particle That Shouldn't Exist (But Does)», 2026-10-09, was three
+stacked panels and passed every check), and does it show what the scene's visual prompt and
+narration asked for. The stills gate and clip QC ask the same one-picture question first.
 The same call carries the characters the storyboard put in each scene, with the Character
 Bible's canonical description and, where the bible holds a stored portrait, the portrait
 itself; a person in the wrong outfit is named, with their scene.
@@ -76,7 +79,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger("studio.picture_qc")
 
 PICTURE_TASK = "picture_qc"
-TEMPLATE_VERSION = "picture-qc-v1"
+#: v2 (2026-10-09): the one-picture question, after scene 5 came out as three stacked panels.
+TEMPLATE_VERSION = "picture-qc-v2"
 
 #: The departments asked to look, in order. The Video Editor owns the pictures, so the
 #: department that made them is the department that answers for them; the Director is asked
@@ -99,6 +103,8 @@ class ScenePictureVerdict(BaseModel):
     model_config = ConfigDict(extra="ignore")
     scene: int
     is_a_picture: bool
+    #: One continuous photograph, not panels pasted together or a picture with a blank band.
+    one_picture: bool
     shows_the_scene: bool
     reason: str = Field(default="", max_length=300)
     _clip_reason = field_validator("reason", mode="before")(clipped(300))
@@ -124,13 +130,17 @@ _INSTRUCTIONS = (
     "Attached are {frames} images: the first {frames} are one frame from the middle of each "
     "scene, in the order the scenes are listed below.{references_note} Judge only what you "
     "can see.\n"
-    "For every scene answer two questions from its frame alone. First: is it a picture at "
+    "For every scene answer three questions from its frame alone. First: is it a picture at "
     "all? A blank or uniform field, plain stripes or bands, pure noise, a smear, or a wall "
-    "of garbled writing is not a picture, however clean the file is. Second: does it show "
-    "what the scene asked for — its written picture and what the narration says over it? "
-    "Something well made that shows none of what the scene asked for does not show it.\n"
+    "of garbled writing is not a picture, however clean the file is. Second: is it ONE "
+    "picture, one continuous photograph filling the frame from edge to edge? A collage, a "
+    "split screen, a grid, panels stacked one above another, a comic strip, or a picture "
+    "with a blank or black band across it is not one picture, however good each part is. "
+    "Third: does it show what the scene asked for — its written picture and what the "
+    "narration says over it? Something well made that shows none of what the scene asked "
+    "for does not show it.\n"
     "{character_note}"
-    'Return only JSON: {{"scenes": [{{"scene": 1, "is_a_picture": true, '
+    'Return only JSON: {{"scenes": [{{"scene": 1, "is_a_picture": true, "one_picture": true, '
     '"shows_the_scene": true, "reason": "one short sentence"}}], "characters": '
     '[{{"scene": 1, "character": "...", "matches": true, "reason": "one short sentence"}}]}}'
     " — one entry for every scene listed, and one for every scene-and-character pair listed. "
@@ -477,6 +487,7 @@ def evaluate_pictures(
                     "scene": scene["index"],
                     "status": "NOT_APPLICABLE",
                     "is_a_picture": None,
+                    "one_picture": None,
                     "shows_the_scene": None,
                     "reason": "no verdict was returned for this scene",
                 }
@@ -488,6 +499,7 @@ def evaluate_pictures(
                 "scene": scene["index"],
                 "status": "MEASURED",
                 "is_a_picture": verdict.is_a_picture,
+                "one_picture": verdict.one_picture,
                 "shows_the_scene": verdict.shows_the_scene,
                 "reason": verdict.reason,
             }
@@ -496,6 +508,12 @@ def evaluate_pictures(
             failures.append(
                 f"Scene {scene['index']}: the frame is not a picture — "
                 f"{verdict.reason or 'no scene in it'}"
+            )
+        elif not verdict.one_picture:
+            # 2026-10-09: scene 5 was three stacked panels, and its clip animated them.
+            failures.append(
+                f"Scene {scene['index']}: the frame is not one picture (panels, a collage or a "
+                f"blank band) — {verdict.reason or 'several pictures in one frame'}"
             )
         elif not verdict.shows_the_scene:
             failures.append(
@@ -508,6 +526,7 @@ def evaluate_pictures(
                 "scene": index,
                 "status": "NOT_APPLICABLE",
                 "is_a_picture": None,
+                "one_picture": None,
                 "shows_the_scene": None,
                 "reason": "no frame was cut for this scene",
             }
@@ -638,13 +657,27 @@ def evaluate_pictures(
 # lower third of a 9:16 picture.
 
 STILL_TASK = "still_qc"
-STILL_TEMPLATE_VERSION = "still-qc-v1"
+#: v2 (2026-10-09): one_picture, and a still is judged as ONE moment, the shot's first frame.
+STILL_TEMPLATE_VERSION = "still-qc-v2"
 #: The width the still is shown at. A 2K still (1530x2720) is scaled down to it.
 STILL_WIDTH = 1080
 #: The largest still read for judging; a vendor still is a few megabytes.
 MAX_STILL_BYTES = 40_000_000
 
 StillAction = Literal["buy_motion", "regenerate_still", "compose_locally"]
+
+#: The question added on 2026-10-09, after scene 5 of «The Particle That Shouldn't Exist (But
+#: Does)» came out as three stacked panels and every check passed it.
+ONE_PICTURE = "one_picture"
+
+
+def _every_entry_answers(entries: Any, question: str) -> Any:
+    """Refuse a model's report in which any entry leaves `question` out."""
+    if isinstance(entries, list) and any(
+        isinstance(entry, dict) and question not in entry for entry in entries
+    ):
+        raise ValueError(f"every entry must answer {question}")
+    return entries
 
 
 class StillVerdict(BaseModel):
@@ -659,6 +692,13 @@ class StillVerdict(BaseModel):
     matches_plan: StrictBool
     look_ok: StrictBool
     technical_ok: StrictBool
+    #: One continuous photograph filling the frame: not a collage, a split screen, a grid,
+    #: stacked panels, a comic strip or a picture with a blank or black band. Required of the
+    #: model like every other answer: `StillJudgeReport`, the shape a model's answer is read
+    #: into, refuses an entry without it. The default is only for a verdict built in code (the
+    #: stills step's test fakes, written before the question): a model's silence never
+    #: reads as one picture.
+    one_picture: StrictBool = True
     bible_violations: str = Field(min_length=1, max_length=300)
     verdict: StillAction
     reason: str = Field(min_length=1, max_length=300)
@@ -669,6 +709,11 @@ class StillVerdict(BaseModel):
 class StillJudgeReport(BaseModel):
     model_config = ConfigDict(extra="ignore")
     stills: list[StillVerdict] = Field(default_factory=list, max_length=4)
+
+    @field_validator("stills", mode="before")
+    @classmethod
+    def _one_picture_answered(cls, value: Any) -> Any:
+        return _every_entry_answers(value, ONE_PICTURE)
 
 
 @dataclass(frozen=True)
@@ -687,22 +732,30 @@ _STILL_INSTRUCTIONS = (
     "You are the studio's quality control. Attached is ONE still, generated for scene "
     "{scene} of a factual short, before any money is spent on animating it. Judge only what "
     "you can see. The plan, the film's look and the visual bible's rules are below.\n"
+    "A still is ONE moment: the first frame of the shot that will be animated from it. If "
+    "the plan describes several moments (first one thing, then another), judge the still "
+    "against the first moment only. A still that shows several moments at once, side by "
+    "side or one above another, does not match the plan.\n"
     "Answer each question about this still:\n"
     "- faces_visible: is any human face visible, even small, partly turned or in the "
     "background? A figure seen only from behind, a silhouette or hands alone is not a face.\n"
     "- readable_text: is there any lettering, number, sign, caption or logo?\n"
-    "- matches_plan: does it show what the plan asks for?\n"
+    "- one_picture: is this ONE continuous photograph filling the whole frame from edge to "
+    "edge? A collage, a split screen, a grid, panels stacked one above another, a comic "
+    "strip, a picture inside a picture, or a picture with a blank or black band across it "
+    "is not one picture.\n"
+    "- matches_plan: does it show what the plan asks for, as one moment?\n"
     "- look_ok: does it match the film's look (light, palette, grain)?\n"
     "- technical_ok: is it sharp where it should be, free of warped anatomy, smears, "
     "stripes or artefacts?\n"
     "- bible_violations: name the violation or write none. Check every rule listed.\n"
-    "- verdict: buy_motion only if the still is right as it is; regenerate_still if a new "
-    "still could fix it; compose_locally if the plan asks for a chart, a title, numbers or "
-    "a black screen, which the studio draws itself.\n"
+    "- verdict: buy_motion only if the still is right as it is (never when one_picture is "
+    "false); regenerate_still if a new still could fix it; compose_locally if the plan asks "
+    "for a chart, a title, numbers or a black screen, which the studio draws itself.\n"
     'Return only JSON: {{"stills": [{{"scene": {scene}, "faces_visible": false, '
-    '"readable_text": false, "matches_plan": true, "look_ok": true, "technical_ok": true, '
-    '"bible_violations": "none", "verdict": "buy_motion", "reason": "one short sentence '
-    'saying what you actually see"}}]}}\n'
+    '"readable_text": false, "one_picture": true, "matches_plan": true, "look_ok": true, '
+    '"technical_ok": true, "bible_violations": "none", "verdict": "buy_motion", "reason": '
+    '"one short sentence saying what you actually see"}}]}}\n'
 )
 
 
@@ -856,7 +909,8 @@ def judge_still(
 # the camera half-way, a picture that melts or changes place, writing that appears late.
 
 CLIP_TASK = "clip_qc"
-CLIP_TEMPLATE_VERSION = "clip-qc-v1"
+#: v2 (2026-10-09): one_picture; a clip made of panels goes back to its still.
+CLIP_TEMPLATE_VERSION = "clip-qc-v2"
 #: The frames shown per clip, in order: first, middle, last.
 CLIP_FRAMES = 3
 
@@ -875,6 +929,11 @@ class ClipVerdict(BaseModel):
     look_ok: StrictBool
     technical_ok: StrictBool
     same_shot: StrictBool
+    #: Each frame is one continuous photograph, not panels. False means the still itself must
+    #: change (clip QC routes it back to the still, never to another seed). Required of the
+    #: model through `ClipJudgeReport`; the default is only for a verdict built in code, as on
+    #: `StillVerdict`.
+    one_picture: StrictBool = True
     bible_violations: str = Field(min_length=1, max_length=300)
     verdict: ClipAction
     reason: str = Field(min_length=1, max_length=300)
@@ -885,6 +944,11 @@ class ClipVerdict(BaseModel):
 class ClipJudgeReport(BaseModel):
     model_config = ConfigDict(extra="ignore")
     clips: list[ClipVerdict] = Field(default_factory=list, max_length=4)
+
+    @field_validator("clips", mode="before")
+    @classmethod
+    def _one_picture_answered(cls, value: Any) -> Any:
+        return _every_entry_answers(value, ONE_PICTURE)
 
 
 @dataclass(frozen=True)
@@ -917,13 +981,17 @@ _CLIP_INSTRUCTIONS = (
     "bodies, smears, flicker artefacts and stripes?\n"
     "- same_shot: are the three frames one continuous shot of the same place, with no cut "
     "to another picture and nothing turning into something else?\n"
+    "- one_picture: is each frame ONE continuous photograph filling the whole frame? A "
+    "collage, a split screen, a grid, panels stacked one above another, a comic strip, or a "
+    "frame with a blank or black band across it is not one picture.\n"
     "- bible_violations: name the violation or write none. Check every rule listed.\n"
     "- verdict: keep only if the clip is right as it is; regenerate_motion if animating the "
-    "same still again could fix it; back_to_still if the still itself must change.\n"
+    "same still again could fix it; back_to_still if the still itself must change (always "
+    "when one_picture is false: the same still animated again shows the same panels).\n"
     'Return only JSON: {{"clips": [{{"scene": {scene}, "faces_visible": false, '
     '"readable_text": false, "matches_plan": true, "look_ok": true, "technical_ok": true, '
-    '"same_shot": true, "bible_violations": "none", "verdict": "keep", "reason": "one short '
-    'sentence saying what you actually see"}}]}}\n'
+    '"same_shot": true, "one_picture": true, "bible_violations": "none", "verdict": "keep", '
+    '"reason": "one short sentence saying what you actually see"}}]}}\n'
 )
 
 

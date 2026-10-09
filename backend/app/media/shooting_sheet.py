@@ -1009,6 +1009,8 @@ _REDO_FIELDS = (
     "reason_ro",
     "replaces",
     "invalidates",
+    # A still redo whose prompt the studio wrote again (old and new words), else None.
+    "prompt_rewrite",
 )
 
 

@@ -4,10 +4,12 @@ Following docs/architecture/08_VIDEO_PIPELINE.md:
 - Technical QC: valid 9:16 aspect ratio, duration within bounds, file size > 0.
 - Factual QC: every referenced claim must remain SUPPORTED in the database.
 - Picture QC: a model that can see reads one frame per scene and says whether it is a
-  picture at all and whether it shows what the scene asked for (app.media.picture_qc).
+  picture at all, whether it is ONE picture (not panels) and whether it shows what the scene
+  asked for (app.media.picture_qc).
 - Picture spans QC: every filmed scene is judged on the first, middle and last frame of its
   span on the film's timeline, at the delivered 1080 px, with the per-clip checklist
-  (picture_qc.judge_clip), and YuNet counts faces on each frame when the bible forbids them.
+  (picture_qc.judge_clip), YuNet counts faces on each frame when the bible forbids them, and
+  each frame is read for a flat band that splits it into panels (`flat_band`).
 - Character Drift QC: the same look, against the Character Bible's canonical description.
 - Rights/License QC: all assets must be clear of copyright blocks.
 - Audio QC: the film measures at the platform's loudness, under the true-peak ceiling.
@@ -342,6 +344,172 @@ def still_is_degenerate(ffmpeg: str | None, path: Path) -> str | None:
     return None
 
 
+# ------------------------------------------------------------- one picture, not panels
+#
+# 2026-10-09, «The Particle That Shouldn't Exist (But Does)»: scene 5's still came out as three
+# stacked panels (a tunnel with a glowing atom, a flat black band, an empty tunnel) because its
+# prompt described a sequence of moments, its clip animated the triptych, and every check
+# passed both. Pictures pasted together are held apart by a flat band: the strip between two
+# of them, or a blank strip at an edge (a letterbox, an empty lower third). This reads it, on
+# a still (`app.media.still_gate`), on a clip's frames and on a film's frames alike. The
+# thresholds and the readings they were set on are in still_gate's docstring.
+
+#: The size a picture's rows are read at (area-averaged grey), the degenerate check's size.
+PANEL_READ_SIZE = (270, 480)
+#: A row is flat when its standard deviation is under this and its range (max - min) under
+#: FLAT_ROW_RANGE, in 8-bit grey at PANEL_READ_SIZE.
+FLAT_ROW_STD = 4.0
+FLAT_ROW_RANGE = 24
+#: The least share of the height a run of flat full-width rows covers to split the picture.
+PANEL_BAND_SHARE = 0.15
+#: On a clip's or a film's frame, the least share of rows that are not flat beside the band
+#: for it to split the frame. A film's frame carries burned-in captions, and a frame flat but
+#: for them is a blank field (a fade to black, a grey vendor fake), not panels: in the
+#: zero-credit dry run (test_film_dry_run, 2026-10-09) the flat grey vendor clips under
+#: captions read a band of 70-74 % beside 3.1-7.3 % of rows that are not flat, 7.3 % being
+#: two lines at the largest caption size (assembler.CAPTION_FONT_SIZE, CAPTION_MAX_LINES).
+#: 10 % leaves 13 rows over that for accents and outline. A still is read without it
+#: (`FlatBand.splits_a_still`): it carries no captions and does not fade, and a review of the
+#: first version (2026-10-09), which waived any band beside under 15 % of picture everywhere,
+#: passed a black still with a strip of picture 260 or 300 px tall through both local checks.
+FRAME_PICTURE_FLOOR = 0.10
+
+
+@dataclass(frozen=True)
+class FlatBand:
+    """The longest run of flat full-width rows of a picture read at 270x480 (`flat_band`)."""
+
+    #: Its first and last row (inclusive), 0 at the top; both -1 when no row is flat.
+    start: int
+    end: int
+    #: The rows read, and the flat ones in any run.
+    height: int
+    flat_rows: int
+
+    @property
+    def rows(self) -> int:
+        return 0 if self.start < 0 else self.end - self.start + 1
+
+    @property
+    def share(self) -> float:
+        return self.rows / self.height if self.height else 0.0
+
+    @property
+    def picture_share(self) -> float:
+        """The share of the rows that are not flat: the picture beside the bands."""
+        return (self.height - self.flat_rows) / self.height if self.height else 0.0
+
+    @property
+    def splits_a_still(self) -> bool:
+        """On a still, any band of at least PANEL_BAND_SHARE of the height: pictures pasted
+        together, a picture with a blank strip, or a blank field (which the degenerate check
+        refuses as well). Nothing on a still is burned in and nothing fades, so no amount of
+        blank beside a strip of picture makes it one photograph."""
+        return self.share >= PANEL_BAND_SHARE
+
+    @property
+    def splits_the_picture(self) -> bool:
+        """On a clip's or a film's frame, a band of at least PANEL_BAND_SHARE of the height
+        beside at least FRAME_PICTURE_FLOOR of picture. A frame that is flat but for two lines
+        of captions, or flat from edge to edge, has no pictures to hold apart: it is a blank
+        field, the look's and the editorial check's, and on a clip most often a fade to
+        black, the motion's fault, for which a new still would be bought in vain."""
+        return self.share >= PANEL_BAND_SHARE and self.picture_share >= FRAME_PICTURE_FLOOR
+
+    @property
+    def where_ro(self) -> str:
+        if self.rows == 0:
+            return "nicăieri"
+        top, bottom = self.start == 0, self.end == self.height - 1
+        if top and bottom:
+            return "pe toată înălțimea, un câmp gol fără imagine"
+        if top:
+            return "sus, lipită de margine"
+        if bottom:
+            return "jos, lipită de margine"
+        return "la mijloc, între două imagini"
+
+    def detail_ro(self) -> str:
+        """The band in the Owner's words, with its rows and the threshold."""
+        if self.rows == 0:
+            return f"niciun rând plat pe toată lățimea (prag {PANEL_BAND_SHARE:.0%} din înălțime)"
+        return (
+            f"o bandă plată pe toată lățimea, {self.where_ro} (rândurile {self.start}-{self.end} "
+            f"din {self.height}, {self.share:.0%} din înălțime; prag {PANEL_BAND_SHARE:.0%})"
+        )
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "band_start": self.start if self.rows else None,
+            "band_end": self.end if self.rows else None,
+            "band_rows": self.rows,
+            "band_share": round(self.share, 3),
+            "flat_rows": self.flat_rows,
+            "picture_share": round(self.picture_share, 3),
+            "height": self.height,
+            "splits_the_picture": self.splits_the_picture,
+        }
+
+
+def flat_band(ffmpeg: str | None, path: Path | str) -> FlatBand | None:
+    """The longest run of flat full-width rows in a picture (or a clip's first frame), read in
+    grey at 270x480 with area scaling: a row is flat when its standard deviation is under
+    FLAT_ROW_STD and its range under FLAT_ROW_RANGE.
+
+    None only when it cannot be read (no encoder, no file, an undecodable picture); a picture
+    with no flat row reads a band of 0 rows.
+    """
+    if not ffmpeg or not Path(path).is_file():
+        return None
+    width, height = PANEL_READ_SIZE
+    try:
+        result = subprocess.run(  # noqa: S603 - argument list, no shell
+            [
+                ffmpeg,
+                "-v",
+                "error",
+                "-nostdin",
+                "-i",
+                str(path),
+                "-frames:v",
+                "1",
+                "-vf",
+                f"scale={width}:{height}:flags=area,format=gray",
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "gray",
+                "pipe:1",
+            ],
+            capture_output=True,
+            timeout=60,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    data = result.stdout
+    if result.returncode != 0 or len(data) != width * height:
+        return None
+    longest, run_start, flat_rows = (-1, -1), -1, 0
+    for y in range(height + 1):
+        flat = False
+        if y < height:
+            row = data[y * width : (y + 1) * width]
+            if max(row) - min(row) < FLAT_ROW_RANGE:
+                mean = sum(row) / width
+                flat = sum((value - mean) ** 2 for value in row) / width < FLAT_ROW_STD**2
+        if flat:
+            flat_rows += 1
+            if run_start < 0:
+                run_start = y
+        elif run_start >= 0:
+            # The run ended on the row before this one (or at the bottom edge).
+            if longest[0] < 0 or y - run_start > longest[1] - longest[0] + 1:
+                longest = (run_start, y - 1)
+            run_start = -1
+    return FlatBand(start=longest[0], end=longest[1], height=height, flat_rows=flat_rows)
+
+
 # ------------------------------------------------------ how the film was made (A12)
 #
 # The second Nepal render (3ec1740c, 2026-09-26) was bought whole by the legacy path from
@@ -629,7 +797,9 @@ def evaluate_media_qc(
     only at the file: a provider that holds a model the provider says can see, and the
     encoder that cuts one frame per scene. Without either, the picture and character checks
     report NOT_APPLICABLE with the reason and the film's verdict is unchanged — never a
-    pass by absence.
+    pass by absence. The span check reads the flat band on each filmed scene's frames even
+    with no registry (`span_picture_qc`): a scene made of panels fails the film whoever
+    looks.
 
     ``span_judge`` and ``face_counter`` replace the per-scene look of `span_picture_qc` (the
     judge bound to ``registry`` and YuNet) for a test; nothing else passes them.
@@ -1618,6 +1788,10 @@ class ClipReport:
     #: Blocks that are "could not measure", which a retry cannot fix.
     unmeasured: tuple[str, ...]
     measured: dict[str, Any] = field(default_factory=dict)
+    #: The still itself must change, so animating it again cannot fix the clip: its first
+    #: frame (the still) is split by a flat band, or the look saw more than one picture or
+    #: asked for back_to_still. `clip_retry_decision` never buys motion on it again.
+    back_to_still: bool = False
 
     def check(self, code: str) -> ClipCheck:
         return next(item for item in self.checks if item.code == code)
@@ -1656,6 +1830,11 @@ def _picture_check(judgement: Any, *, faces_forbidden: bool) -> ClipCheck:
         wrong.append("are deformări sau artefacte")
     if not verdict.same_shot:
         wrong.append("cele trei cadre nu sunt același plan continuu")
+    if not verdict.one_picture:
+        wrong.append(
+            "cadrele nu sunt o singură fotografie (panouri, colaj, ecran împărțit sau o bandă "
+            "goală); imaginea însăși trebuie refăcută"
+        )
     if not _is_none(verdict.bible_violations):
         wrong.append(f"încalcă biblia vizuală: {verdict.bible_violations}")
     if verdict.verdict != "keep" and not wrong:
@@ -1713,6 +1892,73 @@ def _faces_check(
     return ClipCheck("faces", "PASSED", False, 0.0, "YuNet: nicio față în cele trei cadre")
 
 
+def _panels_check(
+    ffmpeg: str | None,
+    frames: list[tuple[str, float, Path]],
+    *,
+    measured: dict[str, Any],
+) -> ClipCheck:
+    """The flat band (`flat_band`) on the first, middle and last frames: a frame split by a
+    band of at least PANEL_BAND_SHARE of its height beside at least FRAME_PICTURE_FLOOR of
+    picture (`FlatBand.splits_the_picture`) is panels pasted together, or a blank strip, not
+    one picture. Free, and measured whether or not anybody looks."""
+    if not frames:
+        return ClipCheck("panels", "NOT_RUN", True, None, "cadrele nu au putut fi tăiate")
+    read: list[dict[str, Any]] = []
+    split: list[tuple[str, FlatBand]] = []
+    unread = False
+    for at, moment, path in frames:
+        band = flat_band(ffmpeg, path)
+        if band is None:
+            unread = True
+            read.append({"at": at, "time": moment, "status": "NOT_RUN"})
+            continue
+        read.append({"at": at, "time": moment, "status": "MEASURED", **band.as_dict()})
+        if band.splits_the_picture:
+            split.append((at, band))
+    measured["panels"] = {
+        "frames": read,
+        "band_share_threshold": PANEL_BAND_SHARE,
+        "picture_share_floor": FRAME_PICTURE_FLOOR,
+    }
+    if split:
+        return ClipCheck(
+            "panels",
+            "FAILED",
+            True,
+            round(max(band.share for _at, band in split), 3),
+            "nu e o singură fotografie: "
+            + "; ".join(f"cadrul {at} are {band.detail_ro()}" for at, band in split),
+        )
+    if unread:
+        return ClipCheck(
+            "panels", "NOT_RUN", True, None, "benzile cadrelor nu au putut fi măsurate"
+        )
+    widest = max(float(entry["band_share"]) for entry in read)
+    return ClipCheck(
+        "panels",
+        "PASSED",
+        False,
+        widest,
+        f"o singură imagine în fiecare cadru (cea mai lată bandă plată: {widest:.0%}, prag "
+        f"{PANEL_BAND_SHARE:.0%})",
+    )
+
+
+def _still_must_change(measured: dict[str, Any], judgement: Any) -> bool:
+    """Whether the clip's fault is its still's: the first frame (the still the clip was made
+    from) is split by a flat band, or the look saw more than one picture or asked for the
+    still to change. Another seed on the same still buys the same fault (2026-10-09: scene 5
+    was a triptych, and its clip animated the triptych)."""
+    frames = (measured.get("panels") or {}).get("frames") or []
+    if any(entry.get("at") == "first" and entry.get("splits_the_picture") for entry in frames):
+        return True
+    verdict = getattr(judgement, "verdict", None)
+    if getattr(judgement, "status", None) != "MEASURED" or verdict is None:
+        return False
+    return not verdict.one_picture or verdict.verdict == "back_to_still"
+
+
 def check_clip(
     clip: Path | str,
     *,
@@ -1730,11 +1976,13 @@ def check_clip(
     - motion: mean YDIF at 540 px against the floor of its camera move (`motion_check`);
     - cuts: a hard cut inside the clip fails it (`cut_spikes`);
     - faces: YuNet on the first, middle and last frames when the bible forbids faces;
+    - panels: a flat full-width band on any of the three frames (`flat_band`);
     - picture: `judge` (normally picture_qc.judge_clip bound to the engine and registry)
       looks at the same three frames at 1080 px.
 
     Fail closed: a local check that could not run blocks in PRODUCTION and warns in TEST; a
     clip nobody looked at blocks in every environment, as a still does at the stills gate.
+    A clip whose still is at fault (`_still_must_change`) is marked ``back_to_still``.
     """
     from app.media.faces import count_faces  # noqa: PLC0415 - opencv loads lazily
 
@@ -1785,6 +2033,7 @@ def check_clip(
                 else ClipCheck("cuts", "PASSED", False, 0.0, "nicio tăietură în clip")
             )
         faces = _faces_check(frames, counter, faces_forbidden=faces_forbidden, measured=measured)
+        panels = _panels_check(ffmpeg, frames, measured=measured)
         judgement = judge([path for _at, _moment, path in frames]) if judge and frames else None
         picture = _picture_check(judgement, faces_forbidden=faces_forbidden)
         if judgement is not None:
@@ -1799,7 +2048,7 @@ def check_clip(
 
     checks: list[ClipCheck] = []
     warnings: list[str] = []
-    for item in (motion, cuts, faces):
+    for item in (motion, cuts, faces, panels):
         if item.status == "NOT_RUN" and environment != "PRODUCTION":
             # In TEST a measurement that could not run is said, not counted: the rule the
             # stills gate keeps for its local checks.
@@ -1817,6 +2066,7 @@ def check_clip(
         warnings_ro=tuple(warnings),
         unmeasured=tuple(item.code for item in blocking if item.status == "NOT_RUN"),
         measured=measured,
+        back_to_still=bool(blocking) and _still_must_change(measured, judgement),
     )
 
 
@@ -1856,7 +2106,7 @@ def stronger_motion_prompt(
 
 @dataclass(frozen=True)
 class ClipRetry:
-    action: str  # ACCEPT | RETRY | ESCALATE
+    action: str  # ACCEPT | RETRY | ESCALATE | BACK_TO_STILL
     seed: int | None
     reason_ro: str
 
@@ -1870,9 +2120,27 @@ def clip_retry_decision(
     price_credits: float,
     cap_credits: float,
 ) -> ClipRetry:
-    """What a clip's QC verdict buys: nothing more, one retry with seed + 1, or the Owner."""
+    """What a clip's QC verdict buys: nothing more, one retry with seed + 1, a new still, or
+    the Owner. A clip whose still is at fault (``report.back_to_still``) is never animated
+    again from that still: another seed animates the same panels (2026-10-09, scene 5)."""
     if report.passed:
         return ClipRetry("ACCEPT", seed, f"Scena {report.scene}: clipul a trecut controlul.")
+    if report.back_to_still:
+        why = next(
+            (
+                item.detail_ro
+                for item in report.checks
+                if item.blocking and item.status == "FAILED" and item.code in ("panels", "picture")
+            ),
+            "imaginea din care a pornit clipul nu e cea cerută",
+        )
+        return ClipRetry(
+            "BACK_TO_STILL",
+            None,
+            f"Scena {report.scene}: greșeala e în imaginea din care s-a făcut clipul ({why}); "
+            "aceeași imagine nu se mai animă. Scena are nevoie de o imagine nouă, apoi de "
+            "mișcare nouă.",
+        )
     if retries_done >= MAX_CLIP_RETRIES:
         return ClipRetry(
             "ESCALATE",
@@ -1907,7 +2175,9 @@ def clip_retry_decision(
 
 @dataclass(frozen=True)
 class ClipQCOutcome:
-    status: str  # PASSED | PASSED_ON_RETRY | ESCALATED
+    #: BACK_TO_STILL: the clip failed because of its still; no motion was bought again on it,
+    #: and the scene needs a new still before any new motion.
+    status: str  # PASSED | PASSED_ON_RETRY | ESCALATED | BACK_TO_STILL
     clip: Path | None
     attempts: int
     seeds: tuple[int, ...]
@@ -1933,7 +2203,8 @@ def qc_clip_with_retry(
     """Check a bought clip; when it fails, buy it again ONCE on the same model with seed + 1
     and a firmer motion prompt, only when the approved cap still covers that; otherwise, or
     when the retry fails too, hand the scene to the Owner. `buy(seed, prompt)` is the caller's
-    purchase of one shot and returns the new clip, or None when nothing was delivered."""
+    purchase of one shot and returns the new clip, or None when nothing was delivered. A clip
+    whose still is at fault buys nothing and comes back BACK_TO_STILL."""
     first = check(clip)
     decision = clip_retry_decision(
         first,
@@ -1945,6 +2216,10 @@ def qc_clip_with_retry(
     )
     if decision.action == "ACCEPT":
         return ClipQCOutcome("PASSED", clip, 1, (seed,), (first,), 0.0, decision.reason_ro, "")
+    if decision.action == "BACK_TO_STILL":
+        return ClipQCOutcome(
+            "BACK_TO_STILL", None, 1, (seed,), (first,), 0.0, decision.reason_ro, ""
+        )
     if decision.action == "ESCALATE" or decision.seed is None:
         return ClipQCOutcome("ESCALATED", None, 1, (seed,), (first,), 0.0, decision.reason_ro, "")
     prompt = stronger_motion_prompt(motion_prompt, camera_move, model_id=model_id)
@@ -1982,7 +2257,14 @@ def qc_clip_with_retry(
         cap_credits=cap_credits,
     )
     return ClipQCOutcome(
-        "ESCALATED", None, 2, seeds, (first, second), float(price_credits), final.reason_ro, prompt
+        "BACK_TO_STILL" if final.action == "BACK_TO_STILL" else "ESCALATED",
+        None,
+        2,
+        seeds,
+        (first, second),
+        float(price_credits),
+        final.reason_ro,
+        prompt,
     )
 
 
@@ -2493,8 +2775,11 @@ def film_length_budget(
 # each filmed scene is judged as a bought clip is (picture_qc.judge_clip): the first frame
 # after its own dissolve in, the middle and the last frame of its span on the film's own
 # timeline, at the delivered 1080 px, with YuNet counting faces on each frame when the bible
-# forbids faces. A composed card is drawn by the studio, carries text by design and is never
-# judged as a photograph.
+# forbids faces and the flat-band reading (`flat_band`) on each frame: a scene made of panels
+# fails here, and the Owner's report (`qc_report.redo_proposals`, which reads a failed scene of
+# this check as a picture to redo) asks for a new still and new motion for it. The band is
+# read even when no model can look (the rehearsal's QC runs without a registry). A composed
+# card is drawn by the studio, carries text by design and is never judged as a photograph.
 
 #: Which frames of a span are looked at.
 SPAN_FRAME_POSITIONS = ("first", "middle", "last")
@@ -2542,12 +2827,15 @@ def span_picture_qc(
     picture_qc.ClipJudgement; by default judge_clip bound to ``registry`` (one vision call per
     scene), and none without a registry. ``face_counter`` is YuNet unless a test passes its own.
 
-    A scene fails when the look refuses it or YuNet finds a face the bible forbids (every
-    environment), or when the face count could not run on a bible that forbids faces
-    (PRODUCTION; a warning in TEST). A look that did not happen certifies nothing: the scene is
+    A scene fails when the look refuses it (more than one picture among its reasons), YuNet
+    finds a face the bible forbids or a frame is split by a flat band (every environment), or
+    when the face count could not run on a bible that forbids faces (PRODUCTION; a warning in
+    TEST). A look or a band reading that did not happen certifies nothing: the scene is
     ``passed`` None and adds no failure. ``passed`` is True only when every filmed scene was
-    looked at and passed. With no one to look and faces allowed, or no film on disk, nothing
-    is cut and the check is NOT_APPLICABLE with the reason.
+    looked at and passed. With no one to look the frames are still cut and the band read (it
+    costs nothing): a scene split by a band fails, every other scene is NOT_RUN. With no film
+    on disk, or no filmed scene, nothing is cut and the check is NOT_APPLICABLE with the
+    reason.
     """
     from app.media.still_gate import StillPlan  # noqa: PLC0415 - still_gate imports this module
 
@@ -2614,11 +2902,10 @@ def span_picture_qc(
                 ffmpeg_path=ffmpeg_path,
             )
 
-    if judge is None and not faces_forbidden:
-        return stood_down(
-            "nimeni nu se uită la cadre: niciun model care vede nu este înregistrat, iar "
-            "biblia vizuală permite fețe"
-        )
+    # With nobody to look (no model that can see, or no registry: the rehearsal's QC and the
+    # Owner's re-QC) the frames are cut all the same: the flat band is free, and until the
+    # review of 2026-10-09 this stood down here whenever the bible allowed faces, so a film
+    # with the triptych in it passed its QC unread.
     if not Path(film_path).is_file():
         return stood_down("filmul nu este pe disc: nu are ce cadre să se taie")
     spans = timeline_spans(production, {index: row["planned"] for index, row in rows.items()})
@@ -2644,6 +2931,7 @@ def span_picture_qc(
 
         face_counter = count_faces
     rules = _bible_rules(bible)
+    band_reader = find_ffmpeg(ffmpeg_path)
     folder = Path(tempfile.mkdtemp(prefix="span_qc_"))
     measured_any = False
     try:
@@ -2702,6 +2990,9 @@ def span_picture_qc(
                 )
                 judgement = judge([path for _at, _moment, path in frames], plan)
             picture = _picture_check(judgement, faces_forbidden=faces_forbidden)
+            # The same flat-band reading as the still's and the clip's: the scene's frames
+            # are one picture each, or the scene is panels (2026-10-09, scene 5).
+            panels = _panels_check(band_reader, frames, measured=measured)
             entry["faces"] = {
                 "status": faces.status,
                 "detail_ro": faces.detail_ro,
@@ -2713,6 +3004,11 @@ def span_picture_qc(
                 "run_id": getattr(judgement, "run_id", None),
                 "looked_by": getattr(judgement, "looked_by", None),
             }
+            entry["panels"] = {
+                "status": panels.status,
+                "detail_ro": panels.detail_ro,
+                **(measured.get("panels") or {}),
+            }
             problems: list[str] = []
             if faces.status == "FAILED":
                 problems.append(faces.detail_ro)
@@ -2721,20 +3017,27 @@ def span_picture_qc(
                     problems.append(faces.detail_ro)
                 else:
                     record["warnings"].append(f"Scena {index}: {faces.detail_ro}")
+            if panels.status == "FAILED":
+                problems.append(panels.detail_ro)
             if picture.status == "FAILED":
                 problems.append(picture.detail_ro)
-            if faces.status in ("PASSED", "FAILED") or picture.status in ("PASSED", "FAILED"):
+            if any(item.status in ("PASSED", "FAILED") for item in (faces, picture, panels)):
                 measured_any = True
             if problems:
                 entry.update(status="FAILED", passed=False, reason="; ".join(problems))
                 record["failures"] += [f"Scena {index}: {problem}" for problem in problems]
-            elif picture.status == "PASSED" and faces.status in ("PASSED", "NOT_APPLICABLE"):
+            elif (
+                picture.status == "PASSED"
+                and panels.status == "PASSED"
+                and faces.status in ("PASSED", "NOT_APPLICABLE")
+            ):
                 entry.update(status="PASSED", passed=True, reason=picture.detail_ro)
             else:
-                entry.update(
-                    status="NOT_RUN",
-                    reason=picture.detail_ro if picture.status == "NOT_RUN" else faces.detail_ro,
+                unmeasured = next(
+                    (item for item in (picture, faces, panels) if item.status == "NOT_RUN"),
+                    picture,
                 )
+                entry.update(status="NOT_RUN", reason=unmeasured.detail_ro)
     finally:
         shutil.rmtree(folder, ignore_errors=True)
 
@@ -2744,6 +3047,19 @@ def span_picture_qc(
     elif filmed and all(entry["passed"] is True for entry in filmed):
         record["passed"] = True
     record["status"] = "MEASURED" if measured_any else "NOT_RUN" if filmed else "NOT_APPLICABLE"
+    if judge is None:
+        read = sum(
+            1
+            for entry in filmed
+            if (entry.get("panels") or {}).get("status") in ("PASSED", "FAILED")
+        )
+        record["detail"] = (
+            "nimeni nu se uită la cadre (niciun model care vede nu este înregistrat); banda "
+            f"plată a fost citită pe {read} din {len(filmed)} scene filmate, pe primul, "
+            "mijlocul și ultimul cadru"
+            + (", iar fețele au fost numărate de YuNet" if faces_forbidden else "")
+        )
+        return record
     looked = sum(1 for entry in filmed if entry["status"] in ("PASSED", "FAILED"))
     record["detail"] = (
         f"{looked} din {len(filmed)} scene filmate privite pe primul, mijlocul și ultimul cadru "

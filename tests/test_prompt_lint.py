@@ -438,9 +438,13 @@ def test_the_avoid_list_face_rule_is_read_but_morphing_is_not_a_face_ban() -> No
 
 def test_kind_phrases_force_the_right_kind() -> None:
     assert prompt_lint.classify_kind_phrase("a bar chart of aid") == ("DATA_CARD", "bar chart")
-    assert prompt_lint.classify_kind_phrase("only 83% arrived")[0] == "DATA_CARD"
-    assert prompt_lint.classify_kind_phrase("the image fades to black")[0] == "BLACK"
-    assert prompt_lint.classify_kind_phrase("a title card: Nepal")[0] == "TITLE_CARD"
+    for phrase, kind in (
+        ("only 83% arrived", "DATA_CARD"),
+        ("the image fades to black", "BLACK"),
+        ("a title card: Nepal", "TITLE_CARD"),
+    ):
+        forced = prompt_lint.classify_kind_phrase(phrase)
+        assert forced is not None and forced[0] == kind, (phrase, forced)
     assert prompt_lint.classify_kind_phrase(GOOD_STILL) is None
     # A card scene is never linted as a photograph.
     assert not lint_still_prompt("", scene=5, kind="DATA_CARD")
@@ -470,3 +474,118 @@ def test_prompt_lint_is_pure_text() -> None:
     source = Path(prompt_lint.__file__).read_text(encoding="utf-8")
     for forbidden in ("sqlalchemy", "httpx", "providers", "import requests", "sqlite"):
         assert forbidden not in source, forbidden
+
+
+# --- a still is one moment (film babcf272, 2026-10-09) ---------------------------------------
+
+#: Scene 5's still prompt as it was stored and bought: three moments, drawn as three panels.
+BABCF272_SCENE_5 = (
+    "Documentary photograph, natural and unposed, true-to-life colour. The film exists in two "
+    "interconnected spaces: the, The setting is entirely, None, The environment is a "
+    "controlled. In the tunnel, lighting is practical and industrial. Muted natural palette of "
+    "A core palette of deep charcoal and slate. Natural 35mm lens perspective with gentle depth "
+    "of field, fine film grain and crisp detail. Wide establishing shot, 85mm lens. Glowing "
+    "white spheres clustered and holding together as atoms, then the empty accelerator tunnel "
+    "from scene 1. First the near-black void of scenes 2 and 3, then the identical tunnel from "
+    "scene 1. Vertical 9:16 frame, main subject in the upper two thirds, lower quarter calm and "
+    "uncluttered. No text, no logo."
+)
+
+
+def test_the_babcf272_scene_5_still_warns_of_a_sequence_and_a_scene_reference() -> None:
+    findings = lint_still_prompt(BABCF272_SCENE_5, scene=5)
+    sequence = _by_code(findings, "STILL_SEQUENCE")
+    pointer = _by_code(findings, "SCENE_REFERENCE")
+    assert len(sequence) == 1 and sequence[0].evidence == "then"
+    assert len(pointer) == 1 and pointer[0].evidence == "scene 1"
+    for finding in (*sequence, *pointer):
+        # WARN, never BLOCK: a BLOCK on a stored prompt would make the sheet LINT_BLOCKED and
+        # its repair would rewrite every scene's package, orphaning the takes already bought.
+        assert finding.severity == WARN
+        assert finding.scene == 5
+        assert ROMANIAN_MARKS & set(finding.message_ro)
+        assert f"„{finding.evidence}”" in finding.message_ro
+    assert "un singur moment" in sequence[0].message_ro and "„apoi”" in sequence[0].message_ro
+    assert "„scena N”" in pointer[0].message_ro
+    assert not has_block(_by_code(findings, "STILL_SEQUENCE") + pointer)
+
+
+@pytest.mark.parametrize(
+    ("text", "evidence"),
+    [
+        ("A quiet street at dawn. Later, a crowd fills it.", "Later"),
+        ("Snow on the ridge, eventually melting into the valley.", "eventually"),
+        ("The glow softens and dissolves into the tunnel view.", "dissolves into"),
+        ("A frozen lake. Moments later the ice cracks.", "Moments later"),
+        ("The harbour at dusk. At the end of the shot, the boat is gone.", "At the end"),
+    ],
+)
+def test_later_moments_in_a_still_are_a_sequence(text: str, evidence: str) -> None:
+    findings = _by_code(lint_still_prompt(text, scene=1), "STILL_SEQUENCE")
+    assert findings and findings[0].evidence == evidence, findings
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        GOOD_STILL,
+        "A door at the end of the corridor, first light on the wall.",
+        "Hills fading into the distance under low cloud.",
+        "The forest gives way to rocky slopes above the village.",
+    ],
+)
+def test_one_moment_described_is_not_a_sequence(text: str) -> None:
+    codes = _codes(lint_still_prompt(text, scene=1))
+    assert "STILL_SEQUENCE" not in codes and "SCENE_REFERENCE" not in codes
+
+
+def test_any_pointer_at_another_scene_is_named() -> None:
+    for text, evidence in (
+        ("The same void as scenes 2 and 3.", "scenes 2 and 3"),
+        ("The tunnel, as in scene four.", "scene four"),
+        ("The street from the previous scene.", "previous scene"),
+    ):
+        found = _by_code(lint_still_prompt(text, scene=4), "SCENE_REFERENCE")
+        assert found and found[0].evidence == evidence, (text, found)
+    # The motion prompt is not a picture: the still rule does not read it.
+    assert not _by_code(
+        lint_motion_prompt(GOOD_MOTION, scene=1, model_id="seedance2_5"), "STILL_SEQUENCE"
+    )
+
+
+@pytest.mark.parametrize(
+    ("text", "evidence"),
+    [
+        ("Split screen of the dense forest and the cleared land.", "Split screen"),
+        ("Before: a dense rainforest canopy. After: a bare clearing of stumps.", "Before:"),
+        ("Top half: a glacier in 1990. Bottom half: bare rock today.", "Top half:"),
+        ("A triptych of the valley at dawn.", "triptych"),
+        ("The street before and after the flood.", "before and after"),
+        ("The two glaciers shown side by side.", "shown side by side"),
+    ],
+)
+def test_a_still_that_asks_for_several_pictures_in_one_is_named(text: str, evidence: str) -> None:
+    found = _by_code(lint_still_prompt(text, scene=3), "STILL_PANELS")
+    assert found and found[0].evidence == evidence, found
+    assert found[0].severity == WARN and found[0].scene == 3
+    assert ROMANIAN_MARKS & set(found[0].message_ro)
+    assert f"„{evidence}”" in found[0].message_ro
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        GOOD_STILL,
+        "Two boats moored side by side in the harbour.",
+        "Solar panels on a roof, a control panel glowing in the dark.",
+        "Rainforest replaced by palm oil plantations.",
+        "An old textile mill transformed into a museum.",
+        "Wind turbines marking the transition to renewable energy.",
+        "A mother elephant followed by her calf, crossing the river.",
+        "The city has grown since then. A chair next to the window.",
+        "The opening shot shows a glacier at dawn.",
+    ],
+)
+def test_one_present_picture_is_neither_panels_nor_a_sequence(text: str) -> None:
+    codes = _codes(lint_still_prompt(text, scene=1))
+    assert not codes & {"STILL_PANELS", "STILL_SEQUENCE", "SCENE_REFERENCE"}, codes

@@ -54,7 +54,8 @@ pytestmark = pytest.mark.skipif(find_ffmpeg() is None, reason="ffmpeg not instal
 
 
 def a_report(scene: int, clip: Path | str, verdict: str) -> ClipReport:
-    """A clip report as qc.check_clip writes it: PASSED, FAILED (measured) or UNCHECKED."""
+    """A clip report as qc.check_clip writes it: PASSED, FAILED (measured), PANELS (measured,
+    and the still it was animated from is at fault) or UNCHECKED."""
     if verdict == "PASSED":
         checks: tuple[ClipCheck, ...] = (
             ClipCheck("motion", "PASSED", False, 1.4, "YDIF mediu 1,40 peste prag"),
@@ -64,6 +65,19 @@ def a_report(scene: int, clip: Path | str, verdict: str) -> ClipReport:
         checks = (
             ClipCheck("motion", "FAILED", True, 0.01, "clipul aproape nu se mișcă"),
             ClipCheck("picture", "PASSED", False, None, "privit la 1080 px: «a river»"),
+        )
+    elif verdict == "PANELS":
+        checks = (
+            ClipCheck("motion", "PASSED", False, 1.4, "YDIF mediu 1,40 peste prag"),
+            ClipCheck(
+                "panels",
+                "FAILED",
+                True,
+                0.338,
+                "nu e o singură fotografie: cadrul first are o bandă plată pe toată lățimea, "
+                "la mijloc, între două imagini (rândurile 159-320 din 480)",
+            ),
+            ClipCheck("picture", "PASSED", False, None, "privit la 1080 px: «a tunnel»"),
         )
     else:
         checks = (ClipCheck("picture", "NOT_RUN", True, None, "clipul nu a fost privit"),)
@@ -77,6 +91,7 @@ def a_report(scene: int, clip: Path | str, verdict: str) -> ClipReport:
         warnings_ro=(),
         unmeasured=tuple(i.code for i in checks if i.blocking and i.status == "NOT_RUN"),
         measured={"motion": {"mean_ydif": checks[0].value}},
+        back_to_still=verdict == "PANELS",
     )
 
 
@@ -230,6 +245,34 @@ def test_a_shot_that_fails_twice_goes_to_the_owner_and_is_never_assembled(engine
     assert refused.value.scenes == [1]
     assert "Scena 1" in str(refused.value) and "controlul clipului" in str(refused.value)
     assert _jobs(engine) == jobs_before
+
+
+def test_a_shot_animated_from_panels_is_not_bought_again_on_the_same_still(engine, tmp_path):
+    """2026-10-09: scene 5's still was three stacked panels and its clip animated them. A seed
+    + 1 on the same still animates the same panels, so nothing more is bought: the scene goes
+    back to its still, rejected, with the reason."""
+    storyboard_id = a_film(engine, tmp_path, scenes=1)
+    account = Account(10_000)
+    models = Models(SpyVideo("seedance2_5", account))
+
+    summary = approved(
+        engine,
+        storyboard_id,
+        tmp_path,
+        "test_shot",
+        models,
+        account,
+        clip_check=ScriptedCheck("PANELS", "PASSED"),
+    )
+
+    assert models.posts() == 1, "the same still was animated again"
+    (entry,) = summary["scenes"]
+    assert entry["status"] == "NEEDS_OWNER"
+    assert entry["clip_qc"]["status"] == "BACK_TO_STILL"
+    assert entry["clip_qc"]["verdict"] == "FAILED" and entry["clip_qc"]["retry_credits"] == 0
+    assert "imagine nouă" in entry["reason"] and "singură fotografie" in entry["reason"]
+    (take,) = shots(engine, storyboard_id)
+    assert take.status == "REJECTED" and take.failure_code == "QC.CLIP"
 
 
 def test_the_retry_is_not_bought_when_it_would_cross_the_approved_cap(engine, tmp_path):

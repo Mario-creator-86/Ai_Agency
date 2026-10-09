@@ -215,6 +215,56 @@ OVERCAST_LIGHT = "soft diffuse overcast light with gentle shadows"
 _HEX = re.compile(r"#(?:[0-9A-Fa-f]{6}|[0-9A-Fa-f]{3})\b")
 _LABEL = re.compile(r"^[A-Za-z][\w /-]{0,24}:\s*")
 _QUOTE_MARKS = re.compile('["“”„]')
+#: A bible sentence with its own verb ("The environment is a controlled space"). A comma
+#: after its verb does not split it when what follows goes on the same phrase (look_phrase),
+#: and capitalised, it is not joined to the place with a comma ("today, The environment is
+#: ..."): place, season and weather are then said as sentences.
+_HAS_VERB = re.compile(
+    r"\b(?:is|are|was|were|exists?|has|have|sits?|lies?|remains?|stays?|appears?|seems?"
+    r"|feels?)\b",
+    re.IGNORECASE,
+)
+#: The first word of a new phrase after a comma: an article, a pronoun, a preposition, a
+#: conjunction, a negation. Any other first word goes on the phrase before the comma ("is a
+#: controlled, climate-stable space"; "is soft, warm and low").
+_NEW_PHRASE = re.compile(
+    r"^(?:the|a|an|this|that|these|those|its|it|their|they|his|he|her|she|our|we|my|your"
+    r"|every|each|all|some|no|not|never|without|with|in|on|at|under|over|outside|inside"
+    r"|beside|behind|near|where|which|who|whose|while|when|as|and|but|or|yet|so|from|to|by"
+    r"|for|through|across|along|against|above|below|beneath|between|among|around|there|here"
+    r"|then|than)\b",
+    re.IGNORECASE,
+)
+#: A bible piece said for one of the film's places: "In the tunnel, lighting is practical
+#: and industrial", "in the void a glow". Film babcf272 (2026-10-09): the block said for
+#: every scene kept that tunnel light, and the void scenes came back as tunnels over flat
+#: black bands. Not a time, a light or the film itself: "In the soft light of dawn, ...",
+#: "At the end of the day, ...", "In this film, ..." are said for every scene.
+_PLACE_SCOPE = re.compile(
+    r"^(?:in|inside|within|at|on|outside|under|beneath|below|across|near)\s+"
+    r"(?:the|a|an|this|that|its|their|our)\s+((?:[\w'-]+\s+){0,3}?[\w'-]+)"
+    r"(?:\s*,|\s+(?=(?:a|an|the|it|everything|there)\b))",
+    re.IGNORECASE,
+)
+_NOT_A_PLACE = re.compile(
+    r"\b(?:films?|series|story|documentary|video|episode|whole|entire|lights?|lighting|glow"
+    r"|sun|sunlight|daylight|moonlight|starlight|shade|shadows?|dark|darkness|haze|mist|fog"
+    r"|rain|snow|morning|evening|afternoon|night|day|dawn|dusk|twilight|hour|season|winter"
+    r"|summer|autumn|spring|monsoon|end|beginning|distance|background|foreground)\b",
+    re.IGNORECASE,
+)
+#: A world that is several places ("two interconnected spaces: the tunnel and the void").
+_SEVERAL_PLACES = re.compile(
+    r"\b(?:two|three|four|five|several|multiple|many|different|distinct|separate|parallel)\s+"
+    r"(?:[\w-]+\s+){0,2}?(?:spaces|places|locations|settings|worlds|realms|environments|sites"
+    r"|landscapes)\b",
+    re.IGNORECASE,
+)
+#: Keys of a structured world that describe one place rather than name another one.
+_ONE_PLACE_KEYS = frozenset(
+    "name description details detail summary notes note type era period time mood look feel"
+    " style texture textures".split()
+)
 
 
 def load_factual_look(path: Path | None = None) -> dict[str, Any]:
@@ -271,26 +321,75 @@ def _said(value: Any) -> str:
     return _clean(value)
 
 
-def look_phrase(value: Any, max_words: int | None, *, own: bool = False) -> str:
-    """Plain words of a bible value that may enter a look block, whole clauses first.
+def _scoped_to_a_place(piece: str) -> bool:
+    """Whether a bible piece is said for one of the film's places, not for all of it."""
+    scope = _PLACE_SCOPE.match(piece.strip())
+    return scope is not None and not _NOT_A_PLACE.search(scope.group(1))
+
+
+def _place_by_place(value: Any) -> bool:
+    """Whether a bible value says its words place by place ("In the tunnel, ...")."""
+    from app.media import prompt_lint as lint  # noqa: PLC0415
+
+    text = lint.without_asides(_said(value))
+    return any(_scoped_to_a_place(piece) for piece in re.split(r"[;.]\s*", text))
+
+
+def _names_several_places(world: Any) -> bool:
+    """Whether the bible's world is more than one place: a block said for every scene then
+    names none of them, or every scene would show all of them (babcf272: tunnel and void)."""
+    if isinstance(world, dict):
+        named = [
+            key
+            for key, item in world.items()
+            if _said(item) and str(key).strip().lower() not in _ONE_PLACE_KEYS
+        ]
+        return len(named) > 1
+    text = _said(world)
+    labels = {
+        label.group(1).strip().lower()
+        for label in re.finditer(r"(?:^|;)\s*([A-Za-z][\w /-]{0,24}):", text)
+    }
+    return len(labels - _ONE_PLACE_KEYS) > 1 or bool(_SEVERAL_PLACES.search(text))
+
+
+def look_phrase(
+    value: Any, max_words: int | None, *, own: bool = False, whole_film: bool = False
+) -> str:
+    """Plain words of a bible value that may enter a look block, whole clauses only.
 
     A clause is dropped when an image model would read it wrongly: a code or a hex colour, a
     negation ("no harsh shadows" invites them), a person (the look is about the world, and
     faces are the scene's business), writing, another medium, a shot size (it would decide
-    every scene's framing at once), a chart or a black screen, a quotation or a "then".
+    every scene's framing at once), a chart or a black screen, a quotation, a "then" or a
+    later moment, a pointer at another scene. A clause that says nothing ("None", "n/a")
+    or is the head of a broken sentence (it ends in "the", "of", "is"...) is dropped too.
     ``own`` marks the look file's own words: its "film grain" is the look, not a restyle.
+
+    With ``max_words``, whole clauses are taken from the start while they fit, and a clause
+    is never cut: babcf272's look said "The setting is entirely" and "The environment is a
+    controlled", each the first words of a sentence too long for its slot. A first clause
+    that does not fit gives "", and the slot falls back to the next key or the look file.
+    A comma splits clauses, except after a verb when the next words go on the same phrase
+    ("The environment is a controlled, climate-stable space" is one clause); a name before
+    the comma stays whole on its own ("Kathmandu, a valley city where temples sit ...").
+
+    ``whole_film`` marks a value said for every scene (light, palette, season, weather): a
+    piece the bible says for one of its places ("In the tunnel, lighting is ...") is not.
     """
     from app.media import prompt_lint as lint  # noqa: PLC0415
-    from app.media.prompt_agent import _STYLE_OVERRIDE, _TEXT_REQUEST  # noqa: PLC0415
+    from app.media.prompt_agent import (  # noqa: PLC0415
+        _STYLE_OVERRIDE,
+        _TEXT_REQUEST,
+        without_scene_reference,
+    )
 
-    text = _said(value).replace("’", "'").replace("‘", "'")
-    kept: list[str] = []
-    for clause in re.split(r"[;,.]\s*|\s*\(|\)\s*", text):
-        said = _LABEL.sub("", " ".join(clause.split()).strip(" -:"))
-        if not re.search(r"[A-Za-z]", said):
-            continue
-        if (
-            _HEX.search(said)
+    def readable(clause: str) -> str:
+        said = without_scene_reference(_LABEL.sub("", " ".join(clause.split()).strip(" -:")))
+        if not re.search(r"[A-Za-z]", said) or (
+            lint.NONE_WORD.match(said)
+            or lint.dangling(said)
+            or _HEX.search(said)
             or lint.ENUM_CODE.search(said)
             or lint.NEGATION.search(said)
             or lint.INLINE_EXCLUSION.search(said)
@@ -300,10 +399,32 @@ def look_phrase(value: Any, max_words: int | None, *, own: bool = False) -> str:
             or (not own and _STYLE_OVERRIDE.search(said))
             or lint.SHOT_SIZE.search(said)
             or lint.THEN_CHAIN.search(said)
+            or lint.SEQUENCE_OPENER.match(said)
+            or lint.LATER_MOMENT.search(said)
+            or lint.PANEL_LAYOUT.search(said)
             or _QUOTE_MARKS.search(said)
         ):
+            return ""
+        return said
+
+    text = lint.without_asides(_said(value).replace("’", "'").replace("‘", "'"))
+    kept: list[str] = []
+    for piece in re.split(r"[;.]\s*|\s*\(|\)\s*", text):
+        if whole_film and _scoped_to_a_place(piece):
             continue
-        kept.append(said)
+        clauses: list[str] = []
+        for clause in re.split(r",\s*", piece):
+            clause = " ".join(clause.split())
+            if not clause:
+                continue
+            if clauses and _HAS_VERB.search(clauses[-1]) and not _NEW_PHRASE.match(clause):
+                # The comma sits inside the phrase its verb began: between two adjectives
+                # ("is a controlled, climate-stable space"), and "The environment is a
+                # controlled" on its own is a broken sentence. The phrase is one clause.
+                clauses[-1] = f"{clauses[-1]}, {clause}"
+            else:
+                clauses.append(clause)
+        kept.extend(said for said in map(readable, clauses) if said)
     if max_words is None:
         return ", ".join(kept)
     fitted: list[str] = []
@@ -311,8 +432,6 @@ def look_phrase(value: Any, max_words: int | None, *, own: bool = False) -> str:
     for said in kept:
         words = len(said.split())
         if count + words > max_words:
-            if not fitted:
-                fitted.append(" ".join(said.split()[:max_words]))
             break
         fitted.append(said)
         count += words
@@ -343,10 +462,13 @@ def look_block(bible: dict[str, Any] | None, look: dict[str, Any] | None = None)
 
     The rendering is the studio's and is never taken from the bible: a bible that asks for
     another medium contradicts the look and is not read. The place, season, weather, light
-    and palette are the bible's when it names them in plain words, the file's otherwise. A
-    bible rule that asks for overcast light is said as the light it wants. The same bible
-    always gives the same block, so every scene of a film opens identically.
+    and palette are the bible's when it names them in whole clauses that fit their slot, the
+    file's otherwise; a bible whose season or weather is "None" has none. A bible rule that
+    asks for overcast light is said as the light it wants. The same bible always gives the
+    same block, so every scene of a film opens identically.
     """
+    from app.media import prompt_lint as lint  # noqa: PLC0415
+
     look = look or load_factual_look()
     if not look.get("in_use"):
         return ""
@@ -354,37 +476,70 @@ def look_block(bible: dict[str, Any] | None, look: dict[str, Any] | None = None)
     slots: dict[str, str] = look.get("slots") or DEFAULT_FACTUAL_SLOTS
     caps: dict[str, int] = look.get("slot_words") or DEFAULT_SLOT_WORDS
 
-    def pick(slot: str, *keys: str, fallback: str | None = None) -> str:
+    def pick(
+        slot: str,
+        *keys: str,
+        fallback: str | None = None,
+        none: bool = False,
+        whole_film: bool = True,
+        by_place_is_none: bool = False,
+    ) -> str:
         for key in keys:
-            said = look_phrase(source.get(key), caps.get(slot, 8))
+            value = source.get(key)
+            said = look_phrase(value, caps.get(slot, 8), whole_film=whole_film)
             if said:
                 return said
+            # A bible that says its film has no weather ("None. The environment is a
+            # controlled ...", babcf272: a particle accelerator tunnel) is not given the
+            # look file's "overcast sky" when the rest of what it says does not fit.
+            text = lint.without_asides(_said(value)).strip()
+            if none and lint.NONE_WORD.match(re.split(r"[;,.:]\s*", text, maxsplit=1)[0]):
+                return ""
+            # A bible that gives its light place by place (babcf272: "In the tunnel, ...")
+            # leaves the light to each scene: the look file's daylight in a void scene would
+            # be as wrong as the tunnel's light.
+            if by_place_is_none and _place_by_place(value):
+                return ""
         if fallback is not None:
             return fallback
         return look_phrase(slots.get(slot), None, own=True)
 
     overcast = any(_OVERCAST_RULE.search(rule) for rule in _bible_rules(source))
     light_default = OVERCAST_LIGHT if overcast else look_phrase(slots.get("light"), None, own=True)
-    place = pick("place", "world", "place")
-    season = pick("season", "season")
-    weather = pick("weather", "weather")
-    light = pick("light", "lighting", fallback=light_default)
+    if _names_several_places(source.get("world")):
+        place = look_phrase(slots.get("place"), None, own=True)
+    else:
+        place = pick("place", "world", "place", whole_film=False)
+    season = pick("season", "season", none=True)
+    weather = pick("weather", "weather", none=True)
+    light = pick("light", "lighting", fallback=light_default, by_place_is_none=True)
     palette = pick("palette", "palette")
     lens = look_phrase(slots.get("lens"), None, own=True)
     grain = look_phrase(slots.get("grain"), None, own=True)
     fills: list[str] = list(look.get("fill") or [])
 
+    # A palette that names itself ("A core palette of deep charcoal and slate") is said as it
+    # is: babcf272's block read "Muted natural palette of A core palette of ...".
+    if re.search(r"\bpalettes?\b", palette, re.IGNORECASE):
+        palette_sentence = _sentence(palette)
+    else:
+        palette_sentence = _sentence(f"Muted natural palette of {palette}") if palette else ""
+
     def compose(with_season: bool, with_weather: bool, extra: int) -> str:
-        where = ", ".join(
+        wheres = [
             part
             for part in (place, season if with_season else "", weather if with_weather else "")
             if part
-        )
+        ]
+        if any(part[:1].isupper() and _HAS_VERB.search(part) for part in wheres):
+            where = " ".join(_sentence(part) for part in wheres)
+        else:
+            where = _sentence(", ".join(wheres))
         parts = [
             _sentence(str(look.get("rendering") or DEFAULT_FACTUAL_RENDERING)),
-            _sentence(where),
+            where,
             _sentence(light),
-            _sentence(f"Muted natural palette of {palette}") if palette else "",
+            palette_sentence,
             *[_sentence(item) for item in fills[:extra]],
             _sentence(", ".join(part for part in (lens, grain) if part)),
         ]

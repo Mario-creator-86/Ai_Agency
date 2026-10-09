@@ -1783,23 +1783,116 @@ _QUOTE_MARKS = re.compile('["“”„]')
 _NOT_A_PERSON = re.compile(r"\b(?:no|without|not\s+a|zero)\s+(?:\w+\s+)?$")
 
 
+#: A pointer at another scene said after what it qualifies, with the words that carry it:
+#: "the void of scenes 2 and 3", "the tunnel from scene 1", "a tunnel similar to scene 2's",
+#: "drift as in scene 2", "a street seen in the previous scene".
+_TRAILING_POINTER = re.compile(
+    r"(?:\s*,)?\s+(?:(?:seen|shown|used|introduced|established)\s+)?"
+    r"(?:(?:similar|identical|equal|comparable)\s+)?"
+    r"(?:as|like|from|of|in|than|to)\s+(?:in\s+)?(?:the\s+)?"
+    rf"(?:{lint.SCENE_REFERENCE.pattern})\s*$",
+    re.IGNORECASE,
+)
+#: A pointer said as the owner or the label of a thing: "scene 1's tunnel", "the previous
+#: scene's street", "the scene 1 tunnel". What is left is the thing itself: "the tunnel".
+_OWNING_POINTER = re.compile(
+    rf"(?:\bthe\s+)?(?:{lint.SCENE_REFERENCE.pattern})(?<='s)\s+"
+    rf"|\bthe\s+(?:{lint.SCENE_NUMBERED})\s+(?=[a-z])",
+    re.IGNORECASE,
+)
+#: "Identical to the tunnel": once the pointer is gone, the likeness points at nothing.
+_LIKENESS = re.compile(
+    r"^(?:the\s+)?(?:same|identical|similar|matching)\s+(?:to|as)\s+", re.IGNORECASE
+)
+#: "The same void as scene 2": once the pointer is gone, "same" points at nothing.
+_SAME_AS = re.compile(r"\b(?:same|identical|matching)\s+", re.IGNORECASE)
+#: What a pointer leaves when it was not said around a whole picture: "Back tunnel" (from
+#: "Back in the scene 1 tunnel"), "to the tunnel", "A tunnel similar", "lit the same".
+_BROKEN_START = re.compile(
+    r"^(?:back|again|once|still|also|too|to|of|as|than|like|from|by|with|for|and|or|but"
+    r"|similar|identical|same|matching)\b",
+    re.IGNORECASE,
+)
+_BROKEN_END = re.compile(
+    r"\b(?:similar|identical|same|like|matching|equal|comparable)$", re.IGNORECASE
+)
+#: A plan that asks for a layout around its pictures: "Split screen of the forest and the
+#: cleared land", "A before-and-after view of the glacier". What follows is said as one.
+_PANEL_FRAMING = re.compile(
+    r"^(?:(?:a|an|the)\s+)?(?:split[- ]?screen|before[- ]and[- ]after|side[- ]by[- ]side"
+    r"|diptych|triptych|polyptych|montage|(?:photo\s+)?collage)"
+    r"(?:\s+(?:views?|images?|shots?|comparisons?|pictures?|photos?|frames?|panels?"
+    r"|compositions?|layouts?))?\s+(?:of|showing|with|between|comparing)\s+",
+    re.IGNORECASE,
+)
+#: "The street before and after the flood": the first moment is "before the flood".
+_BEFORE_AND_AFTER = re.compile(r"\bbefore[- ]and[- ]after\b(?=\s+\w)", re.IGNORECASE)
+
+
+def without_scene_reference(part: str) -> str:
+    """The clause with its pointer at another scene taken out; "" when nothing whole is left.
+
+    An image or video model cannot know what "scene 1" looks like (film babcf272, 2026-10-09:
+    "the identical tunnel from scene 1"). A pointer said after a whole picture or as its
+    owner leaves that picture: "The same near-black void as scene 2" is "The near-black
+    void", "scene 1's tunnel" is "the tunnel". Any other pointer takes its clause with it
+    ("Back in the scene 1 tunnel" left "Back tunnel"; review, 2026-10-09).
+    """
+    if not lint.SCENE_REFERENCE.search(part):
+        return part
+    left = _OWNING_POINTER.sub("the ", _TRAILING_POINTER.sub("", part))
+    left = _SAME_AS.sub("", _LIKENESS.sub("", left.strip()))
+    left = " ".join(left.split()).strip(" ,;:-'")
+    if (
+        len(left.split()) < 2
+        or lint.SCENE_REFERENCE.search(left)
+        or lint.dangling(left)
+        or not re.search(r"[A-Za-z]", left)
+        or _BROKEN_START.match(left)
+        or _BROKEN_END.search(left)
+    ):
+        return ""
+    return left
+
+
+def _then_head(part: str, start: int) -> str:
+    """The words of a clause before its later moment, without a hanging "and"."""
+    head = part[:start].rstrip(" ,;:-")
+    return re.sub(r"(?:\s+\b(?:and|or|but)\b)+$", "", head, flags=re.IGNORECASE).strip()
+
+
 def _clauses_of(text: Any, *, motion: bool = False) -> list[str]:
     """The clauses of a plan field that may enter a prompt, in the plan's words.
 
     Dropped: codes, hex colours (their parentheses too), a negation ("no camera movement"
     is still about the camera), a percentage, a chart, a black screen or a title (those
-    scenes are composed locally), writing, a quotation, a label such as "Direction:". For
-    the motion prompt also anything about the camera, a colour or a "then" chain.
+    scenes are composed locally), writing, a quotation, a label such as "Direction:", a
+    value that says nothing ("None", "n/a"), the head of a broken sentence (a clause that
+    ends in "the", "of", "and"...), and a pointer at another scene ("from scene 1"; the rest
+    of its clause stays when it is whole). For the motion prompt also anything about the
+    camera, a colour or a "then" chain.
+
+    The still prompt is one moment, the first frame of the shot (film babcf272, 2026-10-09:
+    a field that listed three moments came back as three stacked panels). Its fields are
+    read up to the first later moment: the words before a "then", "dissolves into" or "cuts
+    to" are kept, and the rest of that clause and every later clause of the field are not
+    ("finally", "later", "next", "secondly"...). A field that says "First ..." is read for
+    that first moment only. A later-moment word that opens the field is about the scene
+    before it ("Finally, the cluster settles" is this shot's one moment) and is taken off.
+    A layout is read as its first picture: "Before: X. After: Y" is X, "Split screen of X"
+    is X, "the street before and after the flood" is "the street before the flood". A
+    parenthetical aside is closed up, never split into fragments (prompt_lint.without_asides).
     """
     said = _flatten(text).replace("’", "'").replace("‘", "'")
-    said = re.sub(r"\(\s*\)", "", _HEX_COLOUR.sub("", said))
-    kept: list[str] = []
-    for clause in re.split(r"[;,.!?]\s*|\s*\(|\)\s*|\s+-{1,2}\s+|\s*—\s*", said):
-        part = _LABEL_PREFIX.sub("", " ".join(clause.split()).strip(" -:/"))
-        if not re.search(r"[A-Za-z]", part) or part.lower() in ("n/a", "none"):
-            continue
+    said = lint.without_asides(re.sub(r"\(\s*\)", "", _HEX_COLOUR.sub("", said)))
+
+    def usable(part: str) -> str:
+        part = without_scene_reference(part)
         if (
-            lint.ENUM_CODE.search(part)
+            not re.search(r"[A-Za-z]", part)
+            or lint.NONE_WORD.match(part)
+            or lint.dangling(part)
+            or lint.ENUM_CODE.search(part)
             or lint.NEGATION.search(part)
             or lint.INLINE_EXCLUSION.search(part)
             or _PERCENT.search(part)
@@ -1807,28 +1900,77 @@ def _clauses_of(text: Any, *, motion: bool = False) -> list[str]:
             or _TEXT_REQUEST.search(part)
             or _QUOTE_MARKS.search(part)
         ):
-            continue
+            return ""
         if motion and (
             _CAMERA_WORDS.search(part)
             or lint.camera_moves(part)
             or _COLOUR_WORDS.search(part)
             or lint.THEN_CHAIN.search(part)
         ):
+            return ""
+        return part
+
+    kept: list[str] = []
+    opened = False  # a clause of the field has been read
+    first_only = False  # the field said "First ...": a still shows that moment only
+    panelled = False  # a clause was labelled as one picture of a layout ("Before:")
+    for clause in re.split(r"[;,.!?]\s*|\s*\(|\)\s*|\s+-{1,2}\s+|\s*—\s*", said):
+        raw = " ".join(clause.split()).strip(" -:/")
+        if motion:
+            part = usable(_LABEL_PREFIX.sub("", raw))
+            if part:
+                kept.append(part)
             continue
-        kept.append(part)
+        if not re.search(r"[A-Za-z]", raw):
+            continue
+        if lint.PANEL_LABEL.match(raw):
+            if panelled:
+                break
+            panelled = True
+        part = _LABEL_PREFIX.sub("", raw)
+        part = _BEFORE_AND_AFTER.sub("before", _PANEL_FRAMING.sub("", part))
+        first = lint.FIRST_OPENER.match(part)
+        if first:
+            first_only = True
+            part = part[first.end() :]
+        elif not opened:
+            part = lint.LATER_START.sub("", part)
+        elif lint.SEQUENCE_OPENER.match(part):
+            break
+        opened = True
+        marks = [
+            found.start()
+            for found in (lint.STILL_THEN.search(part), lint.LATER_MOMENT.search(part))
+            if found
+        ]
+        if marks:
+            head = usable(_then_head(part, min(marks)))
+            if head:
+                kept.append(head)
+            break
+        said_something = bool(re.search(r"[A-Za-z]", part))
+        part = "" if lint.PANEL_LAYOUT.search(part) else usable(part)
+        if part:
+            kept.append(part)
+        if first_only and said_something:
+            break
     return kept
 
 
 def _phrase(clauses: list[str], max_words: int) -> str:
     """Whole clauses joined while they fit ``max_words``; a first clause alone that does
-    not fit is kept to its first ``max_words`` words."""
+    not fit is kept to its first ``max_words`` words, never ending on "the", "of" or "and"
+    (a subject that is one long sentence still names its subject)."""
     fitted: list[str] = []
     count = 0
     for clause in clauses:
         words = len(clause.split())
         if count + words > max_words:
             if not fitted:
-                fitted.append(" ".join(clause.split()[:max_words]))
+                head = clause.split()[:max_words]
+                while len(head) > 1 and lint.dangling(" ".join(head)):
+                    head.pop()
+                fitted.append(" ".join(head))
             break
         fitted.append(clause)
         count += words
@@ -2101,7 +2243,11 @@ def compile_prompts(
         environment = ""
     light = _phrase(_clauses_of(package.get("lighting")), 12)
     if light and not re.search(r"\blight", light, re.IGNORECASE):
-        light = f"light {light}"
+        # "The glow of the spheres" (babcf272) said as "Light The glow of ..." was no sentence.
+        if re.match(r"(?:the|a|an|its|their|his|her|this|that|one)\b", light, re.IGNORECASE):
+            light = f"lit by {light[:1].lower()}{light[1:]}"
+        else:
+            light = f"light {light}"
     cast = _cast_sentence(package.get("characters"), faces_banned)
     people = _shows_people(" ".join((subject, action, environment, cast)))
     items = [
