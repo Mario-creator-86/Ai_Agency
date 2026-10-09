@@ -750,6 +750,18 @@ def run_watchdog(
         logger.error("watchdog_runpod_unsent_failed", extra={"error": type(exc).__name__})
         unsent_holds = {"cards": [], "released": [], "error": True}
 
+    # A letter to the Owner asking about a question that no longer waits (answered, withdrawn,
+    # expired) or about a film a newer letter has moved past: closed (2026-10-09, he closed six
+    # by hand in one afternoon). Local writes; nothing sent, nothing bought.
+    answered_letters: dict[str, Any]
+    try:
+        from app.media.answered_letters import retire_answered_letters  # noqa: PLC0415
+
+        answered_letters = retire_answered_letters(engine, correlation)
+    except Exception as exc:  # noqa: BLE001 - one part's failure must not lose the others'
+        logger.error("watchdog_answered_letters_failed", extra={"error": type(exc).__name__})
+        answered_letters = {"answered": [], "superseded": [], "lists": [], "error": True}
+
     # The seventh, only when the Owner turned it on: a failed render's shots, deleted.
     try:
         intermediates = _sweep_failed_intermediates(engine, settings, correlation)
@@ -771,6 +783,7 @@ def run_watchdog(
         "intermediates": intermediates,
         "defect_holds": defect_holds,
         "runpod_unsent_holds": unsent_holds,
+        "answered_letters": answered_letters,
         "correlation_id": correlation,
     }
     logger.info(

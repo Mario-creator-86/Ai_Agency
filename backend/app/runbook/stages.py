@@ -2335,7 +2335,16 @@ def _sheet_letter(
             to_owner=True,
             correlation_id=correlation,
         )
-        return str(message.id)
+        message_id = str(message.id)
+    # The film's older letters now say less than this one, and an answered question no longer
+    # asks: closed by the studio (`answered_letters`), so he never closes them by hand.
+    try:
+        from app.media.answered_letters import retire_answered_letters  # noqa: PLC0415
+
+        retire_answered_letters(engine, correlation)
+    except Exception as exc:  # noqa: BLE001 - the new letter stands whatever happens here
+        logger.error("answered_letters_failed", extra={"error": type(exc).__name__})
+    return message_id
 
 
 #: The refusals that are a budget's, and what the film then waits for.
