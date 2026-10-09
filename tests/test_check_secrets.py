@@ -179,3 +179,24 @@ def test_the_cli_detects_a_key_in_utf8_text_with_windows_default_encoding(tmp_pa
     assert result.returncode == 1, result.stdout + result.stderr
     assert "settings.py:2" in result.stdout
     assert key not in result.stdout + result.stderr
+
+
+def test_the_workers_mirror_pin_passes_as_a_commit_line_only(tmp_path, capsys):
+    # backend/runpod_worker/mirrors.lock.json pins his mirror by a 40-hex commit after the copy
+    # (2026-10-09). That commit is not a credential, exactly like models.lock.json's pins.
+    root = tmp_path / "tree"
+    folder = root / "backend" / "runpod_worker"
+    folder.mkdir(parents=True)
+    commit = secrets.token_hex(20)
+    lock = folder / "mirrors.lock.json"
+    lock.write_text(
+        '{\n  "stills": {\n    "repo": "mario/amn-stills",\n'
+        f'    "revision": "{commit}",\n    "visibility": "private"\n  }}\n}}\n',
+        encoding="utf-8",
+    )
+    assert run_gate(root, empty_baseline(tmp_path), capsys)[0] == 0
+
+    # A key on another line of the same file is still caught.
+    lock.write_text(lock.read_text(encoding="utf-8") + f'"token": "{fake_key()}"\n', "utf-8")
+    code, output = run_gate(root, empty_baseline(tmp_path), capsys)
+    assert code == 1 and "mirrors.lock.json" in output

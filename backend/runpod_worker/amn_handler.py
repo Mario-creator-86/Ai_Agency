@@ -21,6 +21,17 @@ One item's failure is that item's FAILED with an error code (its claim is releas
 batch goes on. ComfyUI unreachable fails the remaining items ``COMFY_DOWN``. A contract error
 raises: RunPod marks the job FAILED and nothing was touched.
 
+Before ComfyUI starts, :func:`main` checks the weights (``weights.prepare``: the pinned
+snapshot of the Owner's mirror in RunPod's model cache). Wrong weights fail every item that is
+not a reuse with ``MODELS_MISSING`` or ``WRONG_REVISION`` before its claim, and ComfyUI is
+never started on them. Every item result names ``weights_revision`` and its
+``model_load_seconds``. A workflow that declares ``references`` (the Qwen-Image-Edit-2511
+route) gets the item's 1-3 reference pictures, one per slot, fetched from their presigned
+URLs; its unused LoadImage slots are pruned. Before any GPU work, an item without the
+required reference fails ``NEEDS_REFERENCE``, one with more pictures than slots
+``TOO_MANY_REFERENCES``, and one with a picture for a graph that binds none
+``REFERENCE_NOT_ACCEPTED``: a picture is never dropped in silence.
+
 ``runpod`` and ``boto3`` are imported lazily (in :func:`main` and ``S3Storage.from_env``):
 the studio's environment has neither and imports ``runpod_worker.contract`` only.
 """
@@ -28,6 +39,7 @@ the studio's environment has neither and imports ``runpod_worker.contract`` only
 from __future__ import annotations
 
 import copy
+import dataclasses
 import functools
 import hashlib
 import json
@@ -64,6 +76,7 @@ from runpod_worker.storage import (
     S3Storage,
     StorageError,
 )
+from runpod_worker.weights import WeightsReport
 
 logger = logging.getLogger("amn.worker")
 
@@ -129,6 +142,11 @@ class Workflow:
     bindings: dict[str, list[BindingPath]]
     frames: dict[str, int] | None
     graph: dict[str, Any]
+    #: The reference-picture bindings, in order (each a LoadImage ``image``); empty when the
+    #: route takes none. Unfilled ones are pruned from the graph.
+    references: tuple[str, ...] = ()
+    #: How many references an item must bring (else NEEDS_REFERENCE).
+    references_required: int = 0
 
 
 def _paths(name: str, raw: object) -> list[BindingPath]:
@@ -158,6 +176,18 @@ def load_workflow(name: str) -> Workflow:
     if raw["output_node"] not in graph:
         raise ValueError(f"{name}: output node missing")
     frames = raw.get("frames")
+    declared = raw.get("references") or {}
+    references = tuple(str(key) for key in declared.get("bindings", []))
+    required = int(declared.get("required", 0))
+    for key in references:
+        slots = bindings.get(key) or []
+        if not slots or any(
+            graph[node]["class_type"] != "LoadImage" or field_name != "image"
+            for node, _, field_name in slots
+        ):
+            raise ValueError(f"{name}: reference {key} must bind a LoadImage image")
+    if not 0 <= required <= len(references):
+        raise ValueError(f"{name}: references.required out of range")
     return Workflow(
         name=str(raw["name"]),
         model=str(raw["model"]),
@@ -166,7 +196,22 @@ def load_workflow(name: str) -> Workflow:
         bindings=bindings,
         frames={str(k): int(v) for k, v in frames.items()} if frames else None,
         graph=graph,
+        references=references,
+        references_required=required,
     )
+
+
+def _reference_refusal(workflow: Workflow, references: list[Any]) -> str | None:
+    """The code an item's pictures fail with on ``workflow``, or None when they fit: none for
+    a graph that binds none (REFERENCE_NOT_ACCEPTED), at most one per slot
+    (TOO_MANY_REFERENCES), at least the required ones (NEEDS_REFERENCE)."""
+    if references and not workflow.references:
+        return "REFERENCE_NOT_ACCEPTED"
+    if len(references) > len(workflow.references):
+        return "TOO_MANY_REFERENCES"
+    if len(references) < workflow.references_required:
+        return "NEEDS_REFERENCE"
+    return None
 
 
 def frame_count(duration: float, rule: Mapping[str, int]) -> int:
@@ -178,11 +223,28 @@ def frame_count(duration: float, rule: Mapping[str, int]) -> int:
     return frames
 
 
-def bind(workflow: Workflow, values: Mapping[str, Any]) -> dict[str, Any]:
+def bind(
+    workflow: Workflow, values: Mapping[str, Any], *, prune: tuple[str, ...] = ()
+) -> dict[str, Any]:
+    """The graph with ``values`` written through the bindings; the nodes of the ``prune``
+    bindings (unfilled reference slots) removed with every input that linked to them, so
+    ComfyUI never sees a template file name. Only optional inputs may link to a pruned node
+    (the reference encoder's image2/image3); the test suite checks that per route."""
     graph = copy.deepcopy(workflow.graph)
     for key, value in values.items():
         for node, _, field_name in workflow.bindings.get(key, []):
             graph[node]["inputs"][field_name] = value
+    gone = {node for key in prune for node, _, _ in workflow.bindings.get(key, [])}
+    for node in gone:
+        graph.pop(node, None)
+    for node in graph.values():
+        inputs = node["inputs"]
+        for field_name in [
+            name
+            for name, value in inputs.items()
+            if isinstance(value, list) and value and value[0] in gone
+        ]:
+            del inputs[field_name]
     return graph
 
 
@@ -201,19 +263,26 @@ class _Batch:
         comfy: ComfyPort,
         storage: StoragePort,
         clock: Callable[[], float],
+        weights: WeightsReport | None = None,
     ) -> None:
         self.job_id = job_id
         self.batch = batch
         self.comfy = comfy
         self.storage = storage
         self.clock = clock
+        self.weights = weights
         self.started = clock()
         self.prefix = batch["output"]["prefix"]
         self.ttl = batch["output"]["url_ttl_seconds"]
         self.operation = batch["operation"]
         self.comfy_ready = False
         self.comfy_down = False
-        self.model_load_seconds = 0.0
+        #: The weights check ran before this job (at the worker's start): its seconds are
+        #: this job's load, carried by the first item that waits for ComfyUI.
+        self.unclaimed_load = weights.seconds if weights is not None else 0.0
+        self.model_load_seconds = self.unclaimed_load
+        #: Load seconds of the item being made (weights check + ComfyUI ready).
+        self.item_load = 0.0
         self.slowest = 0.0
         #: True once a prompt finished on ComfyUI: the models are loaded. The first prompt
         #: loads them lazily, a time the studio budgets apart as cold_start_seconds.
@@ -232,6 +301,8 @@ class _Batch:
             "error": None,
             "reused": False,
             "provenance_boxes": [],
+            "weights_revision": self.weights.revision if self.weights is not None else None,
+            "model_load_seconds": round(self.item_load, 3),
         }
 
     def _ended(self, item: BatchItem, status: str, error: str | None) -> ItemResult:
@@ -239,6 +310,19 @@ class _Batch:
         result["status"] = status
         result["error"] = error
         return result
+
+    def refused(self, item: BatchItem) -> str | None:
+        """The error an item fails with before its claim, so before any GPU work: wrong
+        weights, a reference route without its reference, or pictures its graph cannot bind
+        (never dropped in silence: the studio's record would say the still was drawn from a
+        picture the graph never read)."""
+        if self.weights is not None and self.weights.error is not None:
+            return self.weights.error
+        try:
+            workflow = load_workflow(item["workflow"])
+        except (OSError, ValueError, KeyError):
+            return None  # generate() fails it WORKFLOW_INVALID, as before
+        return _reference_refusal(workflow, item.get("reference_images") or [])
 
     # ------------------------------------------------------------------------------- steps
 
@@ -262,6 +346,8 @@ class _Batch:
         result["index"] = item["index"]
         result["reused"] = True
         result["gpu_seconds"] = 0.0
+        result["model_load_seconds"] = 0.0
+        result.setdefault("weights_revision", None)  # the revision that made it, if known
         result["error"] = None
         result["url"] = self.storage.presign_get(checked["key"], self.ttl)
         return result
@@ -313,11 +399,15 @@ class _Batch:
         if self.comfy_ready:
             return
         left = self.batch["time_budget_seconds"] - self.elapsed()
+        self.item_load += self.unclaimed_load
+        self.unclaimed_load = 0.0
         try:
-            self.model_load_seconds += self.comfy.wait_ready(max(1.0, min(READY_SECONDS, left)))
+            waited = self.comfy.wait_ready(max(1.0, min(READY_SECONDS, left)))
         except ComfyUnavailable as exc:
             self.comfy_down = True
             raise ItemFailed("COMFY_DOWN") from exc
+        self.model_load_seconds += waited
+        self.item_load += waited
         self.comfy_ready = True
 
     def fetch_input(self, ref: InputRef) -> str:
@@ -347,16 +437,22 @@ class _Batch:
             values["negative_prompt"] = item["negative_prompt"]
         if self.operation == "image":
             values["width"], values["height"] = item["width"], item["height"]
+        # Only a workflow that declares references receives them, each in its own slot, in
+        # the studio's order (the character's identity sheet first); refused() already failed
+        # an item whose pictures do not fit its slots.
         references = item.get("reference_images") or []
-        if references and "reference_image" in workflow.bindings:
-            # Only a workflow that has a reference input receives one (none does yet).
-            values["reference_image"] = self.fetch_input(references[0])
+        refusal = _reference_refusal(workflow, references)
+        if refusal is not None:
+            raise ItemFailed(refusal)
+        for binding, ref in zip(workflow.references, references, strict=False):
+            values[binding] = self.fetch_input(ref)
         if self.operation == "video":
             values["source_image"] = self.fetch_input(item["source_image"])
             if workflow.frames is None:
                 raise ItemFailed("WORKFLOW_INVALID")
             values["duration_frames"] = frame_count(item["duration"], workflow.frames)
-        prompt_id = self.comfy.queue(bind(workflow, values))
+        empty = workflow.references[len(references) :]
+        prompt_id = self.comfy.queue(bind(workflow, values, prune=empty))
         left = self.batch["time_budget_seconds"] - self.elapsed() - FINISH_MARGIN_SECONDS
         history = self.comfy.wait(prompt_id, max(30.0, left))
         self.models_warm = True
@@ -409,6 +505,10 @@ class _Batch:
             return self._ended(item, "FAILED", "STORAGE_FAILED")
         if reused is not None:
             return reused
+        self.item_load = 0.0
+        refusal = self.refused(item)
+        if refusal is not None:
+            return self._ended(item, "FAILED", refusal)
         budget = max(ITEM_BUDGET_SECONDS[self.operation], self.slowest)
         if self.elapsed() + budget > self.batch["time_budget_seconds"]:
             return self._ended(item, "SKIPPED_TIME", "TIME_BUDGET")
@@ -458,6 +558,7 @@ def handler(
     comfy: ComfyPort | None = None,
     storage: StoragePort | None = None,
     clock: Callable[[], float] = time.monotonic,
+    weights: WeightsReport | None = None,
 ) -> BatchOutput:
     started = clock()
     batch = validate_input(job.get("input") if isinstance(job, Mapping) else None)
@@ -468,6 +569,7 @@ def handler(
         comfy if comfy is not None else ComfyClient.from_env(),
         storage if storage is not None else S3Storage.from_env(),
         clock,
+        weights,
     )
     items = sorted(batch["items"], key=lambda item: item["index"])
     results: list[ItemResult] = []
@@ -491,6 +593,7 @@ def handler(
         "handler_seconds": handler_seconds,
         # The worker holds the GPU for the whole handler; billing adds start-up and idle tail.
         "gpu_seconds": handler_seconds,
+        "weights_revision": weights.revision if weights is not None else None,
     }
 
 
@@ -506,16 +609,29 @@ def _entry(job: dict[str, Any]) -> BatchOutput:
         _shared["comfy"] = ComfyClient.from_env()
     if "storage" not in _shared:
         _shared["storage"] = S3Storage.from_env()
-    return handler(job, comfy=_shared["comfy"], storage=_shared["storage"])
+    report = _shared.get("weights")
+    try:
+        return handler(job, comfy=_shared["comfy"], storage=_shared["storage"], weights=report)
+    finally:
+        if isinstance(report, WeightsReport) and report.seconds:
+            # The check ran once, at the worker's start: only its first job reports it.
+            _shared["weights"] = dataclasses.replace(report, seconds=0.0)
 
 
 def main() -> None:
     import runpod  # type: ignore[import-not-found,unused-ignore]
 
-    from runpod_worker.comfy import start_server
+    from runpod_worker import comfy, weights
 
     logging.basicConfig(level=os.environ.get("AMN_LOG_LEVEL", "INFO"))
-    start_server()
+    # The weights first: ComfyUI is started only on the pinned, complete snapshot.
+    report = weights.prepare()
+    _shared["weights"] = report
+    if report.ok:
+        logger.info("weights_ready", extra={"weights": report.summary()})
+        comfy.start_server(extra_model_paths=report.yaml_path)
+    else:
+        logger.error("weights_refused", extra={"weights": report.summary()})
     global PROGRESS
     PROGRESS = runpod.serverless.progress_update
     runpod.serverless.start({"handler": _entry})

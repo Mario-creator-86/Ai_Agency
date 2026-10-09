@@ -608,7 +608,23 @@ def _references(
     with_figure = figure_one is not None and not first
     if with_figure and figure_one is not None:
         pictures.append(figure_one)
+    most = getattr(adapter, "MAX_REFERENCES", None)
+    if isinstance(most, int) and not isinstance(most, bool) and 0 <= most < len(pictures):
+        # A vendor that states how many pictures its model binds (RunPod, from the catalogue)
+        # is handed no more: the character's first (its face), then the film's look. A model
+        # that binds none gets none, so no still is reported as drawn from a picture.
+        pictures = pictures[:most]
+        kept_character = with_character and bool(pictures)
+        with_figure = with_figure and len(pictures) == int(kept_character) + 1
+        with_character = kept_character
     return pictures, with_character, with_figure
+
+
+def references_sent(with_character: bool, with_figure: bool) -> list[str]:
+    """What the model was really handed, in order: the record of a scene (2026-10-09)."""
+    return [
+        role for role, sent in (("character", with_character), ("figure_one", with_figure)) if sent
+    ]
 
 
 def _event(engine: Engine, event_type: str, storyboard_id: str, payload: dict, corr: str) -> None:
@@ -993,6 +1009,7 @@ class _StillRounds:
         )
         state.references = tuple(refs)
         state.with_character, state.with_figure = with_character, with_figure
+        state.entry["references_sent"] = references_sent(with_character, with_figure)
         self.unverified = self.unverified or (
             bool(refs) and not bool(getattr(self.adapter, "REFERENCE_IMAGE_VERIFIED", False))
         )
@@ -1636,6 +1653,7 @@ def run_stills_stage(
         references, with_character, with_figure = _references(
             scene, figure_one, image_adapter, first=scene.index == first_live
         )
+        entry["references_sent"] = references_sent(with_character, with_figure)
         instruction = ""
         rerolls = 0
         retried = False

@@ -12210,6 +12210,23 @@ def _redo_still(
             ),
             plan=plan,
         )
+    from app.media.factory import accepts_reference_image  # noqa: PLC0415 - factory reaches us
+
+    if (
+        scene.reference is not None
+        and scene.reference.get("required")
+        and not accepts_reference_image(image_adapter)
+    ):
+        # The stills step's rule, here too (adversary 2026-10-09): a locked face is never
+        # redrawn from words by a model that cannot take its reference picture.
+        raise SceneRedoRefused(
+            "NEEDS_REFERENCE",
+            f"Scena {index} arată un personaj cu înfățișarea blocată, iar modelul de imagine "
+            "conectat nu poate primi imaginea lui de referință: nu se cumpără o imagine desenată "
+            "din cuvinte pentru un chip fixat. Alegeți un model care primește imagini de "
+            "referință.",
+            plan=plan,
+        )
     findings = lint_film(
         [LintScene(scene=index, kind=LIVE_KIND, still_prompt=scene.words)], bible=bible
     )

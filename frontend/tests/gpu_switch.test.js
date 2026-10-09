@@ -23,6 +23,16 @@ test('the switch says off, on with the step, or unknown', () => {
   assert.equal(gpuWords(null).tone, 'unknown');
 });
 
+test('a job RunPod has not started yet says the unbilled model wait', () => {
+  const waiting = { ...off, endpoints: [{ ...off.endpoints[0], state: 'ON', workers_max: 1,
+    model_wait_ro: 'aștept descărcarea modelului (neplătită)' }],
+    sessions: [{ id: 's', purpose: 'image', step: 'stills', storyboard_id: 'f' }],
+    model_wait_ro: 'aștept descărcarea modelului (neplătită)' };
+  assert.equal(gpuWords(waiting).label, 'GPU: aștept descărcarea modelului (neplătită) — pas: stills');
+  assert.equal(gpuWords(waiting).tone, 'on');
+  assert.equal(gpuWords({ ...waiting, model_wait_ro: null }).label, 'GPU pornit — pas: stills');
+});
+
 test('the off command and its answer', () => {
   assert.deepEqual(offCommand('c-1'), { schema_version: 1, command_id: 'c-1' });
   assert.equal(offAnswer({ verified: true, words_ro: 'GPU-ul RunPod este oprit și verificat.' }),

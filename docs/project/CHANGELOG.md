@@ -1,5 +1,84 @@
 # Changelog
 
+## 2026-10-09 — restore requested scene animation
+
+- Scene motion follows a persistent ANIMAȚII control; enabled by explicit Owner default,
+  even when Windows limits interface motion. OS/menu preferences remain intact.
+- Pause survives reload, resume works, all real work/visibility/replay/live guards retained.
+- 861 frontend units, types, four bounded browser checks and actual 390px/live scene verified.
+  Four pedestrians, bicycle/pets and eight real staff visibly move; actual clip 15.916016 s.
+
+## 2026-10-09 — agents seated on the original chairs
+
+- Correct seated anatomy in three original staff sprite edits; per-frame hips aligned
+  to eight original seat contacts, shoes on the floor with preserved proportions.
+- Original chair/stool silhouettes stop wall/background rectangles erasing body parts.
+- Current static calibration applies over matching preceding backend geometry, without
+  server restart. All 48 posed combinations and real eight-agent UI/16 s clip checked.
+- 859 frontend, types, three bounded browser and 53 scoped backend/docs green.
+
+## 2026-10-09 — RunPod cached models: the Owner's console pin (completeness pass, fakes only)
+
+- After a successful copy his letter lists, per endpoint, the Model value and the env pin
+  `AMN_MIRROR_REPO` / `AMN_MIRROR_REVISION` with the exact commits; the weights card says the
+  same, and the worker's `WRONG_REVISION` names the variable to set.
+- check_secrets accepts a pinned commit in backend/runpod_worker/mirrors.lock.json; a cache wait
+  longer than one GPU session is refused in the settings; the copy pod's pip fallback matches
+  requirements-mirror.txt (huggingface_hub 0.36.0).
+
+## 2026-10-09 — RunPod cache and reference route: adversary pass (fakes only)
+
+- The worker refuses a picture its graph cannot bind (`REFERENCE_NOT_ACCEPTED`) and more
+  pictures than its slots (`TOO_MANY_REFERENCES`) before the claim, instead of dropping them in
+  silence while the studio's record named them.
+- A one-scene still redo of a locked character on a model without a reference input is refused
+  `NEEDS_REFERENCE` before his yes is asked (the stills step already refused it).
+- New tests/test_runpod_cache_reference_adversary.py (20 cases): fake caches (refs/main absent,
+  empty snapshots, empty pinned snapshot, a folder in a file's place, bad endpoint pins), the
+  model-paths file resolved the way ComfyUI v0.39.2 resolves it, catalogue ↔ graph reference
+  slots, the cache wait inside every ttl and inside the studio's round deadline.
+
+## 2026-10-09 — RunPod copy pod: never keeps billing, never leaks (adversary pass, fakes only)
+
+- The pod cuts the copy at its own deadline (the card's cap) and terminates itself with its
+  pod-scoped key, then exits; a restarted container never copies again.
+- Two accepts at once start one pod; a guard tick no longer stops a copy still being created; a
+  stop during the create ends the new pod at once; a finished copy keeps its revisions at BOOT.
+- The sweep touches only `amn-mirror-copy-<8 hex>`, survives one failing DELETE, counts only a
+  confirmed end and retries an unconfirmed one past two days; his letter says when the end is not
+  confirmed and names his own «Terminate».
+- The card warns that the Hugging Face token is visible in the pod's env in the RunPod console.
+
+## 2026-10-09 — detailed employee and town actor artwork
+
+- Five original transparent sprite atlases, 80 drawn frames: natural human/pet proportions,
+  clothing/accessories, bicycle frame/spokes/basket and four walk/pedal keyframes.
+- Eight Bible-bound employees use real state poses, cup/stretch and visible body/arm motion
+  at the existing desks; palette/accessory edits and missing assets use the code fallback.
+- Continuous cat activities, leashed dog and umbrellas with unclipped canopy/feet.
+- Approved illustration/menu/seat layout preserved; 859 frontend, types, three bounded
+  browser and 53 scoped backend/docs green; actual eight-agent UI/video verified.
+- No production workflow started; built-in imagegen used for local art. See
+  PIXEL_ACTOR_REFINEMENT.md for source prompts, rights, evidence and rollback.
+
+## 2026-10-09 — RunPod: weights from his cached mirrors, the 2511 reference route, the copy pod (studio side, fakes only)
+
+- Settings: `model_source` (cache by default, volume, baked), his two private Hugging Face mirrors
+  and their revisions, the HF token in the vault, the volume fallback as REST v2 names it
+  (`networkVolumes`, `dataCenterIds`).
+- Under the cache, every job's TTL holds the unbilled cache-miss wait (3600 s) on every round; a
+  job still waiting shows «GPU: aștept descărcarea modelului (neplătită)» on the GPU switch.
+- A result reporting another `weights_revision`, MODELS_MISSING or WRONG_REVISION stops the step
+  (no further round, GPU off) and puts a card in the Decisions window naming the endpoint, the
+  expected copy and «Manage → Edit Endpoint → Model»; the endpoint stays held until he is done.
+- The `Qwen-Image-Edit-2511` route (Apache-2.0) draws a locked character from its picture and
+  Figure 1 (1-3 pictures, presigned) instead of refusing NEEDS_REFERENCE; an item with no picture
+  goes to Qwen-Image-2512, and the records say which pictures each model got.
+- The one-time copy pod: his accept of «Copiez modelele în contul tău Hugging Face cu un server
+  RunPod temporar?» starts a capped CPU pod (5.00 USD, 240 minutes by default) that the guard
+  always terminates (success, failure, cap, restart, an unknown `amn-mirror-copy` pod); success
+  writes the mirrors' revisions; cost recorded. Migration 0057.
+
 ## 2026-10-08 — RunPod: what the Owner needs before the paid test (fakes only)
 
 - The worker image starts from a base that exists: `runpod/worker-comfyui:5.10.0-base`

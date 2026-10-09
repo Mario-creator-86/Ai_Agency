@@ -1,6 +1,5 @@
 // Original layered pixel characters. Identity is independent of pose and working state.
 import { PIXEL_LAYOUT } from './pixel_desks.js';
-import { shade } from './pixel_art.js';
 import { paintSeated, paintDeskHands } from './pixel_seated_art.js';
 import { drawStaffAtlas } from './pixel_actor_atlas.js';
 export { shade } from './pixel_art.js';
@@ -87,8 +86,8 @@ export function characterMotion(agent, time = 0, live = false, reduced = false, 
 }
 
 /** Cache compact sprite frames; device scaling stays crisp and repeated poses allocate no canvas. */
-export function drawSeatedPerson(ctx, profile, motion, center, floor, scale = 1.6, portrait = false, orientation = 'side') {
-  if(drawStaffAtlas(ctx,profile,motion,center,floor,scale,portrait))return;
+export function drawSeatedPerson(ctx, profile, motion, center, floor, scale = 1.6, portrait = false, orientation = 'side', seating = null) {
+  if(drawStaffAtlas(ctx,profile,motion,center,floor,scale,portrait,false,seating))return;
   const back = orientation === 'back' && !portrait;
   const key = `${profile.key}:${motion.mode}:${motion.frame}:${motion.breath}:${motion.blink}:${motion.glance}:${motion.gesture}:${motion.gestureFrame}:${motion.sway}:${portrait}:${back}`;
   let sprite = frames.get(key);
@@ -106,8 +105,8 @@ export function drawSeatedPerson(ctx, profile, motion, center, floor, scale = 1.
 }
 
 /** Hands and small tools belong above the chair's foreground, while the body stays seated. */
-export function drawDeskGesture(ctx, profile, motion, center, floor, scale = 1.5) {
-  if(drawStaffAtlas(ctx,profile,motion,center,floor,scale,false,true))return;
+export function drawDeskGesture(ctx, profile, motion, center, floor, scale = 1.5, seating = null) {
+  if(drawStaffAtlas(ctx,profile,motion,center,floor,scale,false,true,seating))return;
   ctx.save(); ctx.translate(Math.round(center - 16 * scale), Math.round(floor - 40 * scale));
   ctx.scale(scale * 2 / 3, scale * 2 / 3); paintDeskHands(ctx, profile, motion); ctx.restore();
 }

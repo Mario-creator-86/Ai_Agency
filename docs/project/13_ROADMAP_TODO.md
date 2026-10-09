@@ -1,5 +1,33 @@
 # Roadmap / TODO v3
 
+## Scene motion resume — 2026-10-09
+
+- [x] PIXEL_MOTION_RESUME — reproduce reduced-motion freeze; explicit Owner animation
+  default and persistent ANIMAȚII toggle, no Windows/menu setting change.
+- [x] 861 frontend/types and four bounded browser checks; actual four pedestrians,
+  bicycle/pets and eight staff visibly move; pause/reload/resume/mobile pass.
+
+Proof and rollback: PIXEL_MOTION_RESUME.md; actual clip 15.916016 s.
+
+## Proper seated contact — 2026-10-09
+
+- [x] PIXEL_SEAT_ALIGNMENT — 48 poses reviewed at eight original chairs/stools; pelvis
+  anchors, fixed floor, proportional shoes and original furniture silhouette masks.
+- [x] Actual current-seat UI verified without backend restart; 859 frontend/types,
+  three bounded browser and 53 scoped backend/docs pass. Final live clip: 16 seconds.
+
+PIXEL_ACTOR_REFINEMENT.md records current assets, proof and rollback.
+
+## Detailed living actors — 2026-10-09
+
+- [x] PIXEL_ACTOR_REFINEMENT — five original RGBA atlases/80 source frames, eight real
+  employee appearances/state poses, detailed pedestrian/cyclist/pet animation, graceful
+  fallback and preserved approved building/personal desks/menus.
+- [x] PIXEL_ACTOR_ACCEPTANCE — 859 frontend, types, three bounded browser and 53 scoped
+  backend/docs; actual eight-agent visible motion and 15.916 s read-only UI video verified.
+
+Source, provenance, evidence and rollback: PIXEL_ACTOR_REFINEMENT.md.
+
 ## RunPod Serverless phase 1 — 2026-10-08 (proven on fakes only)
 
 - [x] RUNPOD_PHASE1_STEPS — paid stills/test shot/motion/redo bought in rounds of one batch job
@@ -13,8 +41,21 @@
   checksums; a RunPod step refuses before the Owner's yes while his GPU card is not accepted.
 - [ ] RUNPOD_IMAGE_BUILD_HOST — Owner decision: where the two images (~39 GB and ~78 GB of
   weights) are built and pushed, and the registry credentials in RunPod.
-- [ ] RUNPOD_REFERENCE_STILLS — a reference-capable still route (Qwen-Image-2512 is text-to-image:
-  locked characters refuse NEEDS_REFERENCE on RunPod, Figure 1 is not used); a model decision.
+- [x] RUNPOD_REFERENCE_STILLS — 2026-10-09 (his card: Qwen Edit 2511), studio side on fakes: the
+  `Qwen-Image-Edit-2511` route takes the character's picture and Figure 1 (1-3, presigned), a
+  locked character is no longer refused NEEDS_REFERENCE there; identity hold UNPROVEN (bake-off).
+- [x] RUNPOD_CACHE_STUDIO — 2026-10-09, fakes only: `model_source` cache/volume/baked, mirror
+  repo/revision per endpoint, the unbilled cache wait always in the TTL, the weights check
+  (`weights_revision`, MODELS_MISSING/WRONG_REVISION → stop, max=0, his card, hold), the
+  «aștept descărcarea modelului (neplătită)» words, and the one-time copy pod (`pods.py`, his
+  card's accept is the press, capped, always terminated; migration 0057).
+- [ ] RUNPOD_MIRROR_COPY_RUN — his accept of «Copiez modelele în contul tău Hugging Face …» (money;
+  needs his HF PRO repos, a write token in the RunPod connection and the worker's `build mirror`).
+- [ ] RUNPOD_CONSOLE_MODEL — his console step per endpoint («Manage → Edit Endpoint → Model», his
+  mirror + HF token), and the copied commit pinned where the worker reads it (mirrors.lock.json +
+  a GitHub release, or AMN_MIRROR_REPO/AMN_MIRROR_REVISION in the endpoint env).
+- [ ] RUNPOD_CACHE_BAKE_OFF — measure the cache's real load time and blob naming, RTX PRO 6000
+  hosts with the cache, CPU pod price, 2511's identity hold at 928x1664 (all UNPROVEN).
 - [ ] RUNPOD_STILL_REDO_ROUNDS — the per-scene still redo bought as a round (refused today).
 - [ ] RUNPOD_BUCKET — the Owner creates the S3-compatible bucket (e.g. Cloudflare R2) and puts
   its endpoint, name and two keys on the RunPod connection.

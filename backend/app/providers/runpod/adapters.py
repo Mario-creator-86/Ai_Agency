@@ -23,7 +23,7 @@ from app.providers.runpod.client import Transport
 from app.providers.runpod.config import RunPodConfig
 from app.providers.runpod.errors import RunPodProtocolError
 from app.providers.runpod.jobs import GenerationJob
-from app.providers.runpod.models import ImageRequest, VideoRequest
+from app.providers.runpod.models import ImageRequest, VideoRequest, reference_spec
 from app.providers.runpod.provider import RunPodGenerationProvider
 
 if TYPE_CHECKING:
@@ -274,6 +274,22 @@ class RunPodConnection:
 
 
 class RunPodImageAdapter(RunPodConnection, ImageProvider):
+    #: What a reference picture really did is proven by the Owner's paid test, never by the
+    #: catalogue's declaration (the stills step reports such stills as unverified).
+    REFERENCE_IMAGE_VERIFIED = False
+
+    @property
+    def ACCEPTS_REFERENCE_IMAGE(self) -> bool:  # noqa: N802 - the studio's capability name
+        """True only when the selected model of config/runpod_models.json declares a
+        reference binding (the 2511 route, 2026-10-09); every other model is handed none."""
+        return reference_spec(self.model) is not None
+
+    @property
+    def MAX_REFERENCES(self) -> int:  # noqa: N802
+        """How many pictures the selected model binds (0 when it takes none)."""
+        spec = reference_spec(self.model)
+        return int(spec.get("max") or 0) if spec else 0
+
     async def generate_image(
         self,
         prompt: str,

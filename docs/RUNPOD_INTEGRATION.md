@@ -81,7 +81,115 @@ is documented in [backend/runpod_worker/README.md](../backend/runpod_worker/READ
 - **Known limits for the test:** Qwen-Image-2512 is text-to-image, so a character with a locked
   look is refused (NEEDS_REFERENCE) and Figure 1 is uploaded but not used by the model; no
   per-scene still redo on RunPod yet; no RunPod balance read (phase 2); `check_runpod.py
-  --live` makes read-only GETs only.
+  --live` makes read-only GETs only. (2026-10-09: superseded for the route below — the
+  Qwen-Image-Edit-2511 route takes the character's picture and Figure 1; Qwen-Image-2512 is
+  now handed no picture at all.)
+
+## Where the weights live — the studio side (2026-10-09, fakes only)
+
+The Owner's cards of 2026-10-09: the weights live in RunPod **cached models**, one cached model
+per endpoint (stills ← his PRIVATE Hugging Face mirror of the stills files, motion ← his private
+mirror of the motion files, HF PRO); the reference route for locked characters is
+Qwen-Image-Edit-2511 (+ Lightning 4-step LoRA, Apache-2.0, 1-3 pictures); LTX-2.5 accepted with
+its licence (the copy keeps LICENSE + Attachment A; the AI disclosure stays on); the small image
+is built by RunPod's GitHub integration from a private repo holding only the worker (the worker's
+own change). Still for later cards (money): the paid bake-off. Nothing below was called for real.
+
+- **Settings** (`RunPodConfig`, the RunPod form): `model_source` `cache` (default) | `volume` |
+  `baked`; `stills_mirror_repo` / `motion_mirror_repo` («cont/nume») and
+  `stills_mirror_revision` / `motion_mirror_revision` (40-hex commits; written by the copy pod's
+  success, or typed); `hf_token` (vault secret, reaches only the copy pod); the fallback's
+  `network_volumes` and `data_center_ids` (REST v2 names `networkVolumes`, `dataCenterIds`,
+  PATCHed by `apply_baseline` only when `model_source = volume`). What the studio expects is
+  his settings first, else the worker image's own pin `backend/runpod_worker/mirrors.lock.json`
+  (`weights.expected_weights`).
+- **The cache wait is always inside the TTL.** RunPod «tries» a host that holds the cached model,
+  else delays the worker until the download ends, unbilled; that can happen on ANY round and the
+  TTL counts from submission. So under `cache` every chunk's `ttl` = executionTimeout +
+  `queue_wait_seconds` + `model_cache_wait_seconds` (3600 s); the billed executionTimeout never
+  grows with it. A job still IN_QUEUE past `model_wait_notice_seconds` (60 s) makes the GPU
+  switch say «GPU: aștept descărcarea modelului (neplătită) — pas: …» (`weights.note_queue`,
+  `gpu_status.model_wait_ro`, `frontend/src/gpu_switch.js`).
+- **The weights check.** The cached-model field has no REST field (only the console:
+  «Manage → Edit Endpoint → Model»), so the studio checks every result instead: the worker reports
+  `weights_revision` (job output, item, manifest) and the codes `MODELS_MISSING` /
+  `WRONG_REVISION` (`MODEL_REVISION_MISMATCH` read as the same). A different revision or either
+  code is a `WeightsProblem` (`providers/runpod/weights.py`, read in `batch.collect_row`): the
+  step cancels what is left and sends no further round, its session's close sets workers.max=0,
+  and a card «Endpoint-ul RunPod pentru imagini/clipuri are alte modele» says which endpoint,
+  what is expected (repo + revision) and the console step. While that card is open, or he chose
+  «Las GPU-ul acestui endpoint oprit», the endpoint is held: `precheck` and `open_session` refuse
+  `WEIGHTS_MISMATCH` before his yes is spent. His «Am făcut-o», or a new expected revision,
+  releases it. Under `cache` a step also refuses `WEIGHTS_NOT_READY` until the mirror's repo and
+  revision are known. The landed item keeps `weights_revision` in its journal output.
+- **The reference route.** config/runpod_models.json gains `Qwen-Image-Edit-2511` (workflow
+  `qwen_image_edit_2511_ref_seedvr2`, output 1530x2720, 75 GPU-s a still — an UNPROVEN estimate)
+  with `reference: {bindings: [reference_image, reference_image_2, reference_image_3], min 1,
+  max 3, text_model: Qwen-Image-2512}`. `RunPodImageAdapter.ACCEPTS_REFERENCE_IMAGE` /
+  `MAX_REFERENCES` come from the selected model's entry (`models.reference_spec`); every other
+  model is handed none. The stills step sends the character's picture first, the film's Figure 1
+  second, as presigned bucket URLs; a locked character is no longer refused NEEDS_REFERENCE on
+  this route. `batch.route_references`: an item with no picture goes to the route's text model
+  (its journal row says `Qwen-Image-2512`); pictures for a model without a binding
+  (REFERENCE_NOT_ACCEPTED) or more than it binds (TOO_MANY_REFERENCES) are refused unsent. The
+  journal keeps `reference_bindings` (which input each picture fed) and the scene record
+  `references_sent` (`character`, `figure_one`); `reference_unverified` stays true until a paid
+  test proves the identity hold. The worker refuses the same two cases before its claim
+  (adversary 2026-10-09: it used to drop such pictures in silence), and a test pins that the
+  catalogue's `reference` block and each graph's `references` declare the same slots. A
+  one-scene still redo of a locked character on a model without a reference input is refused
+  NEEDS_REFERENCE before his yes is asked, as the stills step already was.
+- **The one-time copy pod** (`providers/runpod/pods.py`, table `runpod_copy_pod`, migration
+  0057). Only his card «Copiez modelele în contul tău Hugging Face cu un server RunPod temporar?»
+  starts it, and his accept IS the press (one step: a separate «Pornește copia» button would ask
+  the same consent twice and could be pressed for a cap he never read; the card carries the cap
+  — 5.00 USD and 240 minutes by default — and an accept with no token, repo or bucket refuses
+  with his reason, starts nothing, and the card stays PENDING). The studio uploads the worker's
+  files to his bucket by content, then `POST https://api.runpod.io/v2/pods` a CPU pod
+  (`cpu5c`, 4 vCPU, 200 GB disk, `python:3.12-slim`) named `amn-mirror-copy-<id>`, whose env
+  holds `HF_TOKEN`, `AMN_MIRROR_HOST=pod` and the plan (presigned GETs of every file with its
+  sha256, presigned PUTs for the results). The pod's `BOOTSTRAP` checks every file before
+  anything runs, installs `requirements-mirror.txt`, pins the LTX checksums first
+  (`build resolve --image motion`, after his licence) when the lock has none and uploads that
+  lock, then runs `python -m runpod_worker.build mirror --image <i> --repo <r> --execute` per
+  image and PUTs `{exit_code, commit (the last 40-hex line printed), tail}`. The guard
+  (`gpu_guard` → `pods.watch_copies`) terminates the pod (`DELETE /v2/pods/{id}`, then a read
+  shows 404/TERMINATED) on success, failure, one tick before the time cap or the dollar cap
+  (RunPod's own `cost` per hour, else the 1.00 USD/h estimate), and at BOOT or SHUTDOWN; any pod
+  named `amn-mirror-copy` no running copy owns is terminated too (a create whose answer was
+  lost); a pod the studio did not name is never touched. Success writes both mirrors' repo and
+  revision into the connection's settings (version bump) and closes the card; anything else
+  writes his letter and a fresh card. Cost and outcome: `runpod.mirror_copy_started` /
+  `runpod.mirror_copy_finished`; the token never enters the books.
+- **Copy pod, adversary pass (2026-10-09, fakes only).** The pod never needs the studio to stop
+  billing: the plan carries `not_after` (the card's time cap, or its dollar cap at the
+  configured price if sooner, minus one guard interval, as a wall-clock time); every step gets
+  only the time left, the copy is cut and reported as `DEADLINE`, and then — done, failed or
+  cut — the pod terminates ITSELF (`DELETE /v2/pods/$RUNPOD_POD_ID` with the pod-scoped
+  `RUNPOD_API_KEY` every pod receives) and exits (an EXITED pod reads `cost` 0.0); it no longer
+  lingers. A restarted container reads its results first (presigned GET) and never copies
+  again. In the studio: two accepts at the same moment start one pod (check and insert share
+  the write lock); a tick leaves a copy still inside its create alone (15 min grace) instead of
+  stopping it and sweeping its fresh pod; a stop or restart during the create terminates the
+  new pod at once; the sweep matches only `amn-mirror-copy-<8 hex>` (never a pod of his that
+  merely starts alike), one pod RunPod will not end no longer shields the others, a DELETE is
+  counted only when a read confirms it, and an unconfirmed end is retried on every tick (past
+  the two-day window) and his letter names the pod and his own «Terminate» instead of saying
+  «oprit definitiv»; a copy that finished while the studio was down keeps its revisions at BOOT;
+  RunPod's `cost` 0.0 at create keeps the estimate. The card now tells him the token sits in the
+  pod's env, visible in the RunPod console (and returned by `GET /v2/pods`) while the pod exists:
+  a fine-grained token for the two mirrors (+ LTX read), revoked after the copy. UNPROVEN: that
+  the pod-scoped key may terminate its own pod (the guard stays the primary stop) and whether
+  RunPod restarts an exited container.
+- **Still his (UNPROVEN until the bake-off):** the console «Manage → Edit Endpoint → Model» per
+  endpoint with his HF token; pinning the copied commit where the worker reads it
+  (`mirrors.lock.json` + a GitHub release, or `AMN_MIRROR_REPO`/`AMN_MIRROR_REVISION` in the
+  endpoint's env — the studio does not PATCH env, which makes a release; since the completeness
+  pass of 2026-10-09 his copy-success letter lists both values per endpoint
+  (`weights.console_steps_ro`), the weights card names the same env pin, and the worker's
+  `WRONG_REVISION` names the variable to set); the cache's read speed
+  and blob naming; whether RTX PRO 6000 hosts hold the cache; CPU pod prices; 2511's identity
+  hold at 928x1664.
 
 ## Existing paths reused
 

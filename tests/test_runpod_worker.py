@@ -8,6 +8,7 @@ printed. The real image, the real models and the real timings are the paid bake-
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import io
 import json
@@ -120,6 +121,7 @@ def test_contract_constants_are_the_shared_ones():
     assert contract.ITEM_STATES == ("COMPLETED", "FAILED", "SKIPPED_TIME", "CLAIMED_ELSEWHERE")
     assert WORKFLOWS == {
         "Qwen-Image-2512": ("image", "qwen_image_2512_seedvr2"),
+        "Qwen-Image-Edit-2511": ("image", "qwen_image_edit_2511_ref_seedvr2"),
         "LTX-2.5": ("video", "ltx_2_5_i2v"),
         "Wan-2.2-LightX2V": ("video", "wan_2_2_i2v_lightx2v"),
     }
@@ -361,6 +363,52 @@ def test_a_broken_output_is_refused(change):
         validate_output(raw)
 
 
+def test_an_item_result_carries_its_weights_revision_and_model_load_to_the_studio():
+    revision = "5" * 40
+    raw = output([completed_result(0, weights_revision=revision, model_load_seconds=12.5)])
+    item = validate_output(raw)["items"][0]
+    assert item["weights_revision"] == revision
+    assert item["model_load_seconds"] == 12.5
+    failed = {
+        "index": 0,
+        "idempotency_key": _hex("still-0"),
+        "status": "FAILED",
+        "error": "WRONG_REVISION",
+        "weights_revision": None,
+        "model_load_seconds": 0.0,
+    }
+    assert validate_output(output([failed]))["items"][0]["weights_revision"] is None
+    old = validate_output(output([completed_result(0)]))["items"][0]  # an old worker's result
+    assert "weights_revision" not in old
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"weights_revision": ""},
+        {"weights_revision": 123},
+        {"weights_revision": "x" * 101},
+        {"model_load_seconds": -1},
+        {"model_load_seconds": "3"},
+    ],
+)
+def test_a_broken_weights_field_is_refused(extra):
+    with pytest.raises(ContractError):
+        validate_output(output([completed_result(0, **extra)]))
+
+
+def test_the_reference_model_is_a_still_route_of_the_contract():
+    assert WORKFLOWS["Qwen-Image-Edit-2511"] == ("image", "qwen_image_edit_2511_ref_seedvr2")
+    refs = [_ref(f"r{n}") for n in range(3)]
+    item = image_item(
+        0,
+        model="Qwen-Image-Edit-2511",
+        workflow="qwen_image_edit_2511_ref_seedvr2",
+        reference_images=refs,
+    )
+    assert validate_input(batch([item]))["items"][0]["reference_images"] == refs
+
+
 # ------------------------------------------------------------------------------ worker fakes
 
 from runpod_worker import amn_handler, build, postprocess  # noqa: E402
@@ -526,9 +574,11 @@ def worker(tmp_path, monkeypatch):
     monkeypatch.setattr(amn_handler, "wall_clock", lambda: 5_000_000.0)
     monkeypatch.setattr(amn_handler, "PROGRESS", None)
 
-    def run(raw: dict[str, Any], job_id: str = "job-1") -> dict[str, Any]:
+    def run(raw: dict[str, Any], job_id: str = "job-1", weights: Any = None) -> dict[str, Any]:
         job = {"id": job_id, "input": raw}
-        return dict(amn_handler.handler(job, comfy=comfy, storage=bucket, clock=clock))
+        return dict(
+            amn_handler.handler(job, comfy=comfy, storage=bucket, clock=clock, weights=weights)
+        )
 
     return SimpleWorker(run, comfy, bucket, clock)
 
@@ -753,10 +803,243 @@ def test_a_contract_error_fails_the_job_before_anything_is_touched(worker):
     assert worker.bucket.puts == [] and worker.comfy.graphs == []
 
 
-def test_a_still_reference_is_not_fetched_while_its_workflow_has_no_reference_input(worker):
+def test_a_still_reference_for_a_workflow_with_no_reference_input_is_refused_unfetched(worker):
+    # Adversary 2026-10-09: it used to be ignored and the still made from the words, while the
+    # studio's record said the picture was sent. The studio no longer sends one
+    # (batch.route_references); the worker refuses it before its claim all the same.
     out = worker.run(batch([image_item(0, reference_images=[_ref("unregistered")])]))
-    assert out["items"][0]["status"] == "COMPLETED"
-    assert worker.bucket.downloads == []
+    assert out["items"][0]["status"] == "FAILED"
+    assert out["items"][0]["error"] == "REFERENCE_NOT_ACCEPTED"
+    assert worker.bucket.downloads == [] and worker.comfy.graphs == []
+
+
+# -------------------------------------------- handler: the reference route (Qwen-Image-Edit-2511)
+
+REF_WORKFLOW = "qwen_image_edit_2511_ref_seedvr2"
+REF_BINDINGS = ("reference_image", "reference_image_2", "reference_image_3")
+
+
+def ref_item(index: int, refs: list[dict[str, str]], **extra: Any) -> dict[str, Any]:
+    return image_item(
+        index,
+        model="Qwen-Image-Edit-2511",
+        workflow=REF_WORKFLOW,
+        reference_images=refs,
+        **extra,
+    )
+
+
+def ref_maker(graph: dict[str, Any]) -> tuple[str, str, bytes]:
+    workflow = amn_handler.load_workflow(REF_WORKFLOW)
+    return workflow.output_node, f"ref-{id(graph)}.png", png(1530, 2720)
+
+
+def _registered_refs(worker: Any, count: int) -> list[dict[str, str]]:
+    refs = []
+    for n in range(count):
+        data = png(600 + n, 900)
+        ref = _ref(f"character-{n}", data)
+        worker.bucket.urls[ref["url"]] = data
+        refs.append(ref)
+    return refs
+
+
+def _valid_against_comfyui(graph: dict[str, Any]) -> None:
+    for node_id, node in graph.items():
+        required, optional, _outputs = COMFY_NODES[node["class_type"]]
+        names = set(node["inputs"])
+        assert required <= names, f"{node_id} lost {sorted(required - names)}"
+        assert names <= required | optional
+        for value in node["inputs"].values():
+            if isinstance(value, list):
+                assert value[0] in graph, f"{node_id} still links to pruned node {value[0]}"
+
+
+@pytest.mark.parametrize("count", [1, 2, 3])
+def test_the_reference_route_binds_each_reference_and_prunes_the_empty_slots(worker, count):
+    worker.comfy.make = ref_maker
+    refs = _registered_refs(worker, count)
+    out = worker.run(batch([ref_item(0, refs)]))
+    assert out["items"][0]["status"] == "COMPLETED", out["items"][0]
+    graph = worker.comfy.graphs[0]
+    workflow = amn_handler.load_workflow(REF_WORKFLOW)
+    for n, name in enumerate(REF_BINDINGS):
+        node = workflow.bindings[name][0][0]
+        if n < count:
+            # The picture the studio presigned, sha256-checked and uploaded into ComfyUI.
+            assert graph[node]["inputs"]["image"] == f"{refs[n]['sha256']}.png"
+        else:
+            # A LoadImage left with the template's file name would make ComfyUI refuse.
+            assert node not in graph
+    _valid_against_comfyui(graph)
+    assert worker.bucket.downloads == [ref["url"] for ref in refs]
+    validate_output(out)
+
+
+def test_the_reference_route_refuses_more_than_three_references(worker):
+    # Adversary 2026-10-09: pictures beyond the graph's slots were dropped in silence, so a
+    # record could name a picture the still was never drawn from. Refused before the claim.
+    worker.comfy.make = ref_maker
+    refs = _registered_refs(worker, 5)
+    out = worker.run(batch([ref_item(0, refs)]))
+    assert out["items"][0]["status"] == "FAILED"
+    assert out["items"][0]["error"] == "TOO_MANY_REFERENCES"
+    assert worker.bucket.downloads == [] and worker.comfy.graphs == []
+
+
+def test_the_reference_route_without_a_reference_fails_before_any_gpu_work(worker):
+    worker.comfy.make = ref_maker
+    out = worker.run(batch([ref_item(0, []), image_item(1)]))
+    assert out["items"][0]["status"] == "FAILED"
+    assert out["items"][0]["error"] == "NEEDS_REFERENCE"
+    assert out["items"][1]["status"] == "COMPLETED"
+    assert len(worker.comfy.graphs) == 1  # only the text-to-image item reached ComfyUI
+    refused_key = ref_item(0, [])["idempotency_key"]
+    assert claim_key(PREFIX, refused_key) not in worker.bucket.objects
+    validate_output(out)
+
+
+def test_the_reference_route_follows_the_2511_template_and_ends_at_1530x2720():
+    raw = json.loads((WORKER / "workflows" / f"{REF_WORKFLOW}.json").read_text(encoding="utf-8"))
+    assert raw["references"] == {"bindings": list(REF_BINDINGS), "required": 1}
+    graph = raw["graph"]
+    by_kind: dict[str, list[dict[str, Any]]] = {}
+    for node in graph.values():
+        by_kind.setdefault(node["class_type"], []).append(node)
+    unets = {node["inputs"]["unet_name"] for node in by_kind["UNETLoader"]}
+    assert "qwen_image_edit_2511_fp8mixed.safetensors" in unets
+    assert [n["inputs"]["clip_name"] for n in by_kind["CLIPLoader"]] == [
+        "qwen_2.5_vl_7b_fp8_scaled.safetensors"
+    ]
+    assert by_kind["CLIPLoader"][0]["inputs"]["type"] == "qwen_image"
+    (lora,) = by_kind["LoraLoaderModelOnly"]
+    assert (
+        lora["inputs"]["lora_name"] == "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors"
+    )
+    assert lora["inputs"]["strength_model"] == 1.0
+    assert [n["inputs"]["shift"] for n in by_kind["ModelSamplingAuraFlow"]] == [3.1]
+    assert [n["inputs"]["strength"] for n in by_kind["CFGNorm"]] == [1.0]
+    methods = [
+        n["inputs"]["reference_latents_method"]
+        for n in by_kind["FluxKontextMultiReferenceLatentMethod"]
+    ]
+    assert methods == ["index_timestep_zero", "index_timestep_zero"]
+    encoders = by_kind["TextEncodeQwenImageEditPlus"]
+    assert len(encoders) == 2  # positive (the prompt) and negative, both see the pictures
+    workflow = amn_handler.load_workflow(REF_WORKFLOW)
+    loads = [workflow.bindings[name][0][0] for name in REF_BINDINGS]
+    assert all(graph[node]["class_type"] == "LoadImage" for node in loads)
+    scaled = next(k for k, n in graph.items() if n["class_type"] == "FluxKontextImageScale")
+    assert graph[scaled]["inputs"]["image"] == [loads[0], 0]
+    for encoder in encoders:
+        assert encoder["inputs"]["image1"] == [scaled, 0]
+        assert encoder["inputs"]["image2"] == [loads[1], 0]
+        assert encoder["inputs"]["image3"] == [loads[2], 0]
+        assert "vae" in encoder["inputs"]  # the pictures also go in as reference latents
+    # Lightning 4 steps at CFG 1 (the template's switch, fixed: no switch node in core).
+    edit_sampler = next(
+        n
+        for n in by_kind["KSampler"]
+        if graph[n["inputs"]["latent_image"][0]]["class_type"] == "EmptySD3LatentImage"
+    )
+    assert (edit_sampler["inputs"]["steps"], edit_sampler["inputs"]["cfg"]) == (4, 1.0)
+    assert (edit_sampler["inputs"]["sampler_name"], edit_sampler["inputs"]["scheduler"]) == (
+        "euler",
+        "simple",
+    )
+    latent = graph[edit_sampler["inputs"]["latent_image"][0]]["inputs"]
+    assert (latent["width"], latent["height"]) == (928, 1664)  # 9:16, not image 1's size
+    assert {"SeedVR2Preprocess", "SeedVR2Conditioning", "SeedVR2PostProcessing"} <= set(by_kind)
+    (w_node, _, _), (h_node, _, _) = workflow.bindings["width"][0], workflow.bindings["height"][0]
+    assert graph[w_node]["class_type"] == "ImageScale"
+    assert (graph[w_node]["inputs"]["width"], graph[h_node]["inputs"]["height"]) == STILL_SIZE
+    assert graph[workflow.output_node]["class_type"] == "SaveImage"
+
+
+# ------------------------------------------------------------------ handler: the cached weights
+
+from runpod_worker import weights as worker_weights  # noqa: E402
+
+MIRROR_REVISION = "4" * 40
+
+
+def weights_report(error: str | None = None, seconds: float = 7.5) -> Any:
+    return worker_weights.WeightsReport(
+        image="stills",
+        source="cache",
+        repo="owner-test/amn-stills",
+        root=Path("/runpod-volume/huggingface-cache/hub/x"),
+        revision=MIRROR_REVISION if error != "MODELS_MISSING" else None,
+        error=error,
+        problems=() if error is None else ("diffusion_models/x.safetensors: missing",),
+        seconds=seconds,
+        files=(),
+        yaml_path=None,
+    )
+
+
+def test_every_item_result_names_the_weights_revision_and_its_model_load(worker):
+    out = worker.run(batch([image_item(0), image_item(1)]), weights=weights_report())
+    first, second = out["items"]
+    assert first["weights_revision"] == second["weights_revision"] == MIRROR_REVISION
+    # The item that waited for the weights check and ComfyUI carries the load; the next not.
+    assert first["model_load_seconds"] == pytest.approx(7.5 + 3.0)
+    assert second["model_load_seconds"] == 0.0
+    assert out["model_load_seconds"] == pytest.approx(10.5)
+    assert out["weights_revision"] == MIRROR_REVISION  # the whole job's, for the studio
+    checked = validate_output(out)
+    assert checked["weights_revision"] == MIRROR_REVISION
+    assert checked["items"][0]["weights_revision"] == MIRROR_REVISION
+    assert checked["items"][0]["model_load_seconds"] == pytest.approx(10.5)
+    manifest = json.loads(
+        worker.bucket.objects[manifest_key(PREFIX, image_item(0)["idempotency_key"])]
+    )
+    assert manifest["weights_revision"] == MIRROR_REVISION
+
+
+@pytest.mark.parametrize("code", ["MODELS_MISSING", "WRONG_REVISION"])
+def test_weights_that_failed_their_check_fail_every_item_before_comfyui(worker, code):
+    out = worker.run(batch([image_item(0), image_item(1)]), weights=weights_report(code))
+    assert [item["error"] for item in out["items"]] == [code, code]
+    assert worker.comfy.ready_calls == 0 and worker.comfy.graphs == []
+    assert worker.bucket.puts == []  # not even a claim
+    validate_output(out)
+
+
+def test_a_finished_item_is_reused_even_when_the_weights_are_wrong(worker):
+    worker.run(batch([image_item(0)]), weights=weights_report())
+    out = worker.run(
+        batch([image_item(0)]), job_id="job-2", weights=weights_report("WRONG_REVISION")
+    )
+    item = out["items"][0]
+    assert item["status"] == "COMPLETED" and item["reused"] is True
+    assert item["weights_revision"] == MIRROR_REVISION  # the revision that made it
+    assert item["model_load_seconds"] == 0.0
+
+
+def test_without_a_weights_report_the_items_say_so(worker):
+    out = worker.run(batch([image_item(0)]))
+    assert out["items"][0]["weights_revision"] is None
+    assert out["weights_revision"] is None
+    assert "weights_revision" not in validate_output(output([completed_result(0)]))
+    assert out["items"][0]["model_load_seconds"] == pytest.approx(3.0)
+
+
+def test_the_weights_check_is_counted_in_the_first_job_of_a_worker_only(tmp_path, monkeypatch):
+    clock = Clock()
+    comfy = FakeComfy(tmp_path, clock)
+    comfy.make = still_maker
+    monkeypatch.setattr(amn_handler, "wall_clock", lambda: 5_000_000.0)
+    monkeypatch.setattr(amn_handler, "PROGRESS", None)
+    monkeypatch.setitem(amn_handler._shared, "comfy", comfy)
+    monkeypatch.setitem(amn_handler._shared, "storage", FakeBucket())
+    monkeypatch.setitem(amn_handler._shared, "weights", weights_report(seconds=9.0))
+    first = amn_handler._entry({"id": "job-1", "input": batch([image_item(0)])})
+    second = amn_handler._entry({"id": "job-2", "input": batch([{**image_item(1), "index": 0}])})
+    assert first["items"][0]["model_load_seconds"] == pytest.approx(9.0 + 3.0)
+    # The second job waits only for ComfyUI (the fake answers in 3 s); the check is not redone.
+    assert second["items"][0]["model_load_seconds"] == pytest.approx(3.0)
+    assert second["items"][0]["weights_revision"] == MIRROR_REVISION
 
 
 def test_progress_is_best_effort(worker, monkeypatch):
@@ -885,9 +1168,61 @@ def test_main_starts_the_runpod_loop_with_the_batch_handler(monkeypatch):
     monkeypatch.setitem(sys.modules, "runpod", types.SimpleNamespace(serverless=serverless))
     monkeypatch.setenv("AMN_START_COMFY", "0")
     monkeypatch.setattr(amn_handler, "PROGRESS", None)
+    monkeypatch.setattr(amn_handler, "_shared", {})
     amn_handler.main()
     assert started and callable(started[0]["handler"])
     assert amn_handler.PROGRESS is serverless.progress_update
+
+
+@pytest.mark.parametrize("error", [None, "MODELS_MISSING", "WRONG_REVISION"])
+def test_main_checks_the_weights_before_comfyui_starts_and_never_starts_it_on_wrong_ones(
+    monkeypatch, tmp_path, error
+):
+    import types
+
+    from runpod_worker import comfy as comfy_module
+
+    calls: list[Any] = []
+    yaml_path = tmp_path / "extra_model_paths.amn.yaml"
+    report = dataclasses.replace(
+        weights_report(error), yaml_path=yaml_path if error is None else None
+    )
+
+    def prepare(**kwargs: Any) -> Any:
+        calls.append("prepare")
+        return report
+
+    def start_server(env: Any = None, *, extra_model_paths: Any = None) -> None:
+        calls.append(("start", extra_model_paths))
+
+    serverless = types.SimpleNamespace(start=lambda config: None, progress_update=None)
+    monkeypatch.setitem(sys.modules, "runpod", types.SimpleNamespace(serverless=serverless))
+    monkeypatch.setattr(worker_weights, "prepare", prepare)
+    monkeypatch.setattr(comfy_module, "start_server", start_server)
+    monkeypatch.setattr(amn_handler, "PROGRESS", None)
+    monkeypatch.setattr(amn_handler, "_shared", {})
+    amn_handler.main()
+    if error is None:
+        assert calls == ["prepare", ("start", yaml_path)]
+    else:
+        assert calls == ["prepare"]  # wrong weights are never loaded onto a billed GPU
+    assert amn_handler._shared["weights"] is report
+
+
+def test_comfyui_is_started_with_the_amn_model_paths(monkeypatch, tmp_path):
+    from runpod_worker import comfy as comfy_module
+
+    seen: list[list[str]] = []
+    monkeypatch.setattr(
+        comfy_module.subprocess, "Popen", lambda args, cwd=None: seen.append(list(args))
+    )
+    yaml_path = tmp_path / "extra_model_paths.amn.yaml"
+    comfy_module.start_server({"COMFY_DIR": str(tmp_path)}, extra_model_paths=yaml_path)
+    args = seen[0]
+    assert args[args.index("--extra-model-paths-config") + 1] == str(yaml_path)
+    assert "--disable-metadata" not in args
+    comfy_module.start_server({"COMFY_DIR": str(tmp_path)})
+    assert "--extra-model-paths-config" not in seen[1]
 
 
 # ---------------------------------------------------------------------------- post-processing
@@ -1406,6 +1741,21 @@ COMFY_NODES: dict[str, tuple[frozenset[str], frozenset[str], int]] = {
     ),
     "FrameInterpolationModelLoader": (frozenset({"model_name"}), frozenset(), 1),
     "FrameInterpolate": (frozenset({"interp_model", "images", "multiplier"}), frozenset(), 1),
+    # The reference route (Qwen-Image-Edit-2511), read on 2026-10-09 at the same commit:
+    # comfy_extras/nodes_qwen.py, nodes_flux.py (FluxKontext*), nodes_cfg.py (CFGNorm); the
+    # official template templates/image_qwen_image_edit_2511.json.
+    "TextEncodeQwenImageEditPlus": (
+        frozenset({"clip", "prompt"}),
+        frozenset({"vae", "image1", "image2", "image3"}),
+        1,
+    ),
+    "FluxKontextMultiReferenceLatentMethod": (
+        frozenset({"conditioning", "reference_latents_method"}),
+        frozenset(),
+        1,
+    ),
+    "FluxKontextImageScale": (frozenset({"image"}), frozenset(), 1),
+    "CFGNorm": (frozenset({"model", "strength"}), frozenset({"pre_cfg"}), 1),
 }
 #: The loader input that names a weight -> the ComfyUI models folder it is read from
 #: (folder_paths.py at v0.39.2: diffusion_models, text_encoders, vae, loras,

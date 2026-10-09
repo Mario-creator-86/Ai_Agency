@@ -23,10 +23,15 @@ function registered(key,row,col,x,y,height) {
   return {image,frame,left:x-frame.anchor_x*scale,top:y-h,width:w,height:h,scale};
 }
 function paint(ctx,r,bob=0){
-  const f=r.frame,split=Math.floor(f.height*0.72),dh=split*r.scale;
+  const f=r.frame,split=r.seating?f.seat_y:Math.floor(f.height*0.72),dh=r.seating?r.upperHeight:split*r.scale;
   ctx.imageSmoothingEnabled=false;
-  ctx.drawImage(r.image,f.x,f.y,f.width,split,r.left,r.top-bob,r.width,dh);
-  ctx.drawImage(r.image,f.x,f.y+split,f.width,f.height-split,r.left,r.top+dh,r.width,r.height-dh);
+  ctx.drawImage(r.image,f.x,f.y,f.width,split,r.left,r.top-bob,r.width,dh+(r.seating?bob:0));
+  if(r.seating){
+    const shoeStart=Math.max(split+1,Math.floor(f.height*0.9));
+    const shoeHeight=Math.min((f.height-shoeStart)*r.scale,r.height-dh);
+    ctx.drawImage(r.image,f.x,f.y+split,f.width,shoeStart-split,r.left,r.top+dh,r.width,r.height-dh-shoeHeight);
+    ctx.drawImage(r.image,f.x,f.y+shoeStart,f.width,f.height-shoeStart,r.left,r.top+r.height-shoeHeight,r.width,shoeHeight);
+  }else ctx.drawImage(r.image,f.x,f.y+split,f.width,f.height-split,r.left,r.top+dh,r.width,r.height-dh);
 }
 
 export function drawTownAtlas(ctx,kind,actor){
@@ -41,11 +46,13 @@ export function drawTownAtlas(ctx,kind,actor){
   const r=registered(key,row,col,0,0,height);
   if(!r)return false;
   ctx.save();ctx.translate(Math.round(actor.x),Math.round(actor.y));ctx.scale(actor.direction||1,1);
-  paint(ctx,r);ctx.restore();return true;
+  const bob=kind==='cat'&&['groom','stretch'].includes(actor.pose)?Math.floor(actor.step/2)%2:0;
+  paint(ctx,r,bob);ctx.restore();return true;
 }
 
 export function staffAtlasChoice(profile,motion){
-  const person=ACTORS.staff.find(p=>p.employee_id===profile.employeeId&&p.hair===profile.hair&&p.coat===profile.coat);
+  const person=ACTORS.staff.find(p=>p.employee_id===profile.employeeId
+    &&Object.entries(p.appearance).every(([key,value])=>profile[key]===value));
   if(!person)return null;
   if(motion.mode==='IDLE'&&motion.animate&&['sip','stretch'].includes(motion.gesture))return {
     key:'idle',row:person.idle_row,col:person.idle_col+(motion.gesture==='stretch'?1:0)
@@ -54,22 +61,31 @@ export function staffAtlasChoice(profile,motion){
 }
 
 /** Asset identity is employee-bound and palette-checked; generated poses never change runtime. */
-export function drawStaffAtlas(ctx,profile,motion,center,floor,scale,portrait=false,foreground=false){
+export function drawStaffAtlas(ctx,profile,motion,center,floor,scale,portrait=false,foreground=false,seating=null){
   const choice=staffAtlasChoice(profile,motion);
   if(!choice)return false;
   const r=registered(choice.key,choice.row,choice.col,center,floor,40*scale);
   if(!r)return false;
-  const bob=motion.animate?Math.floor(motion.breath/2):0;
+  if(seating&&!portrait){
+    r.seating=seating;r.upperHeight=40*scale*0.71;
+    r.scale=r.upperHeight/r.frame.seat_y;r.width=r.frame.width*r.scale;
+    r.left=seating.x-r.frame.seat_x*r.scale;r.top=seating.y-r.upperHeight;
+    r.height=r.upperHeight+seating.floor_y-seating.y;
+  }
+  const bob=motion.animate?motion.breath:0;
   ctx.save();
   if(portrait){
     const f=r.frame;
     ctx.imageSmoothingEnabled=false;
     ctx.drawImage(r.image,f.x,f.y,f.width,f.height*0.5,r.left,r.top,r.width,r.height*0.5);
   }else if(foreground){
-    // Face/raised hands and side arms may cross the backrest; the jacket's centre remains behind it.
-    ctx.beginPath();ctx.rect(r.left,r.top-r.height*0.05,r.width,r.height*0.39);
-    ctx.rect(r.left,r.top+r.height*0.25,r.width*0.23,r.height*0.4);
-    ctx.rect(r.left+r.width*0.76,r.top+r.height*0.25,r.width*0.24,r.height*0.4);ctx.clip();
+    // Keep the head's slow breathing separate from the quicker forearm movement.
+    const headHeight=r.seating?r.upperHeight*0.34:r.height*0.34;
+    ctx.save();ctx.beginPath();ctx.rect(r.left,r.top-r.height*0.05,r.width,headHeight+r.height*0.05);ctx.clip();
+    paint(ctx,r,bob);ctx.restore();
+    // Side arms may cross the backrest; the jacket's centre remains behind it.
+    ctx.beginPath();ctx.rect(r.left,r.top+r.height*0.34,r.width*0.23,r.height*0.31);
+    ctx.rect(r.left+r.width*0.76,r.top+r.height*0.34,r.width*0.24,r.height*0.31);ctx.clip();
     const tap=motion.animate&&['WORKING','REVIEWING'].includes(motion.mode)?motion.gestureFrame%2:0;
     paint(ctx,r,bob+tap);
   }else paint(ctx,r,bob);

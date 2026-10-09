@@ -1,0 +1,14 @@
+{
+  "stills": {
+    "repo": null,
+    "revision": null,
+    "visibility": "private",
+    "note": "The Owner's PRIVATE Hugging Face mirror of the stills weights (HF PRO, card 2026-10-09), the stills endpoint's cached model. repo: his <owner>/<name>; revision: the mirror commit `build mirror --execute` prints after the copy. Until both are pinned the worker refuses (WRONG_REVISION)."
+  },
+  "motion": {
+    "repo": null,
+    "revision": null,
+    "visibility": "private",
+    "note": "The Owner's PRIVATE Hugging Face mirror of the motion weights (HF PRO, card 2026-10-09), the motion endpoint's cached model. Copied only after the LTX-2.5 checksums are pinned (`build resolve --image motion`, PIN AFTER THE GATE). Until repo and revision are pinned the worker refuses (WRONG_REVISION)."
+  }
+}

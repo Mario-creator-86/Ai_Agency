@@ -22,6 +22,10 @@ secunda, deci trebuie oprit imediat dupa generare». So:
   every unfinished job: what finished is collected and booked, the rest «nu s-a cumpărat».
 * The meter counts a round's price when it is submitted (possibly charged), and gives back the
   items RunPod never made (cancelled, or never sent).
+* A result that proves the endpoint's weights wrong (another mirror revision, MODELS_MISSING;
+  `providers.runpod.weights`) stops the step: what is left is cancelled, no further round is
+  sent, the session's close sets workers.max=0, and the Owner gets a card with the console
+  step (the cached-model field cannot be set through the API, 2026-10-09).
 """
 
 from __future__ import annotations
@@ -138,7 +142,10 @@ def run_rounds(
         "forced_off": False,
         # Credits added to the meter because RunPod's measured times exceeded the estimate.
         "reconciled_credits": 0.0,
+        # The weights the endpoint loaded were not the expected ones (`weights.WeightsProblem`).
+        "weights_problem": None,
     }
+    problem: Any = None
     billed: list[float | None] = []
     overhead = float(price_credits([]))
     poll_every = float(getattr(getattr(adapter, "config", None), "poll_interval", 2.0))
@@ -200,6 +207,16 @@ def run_rounds(
                     if not run.done():
                         run.cancel(halted)
                     continue
+                found = getattr(run, "weights_problem", None)
+                if found is not None and problem is None:
+                    # The endpoint holds other weights: nothing more is made with them.
+                    problem = found
+                    summary["weights_problem"] = found.as_dict()
+                    if halted is None:
+                        halted = summary["stopped"] = found.words_ro()
+                        if not run.done():
+                            run.cancel(halted)
+                        continue
                 if run.done():
                     break
                 if halted is not None:
@@ -256,6 +273,13 @@ def run_rounds(
                 summary["stopped"] = summary["stopped"] or UNCERTAIN
                 break
             requests = list(next_round(outcomes))
+    if problem is not None:
+        # After the close (workers.max=0): the card in his Decisions window, once per endpoint.
+        from app.providers.runpod.weights import raise_weights_card  # noqa: PLC0415
+
+        raise_weights_card(
+            engine, problem, getattr(adapter, "integration_id", None) or permit.integration_id
+        )
     known = [b for b in billed if b is not None]
     summary["billed_seconds"] = sum(known) if known and len(known) == len(billed) else None
     logger.info(

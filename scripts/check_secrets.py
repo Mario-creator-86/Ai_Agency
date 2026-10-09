@@ -78,7 +78,12 @@ _INDEX_HASH = re.compile(r'\s*"(?:original_)?sha256": "[0-9a-f]{64}",?\s*')
 #: The GPU worker's weight pins (a commit and a content checksum per file) are not credentials
 #: either: only a whole line holding one of them passes, so a key elsewhere is still caught.
 _LOCK_PIN = re.compile(r'\s*"(?:sha256": "[0-9a-f]{64}|revision": "[0-9a-f]{40})",?\s*')
-_PINNED = {_INDEX: _INDEX_HASH, "backend/runpod_worker/models.lock.json": _LOCK_PIN}
+#: mirrors.lock.json pins his private mirror's commit the same way (after the copy, 2026-10-09).
+_PINNED = {
+    _INDEX: _INDEX_HASH,
+    "backend/runpod_worker/models.lock.json": _LOCK_PIN,
+    "backend/runpod_worker/mirrors.lock.json": _LOCK_PIN,
+}
 
 
 @dataclass(frozen=True)

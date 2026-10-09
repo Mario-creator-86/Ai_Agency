@@ -91,3 +91,29 @@ def serverless_models(endpoints: dict[str, bool] | None = None) -> list[dict[str
     if endpoints is None:
         return rows
     return [row for row in rows if endpoints.get(str(row.get("endpoint")))]
+
+
+def model_entry(model_id: str | None) -> dict[str, Any] | None:
+    """One model of the pinned catalogue, by its id, or None."""
+    if not model_id:
+        return None
+    for row in serverless_catalogue()["models"]:
+        if isinstance(row, dict) and row.get("id") == model_id:
+            return dict(row)
+    return None
+
+
+def reference_spec(model_id: str | None) -> dict[str, Any] | None:
+    """The reference binding a model declares (the 2511 route, 2026-10-09), or None.
+
+    {"bindings": [workflow inputs, in order], "min": n, "max": n, "text_model": id}: a model
+    without one never receives a picture (the studio would otherwise report a still as drawn
+    from a character's picture when the graph ignored it)."""
+    entry = model_entry(model_id)
+    spec = entry.get("reference") if entry else None
+    if not isinstance(spec, dict):
+        return None
+    bindings = spec.get("bindings")
+    if not isinstance(bindings, list) or not bindings:
+        return None
+    return dict(spec)

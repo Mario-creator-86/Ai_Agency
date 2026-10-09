@@ -53,6 +53,7 @@ from sqlalchemy.orm import Mapped, Session, mapped_column
 from app.db import lock_for_write
 from app.models import Base
 from app.providers.media_http import MediaProviderError
+from app.providers.runpod import weights
 from app.providers.runpod.config import RunPodConfig
 from app.providers.runpod.endpoint import (
     EndpointControl,
@@ -555,6 +556,23 @@ def precheck(
     with Session(engine) as session:
         if not _runpod_infra_allowed(session, identifier):
             raise GpuSessionRefused(BLOCKED_INFRA_DISABLED, GPU_INFRA_DISABLED_WORDS)
+    # Where the weights live (2026-10-09): the cached model reads his mirror, which must exist;
+    # an endpoint whose results proved other weights waits for his console step.
+    not_ready = weights.readiness_problem(config, purpose)
+    if not_ready:
+        raise GpuSessionRefused("WEIGHTS_NOT_READY", not_ready)
+    _refuse_held(engine, identifier, purpose, config)
+
+
+def _refuse_held(
+    engine: Engine,
+    integration_id: str | None,
+    purpose: Literal["image", "video"],
+    config: RunPodConfig,
+) -> None:
+    held = weights.weights_hold(engine, integration_id, purpose, config)
+    if held:
+        raise GpuSessionRefused("WEIGHTS_MISMATCH", held)
 
 
 def _kernel(engine: Engine, permit: StepPermit) -> dict[str, Any]:
@@ -661,6 +679,7 @@ def open_session(
             "NOT_CONFIGURED",
             "Bucketul pentru rezultatele RunPod nu este configurat: GPU-ul nu se pornește.",
         )
+    _refuse_held(engine, integration_id, purpose, config)
     verdict = _kernel(engine, permit)
     if not verdict.get("allowed"):
         raise GpuSessionRefused(
@@ -1012,7 +1031,20 @@ def force_off(
         )
         if not fast:
             _tell_off(engine, endpoint_id, reading, correlation, letter=reason != "OWNER_OFF")
+    if reason in ("SHUTDOWN", "LAUNCHER_STOP") and not fast:
+        # The studio stopping also terminates a running copy pod (2026-10-09): nothing of the
+        # studio's keeps billing while it is down. A closing window (fast) leaves it to BOOT.
+        _stop_copies(engine, vault, transport)
     return readings
+
+
+def _stop_copies(engine: Engine, vault: CredentialVault, transport: Transport | None) -> None:
+    from app.providers.runpod import pods  # noqa: PLC0415 - pods is the guard's neighbour
+
+    try:
+        pods.watch_copies(engine, vault, reason="SHUTDOWN", transport=transport)
+    except Exception as exc:  # noqa: BLE001 - the GPU's own off is never held back by it
+        logger.warning("runpod_mirror_stop_failed", extra={"error": type(exc).__name__})
 
 
 async def _off_everywhere(
@@ -1180,7 +1212,15 @@ def gpu_status(
             ):
                 read_endpoint(target.config, endpoint_id, transport)
                 reading = last_reading(endpoint_id)
-            endpoints.append({"purpose": purpose, "endpoint_id": endpoint_id, **_state(reading)})
+            endpoints.append(
+                {
+                    "purpose": purpose,
+                    "endpoint_id": endpoint_id,
+                    **_state(reading),
+                    # A job RunPod has not started a worker for yet: unbilled (2026-10-09).
+                    "model_wait_ro": weights.model_wait(endpoint_id),
+                }
+            )
     with Session(engine) as session:
         live = list(
             session.scalars(
@@ -1213,10 +1253,14 @@ def gpu_status(
         )
     configured = bool(real or simulated)
     mock = bool(simulated) and not real
+    waiting = next((e["model_wait_ro"] for e in endpoints if e.get("model_wait_ro")), None)
     if not configured:
         words = "RunPod nu este configurat."
     elif mock:
         words = "Simulare RunPod: niciun GPU real."
+    elif waiting:
+        steps = ", ".join(sorted({str(s["step"]) for s in sessions}))
+        words = f"GPU: {weights.WAIT_WORDS_RO}" + (f" — pas: {steps}." if steps else ".")
     elif sessions:
         words = "GPU pornit — pas: " + ", ".join(sorted({str(s["step"]) for s in sessions})) + "."
     elif any(e["state"] == "ON" for e in endpoints):
@@ -1233,6 +1277,7 @@ def gpu_status(
         "sessions": sessions,
         "last_off": last_off,
         "words_ro": words,
+        "model_wait_ro": waiting,
     }
 
 

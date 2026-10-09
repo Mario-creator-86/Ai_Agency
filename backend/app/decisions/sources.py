@@ -124,6 +124,15 @@ def runpod_infra_key(integration_id: str) -> str:
 RUNPOD_LTX_KEY = "runpod_ltx_licence"
 #: The option type his accept of the RunPod card applies (`apply_runpod_infra`).
 RUNPOD_INFRA = "runpod_infra"
+#: The option type his accept of the copy card applies: the one-time copy pod starts
+#: (`apply_runpod_mirror_copy`, 2026-10-09).
+RUNPOD_MIRROR_COPY = "runpod_mirror_copy"
+#: The console step for an endpoint's cached model (no REST field sets it).
+CONSOLE_MODEL_STEP_RO = "Manage → Edit Endpoint → Model"
+
+
+def runpod_mirror_copy_key(integration_id: str) -> str:
+    return f"runpod_mirror_copy:{integration_id}"
 
 
 # ------------------------------------------------------------------------- the common rule
@@ -384,6 +393,136 @@ def runpod_ltx_licence_card() -> dict[str, Any]:
             },
         ],
         "clears_when": {"type": "never"},
+    }
+
+
+def runpod_weights_card(problem: Any, integration_id: str | None) -> dict[str, Any]:
+    """An endpoint whose results proved other weights than his mirror (2026-10-09): which
+    endpoint, what is expected, and the console step only he can take."""
+    from app.providers.runpod.weights import (  # noqa: PLC0415
+        ENV_STEP_RO,
+        PURPOSE_RO,
+        endpoint_pin_ro,
+        weights_key,
+    )
+
+    purpose = str(problem.purpose)
+    endpoint = problem.endpoint_id or "(nesetat)"
+    expected = (
+        f"{problem.expected_repo or '(depozit nesetat)'} la revizia "
+        f"{(problem.expected_revision or 'nesetată')[:12]}"
+    )
+    return {
+        "kind": "runpod_weights",
+        "dedupe_key": weights_key(integration_id, purpose),
+        "title_ro": f"Endpoint-ul RunPod pentru {PURPOSE_RO.get(purpose, purpose)} are alte modele",
+        "why_ro": problem.words_ro(),
+        "effect_ro": (
+            f"Până faci pasul, GPU-ul endpoint-ului {endpoint} nu mai pornește și nu se cumpără "
+            f"nimic pe el. Așteptat: copia ta {expected}."
+        ),
+        "subject_type": "connection" if integration_id else None,
+        "subject_id": integration_id,
+        "options": [
+            {
+                "key": "fix",
+                "label_ro": "Pun modelul corect în consola RunPod",
+                "effect_ro": "Alegi copia ta în câmpul Model al endpoint-ului și îi scrii "
+                "revizia în variabilele lui, apoi apeși «Am făcut-o»; prima rundă următoare "
+                "verifică din nou.",
+                "recommended": True,
+                "apply": {
+                    "type": "guided",
+                    "place_ro": f"console.runpod.io → Serverless → {endpoint} → "
+                    f"{CONSOLE_MODEL_STEP_RO}",
+                    "steps_ro": f"Deschide endpoint-ul {endpoint}, «{CONSOLE_MODEL_STEP_RO}», "
+                    f"alege {problem.expected_repo or 'copia ta de pe Hugging Face'} (cu tokenul "
+                    f"tău Hugging Face), apoi la «{ENV_STEP_RO}» pune "
+                    f"{endpoint_pin_ro(problem.expected_repo, problem.expected_revision)} și "
+                    "salvează. Nimic din acestea nu se poate seta prin API.",
+                },
+            },
+            {
+                "key": "keep_off",
+                "label_ro": "Las GPU-ul acestui endpoint oprit",
+                "effect_ro": "Nimic nu se cumpără pe acest endpoint până nu se schimbă copia.",
+                "apply": {"type": "none"},
+            },
+        ],
+        # Only he closes it (his DONE); the expected revision it was written for travels with
+        # it, so a new copy (a new revision) is a new question (`weights.weights_hold`).
+        "clears_when": {"type": "never", "expected_revision": problem.expected_revision},
+    }
+
+
+def runpod_mirror_copy_card(integration: Any, *, why_ro: str | None = None) -> dict[str, Any]:
+    """The one-time copy of the weights into his private Hugging Face mirrors (2026-10-09).
+    His accept IS the press: the cap is written on the card and nothing else starts it."""
+    from app.providers.runpod.config import RunPodConfig  # noqa: PLC0415
+    from app.providers.runpod.weights import expected_weights  # noqa: PLC0415
+
+    config = RunPodConfig.from_integration(dict(integration.config or {}), {})
+    images = [
+        image
+        for image, purpose in (("stills", "image"), ("motion", "video"))
+        if config.endpoint_for(purpose) and not expected_weights(config, purpose)[1]  # type: ignore[arg-type]
+    ] or ["stills", "motion"]
+    usd = f"{config.mirror_copy_max_usd:.2f}"
+    minutes = int(config.mirror_copy_max_minutes)
+    repos = {
+        image: expected_weights(config, purpose)[0] or "nesetat (Setări → RunPod)"  # type: ignore[arg-type]
+        for image, purpose in (("stills", "image"), ("motion", "video"))
+    }
+    named = "; ".join(
+        f"{'poze' if image == 'stills' else 'clipuri'}: {repos[image]}" for image in images
+    )
+    return {
+        "kind": "runpod_mirror_copy",
+        "dedupe_key": runpod_mirror_copy_key(integration.id),
+        "title_ro": "Copiez modelele în contul tău Hugging Face cu un server RunPod temporar?",
+        "why_ro": why_ro
+        or (
+            "Endpoint-urile RunPod citesc modelele din cache-ul RunPod, iar cache-ul se umple "
+            f"din copiile tale private de pe Hugging Face ({named}). Copiile nu există încă. "
+            "Copierea o face un server RunPod temporar (CPU), nu PC-ul tău."
+        ),
+        "effect_ro": (
+            "Un singur pas plătit, pornit chiar de acceptul tău: un server RunPod temporar "
+            "copiază fișier cu fișier, verifică fiecare fișier, iar eu îl opresc definitiv "
+            f"(terminate) la final. Plafon: {usd} USD și {minutes} minute; la plafon, la eșec "
+            "sau la repornirea studioului îl opresc definitiv. Costul îl scriu în jurnal. Prețul "
+            "exact al serverului nu e documentat. Ai nevoie de tokenul Hugging Face (scriere în "
+            "cele două depozite private) salvat în conexiunea RunPod. Atenție: serverul primește "
+            "tokenul în variabilele lui de mediu, iar acestea se văd în consola RunPod (Pods → "
+            "amn-mirror-copy-…) cât timp serverul există; folosește un token fin (fine-grained) "
+            "doar pentru cele două copii și pentru citirea LTX-2.5, și revocă-l pe Hugging Face "
+            "după copiere."
+        ),
+        "subject_type": "connection",
+        "subject_id": integration.id,
+        "options": [
+            {
+                "key": "yes",
+                "label_ro": f"Da, pornește copia acum (plafon {usd} USD, {minutes} minute)",
+                "effect_ro": "Serverul temporar pornește acum și se oprește singur.",
+                "recommended": True,
+                "apply": {
+                    "type": RUNPOD_MIRROR_COPY,
+                    "integration_id": integration.id,
+                    "images": images,
+                    "max_usd": usd,
+                    "max_minutes": minutes,
+                },
+            },
+            {
+                "key": "not_yet",
+                "label_ro": "Nu încă",
+                "effect_ro": "Totul rămâne pregătit și nu se cheltuie nimic, dar nu se poate "
+                "genera pe RunPod.",
+                "apply": {"type": "none"},
+            },
+        ],
+        "clears_when": {"type": "runpod_mirrors_ready", "integration_id": integration.id},
     }
 
 
@@ -1092,6 +1231,55 @@ def apply_runpod_infra(
 
 
 # --------------------------------------------------------------- the conditions they clear on
+
+
+def apply_runpod_mirror_copy(
+    engine: Engine, spec: Mapping[str, Any], inner: str, words: Mapping[str, Any]
+) -> dict[str, Any]:
+    """His accept of the copy card: the one-time copy pod starts now, under the card's cap
+    (`providers.runpod.pods.start_copy`). A missing token, repo or bucket refuses with his
+    reason and starts nothing; the card stays PENDING."""
+    from pathlib import Path  # noqa: PLC0415
+
+    from app.integrations.vault import CredentialVault  # noqa: PLC0415
+    from app.providers.runpod import pods  # noqa: PLC0415
+
+    vault = CredentialVault(Path(str(engine.url.database)).with_suffix(".credentials.key"))
+    try:
+        result = pods.start_copy(
+            engine,
+            vault,
+            str(spec.get("integration_id") or ""),
+            max_minutes=int(spec.get("max_minutes") or 0),
+            max_usd=str(spec.get("max_usd") or ""),
+            images=[str(image) for image in spec.get("images") or []] or None,
+            decision_inner=inner,
+        )
+    except pods.CopyRefused as exc:
+        raise DecisionApplyFailed(exc.reason_ro) from None
+    return {"command": "StartRunPodMirrorCopy", "result": result, "event_id": result["event_id"]}
+
+
+def runpod_mirrors_ready(
+    session: Session, row: OwnerDecision, params: Mapping[str, Any], settings: Any
+) -> bool:
+    """Every configured endpoint of the connection knows its mirror's revision (or the
+    connection no longer exists, or no longer reads a cache)."""
+    from app.integrations.models import Integration  # noqa: PLC0415
+    from app.providers.runpod.config import RunPodConfig  # noqa: PLC0415
+    from app.providers.runpod.weights import expected_weights  # noqa: PLC0415
+
+    integration = session.get(Integration, str(params.get("integration_id") or ""))
+    if integration is None:
+        return True
+    config = RunPodConfig.from_integration(dict(integration.config or {}), {})
+    if config.model_source != "cache":
+        return True
+    return all(
+        expected_weights(config, purpose)[1]  # type: ignore[arg-type]
+        for purpose in ("image", "video")
+        if config.endpoint_for(purpose)  # type: ignore[arg-type]
+    )
 
 
 def runpod_infra_enabled(

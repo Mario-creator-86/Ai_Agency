@@ -11,7 +11,11 @@ Numele apare la trecerea mouse-ului sau selecție. Lista de jos și inspectorul 
 și starea: în lucru, se gândește, verifică, în așteptare, blocaj, eroare sau în pauză.
 Stările vin din backend. Lucrul animă tastarea/scrisul, gândirea aduce mâna la bărbie;
 clipitul și respirația discretă dau viață și personajelor care așteaptă.
-Pauza, blocajul, datele vechi, reluarea și preferința de mișcare redusă opresc gesturile.
+Pauza angajatului, blocajul, datele vechi și reluarea opresc gesturile.
+Butonul **ANIMAȚII** din bara camerei pornește sau pune pe pauză mișcarea întregii scene.
+Animațiile sunt pornite implicit, conform cererii tale; alegerea se păstrează la reîncărcare.
+Studioul poate rămâne animat și când Windows reduce mișcarea interfețelor.
+Pauza animațiilor nu modifică activitatea reală a agenților.
 Birourile rămân aceleași la schimbarea stării, pauză, angajarea ori plecarea unui coleg.
 Pentru mai mult de opt angajați apar birouri suplimentare, accesibile din lista de jos
 sau butoanele de sus. Apasă un birou/nume pentru inspector și conversație; poți folosi

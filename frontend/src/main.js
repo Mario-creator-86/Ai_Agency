@@ -22,6 +22,7 @@ import { mountGpuSwitch } from './gpu_switch.js';
 import { acceptSnapshot } from './projection.js';
 import { OfficeEngine, PixelTitle, BUILDING, WORLD_W, WORLD_H } from './pixel_office.js';
 import './pixel_studio.css';
+import { bindSceneMotion } from './pixel_motion.js';
 import { autonomyOverview } from './autonomy_overview.js';
 import { Drawers } from './drawers.js';
 import { OfficeState } from './office_state.js';
@@ -246,6 +247,10 @@ titleScreen.start();
 
 const officeState = new OfficeState();
 let officeEngine = null;
+const sceneMotion = bindSceneMotion(/** @type {HTMLButtonElement} */ (element('scene-motion-toggle')), () => {
+  officeEngine?.draw();
+  officeEngine?.schedule();
+});
 /** Whether the camera keys, fullscreen and the stream have been wired (once per page). */
 let officeWired = false;
 /** @type {any} */
@@ -1005,8 +1010,9 @@ function buildOfficeEngine() {
     // The page may only call its own origin; the backend reads the live weather for the scene.
     infoElement: element('scene-info'),
     fetchWeather: () => api('/office/weather', { timeoutMs: 12000 }),
-    // Reduced motion holds the street, the sky's drift and the employees' loops still.
-    reducedMotion: () => reducedMotion(),
+    // Explicit scene preference: the Owner wants a living studio even when Windows limits
+    // interface motion. Menus/transitions still follow reducedMotion() above.
+    reducedMotion: () => !sceneMotion.enabled(),
     // So does a page that has lost the studio's data: nothing outside lives on while the corner
     // of the render says it is reconnecting.
     dataLive: () => streetMoves(liveSignals),

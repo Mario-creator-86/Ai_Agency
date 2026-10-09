@@ -205,6 +205,21 @@ CATALOG = {
             field("s3_prefix", "Prefixul în bucket (implicit amn/)", False),
             field("s3_access_key_id", "Cheia de acces a bucketului (Access Key ID)", False, True),
             field("s3_secret_access_key", "Cheia secretă a bucketului", False, True),
+            # Where the weights live (his cards, 2026-10-09): RunPod's cache of his private
+            # Hugging Face copies, one per endpoint; the token only reaches the copy server.
+            field(
+                "model_source",
+                "De unde citesc plăcile modelele (implicit cache)",
+                False,
+                choices=["cache", "volume", "baked"],
+            ),
+            field("stills_mirror_repo", "Copia Hugging Face pentru imagini (cont/nume)", False),
+            field("stills_mirror_revision", "Revizia copiei pentru imagini (commit)", False),
+            field("motion_mirror_repo", "Copia Hugging Face pentru mișcare (cont/nume)", False),
+            field("motion_mirror_revision", "Revizia copiei pentru mișcare (commit)", False),
+            field("hf_token", "Token Hugging Face (scriere în cele două copii)", False, True),
+            field("network_volumes", "Volum de rețea (doar varianta de rezervă)", False),
+            field("data_center_ids", "Centre de date (doar varianta de rezervă)", False),
             field("mock", "Simulare fără GPU (doar TEST)", False, choices=["true", "false"]),
             COMMERCIAL_USE,
             LICENCE_TERMS,

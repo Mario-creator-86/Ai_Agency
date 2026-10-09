@@ -6,11 +6,12 @@
 
 /**
  * @typedef {{purpose: string, endpoint_id: string, state: string, workers_max?: number|null,
- *   running?: number|null}} GpuEndpoint
+ *   running?: number|null, model_wait_ro?: string|null}} GpuEndpoint
  * @typedef {{id: string, purpose: string, step: string, storyboard_id?: string|null}} GpuSession
  * @typedef {{configured: boolean, mock?: boolean, rate_usd_per_hour?: string,
  *   endpoints?: GpuEndpoint[], sessions?: GpuSession[],
- *   last_off?: {at: string, reason: string, verified: boolean|null}|null, words_ro?: string}} GpuStatus
+ *   last_off?: {at: string, reason: string, verified: boolean|null}|null, words_ro?: string,
+ *   model_wait_ro?: string|null}} GpuStatus
  */
 
 const OFF_REASONS = /** @type {Record<string, string>} */ ({
@@ -45,6 +46,8 @@ export function gpuWords(status) {
   const endpoints = status.endpoints || [];
   if (sessions.length) {
     const steps = [...new Set(sessions.map(s => s.step))].join(', ');
+    // RunPod has not started the worker yet (a cache miss downloads the model): unbilled.
+    if (status.model_wait_ro) return { label: `GPU: ${status.model_wait_ro} — pas: ${steps}`, tone: 'on', detail };
     return { label: `GPU pornit — pas: ${steps}`, tone: 'on', detail };
   }
   if (endpoints.some(e => e.state === 'ON')) {

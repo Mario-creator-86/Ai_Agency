@@ -567,7 +567,12 @@ def test_serverless_is_verified_from_its_endpoints_and_the_pinned_catalogue(engi
                 select(ProviderResource).where(ProviderResource.integration_id == identifier)
             )
         }
-    assert set(models) == {"Qwen-Image-2512", "LTX-2.5", "Wan-2.2-LightX2V"}
+    assert set(models) == {
+        "Qwen-Image-2512",
+        "Qwen-Image-Edit-2511",
+        "LTX-2.5",
+        "Wan-2.2-LightX2V",
+    }
     assert models["LTX-2.5"].api_metadata["output"] == [1080, 1920]
     assert models["LTX-2.5"].api_metadata["licence_url"].startswith("https://huggingface.co/")
     # The adapter built from the vault has its bucket: the stills step may switch the GPU on.

@@ -1,5 +1,35 @@
 # Original pixel studio assets — 2026-10-08
 
+## Current seated-v3 correction — 2026-10-09
+
+Active staff art: staff-a-seated-v3.png, staff-b-seated-v3.png, staff-idle-seated-v3.png.
+Three original built-in imagegen edits of the earlier own sheets, referencing the existing
+chair board for seated anatomy only. Source IDs/hashes/prompts and generation terms are
+recorded in PIXEL_ACTOR_REFINEMENT.md. The v2 staff sheets below are historical/recovery.
+The town sheets remain active. No game art copied; PNG originals remain unmodified.
+Numeric pelvis landmarks and original furniture silhouette clipping fit the eight desks.
+48 fixture poses and actual current-seated UI/video were inspected. register_frames.py
+now delegates to register_staff_frames.py for the current v3 asset set.
+
+## Detailed original actor atlases — verified 2026-10-09
+
+Supersedes the procedural-only character description below for the current eight staff.
+Five unchanged 1254×1254 RGBA built-in imagegen outputs live in frontend/public/assets/pixel:
+town-walk-v2.png, town-cycle-pets-v2.png, staff-a-v2.png, staff-b-v2.png, staff-idle-v2.png.
+80 drawn frames: four town identities, cyclist, cats/dog, eight state/idle employee poses.
+Character Bible appearances are bound by employee_id and all relevant appearance fields;
+unknown/changed identities or image failures retain the original code-drawn fallback.
+The seated world footprint stays at the existing personal desk anchor with chair occlusion.
+The upper-half drawing is also used for the inspector thumbnail.
+
+Original generated source IDs, hashes, visual references, exact prompts, generation terms
+and rollback are in PIXEL_ACTOR_REFINEMENT.md and config/pixel_actors.json. Prompt files are
+in art-source/pixel/actors-v2/. No game asset was downloaded, copied or redistributed;
+exclusivity of generated art is not claimed. Registration reads original alpha for numeric
+bounds only. The approved building raster is unchanged. Current-source static page/art and
+actual eight-agent motion were verified in the real UI; fixtures separately cover states.
+The earlier procedural descriptions and counts below remain historical.
+
 ## Living city and desk gestures — 2026-10-08
 
 Original procedural pixel actors in frontend/src/pixel_life.js: pedestrians, cyclist,

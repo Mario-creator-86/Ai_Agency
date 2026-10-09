@@ -14,12 +14,16 @@ test('all seated staff/street visibly animate and every lifecycle guard holds', 
   build: { write: false, minify: false, lib: { entry: path.join(FRONTEND, 'src/pixel_office.js'), name: 'PixelScene', formats: ['iife'] } } });
  const code = (Array.isArray(result) ? result[0] : result).output.find(o => o.type === 'chunk').code;
  const image = readFileSync(path.join(FRONTEND, 'public/assets/pixel/studio-detailed.png'));
+ const characters = JSON.parse(readFileSync(path.join(FRONTEND, 'tests/fixtures/pixel_actors_bible.json'), 'utf8'));
+ const manifest = JSON.parse(readFileSync(path.join(FRONTEND, '../config/pixel_actors.json'), 'utf8'));
+ const atlasNames = new Set(Object.values(manifest.atlases).map(a=>path.basename(a.url)));
  const browser = await chromium.launch({ headless: true });
  const page = await browser.newPage({ viewport: { width: 1280, height: 950 } });
  const errors = []; page.on('pageerror', e => errors.push(e.message));
  try {
   await page.route('**/*', route => {
    const url = new URL(route.request().url());
+   if (atlasNames.has(path.basename(url.pathname))) return route.fulfill({body: readFileSync(path.join(FRONTEND,'public/assets/pixel',path.basename(url.pathname))),contentType:'image/png'});
    if (url.pathname === '/assets/pixel/studio-detailed.png') return route.fulfill({ body: image, contentType: 'image/png' });
    if (url.pathname === '/') return route.fulfill({ contentType: 'text/html', body: `<!doctype html><meta charset="utf-8"><title>Verificare animații în test</title>
     <style>body{margin:0;background:#222538;color:#f4dfb4;font:15px monospace}header{padding:14px 24px}canvas{display:block;width:100%;aspect-ratio:3/2;image-rendering:pixelated}</style>
@@ -28,17 +32,24 @@ test('all seated staff/street visibly animate and every lifecycle guard holds', 
   });
   await page.goto('http://pixel-life.invalid/'); await page.addScriptTag({ content: code });
   await page.clock.setFixedTime(new Date('2026-10-08T17:10:00Z'));
-  await page.evaluate(async () => {
+  await page.evaluate(async ({characters,manifest}) => {
    window.live = true; window.reduced = false;
    window.engine = new PixelScene.OfficeEngine(document.getElementById('office-canvas'), { parked: true,
     infoElement: document.getElementById('scene-info'), dataLive: () => window.live, reducedMotion: () => window.reduced,
     fetchWeather: async () => ({ available: true, condition: 'clear', observed_at_utc: '2026-10-08T17:10:00Z' }) });
    await window.engine.ready;
-   const roles = ['Director', 'Writer', 'LeadResearcher', 'FactChecker', 'VoiceArtist', 'VideoEditor', 'Publisher', 'Accountant'];
-   window.engine.setAgents(roles.map((role_name, pixel_slot) => ({ id: `test-${pixel_slot}`, display_name: `Test ${role_name}`, role_name,
+   if (PixelScene.actorAtlasStatus().loaded !== 5) throw new Error("All five detailed atlases must be loaded");
+   window.engine.characters = new Map(characters.map(c=>[c.employee_id,c]));
+   // A still-running backend serves its preceding visual config after a static page update.
+   const preceding=structuredClone(window.engine.pixelLayout);
+   preceding.stations.forEach(s=>{delete s.seating;delete s.foreground_polygons;});
+   window.engine.setLayout({pixel_office:preceding});
+   if(!window.engine.pixelLayout.stations.every(s=>s.seating&&s.foreground_polygons))throw Error('Current seating must survive preceding backend geometry');
+   const roles = ['Director', 'LeadResearcher', 'FactChecker', 'Writer', 'VoiceArtist', 'VideoEditor', 'Publisher', 'Accountant'];
+   window.engine.setAgents(roles.map((role_name, pixel_slot) => ({ id: manifest.staff[pixel_slot].employee_id, display_name: `Test ${role_name}`, role_name,
     pixel_slot, lifecycle: 'ACTIVE', runtime_state: ['IDLE', 'WORKING', 'THINKING', 'REVIEWING'][pixel_slot % 4] })));
    window.engine.unpark(); await window.engine.refreshWeather();
-  });
+  }, {characters,manifest});
   await page.waitForFunction(() => window.engine.lifeElapsed > 100);
   const raster = await page.evaluate(() => {
    const e = window.engine, hash = r => {

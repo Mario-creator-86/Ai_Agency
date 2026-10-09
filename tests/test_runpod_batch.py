@@ -293,7 +293,8 @@ def test_one_round_is_one_job_with_every_item_and_takes_are_recorded_before_any_
     assert body["input"]["contract"] == "amn.batch.v1"
     assert [it["index"] for it in body["input"]["items"]] == [0, 1, 2, 3]
     assert body["policy"]["executionTimeout"] == (120 + 4 * 180) * 1000
-    assert body["policy"]["ttl"] == body["policy"]["executionTimeout"] + 900_000
+    # The queue wait, plus the unbilled cache-miss wait of the cached-model source (2026-10-09).
+    assert body["policy"]["ttl"] == body["policy"]["executionTimeout"] + 900_000 + 3_600_000
     contract.validate_input(body["input"])
     assert session.jobs == ["job-1"]
     assert order == [("take", f"job-1:{n}") for n in range(4)]
@@ -311,8 +312,12 @@ def test_pictures_go_to_the_bucket_by_content_and_the_journal_keeps_digests_only
     cloud = Cloud()
     made = adapter(engine, tmp_path, cloud)
     picture = png(variation=7)
+    # Only a model that binds pictures receives one (the 2511 route, 2026-10-09).
     made.submit_batch(
-        [request("1", 0, references=(picture,)), request("1", 1, references=(picture,))],
+        [
+            request("1", 0, model="Qwen-Image-Edit-2511", references=(picture,)),
+            request("1", 1, model="Qwen-Image-Edit-2511", references=(picture,)),
+        ],
         session=Session_(),
         on_submitted=lambda item: None,
     )

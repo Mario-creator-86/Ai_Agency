@@ -299,6 +299,8 @@ test('personal desks: committed backend states, seated gestures, annex selection
   await page.keyboard.press('Escape');
   await page.waitForSelector('#agent-inspector[open]', { state: 'detached' });
   await page.emulateMedia({ reducedMotion: 'reduce' });
+  assert.equal(await page.evaluate(() => window.__studio.engine.agents.some(a => window.__studio.engine.motionFor(a).animate)), true);
+  await page.locator('#scene-motion-toggle').click();
   assert.equal(await page.evaluate(() => window.__studio.engine.agents.some(a => window.__studio.engine.motionFor(a).animate)), false);
   await page.waitForFunction(() => !window.__studio.engine.tickTimer && !window.__studio.engine.raf);
   assert.equal(await page.evaluate(async () => {
@@ -306,7 +308,8 @@ test('personal desks: committed backend states, seated gestures, annex selection
     const first = canvas.toDataURL();
     await new Promise(resolve => setTimeout(resolve, 250));
     return first === canvas.toDataURL();
-  }), true, 'reduced motion paints a stable scene');
+  }), true, 'the scene pause control paints a stable scene');
+  await page.locator('#scene-motion-toggle').click();
   await page.emulateMedia({ reducedMotion: 'no-preference' });
   await page.route('**/api/v1/snapshot', route => route.abort('failed'));
   await page.waitForSelector('#office-status[data-state="stale"]', { timeout: 20_000 });
@@ -340,6 +343,7 @@ test('outdoor clock and weather: real endpoint, day/night, rain/fog/snow, freshn
     assert.equal(await page.evaluate(() => window.__studio.engine.environment.available), false);
     if (await page.isVisible('#side-close')) await page.click('#side-close');
     await page.emulateMedia({ reducedMotion: 'reduce' });
+    await page.locator('#scene-motion-toggle').click();
 
     const stamp = new Date('2026-10-08T12:23:00Z');
     await page.clock.setFixedTime(stamp);
@@ -349,7 +353,7 @@ test('outdoor clock and weather: real endpoint, day/night, rain/fog/snow, freshn
       await page.evaluate(() => window.__studio.engine.refreshWeather());
       const state = await page.evaluate(() => window.__studio.engine.environment);
       assert.equal(state.clock, '15:23'); assert.equal(state.phase, 'day'); assert.equal(state.weather, condition);
-      assert.equal(state.animating, false, 'reduced motion keeps weather still');
+      assert.equal(state.animating, false, 'scene pause keeps weather still');
       const retained = await page.evaluate(() => {
         const e = window.__studio.engine, expected = document.createElement('canvas');
         expected.width = e.canvas.width; expected.height = e.canvas.height;
@@ -381,6 +385,7 @@ test('outdoor clock and weather: real endpoint, day/night, rain/fog/snow, freshn
     payload = { ...payload, condition: 'rain' };
     await page.evaluate(() => window.__studio.engine.refreshWeather());
     await page.emulateMedia({ reducedMotion: 'no-preference' });
+    await page.locator('#scene-motion-toggle').click();
     await page.waitForFunction(() => window.__studio.engine.environment.animating);
     const first = await page.evaluate(() => window.__studio.engine.weatherElapsed);
     await page.waitForTimeout(250);

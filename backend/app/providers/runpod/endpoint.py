@@ -286,13 +286,18 @@ class EndpointControl:
         """The endpoint's resting settings, sent explicitly (never a default): no worker, a 1 s
         idle tail, the execution timeout and FlashBoot. The GPU pool is left alone."""
         idle = self.config.idle_timeout_seconds
-        settings = await self._patch(
-            {
-                "workers": {"min": 0, "max": 0, "idleTimeout": idle},
-                "timeout": self.config.endpoint_timeout_ms,
-                "flashboot": self.config.flashboot,
-            }
-        )
+        body: dict[str, Any] = {
+            "workers": {"min": 0, "max": 0, "idleTimeout": idle},
+            "timeout": self.config.endpoint_timeout_ms,
+            "flashboot": self.config.flashboot,
+        }
+        if self.config.model_source == "volume" and self.config.network_volumes:
+            # The network-volume fallback only (REST v2 create/update: ``networkVolumes``, and
+            # ``dataCenterIds``, «Omit or pass an empty array to let the scheduler choose»).
+            # The cached model itself has no REST field: his console step sets it.
+            body["networkVolumes"] = list(self.config.network_volumes)
+            body["dataCenterIds"] = list(self.config.data_center_ids)
+        settings = await self._patch(body)
         if settings.workers_min != 0 or settings.workers_max != 0:
             raise SettingsNotApplied(
                 "RunPod did not apply the resting settings", code="SETTINGS_NOT_APPLIED"

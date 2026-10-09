@@ -47,6 +47,7 @@ from app.decisions.sources import (
     reconnect_card,
     runpod_infra_card,
     runpod_ltx_licence_card,
+    runpod_mirror_copy_card,
     youtube_card,
 )
 from app.wording import count, decimal
@@ -387,9 +388,29 @@ def _runpod_cards(session: Session) -> list[dict[str, Any]]:
         allowed = str((integration.config or {}).get("allow_infra_actions", "")).strip().lower()
         if allowed != "true":
             cards.append(runpod_infra_card(integration))
+        if _needs_mirror_copy(integration):
+            cards.append(runpod_mirror_copy_card(integration))
     if real:
         cards.append(runpod_ltx_licence_card())
     return cards
+
+
+def _needs_mirror_copy(integration: Any) -> bool:
+    """A connection reading RunPod's cache whose configured endpoints miss a mirror revision
+    (2026-10-09): the one-time copy has not been done."""
+    from app.providers.runpod.config import RunPodConfig  # noqa: PLC0415
+    from app.providers.runpod.weights import expected_weights  # noqa: PLC0415
+
+    try:
+        config = RunPodConfig.from_integration(dict(integration.config or {}), {})
+    except ValueError:
+        return False
+    if config.model_source != "cache":
+        return False
+    return any(
+        config.endpoint_for(purpose) and not expected_weights(config, purpose)[1]  # type: ignore[arg-type]
+        for purpose in ("image", "video")
+    )
 
 
 def _music_cards() -> list[dict[str, Any]]:

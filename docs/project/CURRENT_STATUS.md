@@ -1,19 +1,157 @@
-# CURRENT STATUS — State on 2026-10-08
+# CURRENT STATUS — State on 2026-10-09
 
 Current proof: the 2026-10-01/02 paid film readiness audit was proven on fakes only;
 AGENT_SCENARIO_ACCEPTANCE later used actual Ollama Cloud calls, with normal serial
 acceptance and real GPU/media/upload still pending. Current local UI evidence is reported
 separately below and does not prove those external workflows.
 
-## Active claim — PIXEL_ACTOR_REFINEMENT (2026-10-08)
+## PIXEL_NATURAL_MOTION — claimed (2026-10-09)
 
-Root; started 2026-10-08T18:14:57.991201+00:00. Improve original animal/bicycle/street
-and employee silhouettes and animation substantially after inspecting official game imagery.
-Files: pixel_life.js, pixel_people.js, pixel_office.js, config/pixel_office.json and relevant
-tests. Plan: backed-up baseline → refined street actors → refined seated staff → actual
-Canvas/browser review → current-source build and read-only real UI video → handoff.
-Preserve the approved detailed illustration, backend truth, fixed seats and existing guards.
-Rollback sources: data/pixel-actors-2026-10-08/before; preserve concurrent work when rebuilding.
+Subsystem: actor proportions, desk occlusion and continuous animation. Expected files:
+pixel actor/people/life renderer, actor/scene config, scoped Playwright verification and
+tracking docs. Outcome: grounded anatomically consistent seats, continuous subdued
+motion, pedestrian/pedal continuity, actual-state projection preserved. Inspect full
+cycles and close-ups before accepting; preserve approved building and concurrent work.
+
+## PIXEL_MOTION_RESUME — complete, actual UI verified (2026-10-09)
+
+Claim released. System motion was disabled; browser reduced-motion reproduction froze all
+actors despite fresh live data. Explicit Owner scene default and persistent ANIMAȚII toggle
+now animate independently of that system setting, without changing Windows or menu motion.
+861 frontend units, types, four bounded browser and 53 scoped backend/docs checks pass. Actual UI at 08:45, cloudy 12°C: all four
+pedestrians, bicycle/dog/cats and eight real IDLE staff move with reduced motion emulated;
+pause/reload/resume and 390px mobile control pass, no page errors. Actual clip 15.916016 s.
+Current build served identically, readiness 200 HEALTHY; approved building/art/seats retained.
+No production server restart, backend/policy command or paid call. Report: PIXEL_MOTION_RESUME.md;
+evidence: data/pixel-motion-2026-10-09/. External workflow acceptance remains separate.
+
+## PIXEL_SEAT_ALIGNMENT — complete, actual UI verified (2026-10-09)
+
+Claim released. Owner seating correction: three original seated-v3 edits, pelvis/seat
+landmarks for all eight places, anchored hip/floor and proportional shoes, traced original
+chair/stool silhouettes. Reserved IDs/slots/old station coordinates and furniture preserved.
+All 48 fixture poses visually checked; 859 frontend units, types, three bounded browser and
+53 scoped backend/docs pass. Old backend visual config regression covered; current chair
+calibration applies in the real UI without restarting the backend. Final actual UI at 08:30,
+cloudy 11°C: eight real IDLE staff seated/animated, no errors/duplicate Canvas name/hover box.
+Current-source static build served identically; readiness 200 HEALTHY. Final clip 16.000 s.
+Report/provenance/rollback: PIXEL_ACTOR_REFINEMENT.md; data/pixel-actors-2026-10-08/.
+Eight built-in imagegen calls total (five initial + three seating edits); no production
+RunPod/model/media/upload job or production policy/database command initiated by this task.
+Older local verification entries below remain historical; external acceptance stays separate.
+
+## PIXEL_ACTOR_REFINEMENT — complete, actual UI verified (2026-10-09)
+
+Claim released. Five original transparent generated atlases replace the crude initial
+actor study: 80 source frames for detailed townspeople, cyclist, two cats/dog and eight
+seated employees. Four walk/pedal keyframes across eight ticks. Personal seats, approved
+building/furniture and menus preserved. Bible identity/appearance checks, fallback for
+changed/new staff, truthful state poses, cup/stretch and fixed-foot body/arm motion.
+859 frontend units, types, three bounded browser and 53 scoped backend/layout/docs pass.
+Actual UI at 07:54 cloudy 10°C: eight actual IDLE employees visibly animate, traffic moves,
+zero page errors, one tooltip/no character outline. Five served PNGs and served bundle
+match disk; current-source launcher build, 200 HEALTHY foundation readiness. Actual clip
+15.916 s: data/pixel-actors-2026-10-08/studio-actors.mp4. Report: PIXEL_ACTOR_REFINEMENT.md.
+No production server restart/policy/database command or paid production workflow initiated;
+built-in imagegen used five times for artwork. Concurrent changes preserved. The evidence
+folder keeps the Oct 8 start date; current verification is Oct 9. Ctrl+F5 shows the update.
+Full Owner workflows/paid external acceptance retain their separately documented limits.
+
+## RUNPOD_CACHE_COMPLETENESS — the Owner's path to the first paid round closed on fakes only (2026-10-09)
+
+Claim: workflow subagent, completeness critic of the cached-model weights, the 2511 route and
+the copy pod. Gap found: after a successful copy the studio wrote the mirror commits only into
+its own settings, while the worker reads its pin from the endpoint's environment
+(`AMN_MIRROR_REPO` / `AMN_MIRROR_REVISION`) or its image's mirrors.lock.json; nothing told him
+to set them, so his Model-field fix alone would still end in `WRONG_REVISION`. Fixed (tests
+first, seen failing): his success letter lists, per endpoint, the Model value and both variables
+with the exact commits (`weights.console_steps_ro`); the weights card and its guided step name
+the same env pin; the worker's refusal names the variable to set; the exported worker README
+has the step. Also: `scripts/check_secrets.py` passes a pinned commit in mirrors.lock.json the
+way it passes models.lock.json; a cache wait that cannot fit in one GPU session is refused in
+the settings; the copy pod's pip fallback is the worker's own pin (huggingface_hub 0.36.0); a
+test pins that the copy's last printed 40-hex is the mirror revision the bootstrap records.
+Tested: 783 RunPod/media/decision/docs tests pass, 1 skipped (no symlinks); ruff, format, mypy
+(273 files), check_docs pass; check_secrets flags only config/pixel_actors.json (Codex's file).
+Nothing reached RunPod, Hugging Face or GitHub; nothing is proven on a GPU.
+
+## RUNPOD_CACHE_REFERENCE_ADVERSARY — cache check and reference route verified, two holes fixed on fakes only (2026-10-09)
+
+Claim: workflow subagent, adversary of the cached-model weights and the Qwen-Image-Edit-2511
+route. Verified: the worker never falls back to refs/main or another snapshot; missing, short or
+folder-shaped files and bad pins refuse before ComfyUI starts; the model-paths file resolves
+every graph weight inside the pinned snapshot the way ComfyUI v0.39.2 (3c1b7a17 =
+tag v0.39.2) reads it; every 2511 node and input exists at that commit (nodes_qwen.py 54-108,
+nodes_flux.py 126-178, nodes_cfg.py 51-70, nodes_sd3.py 40-60, nodes.py ImageScale 1891); the
+cache wait is inside every ttl and the studio's round deadline; a mismatch stops the rounds,
+closes the session and raises his card; the small Dockerfiles carry no weights or secret and the
+export builds its nodes step offline with the standard library only. Fixed (tests first, seen
+failing): the worker dropped pictures its graph could not bind in silence (now
+REFERENCE_NOT_ACCEPTED / TOO_MANY_REFERENCES before the claim); a still redo drew a locked
+character from words on a model without a reference input (now NEEDS_REFERENCE before his
+yes). Tested: 633 RunPod/media tests pass, 1 skipped (no symlinks on this machine); ruff, mypy,
+check_docs pass; check_secrets flags only config/pixel_actors.json (Codex's file). Open: a
+reused manifest made under an older mirror revision is read as WRONG_REVISION (a false card,
+once, after a new copy). Nothing reached RunPod, Hugging Face or GitHub; nothing is proven on a
+GPU.
+
+## RUNPOD_COPY_POD_ADVERSARY — the copy pod never keeps billing and never leaks: verified and fixed on fakes only (2026-10-09)
+
+Claim: workflow subagent, adversary of the one-time copy pod (pods.py, the card text in
+decisions/sources.py, tests/test_runpod_mirror_copy.py, one resume test in
+test_runpod_worker_weights.py). Found and fixed (tests first, seen failing): two accepts at the
+same moment created TWO pods; a guard tick during the create stopped the copy, wrote a false
+letter and could terminate the fresh pod; a stop during the create left the new pod running
+until the next start; the sweep marked a pod «terminated» when RunPod had not confirmed it, one
+failing DELETE aborted the whole sweep, and an unconfirmed pod was no longer retried after two
+days; the letter said «oprit definitiv» even when termination failed; a studio that stayed off
+left the pod lingering and billing past the card's cap (now the pod cuts the copy at its
+deadline and terminates itself); a copy that finished while the studio was down was thrown
+away at BOOT; a pod he named «amn-mirror-copy-…» himself could be swept; RunPod's cost 0.0 at
+create replaced the estimate. Held already: half-way failure, time and dollar caps, SHUTDOWN,
+an unanswered create, resume per file by the Hub's sha256+size, the token in books, logs,
+letters and a refused create echoing the body. Tests: test_runpod_mirror_copy 31 passed; with
+the worker, gpu, owner-setup, cache, money/billing adversary, decision and shutdown suites 452
+passed, 1 skipped; the only failure there, test_docs_owner_decisions project-state window, comes
+from the concurrent PIXEL_SEAT_ALIGNMENT edit of PROJECT_STATE.json. ruff, format, mypy (273),
+check_docs, check_secrets green. Nothing called RunPod, Hugging Face, GitHub or a registry; two
+public RunPod docs pages were read (pod env variables, v2 pod object). UNPROVEN: the pod-scoped
+key terminating its own pod; RunPod's handling of an exited container. Owner: the HF token is
+visible in the pod's env in the RunPod console while the pod exists — use a fine-grained token
+and revoke it after the copy (the card says so). Nothing committed.
+
+## RUNPOD_CACHE_STUDIO — weights in RunPod cached models, the 2511 route, the copy pod: studio side, proven on fakes only (2026-10-09)
+
+Claim: workflow subagent, STUDIO SIDE of the Owner's cards of 2026-10-09 (cached models fed from
+his private HF PRO mirrors; Qwen-Image-Edit-2511 for locked characters; LTX-2.5 with its licence;
+the small image from a private GitHub repo — the worker side is another agent's). Files:
+backend/app/providers/runpod/{config,batch,endpoint,adapters,models,gpu_session,gpu_guard,
+weights (new),pods (new)}.py, media/gpu_batch.py, media/stills_stage.py, decisions/{sources,
+services,seed}.py, integrations/catalog.py, migration 0057_runpod_copy_pod, config/
+runpod_models.json, frontend/src/gpu_switch.js, tests/test_runpod_{model_cache,reference_route,
+mirror_copy}.py (new) and the RunPod tests whose expectations moved. Done: `model_source`
+cache|volume|baked, per-endpoint mirror repo/revision (else the worker's mirrors.lock.json),
+`hf_token` in the vault, volume fallback as `networkVolumes`/`dataCenterIds` (only under volume);
+the cache wait (3600 s, unbilled) always in every job's TTL; «GPU: aștept descărcarea modelului
+(neplătită)» while a job waits; a result with another `weights_revision` or MODELS_MISSING /
+WRONG_REVISION stops the step (no further round, max=0 by the close) and raises the card
+«Endpoint-ul RunPod pentru … are alte modele» with the endpoint, the expected copy and
+«Manage → Edit Endpoint → Model», holding the endpoint until his «Am făcut-o»; under cache a step
+refuses WEIGHTS_NOT_READY before his yes until the mirror is known; the `Qwen-Image-Edit-2511`
+route (1-3 presigned pictures, character first, Figure 1 second; no picture → Qwen-Image-2512;
+`reference_bindings` / `references_sent` recorded; 2512 is handed no picture any more); the
+one-time copy pod (`pods.py`): his accept of «Copiez modelele în contul tău Hugging Face cu un
+server RunPod temporar?» is the press (cap 5.00 USD / 240 min on the card), a CPU pod with the
+worker's files and result URLs through his bucket and the HF token only in its env, terminated by
+the guard on success, failure, cap, BOOT/SHUTDOWN or as an unknown `amn-mirror-copy` pod; success
+writes the revisions; cost recorded. Tested: the three new files (42 cases) and the RunPod,
+stills, serial-references, decisions, settings, schema/migration and paid-path suites (targeted,
+all pass), 857 frontend cases and the type check; ruff, format, mypy, check_docs, check_secrets
+pass. Nothing called RunPod, Hugging Face, GitHub, a registry or a bucket; no image built; no
+provider marked working. Still his / UNPROVEN: the copy run (money), the console Model field per
+endpoint, pinning the copied commit where the worker reads it, the cache's read speed and blob
+naming, CPU pod price, 2511's identity hold. His studio on :8000 needs migration 0057 at its next
+start; the frontend dist was not rebuilt.
 
 ## RUNPOD_PHASE1 — Serverless rounds of batches, proven on fakes only (2026-10-08)
 

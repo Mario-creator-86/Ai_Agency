@@ -5,7 +5,49 @@ import { normalizeWeather } from '../src/hq_weather.js';
 import { pixelPen } from '../src/pixel_art.js';
 import { characterProfile, characterMotion, drawSeatedPerson } from '../src/pixel_people.js';
 import { drawPedestrian, drawBicycle, drawCat, drawDog } from '../src/pixel_town_people.js';
+import { ACTORS, staffAtlasChoice } from '../src/pixel_actor_atlas.js';
+import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 const clear=normalizeWeather({available:true,condition:'clear'});
+const bible=JSON.parse(readFileSync(new URL('./fixtures/pixel_actors_bible.json',import.meta.url),'utf8'));
+
+test('registered frames fit the original transparent sheets and match their pinned bytes',()=>{
+ for(const asset of Object.values(ACTORS.atlases)){
+  const png=readFileSync(new URL(`../public${asset.url}`,import.meta.url));
+  assert.equal(createHash('sha256').update(png).digest('hex'),asset.sha256);
+  assert.equal(png.readUInt32BE(16),asset.width);assert.equal(png.readUInt32BE(20),asset.height);
+  assert.equal(png[25],6,'original PNG is RGBA');
+  for(const row of asset.rows){
+   assert.equal(row.frames.length,4);
+   for(const f of row.frames){
+    assert.ok(f.width>10&&f.height>10&&f.height<=row.height);
+    assert.ok(f.width<asset.width/3&&f.height<asset.height/3,'one frame cannot include neighbouring people');
+    assert.ok(f.x>=0&&f.y>=0&&f.x+f.width<=asset.width&&f.y+f.height<=asset.height);
+    assert.ok(f.anchor_x>=0&&f.anchor_x<=f.width);
+    if ('seat_y' in f) {
+      assert.ok(f.seat_x>=0&&f.seat_x<=f.width);
+      assert.ok(f.seat_y>f.height*.6&&f.seat_y<f.height*.91,'pelvis precedes the grounded shoes');
+    }
+   }
+  }
+ }
+});
+
+test('all eight Bible identities select their own state poses; palette edits use the live fallback',()=>{
+ for(const person of ACTORS.staff){
+  const agent={id:person.employee_id,lifecycle:'ACTIVE',runtime_state:'IDLE'};
+  const profile=characterProfile(agent,bible.find(c=>c.employee_id===agent.id));
+  for(const [mode,col] of [['IDLE',0],['WORKING',1],['THINKING',2],['REVIEWING',3],['ERROR',0],['PAUSED',0]]){
+   assert.deepEqual(staffAtlasChoice(profile,{mode,animate:false,gesture:'sip'}),{key:person.atlas,row:person.row,col});
+  }
+  assert.deepEqual(staffAtlasChoice(profile,{mode:'IDLE',animate:true,gesture:'stretch'}),{key:'idle',row:person.idle_row,col:person.idle_col+1});
+  assert.equal(staffAtlasChoice({...profile,coat:'#010203'},{mode:'WORKING'}),null);
+  assert.equal(staffAtlasChoice({...profile,skin:'#010203'},{mode:'WORKING'}),null);
+  assert.equal(staffAtlasChoice({...profile,headset:!profile.headset},{mode:'WORKING'}),null);
+  assert.equal(staffAtlasChoice({...profile,employeeId:'new-member'},{mode:'WORKING'}),null);
+ }
+ assert.equal(new Set(ACTORS.staff.map(p=>p.employee_id)).size,8);
+});
 
 test('cats alternate walking, sitting, grooming and stretching without teleporting between activities',()=>{
   const poses=new Set();let last=streetFrame(0,clear,true).cat;

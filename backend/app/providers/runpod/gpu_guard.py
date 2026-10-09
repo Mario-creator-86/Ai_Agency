@@ -16,6 +16,10 @@ shutdown (`gpu_session.force_off`).
   a drift from the resting settings (min, idleTimeout, flashboot, timeout) is PATCHed back
   (cost-reducing, always allowed). Three unreadable ticks in a row are one event and a letter.
 - Skipped silently: no RunPod integration, a simulation, no key or no endpoint.
+- Every pass also looks at the one-time copy pod (`pods.watch_copies`, 2026-10-09): it is
+  terminated on success, failure, its time or dollar cap, and at BOOT or SHUTDOWN; any pod named
+  amn-mirror-copy that no running copy owns is terminated too. The short interval holds while a
+  copy runs.
 """
 
 from __future__ import annotations
@@ -32,6 +36,7 @@ from sqlalchemy.orm import Session
 
 from app.db import lock_for_write
 from app.providers.media_http import MediaProviderError
+from app.providers.runpod import pods
 from app.providers.runpod.config import RunPodConfig
 from app.providers.runpod.endpoint import EndpointControl, EndpointSettings, is_off, utc_now
 from app.providers.runpod.gpu_session import (
@@ -264,6 +269,7 @@ def run_gpu_guard(
         "in_use": [],
     }
     correlation = str(uuid4())
+    summary["copies"] = _watch_copies(engine, vault, reason, transport)
     targets = [t for t in runpod_targets(engine, vault) if listed(t)]
     if not targets and reason != "BOOT":
         return summary
@@ -303,9 +309,25 @@ def run_gpu_guard(
     return summary
 
 
+def _watch_copies(
+    engine: Engine,
+    vault: CredentialVault,
+    reason: Literal["TICK", "BOOT", "SHUTDOWN"],
+    transport: Transport | None,
+) -> dict[str, Any] | None:
+    try:
+        return pods.watch_copies(engine, vault, reason=reason, transport=transport)
+    except Exception as exc:  # noqa: BLE001 - the GPU's own off never waits on the copy
+        logger.warning("runpod_mirror_watch_failed", extra={"error": type(exc).__name__})
+        return None
+
+
 def next_interval(engine: Engine, config_seconds: tuple[int, int]) -> int:
-    """The short interval while a session is live or closed in the last 15 minutes."""
+    """The short interval while a session is live or closed in the last 15 minutes, or a copy
+    pod runs (it is ended one interval before its cap)."""
     active, idle = config_seconds
+    if pods.live_copy(engine):
+        return active
     since = (datetime.now(UTC) - RECENT_CLOSE).isoformat()
     with Session(engine) as session:
         live = session.scalars(

@@ -9,8 +9,8 @@ import { bubblePages, bubbleFrame } from './speech_bubble.js';
 import { sceneFrame } from './pixel_navigation.js';
 import { drawOutdoorSky } from './pixel_sky.js';
 import { ambientMoves, drawOutdoorLife } from './pixel_life.js';
-import { loadActorAtlases } from './pixel_actor_atlas.js';
-export { staffPositions, identitySeed, characterMotion };
+import { loadActorAtlases, actorAtlasStatus } from './pixel_actor_atlas.js';
+export { staffPositions, identitySeed, characterMotion, actorAtlasStatus };
 
 export const WORLD_W = PIXEL_LAYOUT.world.width;
 export const WORLD_H = PIXEL_LAYOUT.world.height;
@@ -220,6 +220,12 @@ export class OfficeEngine {
     // Existing inspectors use department/desk names; visual coordinates belong to this scene.
     this.assets.manifest = { ...layout };
     this.pixelLayout = layout.pixel_office || PIXEL_LAYOUT;
+    // A running backend may still hold the preceding visual config. Keep its reserved
+    // slots/desk metadata and apply current artwork calibration to the same illustrated desks.
+    this.pixelLayout = { ...this.pixelLayout, stations: (this.pixelLayout.stations || PIXEL_LAYOUT.stations).map(station => {
+      const painted = PIXEL_LAYOUT.stations.find(s => s.desk_id === station.desk_id && s.x === station.x && s.y === station.y);
+      return painted ? { ...station, seating: painted.seating, foreground_polygons: painted.foreground_polygons } : station;
+    }) };
     this.draw();
   }
   setCharacterBible(characters) {
@@ -311,9 +317,9 @@ export class OfficeEngine {
       const selected = p.id === this.selected || p.id === this.hover;
       const profile = this.profileFor(p.agent);
       const motion = this.motionFor(p.agent);
-      drawSeatedPerson(ctx, profile, motion, p.x, p.y, p.scale || 1.5, false, p.orientation);
+      drawSeatedPerson(ctx, profile, motion, p.x, p.y, p.scale || 1.5, false, p.orientation, p.seating);
       restoreFurniture(ctx, this.background, p, this.pixelLayout);
-      drawDeskGesture(ctx, profile, motion, p.x, p.y, p.scale || 1.5);
+      drawDeskGesture(ctx, profile, motion, p.x, p.y, p.scale || 1.5, p.seating);
       // A tiny real-state indicator keeps the detailed furniture and room readable.
       ctx.fillStyle = '#222538'; ctx.fillRect(p.x + 17, p.y - 61, 5, 5);
       ctx.fillStyle = motion.color; ctx.fillRect(p.x + 18, p.y - 60, 3, 3);

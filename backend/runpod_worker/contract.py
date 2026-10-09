@@ -21,7 +21,7 @@ import hashlib
 import math
 import re
 from collections.abc import Iterable, Mapping
-from typing import Any, TypedDict, cast
+from typing import Any, NotRequired, TypedDict, cast
 from urllib.parse import urlsplit
 
 CONTRACT = "amn.batch.v1"
@@ -37,6 +37,8 @@ ITEM_STATES = ("COMPLETED", "FAILED", "SKIPPED_TIME", "CLAIMED_ELSEWHERE")
 #: model id -> (operation, workflow template name under runpod_worker/workflows/).
 WORKFLOWS: dict[str, tuple[str, str]] = {
     "Qwen-Image-2512": ("image", "qwen_image_2512_seedvr2"),
+    # The reference route for locked characters (Owner, 2026-10-09): 1-3 reference pictures.
+    "Qwen-Image-Edit-2511": ("image", "qwen_image_edit_2511_ref_seedvr2"),
     "LTX-2.5": ("video", "ltx_2_5_i2v"),
     "Wan-2.2-LightX2V": ("video", "wan_2_2_i2v_lightx2v"),
 }
@@ -114,6 +116,12 @@ class ItemResult(TypedDict, total=False):
     error: str | None
     reused: bool
     provenance_boxes: list[str]
+    #: The weights snapshot the item was made with (the mirror's commit, or "baked"); the
+    #: studio compares it with the mirror revision it expects. Absent from an old worker.
+    weights_revision: str | None
+    #: Seconds this item waited for the weights check and ComfyUI before its prompt (the
+    #: first item of a worker carries them; the lazy GPU load is inside gpu_seconds).
+    model_load_seconds: float
 
 
 class BatchOutput(TypedDict):
@@ -123,6 +131,9 @@ class BatchOutput(TypedDict):
     model_load_seconds: float
     handler_seconds: float
     gpu_seconds: float
+    #: The worker's weights snapshot for the whole job (as on each item); absent from an old
+    #: worker's output.
+    weights_revision: NotRequired[str | None]
 
 
 class ContractError(ValueError):
@@ -386,6 +397,15 @@ def validate_item_result(raw: object, where: str = "item") -> ItemResult:
     result["provenance_boxes"] = list(boxes)
     if "gpu_seconds" in body and body["gpu_seconds"] is not None:
         result["gpu_seconds"] = _number(body["gpu_seconds"], f"{where}.gpu_seconds", 0, 1e7)
+    if "weights_revision" in body:
+        revision = body["weights_revision"]
+        result["weights_revision"] = (
+            None if revision is None else _text(revision, f"{where}.weights_revision", 1, ID_MAX)
+        )
+    if "model_load_seconds" in body:
+        result["model_load_seconds"] = _number(
+            body["model_load_seconds"], f"{where}.model_load_seconds", 0, 1e7
+        )
     if status == "FAILED" and result["error"] is None:
         raise ContractError(f"{where} FAILED without an error code")
     if status != "COMPLETED":
@@ -423,7 +443,7 @@ def validate_output(raw: object) -> BatchOutput:
     indexes = [item["index"] for item in items]
     if len(set(indexes)) != len(indexes):
         raise ContractError("output item indexes must be unique")
-    return {
+    checked: BatchOutput = {
         "contract": CONTRACT,
         "batch_key": _hex64(body.get("batch_key"), "output.batch_key"),
         "items": items,
@@ -433,3 +453,9 @@ def validate_output(raw: object) -> BatchOutput:
         "handler_seconds": _number(body.get("handler_seconds"), "output.handler_seconds", 0, 1e7),
         "gpu_seconds": _number(body.get("gpu_seconds"), "output.gpu_seconds", 0, 1e7),
     }
+    if "weights_revision" in body:
+        revision = body["weights_revision"]
+        checked["weights_revision"] = (
+            None if revision is None else _text(revision, "output.weights_revision", 1, ID_MAX)
+        )
+    return checked

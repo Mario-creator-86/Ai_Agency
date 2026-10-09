@@ -22,6 +22,16 @@ export function restoreFurniture(ctx, image, person, layout = PIXEL_LAYOUT) {
   if (!image.complete || !image.naturalWidth) return;
   const sx = image.naturalWidth / layout.world.width;
   const sy = image.naturalHeight / layout.world.height;
+  if (person.foreground_polygons) {
+    ctx.save(); ctx.beginPath();
+    for (const points of person.foreground_polygons) {
+      ctx.moveTo(...points[0]);
+      for (const point of points.slice(1)) ctx.lineTo(...point);
+      ctx.closePath();
+    }
+    ctx.clip(); ctx.drawImage(image, 0, 0, layout.world.width, layout.world.height);
+    ctx.restore(); return;
+  }
   for (const box of person.foreground || []) {
     // Leave the head visible above the chair; restore the illustrated backrest below the neck.
     const top = Math.max(box.y, person.y - 26 * (person.scale || 1.5));

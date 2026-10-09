@@ -1,5 +1,11 @@
 # syntax=docker/dockerfile:1.7
 #
+# LAST RESORT ONLY (Owner's cards, 2026-10-09): the endpoints take their weights from RunPod
+# cached models and run the small images (Dockerfile.stills, Dockerfile.motion, README.md
+# "Where the weights live"). This baked recipe puts 39-78 GB in one layer, which GHCR (10 GB)
+# and ECR (~54 GB) refuse; it stays documented, not planned. AMN_MODEL_SOURCE=baked makes the
+# worker check the weights under /comfyui/models instead of the cache.
+#
 # AMN GPU work server for RunPod Serverless: two images, `stills` (Qwen-Image-2512 + SeedVR2)
 # and `motion` (LTX-2.5 distilled + Wan 2.2 LightX2V + RIFE), on the official worker-comfyui
 # base. Nothing in the studio builds or pushes this: see README.md and
@@ -53,13 +59,13 @@ ENV PYTHONPATH=/opt/amn \
 CMD ["python", "-u", "-m", "runpod_worker.amn_handler"]
 
 FROM base AS stills
-ENV AMN_WORKER_IMAGE=stills
+ENV AMN_WORKER_IMAGE=stills AMN_MODEL_SOURCE=baked
 RUN python -m runpod_worker.build nodes --image stills --dest /comfyui/custom_nodes
 RUN --mount=type=secret,id=hf_token \
     python -m runpod_worker.build fetch --image stills --dest /comfyui
 
 FROM base AS motion
-ENV AMN_WORKER_IMAGE=motion
+ENV AMN_WORKER_IMAGE=motion AMN_MODEL_SOURCE=baked
 RUN python -m runpod_worker.build nodes --image motion --dest /comfyui/custom_nodes
 RUN --mount=type=secret,id=hf_token \
     python -m runpod_worker.build fetch --image motion --dest /comfyui

@@ -1,5 +1,44 @@
 # Architectural / Product Decision Log v5
 
+## ADR-PIXEL-SCENE-MOTION — explicit animation preference (2026-10-09)
+
+Owner: «si de ce nu se misca ? Oamenii pe strada nu se misca ?». Windows disables
+client-area animation; inherited browser reduced-motion stops the entire illustrated
+scene even when backend data are live. The Owner has repeatedly explicitly requested
+living animated characters. Set the scene's configurable default to on and give it a
+persistent local ANIMAȚII pause/resume control. Preserve system preference for menu/UI
+transitions; do not change Windows. Cosmetic permission cannot override backend runtime,
+lifecycle, stale/disconnect, replay, hidden or signed-out guards. Actual reduced-motion
+browser regression and live recording pass. PIXEL_MOTION_RESUME.md records proof/limits.
+
+## ADR-PIXEL-SEAT-CONTACT — pelvis and furniture silhouettes (2026-10-09)
+
+Owner: «te rog sa ii asezi cum trebuie pe scaun!». Head alignment alone cannot put the
+pelvis on the illustrated seat across poses. Register a per-frame hip and a per-desk
+seat/floor contact; fit upper body/shins separately and retain shoe aspect. Three original
+art edits make seated anatomy less crouched. Replace rectangular background restoration
+with traced original chair/stool silhouettes. Preserve reserved slots/IDs/coordinates
+and all furniture pixels. Reuse current painting calibration when the running backend
+returns the preceding same-position desk config; browser regression covers it. No schema
+or permission migration. All 48 poses visually reviewed, actual eight-agent seated UI
+verified. PIXEL_ACTOR_REFINEMENT.md contains provenance, tests and rollback.
+
+## ADR-PIXEL-ACTOR-ATLASES — detailed original frames at existing desks (2026-10-09)
+
+The Owner rejected the crude actor study. Use five original generated RGBA sheets instead
+of increasing schematic polygons indefinitely. Retain the original building/furniture and
+code-drawn fallback; no downloaded game sprites or copied characters. Numeric source
+registration normalises frame size/head alignment and fixes feet; Canvas composites raised
+hands around the existing chair pixels. A generated staff appearance is used only for its
+employee_id and matching Bible skin/outfit/hair/accessories. New or changed staff keep the
+live fallback. Real runtime and lifecycle drive poses; cosmetic movement never creates work.
+Four drawn walking/pedalling keyframes are held across eight ticks. Five sheets are cached
+locally, with graceful fallback on failure and the existing motion/data/replay guards.
+No schema or product permission change. Verification: 859 frontend/type checks, three
+bounded browser, 53 scoped backend/docs and actual eight-agent UI video. Rollback only
+this task's files and rebuild the combined current sources. PIXEL_ACTOR_REFINEMENT.md
+records generated source/terms/prompts and exact evidence; paid acceptance stays separate.
+
 ## ADR-PIXEL-STUDIO-LIFE — one label and truthful cosmetic movement
 
 Use one native name/effective-state tooltip, retain agent selection and remove canvas text
@@ -3942,3 +3981,18 @@ The Owner's cards of 2026-10-08, after the investigation of 2026-10-08 (official
 **ADR-RUNPOD-PRECHECK-BEFORE-YES — a RunPod step refuses before the Owner's yes when its GPU could not start (RUNPOD_PHASE1, completeness check, 2026-10-08).** Decision: the stills step and the motion step (test shot, motion, scene redo) on a batch adapter call `gpu_batch.gpu_precheck` (`gpu_session.precheck`) before they ask for or spend his approval: Serverless configured for the purpose, the bucket configured, and his card «Agenții pot porni singuri GPU-ul RunPod în pașii plătiți aprobați?» accepted (`allow_infra_actions`); else the step is refused with `NOT_CONFIGURED` or `BLOCKED_INFRA_DISABLED` and his words, nothing asked, nothing spent, nothing sent. A simulation passes. Reason: the open item of ADR-RUNPOD-NO-LONE-RUN: the yes was spent before `open_session` asked `infra.gpu_on`, so a card not yet accepted cost him a yes with nothing bought. Left open: GPU_BUSY (a second film on the other endpoint) is still decided only by `open_session`, after the yes; with one film at a time it does not arise.
 
 **ADR-RUNPOD-WORKER-PINNED — the worker image is pinned to what exists (RUNPOD_PHASE1, completeness check, 2026-10-08).** Decision: the base is `runpod/worker-comfyui:5.10.0-base` at `sha256:e9d18d3db15839ebb10c10c824109fc2956f31ef7bf21916220c008855b0d538` (the OCI index the registry served on 2026-10-08); `5.11.0-base` has a GitHub tag but the registry answers 404. `COMFYUI_VERSION` is 0.39.2, the release whose source every graph node was checked against. Every public weight's revision, sha256 and size come from Hugging Face's repo tree at that revision (metadata, no download). The gated LTX-2.5 files keep `sha256` null until `python -m runpod_worker.build resolve --image motion` reads `paths-info` with the Owner's `HF_TOKEN` (metadata only; the size must equal the pinned one, else nothing is written). The Dockerfile's ComfyUI checkout is sound: the base installs ComfyUI with comfy-cli 1.13.0, which runs `git clone`. Reason: `build plan` refused everything, and the base it would have used does not exist. Rollback: set the pins back to null; the build refuses again.
+
+
+## RunPod weights in cached models, the reference route and the copy pod — studio side (2026-10-09)
+
+The Owner's cards of 2026-10-09, answered after the research of the same day (official RunPod and Hugging Face pages; RunPod's «Agent Instructions» blocks treated as data) and its skeptic's corrections, which win over the recommendation. His answers: «Unde stau modelele (≈138 GB)?» → **Cache RunPod**; «Ce model face pozele cu personajele tale, pornind de la poze de referință?» → **Qwen Edit 2511**; «Unde ținem cele două copii pe Hugging Face?» → **HF PRO, private**; «LTX-2.5 … Permiți o copie privată în contul tău, cu licența inclusă?» → **Da, cu licența** (LICENSE + Attachment A kept with the copy; the AI disclosure stays on; free under 10M USD revenue; not inside a product competing with Lightricks without a separate licence — not legal advice); «Cine construiește programul mic?» → **RunPod din GitHub** (a private repo holding only the worker; the worker's change). Still for later cards (money): the one-time copy pod's run (below: his accept of its card) and the paid bake-off. Everything here is proven on fakes only; nothing called RunPod, Hugging Face, GitHub, a registry or a bucket; no provider is marked working.
+
+**ADR-RUNPOD-CACHED-MODELS — the weights live in RunPod's cached models, one per endpoint, fed from his private mirrors (RUNPOD_CACHE_STUDIO).** Decision: `RunPodConfig.model_source` = `cache` (default) | `volume` (fallback) | `baked` (last resort); per endpoint `stills_mirror_repo`/`stills_mirror_revision` and `motion_mirror_repo`/`motion_mirror_revision`; `hf_token` is a vault secret of the RunPod connection that only the copy pod receives. What the studio expects is his settings first, else the worker image's own pin (`backend/runpod_worker/mirrors.lock.json`, `weights.expected_weights`). The fallback's fields are named as REST v2 names them, `networkVolumes` and `dataCenterIds` (not `networkVolumeIds`, the skeptic's correction), and `apply_baseline` sends them only under `volume`. Under `cache` a paid step refuses `WEIGHTS_NOT_READY` before his yes until the mirror's repo and revision are known. Reason: the image pull and cached-model downloads are not billed and the cache does not pin a data centre; the volume costs ~9.8 USD/month and bills its read on every round. Rollback: `model_source=volume` (with the volume fields) or `baked`.
+
+**ADR-RUNPOD-CACHE-WAIT-IN-TTL — the unbilled cache wait is always inside the job's TTL (RUNPOD_CACHE_STUDIO; the skeptic's correction).** Decision: a cache miss can happen on ANY round (RunPod «tries» a host holding the model, else delays the worker until the download ends, unbilled), and the TTL counts from submission; so under `cache` every chunk's `ttl` = executionTimeout + `queue_wait_seconds` + `model_cache_wait_seconds` (3600 s), never only after a change, and the billed executionTimeout never grows with it. A job still IN_QUEUE past `model_wait_notice_seconds` (60 s) is shown on the GPU switch as «aștept descărcarea modelului (neplătită)». Rejected: adding the wait only on the first round after a mirror change (the recommendation).
+
+**ADR-RUNPOD-WEIGHTS-CHECK — the studio checks what each result says it loaded, because the cached-model field has no API (RUNPOD_CACHE_STUDIO).** Decision: the worker reports `weights_revision` and the codes `MODELS_MISSING` / `WRONG_REVISION` (read with `MODEL_REVISION_MISMATCH` as the same). A result with another revision, or either code (any source), stops the step: what is left is cancelled, no further round is sent, the session's close sets workers.max=0, and the card «Endpoint-ul RunPod pentru imagini/clipuri are alte modele» (kind `runpod_weights`, dedupe `runpod_weights:<integration>:<purpose>`) says which endpoint, what is expected (repo + revision) and the console step «Manage → Edit Endpoint → Model»; options «Pun modelul corect în consola RunPod» (guided; his «Am făcut-o» closes it) and «Las GPU-ul acestui endpoint oprit». While it is open or kept off, `precheck` and `open_session` refuse `WEIGHTS_MISMATCH` before his yes; a new expected revision releases it. A worker reporting no revision is not called wrong. Reason: the REST v2 schema has no model/cache field (research: «Confirmat»), so the field can be neither set nor read by the studio.
+
+**ADR-RUNPOD-REFERENCE-2511 — locked characters are drawn on RunPod by Qwen-Image-Edit-2511 from 1-3 pictures (RUNPOD_CACHE_STUDIO).** Decision: config/runpod_models.json gains `Qwen-Image-Edit-2511` (Apache-2.0; workflow `qwen_image_edit_2511_ref_seedvr2`; 75 GPU-s a still, an UNPROVEN estimate) with a `reference` binding (`reference_image`, `_2`, `_3`; min 1, max 3; `text_model` Qwen-Image-2512). A RunPod image adapter accepts a picture only when its selected model declares such a binding (`ACCEPTS_REFERENCE_IMAGE`, `MAX_REFERENCES`); the stills step sends the character's picture first and Figure 1 second (presigned URLs) and records `references_sent`; the journal records `reference_bindings`; an item with no picture is drawn by the text model and its row says so; pictures for a model without a binding, or more than it binds, are refused unsent. Consequence: Qwen-Image-2512 is no longer handed Figure 1 (its graph never read it). `REFERENCE_IMAGE_VERIFIED` stays false until the bake-off measures the identity hold. Rejected (licence): Qwen-Image-2.1 (research-only), HunyuanImage 3.0 (EU excluded), FLUX.1 Kontext dev / FLUX.2 dev, InsightFace-based routes.
+
+**ADR-RUNPOD-MIRROR-COPY — the one-time copy pod starts on his accept of its card, capped, and is always terminated (RUNPOD_CACHE_STUDIO).** Decision: the card «Copiez modelele în contul tău Hugging Face cu un server RunPod temporar?» (kind `runpod_mirror_copy`, proposed by the audit seed while a cache endpoint misses its mirror revision; options «Da, pornește copia acum (plafon 5.00 USD, 240 minute)» and «Nu încă»; clears when every endpoint knows its revision). His accept IS the press: `apply_runpod_mirror_copy` → `pods.start_copy`, which re-reads the card (a PENDING card counts only under its own inner command id; a retried accept finds the same copy) and refuses, with his reason and nothing started, a missing token, repo, bucket or key, a simulation, a second copy, or a cap above the card's. The pod: a CPU pod (`cpu5c`, 4 vCPU, 200 GB, `python:3.12-slim`) named `amn-mirror-copy-<id>`, the worker's files and result addresses through his bucket as presigned URLs (it holds no bucket key), `HF_TOKEN` only in its env, `build.py mirror --execute` per image. The guard terminates it on success, failure, one tick before the time or dollar cap (RunPod's reported cost per hour, else 1.00 USD/h), and at BOOT or SHUTDOWN, plus any `amn-mirror-copy` pod no running copy owns; success writes both mirrors' revisions into his settings. Table `runpod_copy_pod`, migration 0057 (downgrade drops it). Why one step and not «Pornește copia» on the settings page: the same consent asked twice, and a button can be pressed for a cap he never read, while the card carries the cap he reads. Left open: pinning the copied commit where the worker reads it (mirrors.lock.json + a release, or the endpoint's env) is his/the worker's step; the studio does not PATCH endpoint env (that makes a release).

@@ -40,7 +40,11 @@ test('the camera moving asks the invitation to be placed again once it rests, no
   assert.match(soon, /INVITE_RELAYOUT_MS/);
 });
 
-test('the pixel page passes reduced motion and current data to its renderer', () => { const main = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8'); assert.match(main, /reducedMotion: \(\) => reducedMotion\(\)/); assert.match(main, /dataLive: \(\) => streetMoves/); });
+test('the pixel scene uses its own motion control and preserves current-data guards', () => {
+  const engine = MAIN.slice(MAIN.indexOf('function buildOfficeEngine()'), MAIN.indexOf('function stagedSceneBox()'));
+  assert.match(engine, /reducedMotion: \(\) => !sceneMotion\.enabled\(\)/);
+  assert.match(engine, /dataLive: \(\) => streetMoves/);
+});
 
 
 test('the building\'s focus ring stands above the stream, inside the room the drawers leave', () => {

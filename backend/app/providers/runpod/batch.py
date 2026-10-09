@@ -49,12 +49,12 @@ from sqlalchemy.orm import Session
 
 from app.db import lock_for_write
 from app.providers.media_http import MediaProviderError
-from app.providers.runpod import s3
+from app.providers.runpod import s3, weights
 from app.providers.runpod.client import RunPodClient, Transport
 from app.providers.runpod.config import BucketConfig, RunPodConfig
 from app.providers.runpod.errors import IdempotencyConflict, RunPodProtocolError
 from app.providers.runpod.jobs import GenerationJob, JobStore, digest, now, target_identity
-from app.providers.runpod.models import TERMINAL
+from app.providers.runpod.models import TERMINAL, reference_spec
 
 if TYPE_CHECKING:
     from app.providers.runpod.gpu_session import GpuSession
@@ -171,6 +171,10 @@ def journal_payload(request: BatchRequest) -> dict[str, Any]:
         "height": request.height,
         "reference_images": [picture_digest(b) for b in request.references],
     }
+    spec = reference_spec(request.model)
+    if request.references and spec is not None:
+        # Which workflow input each picture was bound to: what the model really received.
+        payload["reference_bindings"] = list(spec["bindings"][: len(request.references)])
     if request.operation == "video":
         payload["duration"] = request.duration
         payload["fps"] = request.fps or contract.CLIP_FPS
@@ -178,6 +182,42 @@ def journal_payload(request: BatchRequest) -> dict[str, Any]:
             picture_digest(request.source_image) if request.source_image else None
         )
     return payload
+
+
+def route_references(request: BatchRequest) -> BatchRequest:
+    """The item as the worker will really make it (the 2511 route, 2026-10-09).
+
+    A model whose catalogue entry declares no reference binding never receives a picture
+    (refused unsent: the record would otherwise say a still was drawn from a picture the graph
+    ignored); more pictures than it binds are refused too; an item with fewer than it needs is
+    drawn by the route's text model on the same endpoint, and its journal row says so."""
+    if request.operation != "image":
+        return request
+    spec = reference_spec(request.model)
+    if spec is None:
+        if request.references:
+            raise BatchRefused(
+                "REFERENCE_NOT_ACCEPTED",
+                f"Modelul {request.model} nu primește imagini de referință; nu se trimite nimic.",
+            )
+        return request
+    if len(request.references) > int(spec.get("max") or 0):
+        raise BatchRefused(
+            "TOO_MANY_REFERENCES",
+            f"Modelul {request.model} primește cel mult {spec.get('max')} imagini de referință; "
+            "nu se trimite nimic.",
+        )
+    if len(request.references) < int(spec.get("min") or 0):
+        text_model = spec.get("text_model")
+        if not isinstance(text_model, str) or not text_model:
+            raise BatchRefused(
+                "NEEDS_REFERENCE",
+                f"Modelul {request.model} desenează doar din imagini de referință.",
+            )
+        from dataclasses import replace  # noqa: PLC0415
+
+        return replace(request, model=text_model)
+    return request
 
 
 def item_budget(config: RunPodConfig, operation: str) -> int:
@@ -203,9 +243,18 @@ def chunk_policy(config: RunPodConfig, operation: str, items: int) -> dict[str, 
         int(config.cold_start_seconds) + items * item_budget(config, operation),
     )
     seconds = max(5, seconds)  # RunPod's documented minimum executionTimeout is 5 s
+    # A cache miss can happen on ANY round (RunPod «tries» a host that holds the model, else
+    # delays the worker until the download ends, unbilled), and the ttl counts from the
+    # submission: under the cached-model source the unbilled wait is always inside the ttl.
+    # The billed executionTimeout never grows with it.
+    cache_wait = (
+        int(config.model_cache_wait_seconds)
+        if config.model_source == "cache" and not config.mock
+        else 0
+    )
     return {
         "executionTimeout": seconds * 1000,
-        "ttl": (seconds + int(config.queue_wait_seconds)) * 1000,
+        "ttl": (seconds + int(config.queue_wait_seconds) + cache_wait) * 1000,
     }
 
 
@@ -345,6 +394,13 @@ class BatchRun:
     _reported: set[str] = field(default_factory=set)
     _pending_report: list[ItemOutcome] = field(default_factory=list)
     _deadline: float = 0.0
+    #: What the results proved about the endpoint's weights (`weights.check_result`).
+    weights_problems: list[weights.WeightsProblem] = field(default_factory=list)
+
+    @property
+    def weights_problem(self) -> weights.WeightsProblem | None:
+        """The first result that proved the endpoint's weights wrong, or None."""
+        return self.weights_problems[0] if self.weights_problems else None
 
     @property
     def store(self) -> JobStore:
@@ -373,6 +429,8 @@ class BatchRun:
                 continue
             self._reported.add(outcome.item.job_row_id)
             fresh.append(outcome)
+        if not self.config.mock:
+            self._note_queue()
         return fresh
 
     def cancel(self, reason: str) -> None:
@@ -402,6 +460,9 @@ class BatchRun:
             self._pending_report.append(
                 ItemOutcome(item, "CANCELLED", None, None, 0.0, "CANCELLED_BY_STUDIO")
             )
+        endpoint = self.config.endpoint_for(self._operation())
+        if endpoint:
+            weights.clear_queue(endpoint)
         logger.info("runpod_batch_cancelled", extra={"reason": reason[:200]})
 
     def billed_seconds_estimate(self) -> float | None:
@@ -505,6 +566,7 @@ class BatchRun:
                         storage_root=self.storage_root,
                         transport=self.transport,
                         statuses=statuses,
+                        problems=self.weights_problems,
                     )
                 except (RunPodProtocolError, contract.ContractError) as exc:
                     # One item whose result is wrong (a checksum, a manifest, an echo that does
@@ -531,6 +593,27 @@ class BatchRun:
                     if chunk.finished:
                         _book_batch(self.engine, self.config, chunk)
         return outcomes
+
+    def _note_queue(self) -> None:
+        """A job still IN_QUEUE has no worker yet: on a cache miss RunPod is downloading the
+        model, unbilled. The GPU switch says so (`weights.model_wait`)."""
+        endpoint = self.config.endpoint_for(self._operation())
+        if not endpoint:
+            return
+        queued = [
+            c.sent_at
+            for c in self.chunks
+            if c.remote_id
+            and not c.finished
+            and str((c.status or {}).get("status")) == "IN_QUEUE"
+            and any(item.job_row_id not in self._reported for item in c.items)
+        ]
+        if queued:
+            weights.note_queue(
+                endpoint, since=min(queued), notice_seconds=self.config.model_wait_notice_seconds
+            )
+        else:
+            weights.clear_queue(endpoint)
 
     # ------------------------------------------------------------------------ mock run
 
@@ -663,12 +746,25 @@ async def collect_row(
     storage_root: Path,
     transport: Transport | None,
     statuses: dict[str, dict[str, Any] | None] | None = None,
+    problems: list[weights.WeightsProblem] | None = None,
 ) -> ItemOutcome:
     """One batch item collected: the bucket manifest first, then GET /status of its job.
 
-    Also the watchdog's path after a restart (``item`` None: an outcome is still built)."""
+    Also the watchdog's path after a restart (``item`` None: an outcome is still built).
+    What a result says about the endpoint's weights (``weights_revision``, MODELS_MISSING) is
+    added to ``problems`` (`weights.check_result`): the round's caller stops the step."""
     store = JobStore(engine)
     statuses = statuses if statuses is not None else {}
+    purpose: Literal["image", "video"] = "video" if row.operation == "video" else "image"
+
+    def check(raw: Any, error: Any = None) -> str | None:
+        """Record a weights problem; return the revision the result reported."""
+        mapping = raw if isinstance(raw, dict) else None
+        problem = weights.check_result(config, purpose, mapping, error=error)
+        if problem is not None and problems is not None and problem not in problems:
+            problems.append(problem)
+        return weights.reported_revision(mapping)
+
     holder = item or SubmittedItem(
         request=_request_of(row),
         job_row_id=row.id,
@@ -681,10 +777,11 @@ async def collect_row(
             bucket, contract.manifest_key(prefix, row.idempotency_key), transport or _default()
         )
         if manifest is not None:
+            revision = check(manifest)
             result = contract.validate_item_result(manifest, "manifest")
             if result["status"] == "COMPLETED":
                 return await _land(
-                    config, engine, row, holder, result, bucket, storage_root, client
+                    config, engine, row, holder, result, bucket, storage_root, client, revision
                 )
     batch = row.batch_remote_id
     if not batch:
@@ -713,7 +810,19 @@ async def collect_row(
             )
         return ItemOutcome(holder, "PENDING", None, None, None, None)
     if state == "COMPLETED":
-        output = contract.validate_output(status.get("output"))
+        raw_output = status.get("output")
+        job_revision = check(raw_output)
+        raw_items = raw_output.get("items") if isinstance(raw_output, dict) else None
+        raw_mine = next(
+            (
+                it
+                for it in (raw_items if isinstance(raw_items, list) else [])
+                if isinstance(it, dict) and it.get("index") == row.batch_index
+            ),
+            None,
+        )
+        revision = check(raw_mine) or job_revision
+        output = contract.validate_output(raw_output)
         mine = next((it for it in output["items"] if it["index"] == row.batch_index), None)
         if mine is None:
             # The job ended without this item (the time guard skipped it before it started).
@@ -729,7 +838,9 @@ async def collect_row(
         if mine["idempotency_key"] != row.idempotency_key:
             raise RunPodProtocolError("RunPod output does not echo the item's idempotency key")
         if mine["status"] == "COMPLETED":
-            return await _land(config, engine, row, holder, mine, bucket, storage_root, client)
+            return await _land(
+                config, engine, row, holder, mine, bucket, storage_root, client, revision
+            )
         code = str(mine.get("error") or mine["status"])[:100]
         seconds = float(mine.get("gpu_seconds") or 0.0)
         store.update(
@@ -742,6 +853,7 @@ async def collect_row(
         )
         return ItemOutcome(holder, "FAILED", None, None, seconds, code)
     if state in ("FAILED", "CANCELLED", "TIMED_OUT"):
+        check(status, status.get("error"))
         journal = {"FAILED": "FAILED", "CANCELLED": "CANCELLED", "TIMED_OUT": "TIMEOUT"}[state]
         store.update(row.id, status=journal, error_code=state, finished_at=now())
         outcome_state: OutcomeState = "CANCELLED" if state == "CANCELLED" else "FAILED"
@@ -787,6 +899,7 @@ async def _land(
     bucket: BucketConfig | None,
     storage_root: Path,
     client: RunPodClient,
+    revision: str | None = None,
 ) -> ItemOutcome:
     """Download a finished item (its URL, else a fresh studio-signed GET), check its sha256
     and keep it under the media root; the journal row becomes COMPLETED with its cost."""
@@ -836,7 +949,9 @@ async def _land(
                 "reused",
                 "provenance_boxes",
             )
-        },
+        }
+        # The mirror commit the worker's snapshot resolved to (the bake-off reads it too).
+        | {"weights_revision": revision},
         asset_path=str(path),
         asset_sha256=result["sha256"],
     )
@@ -883,6 +998,7 @@ def submit_round(
     if len(operations) != 1:
         raise ValueError("one round is one operation (image or video)")
     operation = requests[0].operation
+    requests = [route_references(request) for request in requests]
     if not config.ready_for_generation:
         raise BatchRefused(
             "NOT_CONFIGURED",

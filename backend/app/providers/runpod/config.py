@@ -33,14 +33,21 @@ from app.config import ROOT
 
 logger = logging.getLogger("studio.runpod")
 
-#: The secrets a RunPod integration keeps in the vault, never in its public config.
-SECRET_FIELDS = ("api_key", "s3_access_key_id", "s3_secret_access_key")
+#: The secrets a RunPod integration keeps in the vault, never in its public config. ``hf_token``
+#: is his Hugging Face token: only the one-time copy pod receives it (`pods.start_copy`).
+SECRET_FIELDS = ("api_key", "s3_access_key_id", "s3_secret_access_key", "hf_token")
 
 #: Set while a config is built from the integration alone (the environment ignored).
 _WITHOUT_ENVIRONMENT: ContextVar[bool] = ContextVar("runpod_without_environment", default=False)
 
 _BUCKET_NAME = re.compile(r"^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$")
 _PREFIX = re.compile(r"^[a-z0-9][a-z0-9/_-]{0,100}/$")
+#: A Hugging Face repo id, "owner/name" (his private mirror of one endpoint's weights).
+_HF_REPO = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,95}/[A-Za-z0-9][A-Za-z0-9_.-]{0,95}$")
+#: A git commit of that repo: the revision a worker must report.
+_REVISION = re.compile(r"^[0-9a-f]{40}$")
+#: A RunPod network volume or data centre id.
+_RESOURCE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$")
 
 
 @contextmanager
@@ -152,6 +159,38 @@ class RunPodConfig(BaseSettings):
     s3_access_key_id: SecretStr = SecretStr("")
     s3_secret_access_key: SecretStr = SecretStr("")
     url_ttl_seconds: int = Field(default=604_800, ge=60, le=604_800)
+    # --- Where the weights live (the Owner's cards, 2026-10-09) ---
+    #: "cache": RunPod CACHED MODELS, one per endpoint, fed from his private Hugging Face
+    #: mirror (his choice); "volume": a network volume (fallback); "baked": in the image.
+    model_source: Literal["cache", "volume", "baked"] = "cache"
+    #: His private mirrors (HF PRO) and the commit each worker must report as weights_revision.
+    #: The revision is written by the copy pod's success (`pods`) or typed by him.
+    stills_mirror_repo: str | None = None
+    stills_mirror_revision: str | None = None
+    motion_mirror_repo: str | None = None
+    motion_mirror_revision: str | None = None
+    #: A cache miss can happen on ANY round: RunPod delays the worker, unbilled, until the
+    #: model is downloaded, and the job's TTL counts from submission. So this unbilled wait is
+    #: always added to the TTL under "cache" (never to the billed executionTimeout).
+    model_cache_wait_seconds: int = Field(default=3600, ge=0, le=86_400)
+    #: A job still IN_QUEUE after this long is shown as «aștept descărcarea modelului».
+    model_wait_notice_seconds: int = Field(default=60, ge=0, le=86_400)
+    #: The network-volume fallback only (REST v2 names: networkVolumes, dataCenterIds).
+    network_volumes: list[str] = Field(default_factory=list, max_length=10)
+    data_center_ids: list[str] = Field(default_factory=list, max_length=20)
+    #: The one-time copy pod that fills his mirrors (`pods`): a temporary CPU pod.
+    mirror_pod_image: str = Field(default="python:3.12-slim", min_length=1, max_length=200)
+    mirror_pod_cpu_flavor: str = Field(default="cpu5c", min_length=1, max_length=40)
+    mirror_pod_vcpus: int = Field(default=4, ge=2, le=64)
+    mirror_pod_disk_gb: int = Field(default=200, ge=20, le=1000)
+    #: The rate assumed until RunPod reports the pod's own (CPU pod prices are undocumented).
+    mirror_pod_cost_per_hour: Decimal = Field(default=Decimal("1.00"), ge=0)
+    #: The cap his card proposes: the copy is terminated before either is reached.
+    mirror_copy_max_minutes: int = Field(default=240, ge=10, le=1440)
+    mirror_copy_max_usd: Decimal = Field(default=Decimal("5.00"), gt=0, le=100)
+    #: Used only if the worker has no requirements-mirror.txt; the same pin as that file.
+    mirror_pod_pip: str = Field(default="huggingface_hub==0.36.0", max_length=200)
+    hf_token: SecretStr = SecretStr("")
     model_routes: dict[str, str] = Field(
         default_factory=lambda: {
             "IMAGE_QUALITY": "Qwen-Image-2512",
@@ -212,6 +251,39 @@ class RunPodConfig(BaseSettings):
             raise ValueError("The bucket prefix is lowercase, relative and ends with /")
         return value
 
+    @field_validator("stills_mirror_repo", "motion_mirror_repo")
+    @classmethod
+    def mirror_repo(cls, value: str | None) -> str | None:
+        if value and not _HF_REPO.fullmatch(value):
+            raise ValueError("A mirror is a Hugging Face repo id: owner/name")
+        return value or None
+
+    @field_validator("stills_mirror_revision", "motion_mirror_revision")
+    @classmethod
+    def mirror_revision(cls, value: str | None) -> str | None:
+        if value and not _REVISION.fullmatch(value):
+            raise ValueError("A mirror revision is a 40-character commit id")
+        return value or None
+
+    @field_validator("network_volumes", "data_center_ids", mode="before")
+    @classmethod
+    def resource_list(cls, value: Any) -> Any:
+        # The integration's form gives "vol_a, vol_b"; the API wants a list.
+        if isinstance(value, str):
+            value = [part.strip() for part in value.split(",") if part.strip()]
+        if isinstance(value, list) and not all(
+            isinstance(part, str) and _RESOURCE.fullmatch(part) for part in value
+        ):
+            raise ValueError("Invalid RunPod resource identifier")
+        return value
+
+    @field_validator("mirror_pod_vcpus")
+    @classmethod
+    def power_of_two(cls, value: int) -> int:
+        if value & (value - 1):
+            raise ValueError("A CPU pod's vcpuCount is a power of two")
+        return value
+
     @field_validator("endpoint_id", "stills_endpoint_id", "motion_endpoint_id", "pod_id")
     @classmethod
     def safe_identifier(cls, value: str | None) -> str | None:
@@ -242,6 +314,15 @@ class RunPodConfig(BaseSettings):
             and not self.allow_infra_actions
         ):
             raise ValueError("Automatic compute requires explicit infrastructure permission")
+        # The longest round's ttl (execution cap + queue wait + the unbilled cache wait) must fit
+        # in one GPU session, or the session's own end would cut the model download short.
+        if self.model_source == "cache" and (
+            self.execution_timeout_cap_seconds
+            + self.queue_wait_seconds
+            + self.model_cache_wait_seconds
+            > self.session_max_seconds
+        ):
+            raise ValueError("The model cache wait does not fit in one GPU session")
         return self
 
     @property
@@ -272,6 +353,12 @@ class RunPodConfig(BaseSettings):
         """The Serverless endpoint that serves stills (image) or motion (video)."""
         own = self.stills_endpoint_id if operation == "image" else self.motion_endpoint_id
         return own or self.endpoint_id
+
+    def mirror_for(self, operation: Literal["image", "video"]) -> tuple[str | None, str | None]:
+        """(his mirror repo, the revision its workers must report) for stills or motion."""
+        if operation == "image":
+            return self.stills_mirror_repo, self.stills_mirror_revision
+        return self.motion_mirror_repo, self.motion_mirror_revision
 
     def endpoints(self) -> list[tuple[str, str]]:
         """Every configured endpoint once, as (purpose, endpoint_id), image first."""

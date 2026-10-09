@@ -55,7 +55,7 @@ export function drawOutdoorLife(ctx, weather, elapsed, moment) {
   const night = moment.daylight < 0.4;
   const frame = streetFrame(elapsed, weather, night);
   ctx.save(); ctx.beginPath(); ctx.rect(0, 0, W, PIXEL_LAYOUT.world.height); ctx.clip();
-  ctx.save(); ctx.beginPath(); ctx.rect(147, LIFE.sidewalk_y - 62, W - 165, 72); ctx.clip();
+  ctx.save(); ctx.beginPath(); ctx.rect(147, LIFE.sidewalk_y - 68, W - 165, 78); ctx.clip();
   if (frame.dog) {
     const owner = frame.people[2], d = frame.dog;
     pixelPen(ctx).line(owner.x + 4 * owner.direction, owner.y - 17, d.x - 5 * d.direction, d.y - 8, '#b39e88');

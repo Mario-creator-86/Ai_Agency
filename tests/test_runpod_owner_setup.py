@@ -202,10 +202,14 @@ def test_precheck_reads_the_card_and_the_bucket_and_passes_a_simulation(engine, 
     REAL_PRECHECK(engine, adapter(engine, tmp_path, Cloud(), mock=True), purpose="image")
 
 
+#: His stills mirror, copied (2026-10-09): the cached model the stills endpoint reads.
+MIRROR = {"stills_mirror_repo": "owner/amn-stills", "stills_mirror_revision": "a" * 40}
+
+
 def test_precheck_passes_once_his_card_is_accepted(engine, tmp_path, monkeypatch):
     from test_runpod_batch import Cloud, adapter
 
-    made = adapter(engine, tmp_path, Cloud())
+    made = adapter(engine, tmp_path, Cloud(), **MIRROR)
     made.integration_id = _vault_and_runpod(engine, monkeypatch, allow=True)
     REAL_PRECHECK(engine, made, purpose="image")
 
@@ -220,7 +224,7 @@ def test_stills_refuse_before_his_yes_is_spent_while_agents_may_not_switch_the_g
 
     storyboard_id = a_film(engine, tmp_path)
     cloud = PictureCloud(lambda prompt: NO_FACE[0].read_bytes())
-    made = adapter(engine, tmp_path, cloud)
+    made = adapter(engine, tmp_path, cloud, **MIRROR)
     table = stills_table()
 
     def go() -> dict[str, Any]:

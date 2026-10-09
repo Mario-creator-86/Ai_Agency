@@ -14,3 +14,7 @@ Dockerfile
 *.key
 *.pem
 hf_token
+Dockerfile.*
+.git
+.github
+EXPORT_MANIFEST.json

@@ -205,11 +205,15 @@ class ComfyClient:
         return find_output(history, node_id, self.output_dir)
 
 
-def start_server(env: Mapping[str, str] | None = None) -> subprocess.Popen[bytes] | None:
+def start_server(
+    env: Mapping[str, str] | None = None, *, extra_model_paths: Path | None = None
+) -> subprocess.Popen[bytes] | None:
     """Start the container's ComfyUI in the background (the stock /start.sh is replaced).
 
     Unlike the stock start script, ComfyUI runs without ``--disable-metadata``: the LTX-2.x
     licence forbids removing provenance metadata, so nothing is stripped knowingly.
+    ``extra_model_paths`` is the file ``weights.prepare`` wrote (the cached mirror's folders);
+    ComfyUI reads it next to its own ``extra_model_paths.yaml``.
     ``AMN_START_COMFY=0`` skips it (a ComfyUI already running).
     """
     values = os.environ if env is None else env
@@ -227,5 +231,7 @@ def start_server(env: Mapping[str, str] | None = None) -> subprocess.Popen[bytes
         "--port",
         port or "8188",
     ]
+    if extra_model_paths is not None:
+        args += ["--extra-model-paths-config", str(extra_model_paths)]
     args += values.get("AMN_COMFY_EXTRA_ARGS", "").split()
     return subprocess.Popen(args, cwd=str(comfy_dir))

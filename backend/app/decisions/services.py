@@ -333,6 +333,8 @@ APPLIERS: dict[str, Applier] = {
     "sheet_local_move": _from_sources("apply_sheet_local_move"),
     # His accept of «Agenții pot porni singuri GPU-ul RunPod …» (2026-10-08).
     "runpod_infra": _from_sources("apply_runpod_infra"),
+    # His accept of «Copiez modelele în contul tău Hugging Face …» starts the copy (2026-10-09).
+    "runpod_mirror_copy": _from_sources("apply_runpod_mirror_copy"),
 }
 
 
@@ -497,6 +499,8 @@ CONDITIONS: dict[str, Condition] = {
     "balance_covers": _condition_from_sources("balance_covers"),
     # The RunPod connection lets agents switch its GPU on (2026-10-08).
     "runpod_infra_enabled": _condition_from_sources("runpod_infra_enabled"),
+    # Every configured endpoint knows its mirror's revision (2026-10-09).
+    "runpod_mirrors_ready": _condition_from_sources("runpod_mirrors_ready"),
 }
 
 
@@ -605,6 +609,9 @@ MISSING_RO: dict[str, Missing] = {
     ),
     "runpod_infra_enabled": _missing_words(
         "Lipsește: agenții nu au încă voie să pornească GPU-ul RunPod în pașii aprobați."
+    ),
+    "runpod_mirrors_ready": _missing_words(
+        "Lipsește: copiile modelelor din contul tău Hugging Face nu au încă revizia scrisă."
     ),
 }
 

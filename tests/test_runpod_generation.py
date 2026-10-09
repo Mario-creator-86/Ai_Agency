@@ -523,7 +523,8 @@ def test_serverless_models_come_from_the_pinned_catalogue_without_any_request(en
         transport=t,
     )
     models = asyncio.run(p.available_models())
-    assert [m["id"] for m in models] == ["Qwen-Image-2512"]  # no motion endpoint configured
+    # No motion endpoint configured: the two stills routes (2026-10-09: the 2511 reference one).
+    assert [m["id"] for m in models] == ["Qwen-Image-2512", "Qwen-Image-Edit-2511"]
     assert models[0]["gpu_seconds_per_image"] == 60 and models[0]["output"] == [1530, 2720]
     assert models[0]["licence"] == "Apache-2.0" and models[0]["quality_score"] is None
     assert not t.calls
