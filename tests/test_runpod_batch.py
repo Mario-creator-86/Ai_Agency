@@ -378,6 +378,44 @@ def test_proven_unsent_run_keeps_the_keys_reusable(engine, tmp_path):
         assert len(rows) == 1 and rows[0].idempotency_key == key and rows[0].remote_job_id
 
 
+def paused():
+    return MediaProviderError(
+        "api.runpod.ai refused the request (HTTP 409)",
+        http_status=409,
+        detail="Endpoint is paused (max_workers=0). Set max_workers > 0 to accept work.",
+    )
+
+
+def test_a_paused_endpoint_is_asked_again_until_it_takes_the_job(engine, tmp_path, monkeypatch):
+    # 2026-10-09, live: the /run left 0.1 s after the switch-on PATCH and RunPod answered 409
+    # «Endpoint is paused (max_workers=0)»: the setting had not reached its queue yet.
+    monkeypatch.setattr(batch_module, "PAUSED_RETRY_SECONDS", (0.0, 0.0))
+    cloud = Cloud()
+    cloud.run_answers = [paused(), paused()]
+    made = adapter(engine, tmp_path, cloud)
+    taken = []
+    made.submit_batch([request()], session=Session_(), on_submitted=taken.append)
+    assert len(cloud.posts()) == 3 and len(taken) == 1
+    with Session(engine) as s:
+        row = s.scalar(select(GenerationJob))
+        assert str(row.remote_job_id).startswith("job-1") and row.error_code is None
+
+
+def test_an_endpoint_still_paused_after_the_waits_is_refused_and_nothing_is_uncertain(
+    engine, tmp_path, monkeypatch
+):
+    monkeypatch.setattr(batch_module, "PAUSED_RETRY_SECONDS", (0.0,))
+    cloud = Cloud()
+    cloud.run_answers = [paused(), paused()]
+    made = adapter(engine, tmp_path, cloud)
+    with pytest.raises(MediaProviderError):
+        made.submit_batch([request()], session=Session_(), on_submitted=lambda item: None)
+    assert len(cloud.posts()) == 2
+    with Session(engine) as s:
+        row = s.scalar(select(GenerationJob))
+        assert row.status == "FAILED" and row.error_code == "HTTP_409" and row.cost_value == "0"
+
+
 def test_uncertain_run_is_resent_with_the_same_keys_next_round(engine, tmp_path):
     cloud = Cloud()
     cloud.run_answers = [MediaProviderError("lost", unanswered=True)]

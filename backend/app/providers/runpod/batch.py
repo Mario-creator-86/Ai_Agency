@@ -1219,6 +1219,22 @@ def submit_round(
     return run
 
 
+#: RunPod's /run answers 409 «Endpoint is paused (max_workers=0)» for a moment after the
+#: switch-on PATCH was applied (2026-10-09, live: the /run left 0.1 s after it). A 409 is a
+#: refusal, nothing queued, so the same body goes again after each wait (about 30 s in all).
+PAUSED_RETRY_SECONDS: tuple[float, ...] = (1.0, 2.0, 4.0, 8.0, 15.0)
+
+
+def _endpoint_paused(exc: MediaProviderError) -> bool:
+    """RunPod's «endpoint is paused» refusal of a /run: answered, 409, nothing queued."""
+    words = f"{exc.detail or ''} {exc}".lower()
+    return (
+        exc.http_status == 409
+        and not exc.unanswered
+        and ("paused" in words or "max_workers" in words)
+    )
+
+
 def _switched_off(session: Any) -> bool:
     """True when the step's GPU session was switched off from outside (`GpuForcedOff`)."""
     from app.providers.runpod.gpu_session import GpuForcedOff  # noqa: PLC0415 - import cycle
@@ -1388,14 +1404,31 @@ async def _submit_remote(
         }
         contract.validate_input(body["input"])
         chunk_items_list = [item for item, _row in pairs]
-        try:
-            data = await client.call("POST", "/run", body, key=contract.batch_key(keys))
-            job = data.get("id")
-            if not isinstance(job, str) or not job or len(job) > 90:
-                raise RunPodProtocolError("RunPod did not return a valid job id")
-        except MediaProviderError as exc:
-            proven = exc.unsent or (
-                exc.http_status in (400, 401, 403, 404, 413, 422) and not exc.unanswered
+        failure: MediaProviderError | None = None
+        job: Any = ""
+        for wait in (*PAUSED_RETRY_SECONDS, None):
+            try:
+                data = await client.call("POST", "/run", body, key=contract.batch_key(keys))
+                job = data.get("id")
+                if not isinstance(job, str) or not job or len(job) > 90:
+                    raise RunPodProtocolError("RunPod did not return a valid job id")
+                failure = None
+                break
+            except MediaProviderError as refusal:
+                failure = refusal
+                if wait is None or not _endpoint_paused(refusal) or _switched_off(session):
+                    break
+                # A refusal, nothing queued: the same body again once the switch-on reached
+                # RunPod's queue. No worker runs meanwhile, so the wait costs nothing.
+                logger.info(
+                    "runpod_run_paused_retry",
+                    extra={"endpoint_id": endpoint, "items": len(pairs), "wait_seconds": wait},
+                )
+                await asyncio.sleep(wait)
+        if failure is not None:
+            proven = failure.unsent or (
+                failure.http_status in (400, 401, 403, 404, 409, 413, 422)
+                and not failure.unanswered
             )
             # RunPod's own answer, already sanitised by media_http: without it a failed /run
             # read only «refused, reason unknown» (2026-10-09, the first live stills round).
@@ -1404,13 +1437,13 @@ async def _submit_remote(
                 extra={
                     "endpoint_id": endpoint,
                     "items": len(pairs),
-                    "http_status": exc.http_status,
-                    "unsent": exc.unsent,
-                    "unanswered": exc.unanswered,
-                    "vendor_code": exc.code,
-                    "detail": (exc.detail or "")[:300],
-                    "error_class": type(exc).__name__,
-                    "cause_class": type(exc.__cause__).__name__ if exc.__cause__ else None,
+                    "http_status": failure.http_status,
+                    "unsent": failure.unsent,
+                    "unanswered": failure.unanswered,
+                    "vendor_code": failure.code,
+                    "detail": (failure.detail or "")[:300],
+                    "error_class": type(failure).__name__,
+                    "cause_class": type(failure.__cause__).__name__ if failure.__cause__ else None,
                 },
             )
             for _item, row in pairs:
@@ -1419,7 +1452,7 @@ async def _submit_remote(
                         row.id,
                         status="FAILED",
                         finished_at=now(),
-                        error_code=UNSENT if exc.unsent else f"HTTP_{exc.http_status}",
+                        error_code=UNSENT if failure.unsent else f"HTTP_{failure.http_status}",
                         cost_value="0",
                         gpu_seconds_value="0",
                     )
@@ -1434,7 +1467,7 @@ async def _submit_remote(
             run.chunks.append(_Chunk(None, chunk_items_list, policy, time.monotonic()))
             uncertain_any = uncertain_any or not proven
             if not sent_any and not uncertain_any and proven:
-                raise  # nothing was sent at all: the step refuses before spending
+                raise failure  # nothing was sent at all: the step refuses before spending
             for item, _row in pairs:
                 run._pending_report.append(
                     ItemOutcome(item, "FAILED", None, None, None, UNSENT if proven else UNCERTAIN)
