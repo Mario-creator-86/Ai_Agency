@@ -3,7 +3,8 @@
 See `app.integrations.plan_licence`: the Owner's card «Da, citește singur» lets the studio read
 his ElevenLabs plan and record the licence when it is paid, so a film can go public without
 anybody typing «da» in Setări. A connection that already has the licence is never read again;
-one without it at most once a day. A GET that buys nothing.
+one without it at most once an hour (the Owner upgrades his plan, 2026-10-10). A GET that buys
+nothing.
 """
 
 from __future__ import annotations

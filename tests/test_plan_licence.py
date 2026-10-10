@@ -79,7 +79,7 @@ def test_a_paid_active_plan_records_the_commercial_licence_with_its_evidence(eng
     assert asked == ["xi-test-key"]
 
 
-def test_a_free_or_inactive_plan_records_nothing_and_is_read_again_only_a_day_later(engine):
+def test_a_free_or_inactive_plan_records_nothing_and_is_read_again_only_an_hour_later(engine):
     free = connection(engine)
     calls: list[str] = []
 
@@ -92,9 +92,9 @@ def test_a_free_or_inactive_plan_records_nothing_and_is_read_again_only_a_day_la
     assert first["recorded"] == [] and first["checked"][0]["tier"] == "free"
     assert licence(engine, free)["commercial_use"] is None
 
-    record_plan_licences(engine, Vault(), read_plan=plan, now=now + timedelta(hours=2))
-    assert calls == ["read"], "a free plan is not read again within the day"
-    record_plan_licences(engine, Vault(), read_plan=plan, now=now + timedelta(hours=25))
+    record_plan_licences(engine, Vault(), read_plan=plan, now=now + timedelta(minutes=40))
+    assert calls == ["read"], "a free plan is not read again within the hour"
+    record_plan_licences(engine, Vault(), read_plan=plan, now=now + timedelta(minutes=61))
     assert calls == ["read", "read"]
 
 

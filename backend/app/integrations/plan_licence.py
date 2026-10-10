@@ -33,8 +33,10 @@ PAID_TIERS = frozenset(
 )
 #: Subscription states in which the plan's licence holds.
 ACTIVE_STATUSES = frozenset({"active", "trialing"})
-#: How often a connection without the licence is read again (a free plan may be upgraded).
-RECHECK = timedelta(hours=24)
+#: How often a connection without the licence is read again: a free plan may be upgraded, and
+#: the Owner chose to upgrade his (card 2026-10-10 21:10, «Trec eu pe plan plătit»), so the
+#: studio sees it within the hour. One GET an hour buys nothing.
+RECHECK = timedelta(hours=1)
 #: The connection's answer the rights check counts (`media.factory.COMMERCIAL_USE_YES`).
 YES = "da"
 LICENCE_EVENT = "integrations.licence_recorded"
