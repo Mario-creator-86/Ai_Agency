@@ -55,7 +55,19 @@ from app.media.models import (
     StoryboardScene,
     VideoRenderJob,
 )
-from app.media.picture_qc import evaluate_pictures, judge_clip
+from app.media.picture_qc import (
+    FRAME_SOURCES,
+    MAX_SUBTITLE_LINES,
+    CleanShot,
+    FrameSource,
+    StudioText,
+    caption_rows,
+    clean_shots,
+    cut_caption_rows,
+    evaluate_pictures,
+    film_captions,
+    judge_clip,
+)
 from app.media.prompt_lint import bible_face_rule
 from app.media.schemas import QCReportView
 from app.media.toolchain import (
@@ -2780,6 +2792,20 @@ def film_length_budget(
 # this check as a picture to redo) asks for a new still and new motion for it. The band is
 # read even when no model can look (the rehearsal's QC runs without a registry). A composed
 # card is drawn by the studio, carries text by design and is never judged as a photograph.
+#
+# The picture is judged, never the studio's own subtitles over it (2026-10-10, film babcf272:
+# the look read the burnt-in captions as «text or a logo» in every scene, the film failed, and
+# the repair retired the takes the Owner had approved). A scene's frames are cut from its own
+# shot beside the film while that is still the file the film was joined from
+# (`picture_qc.clean_shots`): the same moments, before the captions were burnt in. Where the
+# shot is gone the film's frames are cut as before. Where a subtitle is on screen at them, the
+# look is shown each with only the rows the captions draw in cut out
+# (`picture_qc.cut_caption_rows`): the picture above them, then the strip below them, because
+# the first crop of the same day cut away everything from row 1320 down and a watermark in the
+# bottom corner of the picture passed unseen (adversarial review). Where none is on screen (a
+# scene without words, by the SRT's cues) the frames are shown whole. The faces and the band
+# are read on the uncut frame, as they always were. The look is told which it was given and
+# that the subtitles are the studio's (`picture_qc.StudioText`).
 
 #: Which frames of a span are looked at.
 SPAN_FRAME_POSITIONS = ("first", "middle", "last")
@@ -2811,6 +2837,80 @@ def _bible_rules(bible: Mapping[str, Any]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(rules))
 
 
+def _film_subtitles(production: Mapping[str, Any], film_dir: Path) -> list[dict[str, Any]]:
+    """The cues of the captions burnt into the film (the SRT beside it, which says the same
+    words as its ASS script), or none when they cannot be read: the look is then told the
+    subtitles repeat the narration, without the words."""
+    record = production.get("captions")
+    named = record.get("srt") if isinstance(record, Mapping) else None
+    srt = film_dir / Path(str(named or "captions.srt")).name
+    try:
+        return parse_srt(srt.read_text(encoding="utf-8")) if srt.is_file() else []
+    except (OSError, UnicodeDecodeError, ValueError):
+        return []
+
+
+def _span_subtitles(cues: list[dict[str, Any]], start: float, end: float) -> tuple[str, ...]:
+    """The subtitle lines on screen at any moment of [start, end) on the film's timeline."""
+    lines: list[str] = []
+    for cue in cues:
+        if float(cue["end"]) > start and float(cue["start"]) < end:
+            lines += [str(line) for line in cue["lines"] if str(line).strip()]
+    return tuple(lines[:MAX_SUBTITLE_LINES])
+
+
+def _captions_on_frames(cues: list[dict[str, Any]], moments: list[float], fps: float) -> bool:
+    """Whether any of the film's subtitles is on screen at one of these moments (seconds on the
+    film's timeline), give or take a frame for the SRT's milliseconds and the ASS script's
+    centiseconds, which round the same cue apart. No cues read (the SRT beside the film is gone
+    or unreadable, though the film burnt captions) is a yes: what cannot be read is cut out."""
+    if not cues:
+        return True
+    slack = 1.0 / fps if fps > 0 else 0.05
+    return any(
+        float(cue["start"]) - slack <= moment < float(cue["end"]) + slack
+        for cue in cues
+        for moment in moments
+    )
+
+
+def _shot_span_frames(
+    shot: CleanShot,
+    chosen: list[tuple[str, int]],
+    start: float,
+    fps: float,
+    ffmpeg_path: str | None,
+    folder: Path,
+) -> list[tuple[str, float, Path]]:
+    """The chosen film frames (first, middle, last) cut from the scene's own shot instead:
+    (at, time on the film, path). The shot starts where the scene starts on the film's timeline
+    (assembler._dissolve_command: shot N always starts where scene N's words start), so a film
+    frame is the shot's frame at the same distance from the scene's start, the frames the
+    viewer sees without the captions laid over them. Empty when any cannot be cut; the caller
+    then cuts the film's own."""
+    rate = shot.fps or fps
+    last = max(0, round(shot.span * rate) - 1) if shot.span > 0 else None
+    numbers: dict[str, int] = {}
+    for at, number in chosen:
+        within = max(0, round((number / fps - start) * rate))
+        numbers[at] = min(within, last) if last is not None else within
+    cut = frames_at(
+        str(shot.path),
+        ffmpeg_path,
+        list(numbers.values()),
+        folder / f"shot_{shot.scene_index:02d}",
+    )
+    frames: list[tuple[str, float, Path]] = []
+    for at, number in chosen:
+        source = cut.get(numbers[at])
+        if source is None:
+            return []
+        named = folder / f"scene_{shot.scene_index:02d}_{at}.png"
+        shutil.copyfile(source, named)
+        frames.append((at, round(number / fps, 3), named))
+    return frames
+
+
 def span_picture_qc(
     engine: Engine,
     registry: Any | None,
@@ -2836,6 +2936,15 @@ def span_picture_qc(
     costs nothing): a scene split by a band fails, every other scene is NOT_RUN. With no film
     on disk, or no filmed scene, nothing is cut and the check is NOT_APPLICABLE with the
     reason.
+
+    Each scene's ``frames_from`` says what was judged (2026-10-10, babcf272): SHOT, the scene's
+    own shot beside the film before the captions were burnt in (faces, band and look all read
+    it); FILM_CROPPED, the film's frames under a subtitle, the look shown each with the rows the
+    captions draw in cut out, the picture above them and then the strip below them;
+    FILM_CLEAR, the film's frames shown whole, no subtitle being on screen at them; FILM, the
+    film's frames as they are (no captions burnt in, nobody to look, or the cut failed). The
+    look is told which, and that the narration's subtitles are the studio's own. A ``judge``
+    passed in is handed the three frames alone (above the caption rows, on FILM_CROPPED).
     """
     from app.media.still_gate import StillPlan  # noqa: PLC0415 - still_gate imports this module
 
@@ -2889,6 +2998,9 @@ def span_picture_qc(
 
     faces_forbidden = bible_face_rule(bible) is not None
     record["faces_forbidden"] = faces_forbidden
+    #: What the studio wrote over each scene's frames, filled in as the frames are cut; the
+    #: studio's own look reads it when it is asked (a test's judge is handed the frames alone).
+    studio_texts: dict[int, StudioText] = {}
     if judge is None and registry is not None:
 
         def judge(paths: list[Path], plan: Any) -> Any:
@@ -2900,6 +3012,7 @@ def span_picture_qc(
                 correlation_id,
                 motion_prompt=rows.get(int(plan.scene), {}).get("motion_prompt", ""),
                 ffmpeg_path=ffmpeg_path,
+                studio_text=studio_texts.get(int(plan.scene)),
             )
 
     # With nobody to look (no model that can see, or no registry: the rehearsal's QC and the
@@ -2932,13 +3045,30 @@ def span_picture_qc(
         face_counter = count_faces
     rules = _bible_rules(bible)
     band_reader = find_ffmpeg(ffmpeg_path)
+    film_dir = Path(film_path).parent
+    shots = clean_shots(production, film_dir)
+    burned, headline = film_captions(production)
+    rows_burnt = caption_rows(production)
+    cues = _film_subtitles(production, film_dir) if burned else []
+    starts = {span["scene_index"]: float(span["start"]) for span in spans}
     folder = Path(tempfile.mkdtemp(prefix="span_qc_"))
     measured_any = False
     try:
+        # The scenes whose own shot is beside the film are cut from it; the film is decoded
+        # once, for the others only.
+        clean: dict[int, list[tuple[str, float, Path]]] = {}
+        for index, chosen in picks.items():
+            shot = shots.get(index)
+            if shot is not None:
+                taken = _shot_span_frames(
+                    shot, chosen, starts[index], fps, ffmpeg_path, folder / "shots"
+                )
+                if taken:
+                    clean[index] = taken
         cut = frames_at(
             film_path,
             ffmpeg_path,
-            [n for chosen in picks.values() for _at, n in chosen],
+            [n for index, chosen in picks.items() if index not in clean for _at, n in chosen],
             folder / "cut",
         )
         for span in spans:
@@ -2959,15 +3089,63 @@ def span_picture_qc(
             if span["composed"]:
                 entry["reason"] = "card compus de studio: nu se judecă drept fotografie"
                 continue
-            frames: list[tuple[str, float, Path]] = []
-            for at, number in picks[index]:
-                source = cut.get(number)
-                if source is None:
-                    frames = []
-                    break
-                named = folder / f"scene_{index:02d}_{at}.png"
-                shutil.copyfile(source, named)
-                frames.append((at, round(number / fps, 3), named))
+            frames: list[tuple[str, float, Path]] = clean.get(index, [])
+            source: FrameSource = "SHOT" if frames else "FILM"
+            if not frames:
+                for at, number in picks[index]:
+                    cut_frame = cut.get(number)
+                    if cut_frame is None:
+                        frames = []
+                        break
+                    named = folder / f"scene_{index:02d}_{at}.png"
+                    shutil.copyfile(cut_frame, named)
+                    frames.append((at, round(number / fps, 3), named))
+            # What the look is shown: the scene's own shot as it is; or the film's frames with
+            # only the rows its captions draw in cut out, the strips below them after the
+            # frames (2026-10-10, babcf272, and the review of the first crop the same day,
+            # which hid the bottom 600 rows); or, where no subtitle is on screen at them, the
+            # film's frames whole. The faces and the flat band are read on the uncut frames,
+            # as they always were: a cut could take a face or a blank strip out of their sight.
+            looked_at = frames
+            strips: tuple[Path, ...] = ()
+            if source == "FILM" and frames and rows_burnt is not None and judge is not None:
+                if not _captions_on_frames(cues, [moment for _at, moment, _p in frames], fps):
+                    source = "FILM_CLEAR"
+                else:
+                    pieces = [
+                        cut_caption_rows(
+                            band_reader,
+                            path,
+                            rows_burnt,
+                            folder / f"scene_{index:02d}_{at}_deasupra.png",
+                            folder / f"scene_{index:02d}_{at}_dedesubt.png",
+                        )
+                        for at, _moment, path in frames
+                    ]
+                    cut_apart = [piece for piece in pieces if piece is not None]
+                    if len(cut_apart) == len(frames):
+                        looked_at = [
+                            (at, moment, above)
+                            for (at, moment, _uncut), (above, _below) in zip(
+                                frames, cut_apart, strict=True
+                            )
+                        ]
+                        strips = tuple(below for _above, below in cut_apart)
+                        source = "FILM_CROPPED"
+            studio_texts[index] = StudioText(
+                source=source,
+                captions_burned_in=burned,
+                # FILM_CLEAR frames carry none: words listed would only invite an excuse for
+                # the picture's own lettering.
+                subtitles=(
+                    ()
+                    if source == "FILM_CLEAR"
+                    else _span_subtitles(cues, float(span["start"]), float(span["end"]))
+                ),
+                headline=headline,
+                below_captions=strips,
+            )
+            entry["frames_from"] = source if frames else None
             entry["frames"] = [
                 {"at": at, "time": round(number / fps, 3), "frame": number}
                 for at, number in picks[index]
@@ -2988,7 +3166,7 @@ def span_picture_qc(
                     bible_rules=rules,
                     look_block=str(asked.get("look_block") or ""),
                 )
-                judgement = judge([path for _at, _moment, path in frames], plan)
+                judgement = judge([path for _at, _moment, path in looked_at], plan)
             picture = _picture_check(judgement, faces_forbidden=faces_forbidden)
             # The same flat-band reading as the still's and the clip's: the scene's frames
             # are one picture each, or the scene is panels (2026-10-09, scene 5).
@@ -3047,6 +3225,8 @@ def span_picture_qc(
     elif filmed and all(entry["passed"] is True for entry in filmed):
         record["passed"] = True
     record["status"] = "MEASURED" if measured_any else "NOT_RUN" if filmed else "NOT_APPLICABLE"
+    sources = [entry.get("frames_from") for entry in filmed]
+    record["frames_from"] = {name: sources.count(name) for name in FRAME_SOURCES if name in sources}
     if judge is None:
         read = sum(
             1
@@ -3061,9 +3241,20 @@ def span_picture_qc(
         )
         return record
     looked = sum(1 for entry in filmed if entry["status"] in ("PASSED", "FAILED"))
+    # Where the frames the look saw came from, in the Owner's words (2026-10-10, babcf272: the
+    # look had been shown the studio's own subtitles and nobody could tell from the report).
+    where = {
+        "SHOT": "pe cadrul scenei, dinainte de subtitrări",
+        "FILM_CROPPED": "pe film, cu rândurile subtitrărilor scoase și restul cadrului întreg",
+        "FILM_CLEAR": "pe film, în clipe fără subtitrări pe ecran",
+        "FILM": (
+            "pe film, cu subtitrările numite modelului ca ale studioului" if burned else "pe film"
+        ),
+    }
     record["detail"] = (
         f"{looked} din {len(filmed)} scene filmate privite pe primul, mijlocul și ultimul cadru "
         f"la {SPAN_FRAME_WIDTH} px"
+        + "".join(f"; {count} {where[name]}" for name, count in record["frames_from"].items())
     )
     return record
 

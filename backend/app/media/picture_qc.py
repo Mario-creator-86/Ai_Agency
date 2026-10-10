@@ -44,15 +44,32 @@ in TEST policy deliberately produces a blank scene or a stranger in a character'
 The gate this one belongs beside is `content_integrity_qc`, the degenerate-still check,
 which fails in both environments for exactly this defect measured on the still instead of
 on the film. This follows it.
+
+What is looked at is the picture, never the studio's own writing on it (2026-10-10, film
+babcf272: the subtitles burnt into the finished film were read as «text or a logo» in every
+scene, and the repair that followed retired the stills and clips the Owner had approved).
+A film's frames are cut from each scene's own shot beside the film (`clean_shots`), built
+before the edit burns the captions in and checked by its sha256 to be the very file the film
+was joined from. Only where a shot is gone (released after quality control, or rebuilt since
+by another render) are they the film's own, and then, where a subtitle is on screen over
+them, the clip look is shown them with only the rows the captions draw in cut out
+(`cut_caption_rows`): the picture above those rows, and the strip below them after it. Either
+way the model is told where its frames were cut from and that the narration's subtitles are
+the studio's (`StudioText`, `studio_text_note`); lettering inside the generated picture counts
+exactly as before, wherever in the frame it is.
 """
 
 from __future__ import annotations
 
 import base64
+import functools
+import hashlib
 import json
 import logging
+import shutil
 import subprocess
-from collections.abc import Sequence
+import tempfile
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -61,9 +78,11 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, field_
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
+from app.agents.editorial import FRAME_WIDTH, MAX_FRAMES
 from app.agents.identity import clipped
-from app.agents.vision import frames_for, vision_agent
+from app.agents.vision import frames_at, frames_for, vision_agent
 from app.factual.sanitizer import wrap_in_inert_boundary
+from app.media.cards import CAPTION_BAND_TOP, FRAME_HEIGHT
 from app.media.models import (
     CharacterBible,
     MediaAsset,
@@ -80,7 +99,9 @@ logger = logging.getLogger("studio.picture_qc")
 
 PICTURE_TASK = "picture_qc"
 #: v2 (2026-10-09): the one-picture question, after scene 5 came out as three stacked panels.
-TEMPLATE_VERSION = "picture-qc-v2"
+#: v3 (2026-10-10): the model is told where its frames were cut from and that the narration's
+#: subtitles are the studio's own (film babcf272 was failed for its own captions).
+TEMPLATE_VERSION = "picture-qc-v3"
 
 #: The departments asked to look, in order. The Video Editor owns the pictures, so the
 #: department that made them is the department that answers for them; the Director is asked
@@ -130,6 +151,7 @@ _INSTRUCTIONS = (
     "Attached are {frames} images: the first {frames} are one frame from the middle of each "
     "scene, in the order the scenes are listed below.{references_note} Judge only what you "
     "can see.\n"
+    "{captions_note}"
     "For every scene answer three questions from its frame alone. First: is it a picture at "
     "all? A blank or uniform field, plain stripes or bands, pure noise, a smear, or a wall "
     "of garbled writing is not a picture, however clean the file is. Second: is it ONE "
@@ -161,6 +183,341 @@ _REFERENCES_NOTE = (
     "the order they are listed under `references` below; those are what the character must "
     "look like, not frames of this film."
 )
+
+
+# ------------------------------------------------------------ the studio's own writing
+#
+# 2026-10-10, film babcf272 «The Particle That Shouldn't Exist (But Does)»: the film-level
+# look (`qc.span_picture_qc` -> `judge_clip`) was shown frames of the finished film, read the
+# subtitles the studio itself burns in as «text or a logo» in every scene, and failed the
+# film; the repair that followed retired the stills and the test shot the Owner had approved
+# and bought new ones. The subtitles are the studio's own writing, not the picture's, so a look
+# at a film is shown the picture without them wherever it can be:
+#
+# - SHOT: the scene's own shot beside the film (production["shots"]), which the edit joins and
+#   only then burns the captions over; used only while it is the very file the film was joined
+#   from (its recorded sha256), because a later render of the same storyboard writes its shots
+#   into the same folder under the same names.
+# - FILM_CROPPED: the shot is gone (quality control releases the shots once its report is
+#   recorded, so the Owner's re-QC finds none) and a subtitle is on screen over the scene's
+#   frames, so the film's own frame with the rows its captions draw in cut out
+#   (`cut_caption_rows`): the part above them, and after the three frames the strip of each
+#   below them. Only those rows: the first crop of 2026-10-10 cut away everything from row
+#   1320 down, 600 rows where the captions draw in 200, and a watermark in the bottom corner of
+#   the picture was never shown to the look (adversarial review, the same day).
+# - FILM_CLEAR: the shot is gone and none of the film's subtitles is on screen at the scene's
+#   frames (a scene without words, by the cues of the SRT beside the film), so the film's frame
+#   whole: there is nothing of the studio's to cut.
+# - FILM: the film's frame as the viewer sees it (no captions burnt in, or the cut failed).
+#
+# Whatever the source, the model is told which it is and that the narration's subtitles never
+# count as text, a logo or a breach of the bible. Lettering inside the generated picture is
+# not the studio's and still fails a scene, and the free flat-band reading (`qc.flat_band`)
+# still reads every frame, so the triptych of 2026-10-09 still fails as panels.
+
+#: Where the frames a look is shown were cut from (see above).
+FrameSource = Literal["SHOT", "FILM_CROPPED", "FILM_CLEAR", "FILM"]
+FRAME_SOURCES: tuple[FrameSource, ...] = ("SHOT", "FILM_CROPPED", "FILM_CLEAR", "FILM")
+
+#: The most subtitle lines shown to a look for one scene: a scene of a short carries a few
+#: caption cards; more is a timeline that went wrong, and the prompt is not the place for it.
+MAX_SUBTITLE_LINES = 16
+
+
+@dataclass(frozen=True)
+class StudioText:
+    """The studio's own writing on the frames a look is shown, and where they came from."""
+
+    source: FrameSource
+    #: The film burns the narration's subtitles in (production["captions"]["burned_in"]).
+    captions_burned_in: bool = False
+    #: The subtitle lines on screen over these frames' part of the film, when known.
+    subtitles: tuple[str, ...] = ()
+    #: The film's opening title (the hook) is written at its top for its first seconds.
+    headline: bool = False
+    #: FILM_CROPPED: the strip of each frame below the rows its captions were cut out of, in
+    #: the frames' order; the look is shown them after the frames (`cut_caption_rows`).
+    below_captions: tuple[Path, ...] = ()
+
+
+_SOURCE_NOTES: dict[str, str] = {
+    "SHOT": (
+        "These frames were cut from the scene's own shot, which the studio builds before the "
+        "edit burns the subtitles of the narration into the film: none of the studio's "
+        "subtitles are on them, so any lettering, number, sign or logo you see is inside the "
+        "generated picture itself."
+    ),
+    "FILM_CROPPED": (
+        "These frames were cut from the finished film, and the rows near the bottom where the "
+        "studio burns the subtitles of the narration were cut out of them first: each frame "
+        "shows the picture above those rows, shorter than 9:16 for that reason alone, which "
+        "is not a fault, not a blank band and not a sign of panels."
+    ),
+    "FILM_CLEAR": (
+        "These frames were cut from the finished film at moments when none of the studio's "
+        "subtitles of the narration is on screen: each frame is the whole picture as the "
+        "viewer sees it, and any lettering, number, sign or logo you see in it is the "
+        "picture's own."
+    ),
+    "FILM": (
+        "These frames were cut from the finished film as the viewer sees it, with the "
+        "studio's subtitles of the narration burnt in near the bottom of the frame."
+    ),
+}
+
+#: Said of FILM_CROPPED frames whose bottom strips travel with them (adversarial review of
+#: 2026-10-10: what lies below the caption rows is the picture's, and is judged as the picture).
+_BELOW_NOTE = (
+    " After the three frames come {strips} more images, in the same order: the bottom of each "
+    "frame, below the rows that were cut out. Each is the lower part of the same picture, shown "
+    "apart only because the rows between were cut out: it is not another picture, a panel or "
+    "a band, and every question about a frame covers its bottom part too, so lettering, "
+    "numbers, signs, logos or faces there count."
+)
+
+_SUBTITLES_LISTED = " The subtitle words over these frames are listed under `studio_subtitles`."
+_SUBTITLES_ARE_NARRATION = " The subtitles repeat the narration's words."
+_HEADLINE_NOTE = (
+    " During the film's first seconds the studio also writes the film's opening title at the "
+    "top of the frame; that title is the studio's own as well."
+)
+_OURS_NOTE = (
+    " The subtitles of the narration are the studio's own writing, laid over the picture: "
+    "wherever any of them still shows, never count it as readable text, a caption, a logo, "
+    "garbled writing, a band, or a breach of the visual bible's rules (a rule against text "
+    "means text in the picture). Any other writing, such as lettering, numbers, signs or "
+    "logos inside the generated picture, counts exactly as it always does."
+)
+
+
+def studio_text_note(text: StudioText | None) -> str:
+    """The paragraph that tells a look which writing on its frames is the studio's.
+
+    Empty when there is nothing to say: no StudioText (a bought clip, judged before any edit),
+    or a film frame of a film that burns no captions in, where every letter is the picture's.
+    """
+    if text is None or (text.source == "FILM" and not text.captions_burned_in):
+        return ""
+    note = _SOURCE_NOTES[text.source]
+    if text.source == "FILM_CROPPED" and text.below_captions:
+        note += _BELOW_NOTE.format(strips=len(text.below_captions))
+    if text.source in ("FILM_CROPPED", "FILM"):
+        note += _SUBTITLES_LISTED if text.subtitles else _SUBTITLES_ARE_NARRATION
+    if text.source != "SHOT" and text.headline:
+        note += _HEADLINE_NOTE
+    return note + _OURS_NOTE + "\n"
+
+
+def film_captions(production: Mapping[str, Any]) -> tuple[bool, bool]:
+    """(burnt in, with the opening title) as the render recorded its captions; (False, False)
+    for a film whose render recorded none, which burnt nothing it could say."""
+    record = production.get("captions")
+    if not isinstance(record, Mapping) or record.get("burned_in") is not True:
+        return False, False
+    style = record.get("style")
+    return True, isinstance(style, Mapping) and style.get("headline") is True
+
+
+@dataclass(frozen=True)
+class CleanShot:
+    """One scene's shot beside the finished film: its picture before the edit burnt captions
+    over it, verified to be the very file the film was joined from."""
+
+    scene_index: int
+    path: Path
+    #: The rate the shot was built at, when its recorded source says; None means the film's.
+    fps: float | None
+    #: The scene's length, and the shot's own (the scene plus any dissolve overlap).
+    seconds: float
+    span: float
+
+
+@functools.lru_cache(maxsize=64)
+def _sha256_of(path: str, size: int, modified_ns: int) -> str | None:
+    """The file's sha256, remembered by path, size and modification time: quality control
+    verifies the same shots twice (the one-frame look and the span look), and a shot can be a
+    lossless file of a hundred megabytes."""
+    del size, modified_ns  # part of the cache key only
+    digest = hashlib.sha256()
+    try:
+        with open(path, "rb") as handle:
+            for block in iter(lambda: handle.read(1 << 20), b""):
+                digest.update(block)
+    except OSError:
+        return None
+    return digest.hexdigest()
+
+
+def _file_sha256(path: Path) -> str | None:
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    return _sha256_of(str(path), stat.st_size, stat.st_mtime_ns)
+
+
+def _positive(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, int | float) or value <= 0:
+        return None
+    return float(value)
+
+
+def clean_shots(production: Mapping[str, Any], film_dir: Path) -> dict[int, CleanShot]:
+    """Each scene's caption-free shot beside the film (production["shots"]), by scene index.
+
+    A shot counts only while it is on disk and its bytes are the sha256 the render recorded:
+    the shots are released once the film's QC report is recorded, and another render of the
+    storyboard writes shot_NN.mp4 into the same folder, so a file of that name may be another
+    film's picture. A record without a sha256 (a render from before 2026-10-01) cannot be
+    verified and is not used. Missing or unverifiable shots are simply absent; the caller cuts
+    the film's own frames for those scenes.
+    """
+    found: dict[int, CleanShot] = {}
+    records = production.get("shots")
+    if not isinstance(records, list):
+        return found
+    for record in records:
+        if not isinstance(record, Mapping) or not record.get("file") or not record.get("sha256"):
+            continue
+        try:
+            index = int(record["scene_index"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        path = film_dir / Path(str(record["file"])).name
+        if not path.is_file() or _file_sha256(path) != str(record["sha256"]):
+            continue
+        source = record.get("source")
+        found[index] = CleanShot(
+            scene_index=index,
+            path=path,
+            fps=_positive(source.get("fps")) if isinstance(source, Mapping) else None,
+            seconds=_positive(record.get("duration_seconds")) or 0.0,
+            span=_positive(record.get("span")) or 0.0,
+        )
+    return found
+
+
+#: The rows of a 1080x1920 frame the burnt captions can draw in, first and past-the-last, by
+#: the script they were burnt with; only these are cut out of a film frame for a look, and the
+#: picture above and below them is shown (adversarial review of 2026-10-10: the first crop cut
+#: away everything from row 1320 down, and a watermark in the bottom corner of the picture was
+#: never seen). Measured on 2026-10-10 on gray frames, two-line cards with diacritics over
+#: capitals and the largest shadow the finish allows (4 px): the ASS captions (Inter Bold 74,
+#: assembler.CAPTION_BOTTOM_Y 1500) drew in rows 1365-1494, the legacy SRT style
+#: (assembler.CAPTION_STYLE, films from before the ASS captions) in rows 1427-1539. Each band
+#: keeps a margin for the encoder's ringing and, for the legacy style, a substitute face.
+ASS_CAPTION_ROWS = (CAPTION_BAND_TOP, 1520)
+LEGACY_CAPTION_ROWS = (1380, 1560)
+
+
+def caption_rows(production: Mapping[str, Any]) -> tuple[int, int] | None:
+    """The rows the film's burnt captions draw in, or None when it burnt none: the ASS rows
+    when the render recorded its ASS script, the legacy rows when it burnt only its SRT (a
+    film from before the ASS captions, or a one-scene redo of one, which burns it the same
+    way: assembler.redo_scene)."""
+    burned, _headline = film_captions(production)
+    if not burned:
+        return None
+    record = production.get("captions")
+    ass = record.get("ass") if isinstance(record, Mapping) else None
+    return ASS_CAPTION_ROWS if ass else LEGACY_CAPTION_ROWS
+
+
+def _row(rows_on_1920: int, *, up: bool) -> str:
+    """An ffmpeg expression for a row of the input at the same height share as ``rows_on_1920``
+    on a 1080x1920 frame, rounded to an even row (down for a top edge, up for a bottom one, so
+    the cut never leaves a caption row in)."""
+    rounding = "floor" if not up else "ceil"
+    return f"{rounding}(ih*{rows_on_1920}/{FRAME_HEIGHT}/2)*2"
+
+
+def cut_caption_rows(
+    ffmpeg: str | None, frame: Path, rows: tuple[int, int], above: Path, below: Path
+) -> tuple[Path, Path] | None:
+    """``frame`` with the caption ``rows`` cut out: the picture above them as ``above`` and the
+    strip below them as ``below``, both from one decode. None when either cannot be cut.
+
+    Cut, never covered: a frame with a black strip painted over its captions is exactly the
+    «picture with a blank band» the look is asked to refuse; and never stitched back together,
+    because a seam across the picture reads as two panels stacked."""
+    if not ffmpeg or not frame.is_file():
+        return None
+    top, bottom = _row(rows[0], up=False), _row(rows[1], up=True)
+    try:
+        result = subprocess.run(  # noqa: S603 - argument list, no shell
+            [
+                ffmpeg,
+                "-v",
+                "error",
+                "-nostdin",
+                "-y",
+                "-i",
+                str(frame),
+                "-filter_complex",
+                f"[0:v]split=2[a][b];[a]crop=w=iw:h={top}:x=0:y=0[above];"
+                f"[b]crop=w=iw:h=ih-{bottom}:x=0:y={bottom}[below]",
+                "-map",
+                "[above]",
+                "-frames:v",
+                "1",
+                str(above),
+                "-map",
+                "[below]",
+                "-frames:v",
+                "1",
+                str(below),
+            ],
+            capture_output=True,
+            timeout=60,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    if not all(path.is_file() and path.stat().st_size > 0 for path in (above, below)):
+        return None
+    return above, below
+
+
+def _film_fps(production: Mapping[str, Any]) -> float:
+    """The rate the film was cut at: its recorded timeline's, else 30 (a film from before the
+    24 fps timeline recorded none; assembler.film_fps reads it the same way)."""
+    timeline = production.get("timeline")
+    return (
+        _positive(timeline.get("fps") if isinstance(timeline, Mapping) else None)
+        or _positive(production.get("fps"))
+        or 30.0
+    )
+
+
+def _shot_middles(shots: Sequence[CleanShot], ffmpeg_path: str | None, fps: float) -> list[str]:
+    """One frame from the middle of each shot, as base64 JPEG at FRAME_WIDTH, in order; empty
+    when any of them cannot be cut, so the caller falls back to the film for all of them and
+    the frames never mix two sources out of order."""
+    ffmpeg = find_ffmpeg(ffmpeg_path)
+    if not ffmpeg or not shots:
+        return []
+    folder = Path(tempfile.mkdtemp(prefix="picture_qc_"))
+    try:
+        images: list[str] = []
+        for shot in shots:
+            middle = max(0, int(shot.seconds * (shot.fps or fps) / 2))
+            cut = frames_at(
+                str(shot.path),
+                ffmpeg_path,
+                [middle],
+                folder / f"scene_{shot.scene_index:02d}",
+                width=FRAME_WIDTH,
+            )
+            frame = cut.get(middle)
+            image = still_image(ffmpeg, frame, FRAME_WIDTH) if frame is not None else None
+            if image is None:
+                return []
+            images.append(image)
+        return images
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
 
 
 def _description(character: CharacterBible) -> dict[str, Any]:
@@ -272,6 +629,13 @@ def evaluate_pictures(
                 characters_configured=characters_configured,
             )
         title = str(board.title or "")
+        # What the render recorded about its shots and captions, read while the session is
+        # open: the frames below come from the shots when they are still beside the film.
+        production: dict[str, Any] = (
+            dict(job.production_json)
+            if job is not None and isinstance(job.production_json, dict)
+            else {}
+        )
         # The storyboard read out as plain values. Everything below this session runs with it
         # closed — the model call must not hold a connection while it waits — and a detached
         # ORM row is a lock or an error waiting for a reader who forgot which it was.
@@ -354,12 +718,27 @@ def evaluate_pictures(
             if encoded is not None:
                 reference_images[cid] = encoded
 
-    frames = frames_for(
-        path,
-        ffmpeg_path,
-        duration,
-        scene_seconds=[scene["seconds"] for scene in scenes],
-    )
+    # The picture without the studio's subtitles (2026-10-10, babcf272): the middle of each
+    # scene's own shot when every scene up to the frame cap has one beside the film, else the
+    # film's own frames as before, with the model told the subtitles are the studio's.
+    burned, headline = film_captions(production)
+    shots = clean_shots(production, Path(str(path or "")).parent)
+    wanted = scenes[:MAX_FRAMES]
+    source: FrameSource = "FILM"
+    frames: list[str] = []
+    if wanted and all(scene["index"] in shots for scene in wanted):
+        frames = _shot_middles(
+            [shots[scene["index"]] for scene in wanted], ffmpeg_path, _film_fps(production)
+        )
+        if frames:
+            source = "SHOT"
+    if not frames:
+        frames = frames_for(
+            path,
+            ffmpeg_path,
+            duration,
+            scene_seconds=[scene["seconds"] for scene in scenes],
+        )
     if not frames:
         return _not_applicable(
             "no frame could be read from the film: there is no encoder, or no file to cut",
@@ -436,6 +815,9 @@ def evaluate_pictures(
             else ""
         ),
         character_note=_CHARACTER_NOTE if pairs else "",
+        captions_note=studio_text_note(
+            StudioText(source=source, captions_burned_in=burned, headline=headline)
+        ),
     ) + wrap_in_inert_boundary(json.dumps(shown, ensure_ascii=False)[:14000], "the-film")
 
     from app.agents.structured import structured_run  # noqa: PLC0415
@@ -470,6 +852,7 @@ def evaluate_pictures(
         logger.info("picture_qc_no_verdict", extra={"run_status": run["status"]})
         stood_down = _not_applicable(detail, characters_configured=characters_configured)
         stood_down["picture_qc"]["frames"] = len(frames)
+        stood_down["picture_qc"]["frames_from"] = source
         stood_down["picture_qc"]["run_id"] = run_id
         for entry in not_applicable_characters:
             stood_down["character_drift_qc"]["characters"].append(entry)
@@ -536,6 +919,8 @@ def evaluate_pictures(
         "status": "MEASURED" if measured_scenes else "NOT_APPLICABLE",
         "passed": (not failures) if measured_scenes else None,
         "frames": len(frames),
+        # SHOT: each scene's own shot, before the captions were burnt in; FILM: the film's.
+        "frames_from": source,
         "scenes_measured": measured_scenes,
         "scenes": scene_records,
         "model_used": True,
@@ -910,7 +1295,10 @@ def judge_still(
 
 CLIP_TASK = "clip_qc"
 #: v2 (2026-10-09): one_picture; a clip made of panels goes back to its still.
-CLIP_TEMPLATE_VERSION = "clip-qc-v2"
+#: v3 (2026-10-10): a film's frames come with `studio_text_note` (where they were cut from, and
+#: the narration's subtitles named as the studio's) and, when their caption rows were cut out,
+#: the strip of each below them; a bought clip's prompt is unchanged.
+CLIP_TEMPLATE_VERSION = "clip-qc-v3"
 #: The frames shown per clip, in order: first, middle, last.
 CLIP_FRAMES = 3
 
@@ -967,9 +1355,9 @@ class ClipJudgement:
 _CLIP_INSTRUCTIONS = (
     "You are the studio's quality control. Attached are THREE frames of ONE generated clip "
     "for scene {scene} of a factual short, in order: the first frame, the middle frame and "
-    "the last frame. The clip was animated from an approved still and has not been cut into "
-    "the film yet. Judge only what you can see. The plan, the camera move asked for, the "
-    "film's look and the visual bible's rules are below.\n"
+    "the last frame. {provenance} Judge only what you can see. The plan, the camera move asked "
+    "for, the film's look and the visual bible's rules are below.\n"
+    "{studio_note}"
     "Answer each question about the clip, looking at all three frames:\n"
     "- faces_visible: is any human face visible in ANY of the three frames, even small, "
     "partly turned or in the background? A figure seen only from behind, a silhouette or "
@@ -993,6 +1381,14 @@ _CLIP_INSTRUCTIONS = (
     '"same_shot": true, "one_picture": true, "bible_violations": "none", "verdict": "keep", '
     '"reason": "one short sentence saying what you actually see"}}]}}\n'
 )
+
+#: What the clip is, said before the questions: a bought clip before the edit, or one scene of
+#: the finished film looked at again by quality control (`qc.span_picture_qc`). Until
+#: 2026-10-10 the film's scenes were described as clips not yet cut into the film.
+_CLIP_BOUGHT = (
+    "The clip was animated from an approved still and has not been cut into the film yet."
+)
+_CLIP_IN_FILM = "The clip is one scene of the finished film, looked at before it is delivered."
 
 
 def _clip_not_run(
@@ -1023,12 +1419,26 @@ def judge_clip(
     *,
     motion_prompt: str = "",
     ffmpeg_path: str | None = None,
+    studio_text: StudioText | None = None,
 ) -> ClipJudgement:
     """One vision call on one clip's first, middle and last frames, at 1080 px, by the
     LOOKERS. MEASURED only when the model answered for exactly this scene with every field;
-    anything else is NOT_RUN ("clipul nu a fost privit"), which clip QC treats as a block."""
+    anything else is NOT_RUN ("clipul nu a fost privit"), which clip QC treats as a block.
+
+    ``studio_text`` is given for a scene of a finished film (`qc.span_picture_qc`): the model
+    is told where the frames were cut from and that the narration's subtitles are the
+    studio's own (`studio_text_note`), with the subtitle words over the scene when known; the
+    strips below the caption rows it carries (FILM_CROPPED) are attached after the frames, one
+    per frame, and a strip that cannot be prepared leaves the clip unseen, never judged on the
+    upper part alone. A bought clip, judged before any edit, is asked exactly as before."""
     if len(frame_paths) != CLIP_FRAMES:
         return _clip_not_run(f"s-au tăiat {len(frame_paths)} cadre, nu {CLIP_FRAMES}")
+    strips = studio_text.below_captions if studio_text is not None else ()
+    if strips and len(strips) != CLIP_FRAMES:
+        return _clip_not_run(
+            f"s-au tăiat {len(strips)} fâșii de sub subtitrări, nu {CLIP_FRAMES}: partea de jos "
+            "a cadrelor nu ar fi fost privită"
+        )
     if registry is None or not registry.registered_ids():
         return _clip_not_run("niciun furnizor de modele nu este înregistrat")
     with Session(engine) as session:
@@ -1037,7 +1447,7 @@ def judge_clip(
         return _clip_not_run("niciun angajat nu are un model care vede")
     looker_id, looker_name = looker
     ffmpeg = find_ffmpeg(ffmpeg_path)
-    images = [still_image(ffmpeg, path) for path in frame_paths]
+    images = [still_image(ffmpeg, path) for path in (*frame_paths, *strips)]
     if any(image is None for image in images):
         return _clip_not_run(
             "cadrele nu au putut fi pregătite la 1080 px (lipsește codorul sau fișierul)",
@@ -1052,9 +1462,15 @@ def judge_clip(
         "faces_forbidden": plan.faces_forbidden,
         "bible_rules": list(plan.bible_rules),
     }
-    prompt = _CLIP_INSTRUCTIONS.format(scene=plan.scene) + wrap_in_inert_boundary(
-        json.dumps(shown, ensure_ascii=False)[:8000], "the-clip"
-    )
+    if studio_text is not None and studio_text.source != "SHOT" and studio_text.subtitles:
+        # The words are the narration's, written by the studio's own writers from researched
+        # sources: data like the plan, so they travel inside the inert boundary with it.
+        shown["studio_subtitles"] = list(studio_text.subtitles[:MAX_SUBTITLE_LINES])
+    prompt = _CLIP_INSTRUCTIONS.format(
+        scene=plan.scene,
+        provenance=_CLIP_BOUGHT if studio_text is None else _CLIP_IN_FILM,
+        studio_note=studio_text_note(studio_text),
+    ) + wrap_in_inert_boundary(json.dumps(shown, ensure_ascii=False)[:8000], "the-clip")
 
     from app.agents.structured import structured_run  # noqa: PLC0415
 
@@ -1068,7 +1484,14 @@ def judge_clip(
         correlation_id,
         ClipJudgeReport,
         '{"clips": [...]}',
-        summary=f"Mă uit la clipul scenei {plan.scene} înainte să intre în film.",
+        summary=(
+            f"Mă uit la clipul scenei {plan.scene} înainte să intre în film."
+            if studio_text is None
+            else (
+                f"Mă uit la scena {plan.scene} din filmul terminat; subtitrările studioului nu "
+                "se socotesc text."
+            )
+        ),
         max_tokens=800,
         temperature=0.1,
         extra={"images": [image for image in images if image is not None]},
