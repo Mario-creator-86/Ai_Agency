@@ -136,6 +136,7 @@ from app.media.serial_storyboard import describe_serial_shots
 from app.media.services import generate_storyboard_from_script
 from app.models import DomainEvent
 from app.providers.registry import ProviderRegistry
+from app.publishing.licence_release import mark_held_for_licence
 from app.publishing.models import ChannelRecord, PublicationRecord
 from app.publishing.services import (
     LIVE_PUBLICATION_STATES,
@@ -5356,6 +5357,12 @@ def _publish_one(
     with Session(engine) as session, session.begin():
         record = session.get(PublicationRecord, published["id"])
         remote_privacy = record.remote_privacy_status if record is not None else None
+        if resolved.get("private_until_licensed"):
+            # Private for its licence alone: the watchdog makes it public once the licence is
+            # confirmed, under the channel's policy (`app.publishing.licence_release`).
+            mark_held_for_licence(
+                session, published["id"], resolved["reason"], rights["missing_ro"]
+            )
         publisher = agent_for_role(session, "Publisher")
         if publisher is not None:
             remember(

@@ -1913,44 +1913,52 @@ def _note_remote_state(
         and _requested_visibility(pub) in ("public", "unlisted")
         and not pub.scheduled_publish_time
     ):
-        pub.error_detail = f"{LOCKED_PRIVATE_LETTER} {LOCKED_PRIVATE_NEXT}"
-        append_event(
-            session,
-            "publishing.visibility_locked_private",
-            "publication_record",
-            pub.id,
-            1,
-            {
-                "requested": pub.privacy_status,
-                "remote_privacy_status": privacy,
-                "remote_video_id": pub.remote_video_id,
-                "channel_id": pub.channel_id,
-            },
-            correlation_id,
-        )
-        from app.agents.memory import agent_for_role  # noqa: PLC0415
-        from app.agents.messages import post_message  # noqa: PLC0415
+        tell_owner_locked_private(session, pub, privacy, correlation_id)
 
-        channel_name = _channel_name(session, pub.channel_id)
-        publisher = agent_for_role(session, "Publisher")
-        post_message(
-            session,
-            intent="ESCALATE",
-            subject=f"YouTube păstrează private filmele de pe {channel_name}",
-            body={
-                "kind": "publication_locked_private",
-                "publication_id": pub.id,
-                "channel_id": pub.channel_id,
-                "requested": pub.privacy_status,
-            },
-            from_agent_id=publisher.id if publisher is not None else None,
-            correlation_id=correlation_id,
-            body_text=(
-                f"Filmul «{pub.title}» a fost cerut {privacy_word(pub.privacy_status)}. "
-                f"{LOCKED_PRIVATE_LETTER} {LOCKED_PRIVATE_NEXT}"
-            ),
-            to_owner=True,
-        )
+
+def tell_owner_locked_private(
+    session: Session, pub: PublicationRecord, privacy: str, correlation_id: str
+) -> None:
+    """YouTube kept private a film the studio asked it to show (PUB-05): the record says why,
+    with its event, and the Owner gets the one letter about the channel."""
+    pub.error_detail = f"{LOCKED_PRIVATE_LETTER} {LOCKED_PRIVATE_NEXT}"
+    append_event(
+        session,
+        "publishing.visibility_locked_private",
+        "publication_record",
+        pub.id,
+        1,
+        {
+            "requested": pub.privacy_status,
+            "remote_privacy_status": privacy,
+            "remote_video_id": pub.remote_video_id,
+            "channel_id": pub.channel_id,
+        },
+        correlation_id,
+    )
+    from app.agents.memory import agent_for_role  # noqa: PLC0415
+    from app.agents.messages import post_message  # noqa: PLC0415
+
+    channel_name = _channel_name(session, pub.channel_id)
+    publisher = agent_for_role(session, "Publisher")
+    post_message(
+        session,
+        intent="ESCALATE",
+        subject=f"YouTube păstrează private filmele de pe {channel_name}",
+        body={
+            "kind": "publication_locked_private",
+            "publication_id": pub.id,
+            "channel_id": pub.channel_id,
+            "requested": pub.privacy_status,
+        },
+        from_agent_id=publisher.id if publisher is not None else None,
+        correlation_id=correlation_id,
+        body_text=(
+            f"Filmul «{pub.title}» a fost cerut {privacy_word(pub.privacy_status)}. "
+            f"{LOCKED_PRIVATE_LETTER} {LOCKED_PRIVATE_NEXT}"
+        ),
+        to_owner=True,
+    )
 
 
 def _remote_reason(status_res: Any) -> str:
