@@ -14,7 +14,8 @@ What is asserted, at 0 credits and with every provider faked:
 - a clip made of panels (a flat band on its first frame, the still it was animated from, or
   the look's one_picture false or back_to_still) goes back to its still and is never bought
   again on it (2026-10-09: scene 5's clip animated a triptych); a band that appears only on a
-  later frame is the motion's fault and gets the one retry;
+  later frame is the motion's fault and gets the one retry; a night clip's own black sky, a
+  band at the top the picture rises out of gradually, is one picture (2026-10-10);
 - in PRODUCTION no LIVE scene may be a still unless the Owner chose it for that scene, and
   assembly is refused for one he did not choose;
 - technical QC holds the delivered file to the encoder's own spec (1080x1920, H.264 High,
@@ -73,6 +74,9 @@ FFMPEG = shutil.which("ffmpeg")
 FIXTURES = Path(__file__).parent / "fixtures" / "nepal_1d530880"
 #: The 2026-10-09 triptych, 270x480 (test_still_gate's docstring): rows 159-320 a flat band.
 TRIPTYCH = Path(__file__).parent / "fixtures" / "panels" / "scene_05_c7c55abb_c1.jpg"
+#: A 2026-10-10 scene-5 still, 270x480 grey (test_still_gate's docstring): one photograph of
+#: glowing spheres over wet ground at night, rows 0-125 its black sky, a soft-edged band.
+NIGHT_SKY = Path(__file__).parent / "fixtures" / "panels" / "scene_05_d067fe4c_c1.png"
 requires_ffmpeg = pytest.mark.skipif(FFMPEG is None, reason="ffmpeg is not installed")
 requires_yunet = pytest.mark.skipif(
     not detector_available(), reason="the YuNet detector is not installed"
@@ -647,22 +651,25 @@ def test_the_stronger_prompt_keeps_the_dialect_of_its_model():
 def panel_clips(clips):
     """The 2026-10-09 triptych held still for 5 s (the still a vendor animates is the clip's
     first frame); the Nepal push-in with a black strip over its lower 40 % in its last second;
-    and the same push-in faded to black, its last frame flat from edge to edge."""
+    the same push-in faded to black, its last frame flat from edge to edge; and a 2026-10-10
+    night still under its black sky held for 5 s."""
     work = clips["work"]
-    triptych = work / "triptych.png"
-    _ffmpeg("-i", str(TRIPTYCH), "-vf", "scale=1080:1920:flags=lanczos", str(triptych))
     encode = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "16", "-pix_fmt", "yuv420p"]
-    panels = work / "panels.mp4"
-    _ffmpeg(
-        "-loop", "1", "-i", str(triptych), "-vf", "fps=24", "-frames:v", "120",
-        *encode, str(panels),
-    )  # fmt: skip
+    held: dict[str, Path] = {}
+    for name, still in (("panels", TRIPTYCH), ("night", NIGHT_SKY)):
+        frame = work / f"{name}.png"
+        _ffmpeg("-i", str(still), "-vf", "scale=1080:1920:flags=lanczos", str(frame))
+        held[name] = work / f"{name}.mp4"
+        _ffmpeg(
+            "-loop", "1", "-i", str(frame), "-vf", "fps=24", "-frames:v", "120",
+            *encode, str(held[name]),
+        )  # fmt: skip
     late = work / "late_band.mp4"
     strip = "drawbox=x=0:y=ih*0.6:w=iw:h=ih*0.4:color=black:t=fill:enable='gte(t,4)'"
     _ffmpeg("-i", str(clips["push"]), "-vf", strip, *encode, str(late))
     faded = work / "faded.mp4"
     _ffmpeg("-i", str(clips["push"]), "-vf", "fade=t=out:st=4:d=1", *encode, str(faded))
-    return {"panels": panels, "late_band": late, "faded": faded}
+    return {**held, "late_band": late, "faded": faded}
 
 
 def _clip_report(clip: Path, tmp_path: Path, *, scene: int, move: str, judge) -> qc.ClipReport:
@@ -784,6 +791,27 @@ def test_a_frame_flat_from_edge_to_edge_is_not_panels(panel_clips, tmp_path):
     last = report.measured["panels"]["frames"][-1]
     assert last["band_rows"] == last["height"] == 480 and last["splits_the_picture"] is False
     assert report.check("panels").status == "PASSED"
+    assert report.back_to_still is False
+
+
+@requires_ffmpeg
+def test_a_night_clip_under_its_own_black_sky_is_one_picture(panel_clips, tmp_path):
+    """2026-10-10: the scene-5 still's black sky is a flat band of a quarter of the height at
+    the top, but the picture rises out of it (qc.SOFT_EDGE_STEP). Its clip has the same sky:
+    the panels check passes it and does not send the still back."""
+    report = _clip_report(
+        panel_clips["night"], tmp_path, scene=5, move="static", judge=_passing_judge(5)
+    )
+
+    panels = report.check("panels")
+    assert panels.status == "PASSED" and not panels.blocking, panels
+    assert "banda plată de sus trece lin în imagine" in panels.detail_ro
+    frames = report.measured["panels"]["frames"]
+    assert [frame["at"] for frame in frames] == ["first", "middle", "last"]
+    for frame in frames:
+        assert frame["band_start"] == 0 and frame["band_share"] >= qc.PANEL_BAND_SHARE, frame
+        assert frame["soft_edge"] is True and frame["splits_the_picture"] is False, frame
+        assert frame["edge_step"] < qc.SOFT_EDGE_STEP / 2, frame
     assert report.back_to_still is False
 
 

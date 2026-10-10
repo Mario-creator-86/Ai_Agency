@@ -365,6 +365,22 @@ def still_is_degenerate(ffmpeg: str | None, path: Path) -> str | None:
 # of them, or a blank strip at an edge (a letterbox, an empty lower third). This reads it, on
 # a still (`app.media.still_gate`), on a clip's frames and on a film's frames alike. The
 # thresholds and the readings they were set on are in still_gate's docstring.
+#
+# 2026-10-10, the same film: the Director ordered a new scene-5 still and Qwen-Image delivered
+# single photographs of a glowing cluster of spheres over wet ground at night, a black night
+# sky over their top quarter. This check refused every one before anybody looked (rows 0-125
+# of 480, 26 %), and each re-roll was paid again. A night sky is as flat as a pasted strip,
+# but the picture rises out of it: around the band's inner edge (its last 4 rows and the
+# first 4 rows past it) the row mean changes by at most 0.53 between neighbouring rows on
+# those stills, and by 1.35 under a misty grey sky, while a strip pasted on jumps: 9.96 at
+# the black lower third of scene_02_a1d8d1bf_c1, 70 at the top of the triptych's band. So a
+# band glued to ONE edge (top or bottom) whose inner edge is soft (`SOFT_EDGE_STEP`) is the
+# scene's own sky, void or background and does not split the picture. A band in the middle
+# (between two pictures, where no soft edge is read), a band from edge to edge and an edge
+# band with a hard edge split it as before, and a hard band of PANEL_BAND_SHARE is read
+# before a wider soft one (`flat_band`), so a sky does not hide a strip pasted at the other
+# edge. A soft-edged strip pasted on a dark picture passes here; the vision look
+# (picture_qc.judge_still, `one_picture`) sees every still that passes.
 
 #: The size a picture's rows are read at (area-averaged grey), the degenerate check's size.
 PANEL_READ_SIZE = (270, 480)
@@ -385,11 +401,28 @@ PANEL_BAND_SHARE = 0.15
 #: first version (2026-10-09), which waived any band beside under 15 % of picture everywhere,
 #: passed a black still with a strip of picture 260 or 300 px tall through both local checks.
 FRAME_PICTURE_FLOOR = 0.10
+#: How many rows on each side of a band's inner edge are read for a soft edge: the band's last
+#: rows and the first rows of picture past it. Area scaling spreads a hard edge over two rows
+#: (scene_02_a1d8d1bf_c1 steps 19.0 -> 9.1 -> 2.2), and the picture's own content starts
+#: further in (on scene_05_082e6b31_c1 the spheres raise the step to 7.5 within 12 rows).
+SOFT_EDGE_ROWS = 4
+#: A band glued to one edge is soft-edged, the scene's own sky or background, when no row mean
+#: within SOFT_EDGE_ROWS of its inner edge differs from its neighbour's by this much (8-bit
+#: grey at PANEL_READ_SIZE). Measured 2026-10-10: 0.34-0.53 under the night skies of scene 5,
+#: 1.35 under a misty grey sky, 1.23 under scene_02_cc3a68a6_c2's dark ceiling; 9.96 at the
+#: black lower third pasted under scene_02_a1d8d1bf_c1 (11.06 on its JPEG copy). 3 sits 2.2x
+#: over the largest step under a sky and 3.3x under the pasted third's.
+SOFT_EDGE_STEP = 3.0
+#: The widest band a soft edge excuses. The widest sky measured was 30 % (scene_05_082e6b31_
+#: c1); a still more than half flat is a blank field with a strip of picture faded into it,
+#: which the look alone would otherwise have to catch (review of this rule, 2026-10-10).
+SOFT_BAND_MAX_SHARE = 0.5
 
 
 @dataclass(frozen=True)
 class FlatBand:
-    """The longest run of flat full-width rows of a picture read at 270x480 (`flat_band`)."""
+    """The run of flat full-width rows of a picture read at 270x480 that decides whether it
+    is one picture (`flat_band`): the longest that splits it, else the longest."""
 
     #: Its first and last row (inclusive), 0 at the top; both -1 when no row is flat.
     start: int
@@ -397,6 +430,10 @@ class FlatBand:
     #: The rows read, and the flat ones in any run.
     height: int
     flat_rows: int
+    #: For a band glued to one edge (top or bottom), the largest change of row mean between
+    #: neighbouring rows within SOFT_EDGE_ROWS of its inner edge; None for a band in the
+    #: middle, a band from edge to edge, or no band.
+    edge_step: float | None = None
 
     @property
     def rows(self) -> int:
@@ -412,21 +449,39 @@ class FlatBand:
         return (self.height - self.flat_rows) / self.height if self.height else 0.0
 
     @property
-    def splits_a_still(self) -> bool:
-        """On a still, any band of at least PANEL_BAND_SHARE of the height: pictures pasted
-        together, a picture with a blank strip, or a blank field (which the degenerate check
-        refuses as well). Nothing on a still is burned in and nothing fades, so no amount of
-        blank beside a strip of picture makes it one photograph."""
+    def wide(self) -> bool:
+        """At least PANEL_BAND_SHARE of the height: wide enough to split the picture."""
         return self.share >= PANEL_BAND_SHARE
+
+    @property
+    def soft_edge(self) -> bool:
+        """Glued to one edge, with the picture rising out of it gradually (under
+        SOFT_EDGE_STEP), and no more than SOFT_BAND_MAX_SHARE of the height: the scene's own
+        sky, void or background, not a strip pasted on."""
+        return (
+            self.edge_step is not None
+            and self.edge_step < SOFT_EDGE_STEP
+            and self.share <= SOFT_BAND_MAX_SHARE
+        )
+
+    @property
+    def splits_a_still(self) -> bool:
+        """On a still, any band of at least PANEL_BAND_SHARE of the height but a soft-edged
+        one at the top or the bottom: pictures pasted together, a picture with a blank strip,
+        or a blank field (which the degenerate check refuses as well). Nothing on a still is
+        burned in and nothing fades, so no amount of blank beside a strip of picture makes it
+        one photograph."""
+        return self.wide and not self.soft_edge
 
     @property
     def splits_the_picture(self) -> bool:
         """On a clip's or a film's frame, a band of at least PANEL_BAND_SHARE of the height
-        beside at least FRAME_PICTURE_FLOOR of picture. A frame that is flat but for two lines
-        of captions, or flat from edge to edge, has no pictures to hold apart: it is a blank
+        beside at least FRAME_PICTURE_FLOOR of picture, but a soft-edged one at the top or the
+        bottom (a night clip has the still's sky). A frame that is flat but for two lines of
+        captions, or flat from edge to edge, has no pictures to hold apart: it is a blank
         field, the look's and the editorial check's, and on a clip most often a fade to
         black, the motion's fault, for which a new still would be bought in vain."""
-        return self.share >= PANEL_BAND_SHARE and self.picture_share >= FRAME_PICTURE_FLOOR
+        return self.splits_a_still and self.picture_share >= FRAME_PICTURE_FLOOR
 
     @property
     def where_ro(self) -> str:
@@ -450,6 +505,16 @@ class FlatBand:
             f"din {self.height}, {self.share:.0%} din înălțime; prag {PANEL_BAND_SHARE:.0%})"
         )
 
+    def soft_edge_ro(self) -> str:
+        """A wide band the soft edge lets pass, in the Owner's words."""
+        side = "de sus" if self.start == 0 else "de jos"
+        return (
+            f"banda plată {side} trece lin în imagine (cer sau fundal), nu e o bandă lipită "
+            f"(rândurile {self.start}-{self.end} din {self.height}, {self.share:.0%} din "
+            f"înălțime; cea mai mare treaptă între două rânduri vecine la marginea ei: "
+            f"{self.edge_step or 0.0:.1f}, prag {SOFT_EDGE_STEP:.0f})"
+        )
+
     def as_dict(self) -> dict[str, Any]:
         return {
             "band_start": self.start if self.rows else None,
@@ -459,14 +524,31 @@ class FlatBand:
             "flat_rows": self.flat_rows,
             "picture_share": round(self.picture_share, 3),
             "height": self.height,
+            "edge_step": None if self.edge_step is None else round(self.edge_step, 2),
+            "soft_edge": self.soft_edge,
             "splits_the_picture": self.splits_the_picture,
         }
 
 
+def _edge_step(means: list[float], start: int, end: int) -> float | None:
+    """The largest change of row mean between neighbouring rows within SOFT_EDGE_ROWS of the
+    inner edge of a band glued to one edge; None for a band in the middle or edge to edge."""
+    height = len(means)
+    top, bottom = start == 0, end == height - 1
+    if top == bottom:
+        return None
+    # The band's inner edge lies between row `edge` and row `edge + 1`.
+    edge = end if top else start - 1
+    first, last = max(0, edge - SOFT_EDGE_ROWS + 1), min(height - 1, edge + SOFT_EDGE_ROWS)
+    return max(abs(means[y + 1] - means[y]) for y in range(first, last))
+
+
 def flat_band(ffmpeg: str | None, path: Path | str) -> FlatBand | None:
-    """The longest run of flat full-width rows in a picture (or a clip's first frame), read in
-    grey at 270x480 with area scaling: a row is flat when its standard deviation is under
-    FLAT_ROW_STD and its range under FLAT_ROW_RANGE.
+    """The run of flat full-width rows that decides whether a picture (or a clip's first
+    frame) is one picture, read in grey at 270x480 with area scaling: a row is flat when its
+    standard deviation is under FLAT_ROW_STD and its range under FLAT_ROW_RANGE. The longest
+    run that splits the picture (`FlatBand.splits_a_still`), else the longest run: a soft
+    sky at the top does not hide a strip pasted at the bottom.
 
     None only when it cannot be read (no encoder, no file, an undecodable picture); a picture
     with no flat row reads a band of 0 rows.
@@ -502,13 +584,16 @@ def flat_band(ffmpeg: str | None, path: Path | str) -> FlatBand | None:
     data = result.stdout
     if result.returncode != 0 or len(data) != width * height:
         return None
-    longest, run_start, flat_rows = (-1, -1), -1, 0
+    means: list[float] = []
+    runs: list[tuple[int, int]] = []
+    run_start, flat_rows = -1, 0
     for y in range(height + 1):
         flat = False
         if y < height:
             row = data[y * width : (y + 1) * width]
+            mean = sum(row) / width
+            means.append(mean)
             if max(row) - min(row) < FLAT_ROW_RANGE:
-                mean = sum(row) / width
                 flat = sum((value - mean) ** 2 for value in row) / width < FLAT_ROW_STD**2
         if flat:
             flat_rows += 1
@@ -516,10 +601,16 @@ def flat_band(ffmpeg: str | None, path: Path | str) -> FlatBand | None:
                 run_start = y
         elif run_start >= 0:
             # The run ended on the row before this one (or at the bottom edge).
-            if longest[0] < 0 or y - run_start > longest[1] - longest[0] + 1:
-                longest = (run_start, y - 1)
+            runs.append((run_start, y - 1))
             run_start = -1
-    return FlatBand(start=longest[0], end=longest[1], height=height, flat_rows=flat_rows)
+    bands = [
+        FlatBand(start, end, height, flat_rows, _edge_step(means, start, end))
+        for start, end in runs
+    ]
+    if not bands:
+        return FlatBand(start=-1, end=-1, height=height, flat_rows=flat_rows)
+    # The topmost of equals, as before the soft edge was read.
+    return max(bands, key=lambda band: (band.splits_a_still, band.rows))
 
 
 # ------------------------------------------------------ how the film was made (A12)
@@ -1913,11 +2004,13 @@ def _panels_check(
     """The flat band (`flat_band`) on the first, middle and last frames: a frame split by a
     band of at least PANEL_BAND_SHARE of its height beside at least FRAME_PICTURE_FLOOR of
     picture (`FlatBand.splits_the_picture`) is panels pasted together, or a blank strip, not
-    one picture. Free, and measured whether or not anybody looks."""
+    one picture; a soft-edged band at the top or the bottom is the scene's sky. Free, and
+    measured whether or not anybody looks."""
     if not frames:
         return ClipCheck("panels", "NOT_RUN", True, None, "cadrele nu au putut fi tăiate")
     read: list[dict[str, Any]] = []
     split: list[tuple[str, FlatBand]] = []
+    soft: list[tuple[str, FlatBand]] = []
     unread = False
     for at, moment, path in frames:
         band = flat_band(ffmpeg, path)
@@ -1928,6 +2021,8 @@ def _panels_check(
         read.append({"at": at, "time": moment, "status": "MEASURED", **band.as_dict()})
         if band.splits_the_picture:
             split.append((at, band))
+        elif band.wide and band.soft_edge:
+            soft.append((at, band))
     measured["panels"] = {
         "frames": read,
         "band_share_threshold": PANEL_BAND_SHARE,
@@ -1947,14 +2042,17 @@ def _panels_check(
             "panels", "NOT_RUN", True, None, "benzile cadrelor nu au putut fi măsurate"
         )
     widest = max(float(entry["band_share"]) for entry in read)
-    return ClipCheck(
-        "panels",
-        "PASSED",
-        False,
-        widest,
+    detail = (
         f"o singură imagine în fiecare cadru (cea mai lată bandă plată: {widest:.0%}, prag "
-        f"{PANEL_BAND_SHARE:.0%})",
+        f"{PANEL_BAND_SHARE:.0%})"
     )
+    if soft:
+        named = ("în cadrul " if len(soft) == 1 else "în cadrele ") + ", ".join(
+            at for at, _band in soft
+        )
+        widest_soft = max((band for _at, band in soft), key=lambda band: band.rows)
+        detail += f"; {named}, {widest_soft.soft_edge_ro()}"
+    return ClipCheck("panels", "PASSED", False, widest, detail)
 
 
 def _still_must_change(measured: dict[str, Any], judgement: Any) -> bool:

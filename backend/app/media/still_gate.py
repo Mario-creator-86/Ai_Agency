@@ -20,26 +20,52 @@ up to 68 credits a second. So the still is checked first, twice, at no credit co
      the still is read in grey at 270x480 (area scaling): a row is flat when its standard
      deviation is under 4 and its range under 24, and a run of flat full-width rows of at
      least 15 % of the height blocks the still, between two pictures or at an edge (a
-     letterbox, a blank lower third), whatever is beside it. Clip QC and the film's QC make
-     the same reading on their frames with one waiver a still does not get: a frame flat but
-     for two lines of burned-in captions (under 10 % of rows not flat,
+     letterbox, a blank lower third), whatever is beside it, unless the picture rises out of
+     it gradually at one edge (the night sky below). Clip QC and the film's QC make the same
+     reading on their frames with one waiver a still does not get: a frame flat but for two
+     lines of burned-in captions (under 10 % of rows not flat,
      `app.media.qc.FRAME_PICTURE_FLOOR`), or flat from edge to edge (a fade to black), has
      no pictures to hold apart. The first version waived that on stills too, beside under
      15 % of picture, and its review (2026-10-09) passed a black 1530x2720 still with a strip
      of a good still 260 or 300 px tall (9.6 % and 11 % of rows not flat, a band of about
      half the height) through this check and the degenerate one (which refuses a strip of
-     200 px, 7.5 %, and passes these); a blank still now fails both. Read by
-     `app.media.qc.flat_band`. Measured with it on that film's stills (1530x2720 PNG, read
-     only; tests/fixtures/panels keeps 270x480 JPEG copies, which read the same):
+     200 px, 7.5 %, and passes these); a blank still now fails both. On 2026-10-10 the
+     Director ordered a new scene-5 still and Qwen-Image delivered single photographs of a
+     glowing cluster of spheres over wet ground at night, a black sky over the top quarter;
+     this check refused every one before anybody looked, and each re-roll was paid again. A
+     band glued to ONE edge (top or bottom) whose inner edge is soft is the scene's own sky,
+     void or background, not a strip pasted on: no row mean within 4 rows of that edge (the
+     band's last rows and the first rows past it) differs from its neighbour's by 3 or more
+     (`app.media.qc.SOFT_EDGE_STEP`; the "step" below). It passes, on a still and on a frame.
+     A band in the middle, a band from edge to edge and an edge band with a hard edge block
+     as before, and a hard band of 15 % or more is read before a wider soft one, so a sky
+     does not hide a strip pasted at the other edge. Read by `app.media.qc.flat_band`. Measured with
+     it on that film's stills (1530x2720 PNG, read only; tests/fixtures/panels keeps 270x480
+     JPEG copies of six of them, which read the same, and grey 270x480 PNG copies of the
+     six below of 2026-10-10, the pixels flat_band reads: JPEG copies of those read a band
+     a row or two off on four of them):
        scene_05_c7c55abb_c1   rows 159-320, 34 %    the triptych (fails)
-       scene_02_a1d8d1bf_c1   rows 321-479, 33 %    a black lower third, to the edge (fails)
-       every good still       28 rows at most, 6 %  scene_02_cc3a68a6_c2's dark ceiling, 0-27
+       scene_02_a1d8d1bf_c1   rows 321-479, 33 %    a black lower third, to the edge, step
+                                                    9.96 (fails; 11.06 on its JPEG copy)
+       scene_05_d067fe4c_c1   rows 0-125, 26 %      a night sky over the spheres, step 0.53
+       scene_05_b22f4a8e_c2   rows 0-107, 22 %      the same, step 0.45
+       scene_05_082e6b31_c1   rows 0-144, 30 %      the same, step 0.40
+       scene_05_95b4f17e_c2   rows 0-128, 27 %      the same, step 0.44
+       scene_05_1927d68d_c1   rows 0-102, 21 %      spheres in a black void, step 0.34, and
+                              rows 381-479, 21 %    under them, step 0.36
+       scene_05_2062c362_c2   rows 0-72, 15 %       a misty grey sky, step 1.35
+       every other good still 28 rows at most, 6 %  scene_02_cc3a68a6_c2's dark ceiling, 0-27
+                                                    (step 1.23)
        the Nepal fixtures     49 rows at most, 10 % scene_05.jpg: 0-48 and 444-479
-     The threshold sits 1.5x over the widest real band and 2.2x under the triptych's. The
-     second scene-5 candidate, scene_05_0d900cbd_c2, is a triptych of three similar tunnels
-     with no flat band (2 flat rows): neither a single full-width seam (a natural edge in the
-     good scene_04_f606d968_c2 crosses 88 % of the columns) nor the correlation of adjacent
-     rows separates it, so its net is the vision checklist's one_picture question below;
+     The six of 2026-10-10 were refused until then and pass since. The threshold sits 1.5x
+     over the widest band of the good stills of 2026-10-09 and 2.2x under the triptych's;
+     the step's, 2.2x over the misty sky's and 3.3x under the black third's. A strip pasted
+     with a soft edge onto a dark picture passes here: the vision checklist below sees every
+     still this check passes. The second scene-5 candidate, scene_05_0d900cbd_c2, is a
+     triptych of three similar tunnels with no flat band (2 flat rows): neither a single
+     full-width seam (a natural edge in the good scene_04_f606d968_c2 crosses 88 % of the
+     columns) nor the correlation of adjacent rows separates it, so its net is the vision
+     checklist's one_picture question below;
    - sharpness (`measure_focus`), two readings at 1080 px width on an 8 x 14 grid of tiles. A
      still is in focus when its subject is: a documentary frame with a sharp subject before a
      dark, soft background (shallow depth of field) is not a blurred frame. Until 2026-10-09
@@ -591,14 +617,18 @@ def local_checks(
                 )
             )
         else:
+            # A wide band passes only glued to one edge with a soft edge: the scene's own
+            # night sky or background (2026-10-10, qc.SOFT_EDGE_STEP).
             checks.append(
                 CheckResult(
                     "panels",
                     "PASSED",
                     False,
                     round(band.share, 3),
-                    f"o singură imagine: cea mai lată bandă plată are {band.rows} rânduri din "
-                    f"{band.height} ({band.share:.0%}, prag {PANEL_BAND_SHARE:.0%})",
+                    f"o singură imagine: {band.soft_edge_ro()}"
+                    if band.wide
+                    else f"o singură imagine: cea mai lată bandă plată are {band.rows} rânduri "
+                    f"din {band.height} ({band.share:.0%}, prag {PANEL_BAND_SHARE:.0%})",
                 )
             )
     if "sharpness" in measure:

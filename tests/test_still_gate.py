@@ -19,8 +19,10 @@ What is asserted, all at 0 credits and with every provider faked:
   the flat-band reading fails the 2026-10-09 triptych, the still with a black lower third, a
   black still with a strip of picture and a blank still (a film's frame alone is read with a
   waiver for captions over a blank field) and passes the good stills and the Nepal fixtures;
-  the vision model's one_picture false blocks the triptych that has no band, and contradicts
-  a buy_motion;
+  a band glued to one edge passes when the picture rises out of it gradually (the night
+  skies of 2026-10-10, on a still and on a clip's frames) and fails with a hard edge, and a
+  soft sky does not hide a hard strip at the other edge; the vision model's one_picture
+  false blocks the triptych that has no band, and contradicts a buy_motion;
 - the best passing candidate is chosen by its check score (the sharper of two passing takes
   wins), a failing still is re-rolled at most twice with its violation rewritten as a
   positive instruction, then goes to the Owner.
@@ -41,6 +43,16 @@ an empty tunnel); scene_02_a1d8d1bf_c1 glowing spheres in a tunnel over a black 
 scene_05_0d900cbd_c2 three stacked tunnels with no band between them; scene_02_cc3a68a6_c2,
 scene_04_f606d968_c2 and scene_01_d1e900d3_c1 one photograph each. The copies read the same
 bands as the originals (still_gate's docstring).
+
+tests/fixtures/panels/scene_05_*.png are 270x480 grey PNG copies (area-scaled with ffmpeg,
+the pixels qc.flat_band reads) of six scene-5 stills Qwen-Image delivered on 2026-10-10 for
+the same film, which the panels check refused before anybody looked. Looked at by eye, one
+photograph each: a glowing cluster of spheres over wet ground at night under a black sky
+(d067fe4c_c1, b22f4a8e_c2, 082e6b31_c1, 95b4f17e_c2), the spheres in a black void
+(1927d68d_c1), the spheres before misty mountains under a grey sky (2062c362_c2). Their
+JPEG copies (q 2) read a band one or two rows off on four of the six, a colour PNG copy on
+one (95b4f17e_c2: 0-127 for 0-128); the grey copies read the originals' bands and steps
+exactly.
 """
 
 from __future__ import annotations
@@ -56,7 +68,17 @@ import pytest
 from app.media import faces, still_gate
 from app.media.faces import FaceCount, count_faces
 from app.media.picture_qc import StillJudgement, StillVerdict
-from app.media.qc import FRAME_PICTURE_FLOOR, PANEL_BAND_SHARE, flat_band, still_is_degenerate
+from app.media.qc import (
+    FRAME_PICTURE_FLOOR,
+    PANEL_BAND_SHARE,
+    SOFT_BAND_MAX_SHARE,
+    SOFT_EDGE_STEP,
+    ClipCheck,
+    FlatBand,
+    _panels_check,
+    flat_band,
+    still_is_degenerate,
+)
 from app.media.still_gate import (
     ALL_CHECKS,
     FINE_DETAIL_KEPT_MAX,
@@ -89,6 +111,24 @@ PANEL_BANDS = {
     "scene_01_d1e900d3_c1": None,
 }
 SPLIT = ("scene_05_c7c55abb_c1", "scene_02_a1d8d1bf_c1")
+#: The 2026-10-10 scene-5 stills (grey PNG copies): the band each reads at 270x480, all at
+#: the top, and its step (the largest change of row mean between neighbouring rows within 4
+#: rows of its inner edge), measured on the PNGs and on these copies alike.
+SKIES = {
+    "scene_05_d067fe4c_c1": ((0, 125), 0.53),  # a night sky over the spheres: 26 %
+    "scene_05_b22f4a8e_c2": ((0, 107), 0.45),  # 22 %
+    "scene_05_082e6b31_c1": ((0, 144), 0.40),  # 30 %
+    "scene_05_95b4f17e_c2": ((0, 128), 0.44),  # 27 %
+    "scene_05_1927d68d_c1": ((0, 102), 0.34),  # a black void, and 381-479 under it: 21 % each
+    "scene_05_2062c362_c2": ((0, 72), 1.35),  # a misty grey sky: 15 %
+}
+#: Edge bands drawn on a good still (scene_04_f606d968_c2, no flat row) at 1080x1920: a black
+#: top quarter with a hard edge; a black top quarter the picture fades in from over the next
+#: quarter (a dark sky); that sky over a black bottom fifth with a hard edge.
+SHARP = "scale=1080:1920:flags=lanczos"
+HARD_TOP = f"{SHARP},drawbox=x=0:y=0:w=iw:h=ih/4:color=black:t=fill"
+SOFT_TOP = f"{SHARP},format=gray,geq=lum='lum(X,Y)*clip((Y-H/4)/(H/4),0,1)'"
+HARD_BOTTOM = "drawbox=x=0:y=ih*0.8:w=iw:h=ih/5:color=black:t=fill"
 NEPAL_MEDIA = ROOT / "backend" / "storage" / "media" / "1d530880-c94a-48a1-baf5-6ad7c1796a6d"
 #: The five scene-1 stills RunPod delivered on 2026-10-09 for «The Particle That Shouldn't
 #: Exist (But Does)» (1530x2720 PNG), read only; the gate rejected them all at 70-182.
@@ -674,11 +714,23 @@ def panel(name: str) -> Path:
     return PANELS / f"{name}.jpg"
 
 
+def sky(name: str) -> Path:
+    return PANELS / f"{name}.png"
+
+
 def panels_check(path: Path, environment: str = "PRODUCTION") -> CheckResult:
     (check,) = local_checks(
         path, plan(5), environment=environment, face_counter=no_faces, measure=("panels",)
     )
     return check
+
+
+def frames_check(path: Path) -> tuple[ClipCheck, dict]:
+    """Clip QC's and the film QC's panels check, the picture as its first, middle and last
+    frame (a still held, as a vendor animates it)."""
+    measured: dict = {}
+    frames = [(at, 0.0, path) for at in ("first", "middle", "last")]
+    return _panels_check(FFMPEG, frames, measured=measured), measured
 
 
 def test_panels_is_one_of_the_gates_checks_with_positive_words():
@@ -733,6 +785,19 @@ def test_the_triptych_and_the_black_lower_third_fail_the_panels_check(name):
     assert ("la mijloc" if start > 0 and end < 479 else "jos") in check.detail_ro
     # A measured violation blocks in TEST as well.
     assert panels_check(panel(name), environment="TEST").blocking is True
+    # Neither is a sky: the triptych's band is in the middle, and the black lower third's
+    # edge is hard (9.96 on the PNG, 11.06 on this copy: over 3x SOFT_EDGE_STEP).
+    band = flat_band(FFMPEG, panel(name))
+    assert band is not None and band.soft_edge is False
+    if start > 0 and end < 479:
+        assert band.edge_step is None
+    else:
+        assert band.edge_step is not None and band.edge_step > 3 * SOFT_EDGE_STEP
+    # A clip's or a film's frame reads it the same way.
+    frames, measured = frames_check(panel(name))
+    assert frames.status == "FAILED" and frames.blocking is True
+    assert "nu e o singură fotografie" in frames.detail_ro
+    assert all(frame["splits_the_picture"] for frame in measured["panels"]["frames"])
 
 
 @needs_ffmpeg
@@ -838,6 +903,123 @@ def test_the_delivered_pngs_read_the_same_bands_as_their_copies():
         band = flat_band(FFMPEG, PARTICLE_STILLS / f"{name}.png")
         assert band is not None, name
         assert ((band.start, band.end) if band.rows else None) == rows, (name, band)
+    for name, (rows, step) in SKIES.items():
+        if not (PARTICLE_STILLS / f"{name}.png").is_file():
+            continue
+        band = flat_band(FFMPEG, PARTICLE_STILLS / f"{name}.png")
+        copy = flat_band(FFMPEG, sky(name))
+        assert band is not None and (band.start, band.end) == rows, (name, band)
+        assert band == copy, name
+        assert band.edge_step == pytest.approx(step, abs=0.005), (name, band)
+
+
+@needs_ffmpeg
+def test_the_night_sky_fixtures_are_grey_270x480_png_copies():
+    ffprobe = shutil.which("ffprobe")
+    assert ffprobe
+    for name in SKIES:
+        probed = subprocess.run(
+            [ffprobe, "-v", "error", "-show_entries", "stream=codec_name,width,height,pix_fmt"]
+            + ["-of", "json", str(sky(name))],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        stream = json.loads(probed.stdout)["streams"][0]
+        assert (stream["codec_name"], stream["width"], stream["height"], stream["pix_fmt"]) == (
+            "png",
+            270,
+            480,
+            "gray",
+        )
+
+
+@needs_ffmpeg
+@pytest.mark.parametrize("name", SKIES)
+def test_a_night_sky_at_the_top_is_one_picture_on_a_still_and_on_a_clips_frames(name):
+    """2026-10-10, scene 5: single photographs under a black (or misty) sky were refused as
+    panels before anybody looked, and each re-roll was paid again. The sky is a flat band as
+    wide as a pasted strip (15-30 %), glued to the top, but the picture rises out of it: its
+    step is under half SOFT_EDGE_STEP on every one, where the black lower third's is over 3x
+    it. On a still and on a clip's or a film's frames alike, it is one picture."""
+    rows, step = SKIES[name]
+    band = flat_band(FFMPEG, sky(name))
+    assert band is not None and (band.start, band.end) == rows, band
+    assert band.wide is True and band.share >= PANEL_BAND_SHARE
+    assert band.edge_step == pytest.approx(step, abs=0.005)
+    assert band.edge_step < SOFT_EDGE_STEP / 2
+    assert band.soft_edge is True
+    assert band.splits_a_still is False and band.splits_the_picture is False
+
+    check = panels_check(sky(name))
+    assert check.status == "PASSED" and check.blocking is False, check
+    assert check.value == pytest.approx(band.share, abs=0.001)
+    assert check.detail_ro.startswith(
+        "o singură imagine: banda plată de sus trece lin în imagine (cer sau fundal), nu e o "
+        f"bandă lipită (rândurile {rows[0]}-{rows[1]} din 480"
+    ), check.detail_ro
+    report = decide(sky(name), plan(5), [check], clean_verdict(5), environment="PRODUCTION")
+    assert "panels" not in report.violations and "panels" not in report.unmeasured
+
+    frames, measured = frames_check(sky(name))
+    assert frames.status == "PASSED" and frames.blocking is False, frames
+    assert (
+        "în cadrele first, middle, last, banda plată de sus trece lin în imagine (cer sau "
+        f"fundal), nu e o bandă lipită (rândurile {rows[0]}-{rows[1]} din 480"
+    ) in frames.detail_ro, frames.detail_ro
+    read = measured["panels"]["frames"]
+    assert [frame["at"] for frame in read] == ["first", "middle", "last"]
+    assert all(frame["soft_edge"] and not frame["splits_the_picture"] for frame in read)
+
+
+@needs_ffmpeg
+@pytest.mark.parametrize(
+    ("vf", "rows", "splits"),
+    [
+        (HARD_TOP, (0, 119), True),
+        (SOFT_TOP, (0, 127), False),
+        (f"{SOFT_TOP},{HARD_BOTTOM}", (384, 479), True),
+    ],
+    ids=["hard-edge", "soft-gradient", "soft-sky-over-a-hard-strip"],
+)
+def test_an_edge_band_splits_with_a_hard_edge_and_not_with_a_soft_gradient(
+    tmp_path, vf, rows, splits
+):
+    """The same quarter of black at the top of a good still: drawn on with a hard edge it is a
+    strip pasted on (step 82 at 270x480), faded into the picture it is a dark sky (step 0.94).
+    A soft sky does not hide a hard strip at the other edge: the hard band is read first,
+    though it is narrower (20 % under a 27 % sky)."""
+    still = render(tmp_path, "edge.png", str(panel("scene_04_f606d968_c2")), vf=vf)
+    band = flat_band(FFMPEG, still)
+    assert band is not None and (band.start, band.end) == rows, band
+    assert band.wide is True and band.edge_step is not None
+    assert band.soft_edge is not splits
+    assert (band.edge_step < SOFT_EDGE_STEP / 2) is not splits, band
+    assert (band.edge_step > 5 * SOFT_EDGE_STEP) is splits, band
+    assert band.splits_a_still is splits and band.splits_the_picture is splits
+
+    check = panels_check(still)
+    frames, _measured = frames_check(still)
+    assert (check.status, frames.status) == (("FAILED",) * 2 if splits else ("PASSED",) * 2)
+    assert check.blocking is splits and frames.blocking is splits
+    if splits:
+        side = "sus" if rows[0] == 0 else "jos"
+        assert f"{side}, lipită de margine" in check.detail_ro
+        assert f"{side}, lipită de margine" in frames.detail_ro
+    else:
+        assert "trece lin în imagine" in check.detail_ro
+        assert "trece lin în imagine" in frames.detail_ro
+
+
+def test_a_soft_edge_excuses_a_sky_not_a_still_more_than_half_flat():
+    """The widest sky measured is 30 % of the height. A still flat over more than half of it,
+    however softly the strip of picture fades in, is a blank field: it splits."""
+    sky = FlatBand(start=0, end=143, height=480, flat_rows=144, edge_step=0.4)
+    assert sky.soft_edge is True and sky.splits_a_still is False
+    field = FlatBand(start=0, end=299, height=480, flat_rows=300, edge_step=0.4)
+    assert field.share > SOFT_BAND_MAX_SHARE
+    assert field.soft_edge is False
+    assert field.splits_a_still is True and field.splits_the_picture is True
 
 
 @needs_ffmpeg
