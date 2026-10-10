@@ -658,15 +658,22 @@ export function stepButtons(sheet) {
 /**
  * The assembly's button: after the paid steps, priced as 0 Runway credits and the narration's
  * cents (the backend's own figure), held by every scene the backend says has no accepted take.
+ *
+ * CLIP_LENGTH (2026-10-09, film babcf272): the button said «Pregătit» four times while the render
+ * refused scene 3, its 5,0 s clip shorter than the 6,06 s of words it had to carry. `ready` and
+ * `blocked` are now the render's own reading (backend `assembly_readiness`), so the page never
+ * offers an assembly the render refuses. `notes` are what the assembly will do by itself at 0 USD
+ * (a clip slowed into its span, a clip whose words are not voiced yet); `refusal_ro` is the newest
+ * refused assembly with its seconds, said while the film still waits.
  * @param {any} sheet
- * @returns {{label: string, price_ro: string, line_ro: string, disabled: boolean, reasons: string[], reason_ro: string}}
+ * @returns {{label: string, price_ro: string, line_ro: string, disabled: boolean, reasons: string[], reason_ro: string, notes: string[], refusal_ro: string}}
  */
 export function assembleButton(sheet) {
   const step = sheet?.steps?.[ASSEMBLE_STEP];
   const label = 'Asamblează filmul';
   if (!step || typeof step !== 'object') {
     const reason = 'Studioul nu are încă pasul de asamblare pe foaie; el apare după repornirea studioului.';
-    return { label, price_ro: '0 credite Runway', line_ro: '', disabled: true, reasons: [reason], reason_ro: reason };
+    return { label, price_ro: '0 credite Runway', line_ro: '', disabled: true, reasons: [reason], reason_ro: reason, notes: [], refusal_ro: '' };
   }
   const narration = step.narration || sheet?.footer?.narration || {};
   let voice = `narațiunea ${usdText(narration.usd_micros)}`;
@@ -687,14 +694,37 @@ export function assembleButton(sheet) {
   if (step.blocked_ro) reasons.push(String(step.blocked_ro));
   else for (const b of Array.isArray(step.blocked) ? step.blocked : []) if (b && b.reason_ro) reasons.push(String(b.reason_ro));
   if (step.ready === false && !reasons.length) reasons.push(String(step.waiting_ro || 'Filmul nu poate fi asamblat încă.'));
+  const disabled = reasons.length > 0;
+  const notes = (Array.isArray(step.notes_ro) ? step.notes_ro : []).map(String).filter(Boolean);
+  const refused = step.last_refusal && typeof step.last_refusal === 'object' ? step.last_refusal : null;
   return {
     label,
     price_ro: `0 credite Runway · ${voice}`,
     line_ro: String(narration.line_ro || ''),
-    disabled: reasons.length > 0,
+    disabled,
     reasons,
     reason_ro: reasons.join(' '),
+    notes,
+    refusal_ro: disabled && refused && refused.reason_ro ? `Ultima asamblare a fost refuzată: ${String(refused.reason_ro)}` : '',
   };
+}
+
+/**
+ * What the assembly waits for, in one line: clips too short for their words (CLIP_SHORT, their
+ * motion is redone at the right length) said apart from scenes with no accepted clip.
+ * @param {any[]} blocked the assemble step's `blocked` scenes
+ * @returns {string}
+ */
+export function assembleWaitLine(blocked) {
+  const list = Array.isArray(blocked) ? blocked : [];
+  const short = [...new Set(list.filter((b) => b && b.code === 'CLIP_SHORT').map((b) => b.scene_index))];
+  const other = [...new Set(list.filter((b) => b && b.code !== 'CLIP_SHORT').map((b) => b.scene_index))];
+  /** @type {string[]} */
+  const lines = [];
+  if (short.length === 1) lines.push(`Clipul scenei ${short[0]} este prea scurt pentru narațiunea ei; mișcarea ei se reface la lungimea potrivită.`);
+  else if (short.length) lines.push(`Clipurile scenelor ${short.join(', ')} sunt prea scurte pentru narațiunea lor; mișcarea lor se reface la lungimea potrivită.`);
+  if (other.length) lines.push(`Așteaptă clipurile scenelor ${other.join(', ')}.`);
+  return lines.join(' ');
 }
 
 /**
@@ -1283,7 +1313,9 @@ function workflowHtml(sheet, o) {
   const blocked = sheet?.steps?.assemble?.blocked || [];
   const assemble = '<div class="sheet-step-box sheet-assemble">'
     + `<div class="sheet-step-main"><span class="sheet-step-index" aria-hidden="true">4</span><h3>Asamblarea filmului</h3><span class="sheet-step-state" data-tone="${a.disabled ? 'quiet' : 'info'}">${a.disabled ? 'În așteptare' : 'Pregătit'}</span></div>`
-    + `<div class="sheet-step-copy"><p class="sheet-step-explain">${e(busy ? BUSY_SEE_BAR : blocked.length ? `Așteaptă clipurile scenelor ${[...new Set(blocked.map((/** @type {any} */ b) => b.scene_index))].join(', ')}.` : a.disabled ? 'Finalizează pașii de producție înainte de asamblare.' : 'Unește scenele, narațiunea și subtitrările; apoi rulează controlul calității.')}</p>${reasonDetails(a.reasons)}</div>`
+    + `<div class="sheet-step-copy"><p class="sheet-step-explain">${e(busy ? BUSY_SEE_BAR : blocked.length ? assembleWaitLine(blocked) : a.disabled ? 'Finalizează pașii de producție înainte de asamblare.' : 'Unește scenele, narațiunea și subtitrările; apoi rulează controlul calității.')}</p>${reasonDetails(a.reasons)}`
+    + a.notes.map((note) => `<p class="sheet-step-scope" data-assemble-note>${e(note)}</p>`).join('')
+    + (a.refusal_ro ? `<p class="sheet-step-warn" data-assemble-refusal>${e(a.refusal_ro)}</p>` : '') + '</div>'
     + `<div class="sheet-step-action"><span class="sheet-step-price">${e(a.price_ro)}</span><button type="button" class="sheet-step" data-sheet-action="step" data-step="assemble"${a.disabled ? ' disabled' : ''}>${e(a.label)}</button></div>`
     + (o.confirm === ASSEMBLE_STEP ? stepConfirmHtml(sheet, ASSEMBLE_STEP, o) : '')
     + assembleResultHtml(o.assembled, o) + '</div>';

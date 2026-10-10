@@ -61,6 +61,7 @@ from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session
 
 from app.media.assembler import (
+    CLIP_SHORT,
     HERO_ACCEPTED_BY,
     MOTION_STEP,
     MOTION_STEP_ACTIONS,
@@ -71,17 +72,16 @@ from app.media.assembler import (
     SceneRedoRefused,
     SpendMeter,
     SpentStageError,
-    _scene_clip_refusal,
-    _shot_take,
+    assembly_readiness,
     check_unchecked_shots,
-    clip_accepted,
+    clip_plan,
     clip_qc_of,
     collect_submitted_takes,
     decide_take,
     film_seed,
     hero_acceptances,
     hero_gate,
-    motion_fields,
+    latest_assembly_refusal,
     motion_plan,
     motion_seconds,
     narration_to_buy,
@@ -136,7 +136,7 @@ from app.media.prompt_lint import (
     lint_film,
     summary_ro,
 )
-from app.media.sheet_words import NO_SHOT, NO_STILL, blocked_words, decision_outcome, refusal_view
+from app.media.sheet_words import blocked_words, decision_outcome, refusal_view
 from app.media.stills_stage import (
     STILLS_ACTION,
     STILLS_STEP,
@@ -922,78 +922,6 @@ def _safety_moves(session: Session, storyboard_id: str) -> dict[int, dict[str, A
     return moves
 
 
-def _scene_readiness(
-    session: Session,
-    storyboard_id: str,
-    scene: dict[str, Any],
-    still: SceneTake | None,
-    *,
-    environment: str,
-    local_moves: set[int],
-) -> dict[str, Any]:
-    """Whether a LIVE scene can go into the film assembled from takes, and why not.
-
-    The same reading `assemble_from_takes` makes before anything is spoken or encoded: an
-    approved still for the prompt as it is now, then an accepted shot (the Owner's APPROVED
-    or a passing clip QC) or, in PRODUCTION, his own LOCAL_MOVE for the scene.
-    """
-    index = int(scene["scene_index"])
-    if still is None:
-        return {
-            "scene_index": index,
-            "ok": False,
-            "how": None,
-            # the code lets the assemble card group the scenes (`sheet_words.blocked_words`)
-            "code": NO_STILL,
-            "why_ro": "",
-            "reason_ro": (
-                f"Scena {index} nu are o imagine aprobată pentru promptul de acum; "
-                "cumpărați sau aprobați imaginea ei pe foaia de filmare."
-            ),
-        }
-    shot = _shot_take(
-        session,
-        storyboard_id,
-        index,
-        motion_fields(scene, str(still.sha256 or ""), from_prompt=False),
-        0.0,
-    )
-    why = ""
-    if shot is not None:
-        accepted, why = clip_accepted(session, shot, environment)
-        if accepted:
-            return {"scene_index": index, "ok": True, "how": "shot", "reason_ro": ""}
-    else:
-        refusal, _record = _scene_clip_refusal(session, storyboard_id, index)
-        why = refusal or ""
-    if index in local_moves:
-        return {
-            "scene_index": index,
-            "ok": True,
-            "how": "local_move",
-            "reason_ro": f"Scena {index}: imagine fixă animată local, aleasă de Proprietar.",
-        }
-    if environment != "PRODUCTION":
-        return {
-            "scene_index": index,
-            "ok": True,
-            "how": "still",
-            "reason_ro": f"Scena {index}: fără cadru acceptat, rămâne imagine fixă (TEST).",
-        }
-    return {
-        "scene_index": index,
-        "ok": False,
-        "how": None,
-        "code": NO_SHOT,
-        "why_ro": why,
-        "reason_ro": (
-            (f"{why} " if why else "")
-            + f"Scena {index} nu are un cadru acceptat, iar Proprietarul nu a ales "
-            "„imagine fixă animată local” pentru ea pe foaia de filmare."
-        ),
-    }
-
-
 #: What a redo plan shows on the sheet beside a scene's «Refă» button.
 _REDO_FIELDS = (
     "plan_hash",
@@ -1145,19 +1073,32 @@ def _sheet(
         rule, threshold = paid_media_policy(session.get(OwnerPolicy, 1))
         # What the assemble step will find: per filmed scene, a shot it may cut in or the
         # Owner's own LOCAL_MOVE; and each shot's clip-QC report, for his look.
+        # 2026-10-09 (babcf272): the sheet said «Pregătit» four times while the render refused
+        # scene 3, its 5.0 s clip shorter than the 6.06 s of words it had to carry: the sheet
+        # looked for a shot of any length. It now reads the render's own readiness
+        # (`assembly_readiness`): the same shot identity, the same span from the narration
+        # (measured, else estimated), the same slow-down allowance.
         local_moves = owner_local_moves(session, storyboard_id)
-        readiness = [
-            _scene_readiness(
-                session,
-                storyboard_id,
-                scene,
-                stills.get(int(scene["scene_index"])),
-                environment=environment,
-                local_moves=local_moves,
-            )
-            for scene in scenes
-            if scene_kind_of(scene) == "LIVE"
-        ]
+        readiness = assembly_readiness(
+            session,
+            storyboard_id,
+            scenes,
+            {
+                int(scene["scene_index"]): (
+                    str(stills[int(scene["scene_index"])].sha256 or "") or None
+                    if int(scene["scene_index"]) in stills
+                    else None
+                )
+                for scene in scenes
+                if scene_kind_of(scene) == "LIVE"
+            },
+            environment=environment,
+            local_moves=local_moves,
+        )
+        # Each clip's length as the motion step buys it: the narration it will carry.
+        sizes = clip_plan(session, storyboard_id, scenes)
+        # The newest refused assembly, until a film is assembled (shown with its seconds).
+        refusal = latest_assembly_refusal(session, storyboard_id)
         clip_reports = {
             take.id: clip_qc_of(session, take.id)
             for rows_ in takes.values()
@@ -1218,8 +1159,14 @@ def _sheet(
 
     # The whole film's per-scene choice, priced even before its stills exist: the Owner sees
     # every scene's model and price before the first credit, not only after the stills.
+    # Each clip at the length its narration needs (`clip_plan`, the motion step's own), so
+    # the price he reads is the price of the clip that will be bought.
+    def shot_seconds(scene: dict[str, Any]) -> float:
+        entry = sizes.get(int(scene["scene_index"]))
+        return float(entry["seconds"]) if entry is not None else motion_seconds(scene)
+
     needs = [
-        need_from_scene({**scene, "duration_seconds": motion_seconds(scene)}, len(scenes))
+        need_from_scene({**scene, "duration_seconds": shot_seconds(scene)}, len(scenes))
         for scene in scenes
     ]
     policy = plan_scene_models(
@@ -1356,7 +1303,11 @@ def _sheet(
                 "story_purpose": scene.get("story_purpose"),
                 "narration": scene.get("voiceover_segment"),
                 "planned_seconds": float(scene.get("duration_seconds") or 0.0),
-                "shot_seconds": motion_seconds(scene) if kind == "LIVE" else 0.0,
+                "shot_seconds": shot_seconds(scene) if kind == "LIVE" else 0.0,
+                # Where the clip's length comes from: "planned", or the narration
+                # "rendered" / "measured" / "estimated" (`clip_plan`), and its words' seconds.
+                "shot_seconds_source": (sizes.get(index) or {}).get("source"),
+                "spoken_seconds": (sizes.get(index) or {}).get("spoken_seconds"),
                 "prompt_source": package.get("source"),
                 "shot_size": package.get("shot_size"),
                 "still_prompt": still_text,
@@ -1512,7 +1463,16 @@ def _sheet(
     if steps[MOTION_STEP]["to_buy"] and hero["status"] in ("NOT_BOUGHT", "WAITING", "REFUSED"):
         # Shots are planned, but the step would refuse before buying them: say why.
         steps[MOTION_STEP]["waiting_ro"] = hero["reason_ro"]
-    blocked = [item for item in readiness if not item["ok"]]
+    blocked = [
+        {
+            **item,
+            # A clip too short for its words says so once, in its own sentence (reason_ro
+            # carries why_ro and the way out), never twice (`blocked_words`).
+            "why_ro": "" if item.get("code") == CLIP_SHORT else item.get("why_ro") or "",
+        }
+        for item in readiness
+        if not item["ok"]
+    ]
     paid_left = [name for name in SHEET_STEPS if steps[name]["to_buy"]]
     steps[ASSEMBLE_STEP] = {
         "step": ASSEMBLE_STEP,
@@ -1526,9 +1486,38 @@ def _sheet(
                 "reason_ro": item["reason_ro"],
                 "code": item.get("code"),
                 "why_ro": item.get("why_ro") or "",
+                # A clip too short for its span: its seconds and what its redo must reach.
+                "clip_seconds": item.get("clip_seconds"),
+                "span": item.get("span"),
+                "needed_seconds": item.get("needed_seconds"),
             }
             for item in blocked
         ],
+        # What the assembly will do of its own, at 0 USD, said before he presses: the clips
+        # it slows into their spans, and the clips whose words are not measured yet and may
+        # be too short once they are ("at_risk", `clip_readiness`: never a slow-down promised
+        # past the 25% allowance; a clip too short even for the shortest reading is blocked).
+        "notes_ro": [
+            text
+            for item in readiness
+            if item["ok"]
+            for text in (
+                item.get("reason_ro") if item.get("how") == "slowed" else "",
+                item.get("risk_ro") or "",
+            )
+            if text
+        ],
+        # The newest refused assembly (ASSEMBLY_REFUSED_EVENT), until a film is assembled.
+        "last_refusal": (
+            {
+                "at": refusal.get("at"),
+                "stage": refusal.get("stage"),
+                "reason_ro": refusal.get("reason_ro"),
+                "scenes": refusal.get("scenes") or [],
+            }
+            if refusal is not None
+            else None
+        ),
         # The wait said once, the scenes grouped (2026-10-04: one sentence per scene, x5).
         "blocked_ro": blocked_words(blocked),
         "scenes": readiness,
@@ -3743,6 +3732,7 @@ def run_assemble_step(
     production_plan: dict[str, Any] | None = None,
     allow_over_budget: bool = False,
     requester: str = "video_editor",
+    redo_wiring: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """The sheet's last step: the film assembled from its takes, its master and its QC.
 
@@ -3755,6 +3745,13 @@ def run_assemble_step(
     `qc.require_chosen_fallbacks` again and books the measured spend of the film's steps),
     the narration's cost into the books, quality control and the Owner's QC letter.
 
+    A refusal for its clips (TAKES_NOT_ACCEPTED) is recorded with each scene's seconds
+    (`assembler.record_assembly_refused`). A clip too short to be slowed into the span its
+    words need (CLIP_SHORT) has its paid motion redo raised by the studio at the right length
+    when ``redo_wiring`` (`runbook.stages.sheet_wiring`) is given (`propose_clip_redos`:
+    `redo_scene` unasked, so his paid-media rule asks him); each outcome rides on its scene in
+    the refusal (``redo``). Nothing is bought without his yes.
+
     Raises `SheetStepRefused`; returns the film, its QC and the letter.
     """
     from app.economy.accountant import record_render_costs  # noqa: PLC0415
@@ -3765,6 +3762,7 @@ def run_assemble_step(
         RenderStopped,
         TakesMissing,
         assemble_from_takes,
+        record_assembly_refused,
     )
     from app.media.qc import evaluate_media_qc  # noqa: PLC0415
     from app.media.services import ReferenceRequired  # noqa: PLC0415
@@ -3792,10 +3790,32 @@ def run_assemble_step(
         )
     info = sheet["steps"][ASSEMBLE_STEP]
     if info["blocked"]:
+        message = "Filmul nu se asamblează: " + blocked_words(info["blocked"])
+        record_assembly_refused(
+            engine,
+            storyboard_id,
+            correlation_id,
+            ClipsNotAccepted(
+                [int(item["scene_index"]) for item in info["blocked"]],
+                message,
+                details=list(info["blocked"]),
+            ),
+            stage="sheet",
+            environment=environment,
+        )
         raise SheetStepRefused(
             "TAKES_NOT_ACCEPTED",
-            "Filmul nu se asamblează: " + blocked_words(info["blocked"]),
-            scenes=info["blocked"],
+            message,
+            scenes=_with_redos(
+                engine,
+                storyboard_id,
+                correlation_id,
+                info["blocked"],
+                redo_wiring=redo_wiring,
+                settings=settings,
+                registry=registry,
+                environment=environment,
+            ),
         )
 
     narration = info["narration"]
@@ -3888,10 +3908,35 @@ def run_assemble_step(
             settings=settings,
         )
     except ClipsNotAccepted as exc:
+        # Recorded where it was refused (the pre-check or the render, `assemble_from_takes`).
+        # A render refused once the narration was measured had voiced it (babcf272, 18:22
+        # UTC): what it bought goes into the books like any failed assembly's; a pre-check
+        # refusal left no render job and books nothing.
+        _book_failed_assembly(engine, storyboard_id, started, correlation_id)
+        readings = {int(item.get("scene_index") or 0): item for item in exc.details}
         raise SheetStepRefused(
             "TAKES_NOT_ACCEPTED",
             exc.message_ro,
-            scenes=[{"scene_index": n, "reason_ro": exc.message_ro} for n in exc.scenes],
+            scenes=_with_redos(
+                engine,
+                storyboard_id,
+                correlation_id,
+                [
+                    {
+                        **{
+                            key: readings.get(n, {}).get(key)
+                            for key in ("code", "clip_seconds", "span", "needed_seconds")
+                        },
+                        "scene_index": n,
+                        "reason_ro": exc.message_ro,
+                    }
+                    for n in exc.scenes
+                ],
+                redo_wiring=redo_wiring,
+                settings=settings,
+                registry=registry,
+                environment=environment,
+            ),
         ) from exc
     except TakesMissing as exc:
         raise SheetStepRefused("TAKES_MISSING", str(exc)) from exc
@@ -3960,6 +4005,65 @@ def run_assemble_step(
         "qc": qc,
         "qc_letter_ro": letter,
     }
+
+
+def _with_redos(
+    engine: Engine,
+    storyboard_id: str,
+    correlation_id: str,
+    scenes: Sequence[dict[str, Any]],
+    *,
+    redo_wiring: dict[str, Any] | None,
+    settings: Any,
+    registry: Any,
+    environment: str,
+) -> list[dict[str, Any]]:
+    """The refused scenes, each clip too short for its words (CLIP_SHORT) with the paid motion
+    redo the studio raised for it (``redo``: NEEDS_APPROVAL with his question, or the reason
+    it was not raised), when the caller passed the sheet's wiring. Without it the scenes go
+    back as they came; the sheet's «Refă mișcarea» is priced at the right length either way.
+
+    2026-10-09 (babcf272): four refusals of scene 3 ended as letters and nothing moved the
+    film; the refusal now raises the one step that can (his yes still decides)."""
+    from app.media.assembler import propose_clip_redos  # noqa: PLC0415
+
+    found = [dict(item) for item in scenes]
+    short = sorted({int(item["scene_index"]) for item in found if item.get("code") == CLIP_SHORT})
+    if not short or redo_wiring is None:
+        return found
+    try:
+        outcomes = propose_clip_redos(
+            engine,
+            storyboard_id,
+            correlation_id,
+            wiring=redo_wiring,
+            settings=settings,
+            registry=registry,
+            environment=environment,
+            scenes=short,
+        )
+    except (SceneRedoRefused, UnpricedError, ValueError) as exc:
+        logger.warning(
+            "clip_redo_not_raised",
+            extra={"storyboard_id": storyboard_id, "reason": str(exc)[:200]},
+        )
+        return found
+    by_scene = {int(outcome["scene_index"]): outcome for outcome in outcomes}
+    for item in found:
+        outcome = by_scene.get(int(item["scene_index"]))
+        if outcome is not None:
+            item["redo"] = {
+                key: outcome.get(key)
+                for key in (
+                    "status",
+                    "approval_id",
+                    "billed_seconds",
+                    "cost_usd",
+                    "cap_usd",
+                    "reason_ro",
+                )
+            }
+    return found
 
 
 def _book_failed_assembly(

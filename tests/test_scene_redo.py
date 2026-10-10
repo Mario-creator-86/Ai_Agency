@@ -85,7 +85,9 @@ def stream_hash(path: Path, stream: str) -> str:
 
 
 def coloured_clip(tmp_path: Path, colour: str) -> bytes:
-    """Two seconds of real h264 in one colour: a vendor's clip, faked, with its own bytes."""
+    """Twelve seconds of real h264 in one colour: a vendor's clip, faked, with its own bytes;
+    longer than any shot it fills, so it is cut (since 2026-10-09 a clip more than 25% short
+    of its span is refused, never held on a frozen frame)."""
     target = tmp_path / f"clip_{colour}.mp4"
     subprocess.run(
         [
@@ -96,7 +98,7 @@ def coloured_clip(tmp_path: Path, colour: str) -> bytes:
             "-f",
             "lavfi",
             "-i",
-            f"color=c={colour}:s=540x960:d=2",
+            f"color=c={colour}:s=540x960:d=12",
             "-pix_fmt",
             "yuv420p",
             str(target),

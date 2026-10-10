@@ -80,7 +80,10 @@ class StubMotion:
 
 
 def a_clip(tmp_path: Path) -> bytes:
-    """Two seconds of real h264, made by the encoder the studio already requires."""
+    """Twelve seconds of real h264, made by the encoder the studio already requires: longer
+    than any shot it fills, so it is cut. (It was two seconds, its last frame held to fill
+    each span; since 2026-10-09 a clip more than 25% short of its span is refused, never
+    held on a frozen frame: «Încetinește local».)"""
     import subprocess
 
     target = tmp_path / "stub_clip.mp4"
@@ -93,7 +96,7 @@ def a_clip(tmp_path: Path) -> bytes:
             "-f",
             "lavfi",
             "-i",
-            "color=c=navy:s=540x960:d=2",
+            "color=c=navy:s=540x960:d=12",
             "-pix_fmt",
             "yuv420p",
             str(target),
