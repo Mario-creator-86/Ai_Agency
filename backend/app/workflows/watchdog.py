@@ -42,15 +42,20 @@ ended, so a rejected or failed one is FAILED_FINAL with a letter instead of PUBL
 What it will not do. It changes nothing while the Owner's autonomy stop is set — safe mode sets
 that stop too — because a stopped studio is a studio in which nothing moves, including repair.
 And it never uploads on a guess: the retry path it reuses asks the platform first.
+
+The repairs added since 2026-10-09 register from their own files (`app.workflows.passes`) and
+run after the parts above, in their declared order, each in its own try; also when one of the
+first parts raised, whose exception still ends the pass.
 """
 
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+import time
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from typing import Any
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session
@@ -73,6 +78,7 @@ from app.publishing.services import (
 )
 from app.services import append_event, utc_now
 from app.workflows.models import TaskQueueItem
+from app.workflows.passes import PASSES, WatchdogContext, WatchdogPass, registered_passes
 
 logger = logging.getLogger("studio.watchdog")
 
@@ -623,6 +629,174 @@ def _interrupted_days(engine: Engine, correlation_id: str) -> dict[str, Any]:
     return {"interrupted": [record["run_id"] for record in closed]}
 
 
+# --------------------------------------------------------------- registered passes --
+
+
+#: The registry modules (and their errors) one event already named in this process: a module
+#: that did not import is said once per boot, not every few minutes (2026-10-09).
+_REPORTED_LOAD_ERRORS: set[tuple[str, str]] = set()
+
+#: The package of the card producers (`app.decisions.producers`), named in the events.
+_PRODUCERS_PACKAGE = "app.decisions.producers"
+
+
+def _stop_pressed(engine: Engine) -> bool:
+    """The Owner's stop, read again before each registered pass; unreadable reads as pressed."""
+    try:
+        return _autonomy_stopped(engine)
+    except Exception as exc:  # noqa: BLE001 - a stop nobody can read is not a go
+        logger.error("watchdog_stop_unreadable", extra={"error": type(exc).__name__})
+        return True
+
+
+def _report_load_errors(engine: Engine, load_errors: Mapping[str, str], correlation: str) -> None:
+    """One `studio.registry_module_failed` event per module that did not import, once per boot.
+
+    Review of 2026-10-09: the worker keeps nothing of the watchdog's answer, so `load_errors`
+    in the result alone reached nobody. A producer that did not import leaves its cards unable
+    to close (UNREADABLE) and his accept refused (UNKNOWN_APPLY_RO); a pass module that did
+    not, a repair that never runs. The studio says so where it is read: here, and on the
+    `watchdog_pass` log line of every pass."""
+    fresh = sorted(
+        (module, error)
+        for module, error in load_errors.items()
+        if (module, error) not in _REPORTED_LOAD_ERRORS
+    )
+    if not fresh:
+        return
+    if _stop_pressed(engine):
+        # The watchdog writes nothing while he has the studio stopped; the first pass after
+        # he lets it go writes the event (the log line names the module meanwhile).
+        return
+    try:
+        with Session(engine) as session, session.begin():
+            for module, error in fresh:
+                append_event(
+                    session,
+                    "studio.registry_module_failed",
+                    "studio_registry",
+                    # A module name can be longer than the 36 characters the column keeps.
+                    str(uuid5(NAMESPACE_URL, f"amn-registry:{module}")),
+                    1,
+                    {
+                        "module": module,
+                        "error": error,
+                        "registry": (
+                            "decision_producers"
+                            if module.startswith(_PRODUCERS_PACKAGE)
+                            else "watchdog_passes"
+                        ),
+                    },
+                    correlation,
+                )
+    except Exception as exc:  # noqa: BLE001 - a report, never a reason to lose the pass
+        logger.error("watchdog_registry_report_failed", extra={"error": type(exc).__name__})
+        return
+    _REPORTED_LOAD_ERRORS.update(fresh)
+
+
+def _run_registered_passes(
+    context: WatchdogContext,
+) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
+    """Every pass registered in `app.workflows.passes`, in its declared order, each in its own
+    try: (each pass's result by its name, what ran). A pass that raises, or answers with
+    something that is not a dict, reports its ``on_error`` shape with ``"error": True``, and
+    the next pass still runs, as the built-in parts above do for each other.
+
+    The Owner's stop is read again before each pass (review of 2026-10-09): the built-in parts
+    above can take minutes (the paid collection asks the vendors), and a stop he pressed
+    meanwhile, or that a pass before set, skips every pass still to run (``skipped``)."""
+    results: dict[str, dict[str, Any]] = {}
+    ran: list[dict[str, Any]] = []
+    failed: list[str] = []
+    skipped: list[str] = []
+    passes: list[WatchdogPass] = []
+    try:
+        passes = registered_passes()
+        pass_errors = dict(PASSES.errors)
+    except Exception as exc:  # noqa: BLE001 - the built-in parts' results must not be lost
+        logger.error("watchdog_passes_unavailable", extra={"error": type(exc).__name__})
+        pass_errors = {PASSES.package: f"{type(exc).__name__}: {exc}"[:500]}
+    for entry in passes:
+        if skipped or _stop_pressed(context.engine):
+            skipped.append(entry.name)
+            continue
+        started = time.monotonic()
+        status = "OK"
+        try:
+            answer = entry.function(context)
+            if not isinstance(answer, Mapping):
+                raise TypeError(f"the pass answered {type(answer).__name__}, not a dict")
+            outcome = dict(answer)
+        except Exception as exc:  # noqa: BLE001 - one pass's failure must not lose the others'
+            logger.error(
+                "watchdog_registered_pass_failed",
+                extra={"pass": entry.name, "error": type(exc).__name__},
+                exc_info=exc,
+            )
+            outcome = {**dict(entry.on_error), "error": True, "error_type": type(exc).__name__}
+            status = "FAILED"
+            failed.append(entry.name)
+        results[entry.name] = outcome
+        ran.append(
+            {
+                "name": entry.name,
+                "order": entry.order,
+                "status": status,
+                "ms": int((time.monotonic() - started) * 1000),
+            }
+        )
+    if skipped:
+        logger.info("watchdog_registered_passes_stopped", extra={"skipped": list(skipped)})
+    # A card producer that did not import leaves its cards unable to apply or close (they
+    # fail closed); the watchdog names it each pass, beside a pass module that did not.
+    try:
+        from app.decisions.producers import PRODUCERS  # noqa: PLC0415
+
+        PRODUCERS.load()
+        producer_errors = dict(PRODUCERS.errors)
+    except Exception as exc:  # noqa: BLE001 - a report, never a reason to lose the pass
+        producer_errors = {_PRODUCERS_PACKAGE: f"{type(exc).__name__}: {exc}"[:500]}
+    load_errors = {**pass_errors, **producer_errors}
+    _report_load_errors(context.engine, load_errors, context.correlation_id)
+    return results, {
+        "ran": ran,
+        "failed": failed,
+        "skipped": skipped,
+        "load_errors": load_errors,
+    }
+
+
+def _passes_after_a_failed_part(context: WatchdogContext, failure: Exception) -> None:
+    """The registered passes, when one of the first built-in parts raised (they have no try
+    of their own, and their exception stays the watchdog's answer).
+
+    Review of 2026-10-09: the registered passes carry the money repairs of the self-repair
+    plan (unbooked spend, GPU receipts, held RunPod scenes). A part that raised before them (a
+    locked database in `release_stale_reservations`, an unreadable publisher binding) skipped
+    every one, every cycle while the cause lasted, and the result that would have said so was
+    never built. Each still runs in its own try with the stop read again (a stop nobody can
+    read skips them all); what ran is on this log line, and nothing here may hide the part's
+    own exception."""
+    try:
+        _results, passes = _run_registered_passes(context)
+        logger.error(
+            "watchdog_built_in_part_failed",
+            extra={
+                "error": type(failure).__name__,
+                "registered_passes_ran": [entry["name"] for entry in passes["ran"]],
+                "registered_passes_failed": list(passes["failed"]),
+                "registered_passes_skipped": list(passes["skipped"]),
+                "registered_load_errors": sorted(passes["load_errors"]),
+            },
+        )
+    except Exception as exc:  # noqa: BLE001 - the part's exception is the one that goes on
+        logger.error(
+            "watchdog_built_in_part_failed",
+            extra={"error": type(failure).__name__, "passes_error": type(exc).__name__},
+        )
+
+
 # ------------------------------------------------------------------------------ the pass --
 
 
@@ -672,27 +846,36 @@ def run_watchdog(
         getattr(settings, "publish_stuck_after_seconds", DEFAULT_PUBLISH_STUCK_AFTER_SECONDS)
     )
 
-    renders = _fail_stuck_renders(engine, threshold, correlation)
-    resolver = publisher_for or _default_publisher_for(engine, settings)
-    publications = _reconcile_publications(engine, resolver, max_attempts, correlation, stuck_after)
+    # These first parts have no try of their own: one that raises ends the watchdog with its
+    # exception, as it always did (the worker records the task FAILED). The registered passes
+    # still run first (`_passes_after_a_failed_part`, review of 2026-10-09).
     try:
-        processing = _follow_processing(engine, resolver, correlation)
-    except Exception as exc:  # noqa: BLE001 - one part's failure must not lose the others'
-        logger.error("watchdog_processing_pass_failed", extra={"error": type(exc).__name__})
-        processing = {"checked": 0, "processed": 0, "rejected": 0, "unreadable": 0, "error": 1}
-    leases = _lapsed_leases(engine)
-    # The fourth thing a dead process leaves behind. A film holds the money it is about to
-    # spend (`reserve_spend`) and releases or settles it when the render ends; a process
-    # killed under a hold leaves the day's budget pledged to a film nobody is making, and
-    # every later film is refused for money that was never spent. Same threshold logic as
-    # the renders above: read through the settings when they carry it.
-    reservations = release_stale_reservations(
-        engine,
-        ttl_seconds=int(
-            getattr(settings, "reservation_ttl_seconds", DEFAULT_RESERVATION_TTL_SECONDS)
-        ),
-        correlation_id=correlation,
-    )
+        renders = _fail_stuck_renders(engine, threshold, correlation)
+        resolver = publisher_for or _default_publisher_for(engine, settings)
+        publications = _reconcile_publications(
+            engine, resolver, max_attempts, correlation, stuck_after
+        )
+        try:
+            processing = _follow_processing(engine, resolver, correlation)
+        except Exception as exc:  # noqa: BLE001 - one part's failure must not lose the others'
+            logger.error("watchdog_processing_pass_failed", extra={"error": type(exc).__name__})
+            processing = {"checked": 0, "processed": 0, "rejected": 0, "unreadable": 0, "error": 1}
+        leases = _lapsed_leases(engine)
+        # The fourth thing a dead process leaves behind. A film holds the money it is about to
+        # spend (`reserve_spend`) and releases or settles it when the render ends; a process
+        # killed under a hold leaves the day's budget pledged to a film nobody is making, and
+        # every later film is refused for money that was never spent. Same threshold logic as
+        # the renders above: read through the settings when they carry it.
+        reservations = release_stale_reservations(
+            engine,
+            ttl_seconds=int(
+                getattr(settings, "reservation_ttl_seconds", DEFAULT_RESERVATION_TTL_SECONDS)
+            ),
+            correlation_id=correlation,
+        )
+    except Exception as exc:
+        _passes_after_a_failed_part(WatchdogContext(engine, settings, correlation), exc)
+        raise
 
     # A film's purchase lease whose holder is gone: freed, its hold released, the Owner told.
     # Before the collection below, so his letter says what was still at the vendor.
@@ -769,6 +952,9 @@ def run_watchdog(
         logger.error("watchdog_sweep_failed", extra={"error": type(exc).__name__})
         intermediates = {"status": "FAILED", "files": [], "bytes": 0, "error": True}
 
+    # The repairs registered from their own files (2026-10-09), after every part above.
+    registered, passes = _run_registered_passes(WatchdogContext(engine, settings, correlation))
+
     result = {
         "status": "COMPLETED",
         "reason": "",
@@ -785,6 +971,9 @@ def run_watchdog(
         "runpod_unsent_holds": unsent_holds,
         "answered_letters": answered_letters,
         "correlation_id": correlation,
+        # A registered pass's name is never a key above (`BUILT_IN_RESULT_KEYS`).
+        **registered,
+        "passes": passes,
     }
     logger.info(
         "watchdog_pass",
@@ -802,6 +991,11 @@ def run_watchdog(
             "defect_holds_released": len(defect_holds["released"]),
             "runpod_unsent_cards": len(unsent_holds["cards"]),
             "runpod_unsent_released": len(unsent_holds.get("released") or []),
+            "registered_passes_ran": len(passes["ran"]),
+            "registered_passes_failed": len(passes["failed"]),
+            "registered_passes_skipped": len(passes["skipped"]),
+            # Every pass, while a registry module does not import (the result reaches no one).
+            "registered_load_errors": sorted(passes["load_errors"]),
         },
     )
     return result

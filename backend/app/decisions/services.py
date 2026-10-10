@@ -33,14 +33,21 @@ command id derived from the card's id, version and option (`_inner_command_id`):
 is retried after the apply committed and before the card did finds the command already
 recorded and does not apply twice; a failed apply commits nothing, so the card cannot be
 half-applied.
+
+Registries (2026-10-09). APPLIERS, CONDITIONS and MISSING_RO also take entries from the modules
+of `app.decisions.producers`, each registering its own (`register_applier`,
+`register_condition`); the first read of any of the three imports that package. An accept
+whose option type nobody registers any more (a producer that failed to import) is refused and
+the card stays PENDING: his yes is never recorded as applied when nothing ran.
 """
 
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Mapping
+import re
+from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, overload
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -50,6 +57,7 @@ from sqlalchemy.orm import Session
 
 from app.config import ROOT
 from app.decisions.models import OPEN_STATUSES, OwnerDecision
+from app.decisions.producers import PRODUCERS
 from app.models import ApprovalRequest, CommandRecord, OwnerPolicy
 from app.services import (
     AutonomyRefused,
@@ -64,6 +72,9 @@ from app.services import (
     utc_now,
 )
 from app.wording import COMMAND_REUSED, SETTINGS_TABS, decimal
+
+if TYPE_CHECKING:
+    from _collections_abc import dict_items, dict_keys, dict_values
 
 logger = logging.getLogger("studio.decisions")
 
@@ -101,6 +112,12 @@ DECIDE_COMMAND = "DecideOwnerDecision"
 POLICY_MOVED_RO = (
     "Politica studioului s-a schimbat chiar acum; nu s-a aplicat nimic. Reîncarcă fereastra "
     "și decide din nou."
+)
+
+#: His accept of an option whose applier the studio no longer has (2026-10-09).
+UNKNOWN_APPLY_RO = (
+    "Studioul nu mai știe să aplice opțiunea aleasă (tipul «{kind}»); nu s-a aplicat nimic. "
+    "Cardul rămâne deschis: îl poți refuza sau poți aștepta până studioul este reparat."
 )
 
 
@@ -150,6 +167,98 @@ class DecisionOption(BaseModel):
     effect_ro: str = Field(default="", max_length=2000)
     recommended: bool = False
     apply: dict[str, Any] = Field(default_factory=lambda: {"type": APPLY_NONE})
+
+
+# ------------------------------------------------------------ the registries' first read
+
+
+class _ProducerRegistry[V](dict[str, V]):
+    """One of the core's tables (APPLIERS, CONDITIONS, MISSING_RO): a plain dict whose reads
+    first import `app.decisions.producers` (once), so an entry a producer module registers is
+    there for whoever reads, the core or a test alike. Writes do not load: registering
+    happens during the load itself."""
+
+    def __getitem__(self, key: str) -> V:
+        PRODUCERS.load()
+        return super().__getitem__(key)
+
+    def __contains__(self, key: object) -> bool:
+        PRODUCERS.load()
+        return super().__contains__(key)
+
+    @overload
+    def get(self, key: str, default: None = None, /) -> V | None: ...
+    @overload
+    def get(self, key: str, default: V, /) -> V: ...
+    @overload
+    def get[T](self, key: str, default: T, /) -> V | T: ...
+    def get(self, key: str, default: Any = None, /) -> Any:
+        PRODUCERS.load()
+        return super().get(key, default)
+
+    def __iter__(self) -> Iterator[str]:
+        PRODUCERS.load()
+        return super().__iter__()
+
+    def __len__(self) -> int:
+        PRODUCERS.load()
+        return super().__len__()
+
+    def keys(self) -> dict_keys[str, V]:
+        PRODUCERS.load()
+        return super().keys()
+
+    def values(self) -> dict_values[str, V]:
+        PRODUCERS.load()
+        return super().values()
+
+    def items(self) -> dict_items[str, V]:
+        PRODUCERS.load()
+        return super().items()
+
+
+#: A registered name: lower case, digits and underscores, as the core's own.
+_REGISTERED_NAME = re.compile(r"^[a-z][a-z0-9_]{0,59}$")
+
+
+def _same_function(first: object, second: object) -> bool:
+    """The same function registered again (a module imported twice), not a second owner of
+    the name. Functions made inside a factory share their qualified name, so only the object
+    itself counts for them."""
+    if first is second:
+        return True
+    name = getattr(first, "__qualname__", None)
+    return (
+        isinstance(name, str)
+        and "<locals>" not in name
+        and getattr(first, "__module__", None) is not None
+        and (getattr(first, "__module__", None), name)
+        == (getattr(second, "__module__", None), getattr(second, "__qualname__", None))
+    )
+
+
+def _register[V](
+    table: dict[str, V],
+    kind: str,
+    entry: V,
+    what: str,
+    *,
+    also: tuple[dict[str, Any], ...] = (),
+) -> None:
+    """Add one entry, refusing a name another module already owns: two producers answering
+    for one option type would make his accept run whichever was imported last. ``also``: the
+    tables whose entry of that name goes with this one (a condition's words)."""
+    if not _REGISTERED_NAME.match(kind):
+        raise ValueError(f"{what} name {kind!r} must be lower case letters, digits and _")
+    standing = dict.get(table, kind)  # no load: this runs during the load
+    if standing is not None and not _same_function(standing, entry):
+        owner = getattr(standing, "__module__", "?")
+        raise ValueError(f"{what} {kind!r} is already registered (by {owner})")
+    dict.__setitem__(table, kind, entry)
+    if standing is None:
+        # Taken out again if the module registering it fails to import, whichever import was
+        # running when it registered (`PackageLoader.added`).
+        PRODUCERS.added(table, kind, owner=entry, also=also)
 
 
 # --------------------------------------------------------------------- the apply registry
@@ -321,9 +430,11 @@ def _from_sources(name: str) -> Applier:
 
 
 #: Each option type his accept applies through his own command. Extended with
-#: `register_applier`; an option of a type in neither this table nor the three plain types
-#: (none, record, guided) is refused when proposed. The two sheet types are the paused sheet
-#: repair's (DECISION_SOURCES): let it try again now, or the local move for its blocked scenes.
+#: `register_applier` (from a module of `app.decisions.producers`); an option of a type in
+#: neither this table nor the three plain types (none, record, guided) is refused when
+#: proposed, and refused again at his accept if its applier is gone by then. The two sheet
+#: types are the paused sheet repair's (DECISION_SOURCES): let it try again now, or the local
+#: move for its blocked scenes.
 APPLIERS: dict[str, Applier] = {
     "budget": _apply_budget,
     "paid_media_approval": _apply_paid_media,
@@ -338,13 +449,17 @@ APPLIERS: dict[str, Applier] = {
     # His accept of «Nu s-a trimis nimic la RunPod: eliberez scena N?» (2026-10-09).
     "runpod_unsent_release": _from_sources("apply_runpod_unsent_release"),
 }
+#: The first read imports the producers' modules (`_ProducerRegistry`).
+APPLIERS = _ProducerRegistry(APPLIERS)
 
 
 def register_applier(kind: str, applier: Applier) -> None:
-    """Add an option type whose accept runs one more existing Owner command."""
+    """Add an option type whose accept runs one more existing Owner command. Called by a
+    module of `app.decisions.producers` when it is imported; a name already registered by
+    another function is refused (ValueError), so no two producers answer one accept."""
     if kind in (APPLY_NONE, APPLY_RECORD, APPLY_GUIDED):
         raise ValueError(f"{kind} is a plain option type, not an applier")
-    APPLIERS[kind] = applier
+    _register(APPLIERS, kind, applier, "applier")
 
 
 # ------------------------------------------------------------------------ the conditions
@@ -484,6 +599,8 @@ def _condition_from_sources(name: str) -> Condition:
     return check
 
 
+#: What the studio reads to close a card, by its ``clears_when`` type. Extended with
+#: `register_condition` (from a module of `app.decisions.producers`).
 CONDITIONS: dict[str, Condition] = {
     "integration_verified": _integration_verified,
     "youtube_connected": _youtube_connected,
@@ -506,6 +623,8 @@ CONDITIONS: dict[str, Condition] = {
     # The scene is no longer held by that unanswered RunPod /run (2026-10-09).
     "runpod_unsent_hold_cleared": _condition_from_sources("runpod_unsent_hold_cleared"),
 }
+#: The first read imports the producers' modules (`_ProducerRegistry`).
+CONDITIONS = _ProducerRegistry(CONDITIONS)
 
 
 #: How a card's condition reads now (2026-10-04). MET: the studio sees the step done.
@@ -582,6 +701,8 @@ def _missing_words(words: str) -> Missing:
     return lambda session, row, params: words
 
 
+#: Every readable condition says what is still missing (a registered one too, through
+#: `register_condition`): his «Am făcut-o» never gets a bare «not yet».
 MISSING_RO: dict[str, Missing] = {
     "commercial_use": _missing_commercial_use,
     "file_exists": _missing_file,
@@ -621,6 +742,23 @@ MISSING_RO: dict[str, Missing] = {
         "Lipsește: scena este încă ținută de cererea RunPod fără răspuns."
     ),
 }
+#: The first read imports the producers' modules (`_ProducerRegistry`).
+MISSING_RO = _ProducerRegistry(MISSING_RO)
+
+
+def register_condition(kind: str, condition: Condition, *, missing_ro: str | Missing) -> None:
+    """Add a ``clears_when`` type the studio can read, with what his DONE is told is still
+    missing while it reads false (words, or a function of (session, card, params)). Called by
+    a module of `app.decisions.producers` when it is imported; a name already registered by
+    another function is refused (ValueError). A condition only reads: True when the question
+    went away; an exception reads UNREADABLE and keeps the card open."""
+    if not missing_ro:
+        raise ValueError(f"condition {kind!r} must say what is still missing (missing_ro)")
+    words: Missing = _missing_words(missing_ro) if isinstance(missing_ro, str) else missing_ro
+    had_words = dict.__contains__(MISSING_RO, kind)
+    # Its words go with it if its module fails (words the core already had for it stay).
+    _register(CONDITIONS, kind, condition, "condition", also=() if had_words else (MISSING_RO,))
+    dict.__setitem__(MISSING_RO, kind, words)
 
 
 def still_missing_ro(session: Session, row: OwnerDecision, reading: ConditionReading) -> str | None:
@@ -1069,6 +1207,17 @@ def decide_owner_decision(
     kind = str(spec.get("type") or APPLY_NONE)
     option_key = str(option["key"]) if option else ""
     applied_command: dict[str, Any] | None = None
+    if (
+        option is not None
+        and kind not in APPLIERS
+        and kind not in (APPLY_NONE, APPLY_RECORD, APPLY_GUIDED)
+    ):
+        # The card was proposed with an applier that is not registered any more (its producer
+        # module failed to import, or was removed). Recorded as «none», his yes would read
+        # applied while nothing ran: the card stays PENDING with the reason instead.
+        reason = UNKNOWN_APPLY_RO.format(kind=kind)
+        _record_apply_error(engine, decision_id, version, option_key, reason)
+        raise DecisionApplyFailed(reason)
     if option is not None and kind in APPLIERS:
         try:
             applied_command = APPLIERS[kind](
@@ -1491,6 +1640,7 @@ def owner_decision_cards(
 __all__ = [
     "APPLIERS",
     "CONDITIONS",
+    "MISSING_RO",
     "DecideCommand",
     "DecisionApplyFailed",
     "DecisionConflict",
@@ -1503,6 +1653,7 @@ __all__ = [
     "propose_owner_decision",
     "refresh_owner_decisions",
     "register_applier",
+    "register_condition",
     "reopen_unconfirmed_done",
     "withdraw_owner_decision",
 ]
