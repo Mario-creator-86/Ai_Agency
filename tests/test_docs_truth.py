@@ -18,6 +18,11 @@ spec = importlib.util.spec_from_file_location("check_docs", ROOT / "scripts/chec
 checker = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(checker)
 
+note_spec = importlib.util.spec_from_file_location("docs_note", ROOT / "scripts/docs_note.py")
+assert note_spec is not None and note_spec.loader is not None
+docs_note = importlib.util.module_from_spec(note_spec)
+note_spec.loader.exec_module(docs_note)
+
 ARCH = ROOT / "docs/architecture"
 PROJECT = ROOT / "docs/project"
 
@@ -135,7 +140,10 @@ def test_each_amended_document_has_its_hash_named_in_the_decision_log():
 
 
 def test_the_decision_log_records_each_decision_of_the_audit():
-    log = _text(PROJECT / "16_DECISION_LOG.md")
+    _assert_the_audit_decisions_are_logged(_text(PROJECT / "16_DECISION_LOG.md"))
+
+
+def _assert_the_audit_decisions_are_logged(log):
     section = log[log.find("## The production-readiness audit (2026-10-01 → 2026-10-02)") :]
     assert section.startswith("## The production-readiness audit")
     for decision in (
@@ -169,29 +177,130 @@ def _status_head(text):
     return text if at == -1 else text[:at]
 
 
-def test_the_status_header_is_dated_and_separates_proof_from_fakes():
-    text = _text(PROJECT / "CURRENT_STATUS.md")
+def _status_header_problems(text):
+    """What the status header must hold, as messages; [] when it holds all of it.
+
+    2026-10-09 (WP29): a note written straight under the title pushed the state block into
+    that note's section twice (SHOOTING_SHEET_UI on 2026-10-03, Codex's notes on 2026-10-09),
+    and each time the failure only said a phrase was missing from the head. It now says where
+    the paragraph stands and what moves it back (scripts/docs_note.py)."""
     head = _status_head(text)
+    problems = []
     # The header's date moves with each dated update; it is never older than the audit's.
     date = re.match(r"^# CURRENT STATUS — State on (\d{4}-\d{2}-\d{2})\n", head)
-    assert date and date.group(1) >= "2026-10-02"
-    assert "Last verified: 2026-09-09" not in head
-    assert "Active edit claim: Codex" not in head
-    assert "proven on fakes only" in head
-    assert "AGENT_SCENARIO_ACCEPTANCE" in head
-    assert "2,550 passed, 4 failed, 6 skipped" in text  # retain the historical audit evidence
-    for item in ITEMS:
-        assert item in text, item
+    if not (date and date.group(1) >= "2026-10-02"):
+        problems.append("the first line must read «# CURRENT STATUS — State on YYYY-MM-DD»")
+    for stale in ("Last verified: 2026-09-09", "Active edit claim: Codex"):
+        if stale in head:
+            problems.append(f"the head still says «{stale}»")
+    missing = [w for w in ("proven on fakes only", "AGENT_SCENARIO_ACCEPTANCE") if w not in head]
+    if missing:
+        placement = [p for p in docs_note.status_head_problems(text) if "state block" in p]
+        problems.append(
+            f"the head (the title and the state block, before the first dated section) does "
+            f"not say {missing}: " + (" ".join(placement) or "restore the state block there.")
+        )
+    if "2,550 passed, 4 failed, 6 skipped" not in text:  # retain the historical audit evidence
+        problems.append("the audit's evidence «2,550 passed, 4 failed, 6 skipped» is gone")
+    problems.extend(f"{item} is not named" for item in ITEMS if item not in text)
+    return problems
+
+
+def test_the_status_header_is_dated_and_separates_proof_from_fakes():
+    assert _status_header_problems(_text(PROJECT / "CURRENT_STATUS.md")) == []
+
+
+def _assert_the_changelog_is_newest_first(changelog):
+    # Newest first: later sections may stand above the audit's (amended 2026-10-03).
+    assert changelog.startswith("# Changelog\n\n## ")
+    assert "\n## The production-readiness audit — 2026-10-01 → 2026-10-02\n" in changelog
 
 
 def test_the_roadmap_and_changelog_name_every_item():
     roadmap = _text(PROJECT / "13_ROADMAP_TODO.md")
-    changelog = _text(PROJECT / "CHANGELOG.md")
-    # Newest first: later sections may stand above the audit's (amended 2026-10-03).
-    assert changelog.startswith("# Changelog\n\n## ")
-    assert "\n## The production-readiness audit — 2026-10-01 → 2026-10-02\n" in changelog
+    _assert_the_changelog_is_newest_first(_text(PROJECT / "CHANGELOG.md"))
     for item in ITEMS:
         assert item in roadmap, item
+
+
+# ------------------------------------------- a note added by scripts/docs_note.py (WP29)
+#
+# Every agent adds its notes with scripts/docs_note.py, which puts them after the head. These
+# run it on the documents as they stand, in memory: nothing under docs/project is written.
+
+NOTE_BODY = "First paragraph of the note.\n\n- a line\n- another line\n"
+NOTE_DAY = "2099-01-01"  # later than any header date, so the header's date must move to it
+
+
+def _split_status(text):
+    head = _status_head(text)
+    return head.partition("\n")[2], text[len(head) :]
+
+
+def test_a_status_note_from_docs_note_keeps_the_status_header_whole():
+    text = _text(PROJECT / "CURRENT_STATUS.md")
+    updated, notices = docs_note.add_note(
+        text, "status", "WP29_SAMPLE — inserted by docs_note", NOTE_BODY, NOTE_DAY
+    )
+    assert _status_header_problems(updated) == []
+    assert updated.startswith(f"# CURRENT STATUS — State on {NOTE_DAY}\n")
+    # The head is the same but for its date; the note is the first section; the rest is kept.
+    head_before, rest_before = _split_status(text)
+    head_after, rest_after = _split_status(updated)
+    assert head_after == head_before
+    heading = f"\n## WP29_SAMPLE — inserted by docs_note ({NOTE_DAY})\n\n"
+    assert rest_after == heading + NOTE_BODY + rest_before
+    assert notices == [f"added «## WP29_SAMPLE — inserted by docs_note ({NOTE_DAY})»"]
+    # Run again (a retried agent), the same note is not written twice.
+    assert (
+        docs_note.add_note(updated, "status", "WP29_SAMPLE — inserted by docs_note", "x", NOTE_DAY)[
+            0
+        ]
+        == updated
+    )
+
+
+def test_a_changelog_and_a_decision_note_from_docs_note_keep_their_checks():
+    changelog = _text(PROJECT / "CHANGELOG.md")
+    updated, _ = docs_note.add_note(changelog, "changelog", "a WP29 sample", NOTE_BODY, NOTE_DAY)
+    _assert_the_changelog_is_newest_first(updated)
+    assert updated == f"# Changelog\n\n## {NOTE_DAY} — a WP29 sample\n\n{NOTE_BODY}\n" + (
+        changelog.removeprefix("# Changelog\n\n")
+    )
+
+    log = _text(PROJECT / "16_DECISION_LOG.md")
+    updated, _ = docs_note.add_note(log, "decision", "ADR-WP29-SAMPLE — why", NOTE_BODY, NOTE_DAY)
+    _assert_the_audit_decisions_are_logged(updated)
+    title, _, rest = log.partition("\n")
+    assert updated == f"{title}\n\n## ADR-WP29-SAMPLE — why ({NOTE_DAY})\n\n{NOTE_BODY}" + rest
+
+
+def _note_under_the_title(text):
+    """The old mistake: a section written straight under the status title."""
+    title, _, rest = text.partition("\n")
+    return f"{title}\n\n## WP29_SAMPLE — written under the title (2026-10-09)\n\nA note.\n{rest}"
+
+
+def test_a_state_block_pushed_under_a_note_is_named_and_moved_back():
+    text = _text(PROJECT / "CURRENT_STATUS.md")
+    broken = _note_under_the_title(text)
+    problems = _status_header_problems(broken)
+    assert any(
+        "Move that paragraph up" in p and "WP29_SAMPLE — written under the title" in p
+        for p in problems
+    ), problems
+
+    repaired, moved = docs_note.repair_status_head(broken)
+    assert moved and _status_header_problems(repaired) == []
+    assert repaired[len(_status_head(repaired)) :].startswith(
+        "\n## WP29_SAMPLE — written under the title (2026-10-09)\n\nA note.\n\n## "
+    )
+    assert docs_note.repair_status_head(repaired) == (repaired, False)
+
+    # The next note repairs it on the way, and says so.
+    updated, notices = docs_note.add_note(broken, "status", "WP29_NEXT", NOTE_BODY, NOTE_DAY)
+    assert _status_header_problems(updated) == []
+    assert any("moved back under the title" in notice for notice in notices), notices
 
 
 def test_the_project_state_follows_the_migration_chain():

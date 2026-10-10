@@ -81,11 +81,28 @@ _LOCK_PIN = re.compile(r'\s*"(?:sha256": "[0-9a-f]{64}|revision": "[0-9a-f]{40})
 #: mirrors.lock.json pins his private mirror's commit the same way (after the copy, 2026-10-09).
 _PINNED = {
     _INDEX: _INDEX_HASH,
-    # Public PNG content hashes; other values in this manifest are still scanned.
-    "config/pixel_actors.json": _INDEX_HASH,
     "backend/runpod_worker/models.lock.json": _LOCK_PIN,
     "backend/runpod_worker/mirrors.lock.json": _LOCK_PIN,
 }
+#: The studio's configuration (config/*.json) and its state file record content checksums of
+#: reviewed files: pixel art, ComfyUI workflows, the office background. Each new one failed the
+#: gate until someone rewrote the whole baseline with --write-baseline (12301a7, 27e016c), and
+#: a rewrite also blesses whatever else stood in the tree that day (WP29, 2026-10-09). So a
+#: whole line holding a single 64-hex value under a key named for its checksum (`sha256`,
+#: `workflow_sha256`, `background_sha256`, ...) passes there; a key, or any other field, in the
+#: same files is still scanned.
+_CHECKSUM_LINE = re.compile(r'\s*"(?:[a-z0-9]+_)*sha256": "[0-9a-f]{64}",?\s*')
+_STATE = "docs/project/PROJECT_STATE.json"
+
+
+def _pin_for(relative: str) -> re.Pattern[str] | None:
+    """The whole-line pattern a finding in `relative` may match to be a pin, not a secret."""
+    if relative in _PINNED:
+        return _PINNED[relative]
+    folder, _, name = relative.rpartition("/")
+    if relative == _STATE or (folder == "config" and name.endswith(".json")):
+        return _CHECKSUM_LINE
+    return None
 
 
 @dataclass(frozen=True)
@@ -164,12 +181,12 @@ def candidate_files(root: Path = ROOT) -> list[Path]:
 def scan(root: Path = ROOT, files: list[Path] | None = None) -> list[Finding]:
     collection = SecretsCollection()
     with default_settings():
-        for relative in candidate_files(root) if files is None else files:
-            collection.scan_file(str(root / relative))
+        for chosen in candidate_files(root) if files is None else files:
+            collection.scan_file(str(root / chosen))
     findings = []
     for filename, secret in collection:
         relative = Path(filename).relative_to(root).as_posix()
-        pin = _PINNED.get(relative)
+        pin = _pin_for(relative)
         if pin is not None:
             lines = (root / relative).read_text(encoding="utf-8").splitlines()
             if pin.fullmatch(lines[secret.line_number - 1]):

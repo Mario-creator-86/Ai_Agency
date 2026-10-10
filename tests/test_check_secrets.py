@@ -21,6 +21,7 @@ import sys
 
 import pytest
 from app.config import ROOT
+from detect_secrets.plugins.high_entropy_strings import Base64HighEntropyString
 
 spec = importlib.util.spec_from_file_location("check_secrets", ROOT / "scripts/check_secrets.py")
 gate = importlib.util.module_from_spec(spec)
@@ -28,8 +29,21 @@ spec.loader.exec_module(gate)
 
 
 def fake_key() -> str:
+    """40 different random letters and digits after "sk-": drawn without repeats, its entropy
+    stays near 5.3 bits a character, clear of the Base64 detector's 4.5 on every draw (drawn
+    with repeats, about one key in 200 fell under it and went unseen in a JSON file)."""
     alphabet = string.ascii_letters + string.digits
-    return "sk-" + "".join(secrets.choice(alphabet) for _ in range(40))
+    return "sk-" + "".join(secrets.SystemRandom().sample(alphabet, 40))
+
+
+def test_every_fake_key_is_one_the_scan_must_find():
+    """The WP29 review (2026-10-10) measured about one fake key in 200 below the entropy limit
+    of the Base64 detector, the only one that sees a key under a JSON field: such a key went
+    unseen and its test failed for no reason, once in a run of this file. Every key here must
+    stand clear of the limit, so a red test always means the gate missed a real-looking key."""
+    detector = Base64HighEntropyString()
+    lowest = min(detector.calculate_shannon_entropy(fake_key()) for _ in range(3000))
+    assert lowest > detector.entropy_limit + 0.5, lowest
 
 
 def empty_baseline(folder):
@@ -217,3 +231,78 @@ def test_public_pixel_content_hashes_pass_but_credentials_and_other_fields_do_no
     assert code == 1 and "pixel_actors.json:3" in output
     manifest.write_text('{\n  "token": "' + digest + '"\n}\n', encoding="utf-8")
     assert run_gate(root, empty_baseline(tmp_path), capsys)[0] == 1
+
+
+@pytest.mark.parametrize(
+    ("place", "key"),
+    [
+        ("config/local_media.json", "workflow_sha256"),
+        ("config/pixel_portraits.json", "sha256"),
+        ("docs/project/PROJECT_STATE.json", "background_sha256"),
+        ("docs/project/PROJECT_STATE.json", "approved_background_sha256"),
+    ],
+)
+def test_a_checksum_in_the_config_or_the_state_file_passes_without_a_baseline(
+    tmp_path, capsys, place, key
+):
+    # WP29 (2026-10-09): every new checksum there failed the gate until the whole baseline was
+    # rewritten (12301a7, 27e016c). A checksum line passes; a key in the same file never does.
+    root = tmp_path / "tree"
+    path = root / place
+    path.parent.mkdir(parents=True)
+    digest = secrets.token_hex(32)
+    checksum = f'{{\n  "a": {{\n    "{key}": "{digest}",\n    "b": 1\n  }}\n}}\n'
+    path.write_text(checksum, encoding="utf-8")
+    code, output = run_gate(root, empty_baseline(tmp_path), capsys)
+    assert code == 0, output
+
+    # A credential beside the checksum, in the same file, is still caught on its own line.
+    path.write_text(checksum.replace('"b": 1', f'"token": "{fake_key()}"'), encoding="utf-8")
+    code, output = run_gate(root, empty_baseline(tmp_path), capsys)
+    assert code == 1 and f"{place}:4" in output and f"{place}:3" not in output
+
+
+@pytest.mark.parametrize(
+    ("place", "line"),
+    [
+        # A checksum key holding something else is not a checksum.
+        ("config/local_media.json", '"workflow_sha256": "{key}"'),
+        # A 64-hex value under another key may be a credential.
+        ("config/local_media.json", '"api_token": "{digest}"'),
+        # A checksum line with something more on it is read whole.
+        ("config/local_media.json", '"sha256": "{digest}", "token": "{key}"'),
+        # Beside config/*.json and the state file, a checksum still needs its review.
+        ("config/local_workflows/flow.json", '"sha256": "{digest}"'),
+        ("frontend/tests/fixtures/sheet.json", '"sha256": "{digest}"'),
+        ("docs/project/OTHER_STATE.json", '"sha256": "{digest}"'),
+    ],
+)
+def test_only_a_whole_checksum_line_in_those_files_passes(tmp_path, capsys, place, line):
+    root = tmp_path / "tree"
+    path = root / place
+    path.parent.mkdir(parents=True)
+    text = line.format(digest=secrets.token_hex(32), key=fake_key())
+    path.write_text("{\n  " + text + "\n}\n", encoding="utf-8")
+    code, output = run_gate(root, empty_baseline(tmp_path), capsys)
+    assert code == 1 and f"{place}:2" in output, output
+
+
+def test_the_shipped_checksums_in_the_config_and_the_state_file_are_pins(capsys):
+    """The tree's own checksum lines (ComfyUI workflows, pixel art, the office background)
+    need no baseline entry: read only, nothing is written."""
+    places = [
+        relative
+        for relative in gate.candidate_files(ROOT)
+        if relative.as_posix() == gate._STATE
+        or (relative.parent.as_posix() == "config" and relative.suffix == ".json")
+    ]
+    assert any(p.as_posix() == "config/local_media.json" for p in places), places
+    findings = gate.scan(ROOT, places)
+    checksums = [
+        f
+        for f in findings
+        if gate._CHECKSUM_LINE.fullmatch(
+            (ROOT / f.path).read_text(encoding="utf-8").splitlines()[f.line - 1]
+        )
+    ]
+    assert checksums == []
