@@ -1520,6 +1520,87 @@ def test_the_director_sees_the_conversation_she_is_in(engine, studio):
     assert "good enough to publish, not whether it is perfect" in seen[1]
 
 
+def _director_says(verdict: str, *notes: str):
+    def answer(prompt):
+        return json.dumps(
+            {
+                "verdict": verdict,
+                "hook_strength": 7,
+                "clarity": 7,
+                "payoff": 7,
+                "cta_fit": 6,
+                "retention": {"at_3": 70, "at_end": 45},
+                "notes": list(notes) or ["Strânge scena 3."],
+            }
+        )
+
+    return answer
+
+
+def test_taste_alone_sends_a_passing_story_back_once_then_the_studio_goes_on(engine, studio):
+    """2026-10-10 (film «How NASA Keeps a Space Telescope Alive With Frozen Fuel»): the sheet
+    repair sent the story round five times; the last two drafts passed every computed check and
+    the Director still answered REVISE, until the repair paused and wrote to the Owner. Taste may
+    send a passing draft back once; a second REVISE on taste alone in a row is a loop, and the
+    studio goes on with her notes kept as suggestions (the Owner: «studioul trebuie să rezolve
+    singur, fără intervenții»)."""
+    from app.factual.story_review import TASTE_SETTLED_RO, review_story
+
+    topic_id = a_topic(engine)
+    registry, _ = registry_with(studio, _director_says("REVISE", "Strânge scena 3."))
+
+    first = review_story(
+        engine, registry, a_script(engine, topic_id, status="VERIFIED_PASS"), target_seconds=30
+    )
+    assert first["failed"] == [], first["failed"]
+    assert first["verdict"] == "REVISE", "her first matter of taste is honoured"
+
+    second = review_story(
+        engine, registry, a_script(engine, topic_id, status="VERIFIED_PASS"), target_seconds=30
+    )
+    assert second["failed"] == []
+    assert second["verdict"] == "PASS"
+    assert TASTE_SETTLED_RO in second["notes"] and "Strânge scena 3." in second["notes"]
+    with Session(engine) as session:
+        stored = session.get(StoryReview, second["id"]).notes_json
+    assert stored["taste_settled"] is True and stored["taste_only"] is False
+
+
+def test_her_reject_and_a_taste_round_after_a_failed_check_still_stand(engine, studio):
+    """Only a REVISE on taste right after another one goes on: her REJECT is a decision and
+    stays hers, and a taste REVISE after a draft the checks themselves sent back is her first."""
+    from app.factual.story_review import review_story
+
+    topic_id = a_topic(engine)
+    # The last reading failed a check (no "taste_only", a refusing failure stored).
+    failing = a_script(engine, topic_id, status="VERIFIED_PASS")
+    with Session(engine) as session, session.begin():
+        session.add(
+            StoryReview(
+                id=str(uuid4()),
+                script_id=failing,
+                verdict="REVISE",
+                checks_json={},
+                retention_json={},
+                scores_json={},
+                notes_json={"notes": ["Prea lung."], "failed": ["duration_is_realistic"]},
+                estimated_seconds=57.5,
+                created_at=utc_now(),
+            )
+        )
+    registry, _ = registry_with(studio, _director_says("REVISE"))
+    after_a_check = review_story(
+        engine, registry, a_script(engine, topic_id, status="VERIFIED_PASS"), target_seconds=30
+    )
+    assert after_a_check["verdict"] == "REVISE"
+
+    rejecting, _ = registry_with(studio, _director_says("REJECT", "Ideea nu ține un short."))
+    refused = review_story(
+        engine, rejecting, a_script(engine, topic_id, status="VERIFIED_PASS"), target_seconds=30
+    )
+    assert refused["verdict"] == "REJECT", "a taste REVISE before does not turn her REJECT"
+
+
 def test_director_respects_the_same_shot_limits_as_writer(engine, studio, monkeypatch):
     from app.factual.story_review import review_story
 

@@ -541,22 +541,24 @@ def _paused_for_the_day(engine, film_id):
     return reading
 
 
-def test_his_accept_lets_the_paused_repair_try_again_now(engine, film):  # noqa: F811
+def test_a_repair_paused_for_the_day_puts_nothing_in_front_of_him(engine, film):  # noqa: F811
+    """2026-10-10, «studioul trebuie să rezolve singur, fără intervenții»: the daily ceiling is
+    the studio's own pause. No card and no letter for him; the Director's note closes by itself
+    when the repair resumes (the next day, a restart or a changed sheet). His retry through the
+    API still works and is recorded once."""
     from app.media import blocker_repair as repair
 
     reading = _paused_for_the_day(engine, film)
-    (card,) = cards(engine, "sheet_repair_paused")
-    assert card.dedupe_key == sources.sheet_repair_key(film, "DAILY_LIMIT")
-    assert card.options[0]["key"] == "retry" and card.options[0]["recommended"]
-    assert card.options[0]["apply"]["type"] == "sheet_repair_retry"
+    assert cards(engine, "sheet_repair_paused") == []
+    assert [
+        letter for letter in paused_letters(engine) if letter.body_json.get("to") == "Owner"
+    ] == []
 
-    answer = accept(engine, card)
-
-    assert answer["decision"]["status"] == "ACCEPTED"
+    repair.allow_repair_retry(engine, film, issued_by="owner", correlation_id="once")
+    repair.allow_repair_retry(engine, film, issued_by="owner", correlation_id="once")
     again = repair.submit_sheet_issues(engine, reading)
     assert again.get("task_id"), again
-    assert paused_letters(engine) == [], "the pause letter closes when the repair resumes"
-    # Accepted twice (a retried click) the retry is recorded once.
+    assert paused_letters(engine) == [], "the Director's note closes when the repair resumes"
     with Session(engine) as session:
         from app.models import DomainEvent
 
@@ -573,24 +575,20 @@ def test_only_the_owner_lets_the_repair_try_again(engine, film):  # noqa: F811
         repair.allow_repair_retry(engine, film, issued_by="Director", correlation_id=str(uuid4()))
 
 
-def test_his_accept_turns_the_blocked_scenes_into_a_local_move(engine, film):  # noqa: F811
+def test_a_day_paused_template_sheet_is_not_turned_into_a_question_either(engine, film):  # noqa: F811
+    """The local-move way out used to be offered on the daily pause's card. That card is gone:
+    the scenes stay as they are and the repair tries again by itself; nothing is chosen for
+    him and nothing is asked."""
     from app.media.models import StoryboardScene
-    from app.media.production_policy import LOCAL_MOVE
     from app.media.shooting_sheet import sheet_overrides
 
     with Session(engine) as session, session.begin():
         scene = session.scalar(select(StoryboardScene).where(StoryboardScene.storyboard_id == film))
         scene.prompt_json = {**scene.prompt_json, "source": "template"}
     _paused_for_the_day(engine, film)
-    (card,) = cards(engine, "sheet_repair_paused")
-    local = next(option for option in card.options if option["key"] == "local_move")
-    scenes = local["apply"]["scenes"]
-    assert scenes and local["apply"]["type"] == "sheet_local_move"
 
-    accept(engine, card, "local_move")
-
-    chosen = sheet_overrides(engine, film)
-    assert all(chosen.get(index) == LOCAL_MOVE for index in scenes), chosen
+    assert cards(engine, "sheet_repair_paused") == []
+    assert sheet_overrides(engine, film) == {}
 
 
 def test_producers_never_decide_and_write_no_ledger_event_when_they_propose(engine):

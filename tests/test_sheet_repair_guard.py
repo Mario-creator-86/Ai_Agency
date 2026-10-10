@@ -134,10 +134,15 @@ def test_once_the_wait_has_passed_the_repair_continues(engine, film):  # noqa: F
     assert third.get("task_id") and third["task_id"] not in (first["task_id"], second["task_id"])
 
 
-def test_five_attempts_a_day_on_the_same_blockers_then_one_letter_and_a_pause(
+def test_five_attempts_a_day_on_the_same_blockers_then_a_pause_the_owner_never_handles(
     engine,
     film,  # noqa: F811
 ):
+    """The ceiling stays (his «să nu meargă la infinit», 2026-10-03), but a pause the studio made
+    itself is its own business (2026-10-10, «studioul trebuie să rezolve singur, fără
+    intervenții»): one note to the Director, no letter and no card for him."""
+    from app.decisions.models import OwnerDecision
+
     reading = sheet(engine, film)
     for n in range(repair.MAX_SAME_ISSUES_PER_DAY):
         dispatched = repair.submit_sheet_issues(engine, reading)
@@ -149,9 +154,12 @@ def test_five_attempts_a_day_on_the_same_blockers_then_one_letter_and_a_pause(
 
     assert paused["status"] == "PAUSED" and again["status"] == "PAUSED"
     assert repair_tasks(engine) == repair.MAX_SAME_ISSUES_PER_DAY
-    (letter,) = paused_letters(engine)
-    assert letter.body_json.get("owner_attention") is True
-    assert "de 5 ori" in letter.body_text and "foaia se schimbă" in letter.body_text
+    (note,) = paused_letters(engine)
+    assert note.body_json.get("to") != "Owner" and not note.body_json.get("owner_attention")
+    assert note.to_agent_id is not None, "the Director's own inbox"
+    assert "de 5 ori" in note.body_text and "foaia se schimbă" in note.body_text
+    with Session(engine) as session:
+        assert list(session.scalars(select(OwnerDecision))) == [], "no card for him"
 
 
 def test_a_changed_sheet_starts_again_from_zero(engine, film):  # noqa: F811

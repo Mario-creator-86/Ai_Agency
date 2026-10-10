@@ -218,13 +218,27 @@ def _repair_guard(
     return None
 
 
+#: The pauses that are the Owner's to unblock: his language-model account. Every other pause is
+#: the studio's own and never reaches him (see `_pause_letter`).
+OWNER_PAUSE_CAUSES = frozenset({"LANGUAGE_MODEL_DOWN"})
+
+
 def _pause_letter(session: Session, sheet: dict[str, Any], fingerprint: str, guard: dict) -> None:
-    """One letter to the Owner per paused sheet, cause and blockers; never one per scan. The
-    pause is also a card in his window of decisions (DECISION_SOURCES, 2026-10-03): the cause
-    and what unblocks it, one per sheet and cause; the letter stays."""
+    """One note per paused sheet, cause and blockers; never one per scan.
+
+    A pause on his account (the language model not answering) is his: a letter and a card in
+    his window of decisions (DECISION_SOURCES, 2026-10-03), the cause and what unblocks it.
+    Any other pause is the studio's own business. 2026-10-10 (film «How NASA Keeps a Space
+    Telescope Alive With Frozen Fuel»): the daily ceiling paused a story loop the studio had
+    made itself and wrote to him «Remedierea foii e în pauză», and he answered «studioul
+    trebuie să rezolve singur, fără intervenții». The ceiling stays (his 2026-10-03 «să nu
+    meargă la infinit»); the note goes to the Director, and the repair resumes by itself the
+    next day, after a restart or when the sheet changes."""
     from app.decisions import sources  # noqa: PLC0415 - the decisions read media lazily
 
-    sources.sheet_repair_paused(session, sheet, fingerprint, guard)
+    owners = guard.get("cause") in OWNER_PAUSE_CAUSES
+    if owners:
+        sources.sheet_repair_paused(session, sheet, fingerprint, guard)
     identifier = str(sheet["storyboard_id"])
     for message in session.scalars(select(AgentMessage).where(AgentMessage.status == "OPEN")):
         body = message.body_json or {}
@@ -233,7 +247,7 @@ def _pause_letter(session: Session, sheet: dict[str, Any], fingerprint: str, gua
     director = agent_for_role(session, "Director")
     post_message(
         session,
-        intent="ESCALATE",
+        intent="ESCALATE" if owners else "STATUS",
         subject=f"Remedierea foii e în pauză: {sheet.get('title') or identifier}"[:200],
         body={
             "kind": PAUSED_KIND,
@@ -243,7 +257,8 @@ def _pause_letter(session: Session, sheet: dict[str, Any], fingerprint: str, gua
         },
         body_text=guard["reason_ro"],
         from_agent_id=director.id if director else None,
-        to_owner=True,
+        to_agent_id=None if owners else (director.id if director else None),
+        to_owner=owners,
     )
 
 

@@ -89,6 +89,33 @@ MAX_REVISIONS = 19
 #: is the decision, not another request.
 MAX_EXCHANGES = 20
 
+#: Said when the studio goes on past a second matter-of-taste REVISE (see `_taste_only`).
+TASTE_SETTLED_RO = (
+    "Scenariul trece toate verificările a doua oară la rând, iar Directorul a cerut din nou "
+    "doar retușuri de gust: studioul merge mai departe, iar notele lui rămân sugestii pentru "
+    "filmare."
+)
+
+
+def _taste_only(review: StoryReview | None) -> bool:
+    """Whether a past reading sent the story back on taste alone: REVISE while every check
+    that may refuse had passed.
+
+    2026-10-10 (film «How NASA Keeps a Space Telescope Alive With Frozen Fuel»): the sheet
+    repair sent the story round five times; the last two drafts passed every computed check
+    and the Director still answered REVISE, each rewrite a new draft she could find something
+    in, until the repair paused and wrote to the Owner. Taste may send a passing draft back
+    once, with her notes for the writer; a second time in a row it is a loop, not a review,
+    and the studio decides on its own (the Owner: «studioul trebuie să rezolve singur, fără
+    intervenții»). A reading recorded before the marker counts when its failures were stored
+    and none of them refuses."""
+    if review is None or review.verdict != "REVISE":
+        return False
+    notes = review.notes_json or {}
+    if notes.get("taste_only") is True:
+        return True
+    return "failed" in notes and blocking_count(review) == 0
+
 
 class StoryReviewError(ValueError):
     """The review could not be produced; nothing was decided and nothing was stored."""
@@ -289,6 +316,8 @@ def review_story(
                 .order_by(StoryReview.created_at.desc())
             ).first()
         earlier_notes = list((previous.notes_json or {}).get("notes") or []) if previous else []
+        # Whether the last reading of this story already sent it back on taste alone.
+        taste_spent = _taste_only(previous)
 
     every_failure = failed(checks)
     # What the arithmetic may refuse on, and what it may only point at.
@@ -312,6 +341,10 @@ def review_story(
     scores: dict[str, Any] = {}
     retention: dict[str, Any] = {}
     run_id = None
+    # REVISE on her taste alone, every refusing check passed (recorded, so the next reading
+    # knows it), and whether this reading went on past such a REVISE.
+    taste_only = False
+    taste_settled = False
     if reviewer_id is not None and registry is not None:
         try:
             opinion, run_id = _ask_director(
@@ -341,9 +374,15 @@ def review_story(
             retention = opinion.retention.model_dump()
             notes.extend(str(note) for note in opinion.notes[:6])
             # The Director may send back a script the checks did not catch; she may not wave
-            # through one they did. Taste can be stricter than a rule, never looser.
-            if opinion.verdict != "PASS" and verdict == "PASS":
+            # through one they did. Taste can be stricter than a rule, never looser — once in
+            # a row: a second REVISE on taste alone, after a rewrite that passes every check
+            # again, is a loop, and the studio goes on (`_taste_only`). Her REJECT stays hers.
+            if opinion.verdict == "REVISE" and verdict == "PASS" and taste_spent:
+                taste_settled = True
+                notes.append(TASTE_SETTLED_RO)
+            elif opinion.verdict != "PASS" and verdict == "PASS":
                 verdict = opinion.verdict
+                taste_only = verdict == "REVISE"
                 # At the last exchange her answer has to be a decision. Asking for another
                 # rewrite when there will be no rewrite is a refusal, and the studio records
                 # it as one rather than ending the day having quietly made nothing. Her
@@ -384,6 +423,8 @@ def review_story(
                     "notes": notes[:12],
                     "failed": every_failure,
                     "flagged": flagged,
+                    "taste_only": taste_only and verdict == "REVISE",
+                    "taste_settled": taste_settled,
                 },
                 estimated_seconds=float(facts["estimated_seconds"]),
                 reviewer_agent_id=reviewer_id,

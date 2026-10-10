@@ -458,7 +458,7 @@ def set_scene_model(
                     f"Modelul {model_id} nu are preț publicat la {resolution}; nu poate fi "
                     "ales pentru o scenă, fiindcă nu se cumpără nimic pe un preț ghicit."
                 )
-        append_event(
+        event = append_event(
             session,
             SCENE_MODEL_EVENT,
             "storyboard",
@@ -472,7 +472,24 @@ def set_scene_model(
             },
             correlation_id or str(uuid4()),
         )
-    return {"scene_index": int(scene_index), "model_id": model_id or None}
+        # His choice is often the decision the film waits for (a scene held for him, now a
+        # local move): the film is walked on now, as his take decisions and his paid yes
+        # already walk it. 2026-10-10: he chose LOCAL_MOVE for babcf272's scene 5 at 08:46 UTC
+        # and nothing moved, because only those two queued the continuation. Nothing is
+        # bought by this: the walk asks for anything paid under his rule. PRODUCTION only.
+        from app.services import queue_film_continue  # noqa: PLC0415 - services imports media
+
+        continue_task_id = queue_film_continue(
+            session,
+            storyboard_id,
+            key=f"film-continue-{storyboard_id}-scene-model-{event.event_id}",
+            payload={"cause": f"scene_model:{int(scene_index)}:{model_id or 'auto'}"},
+        )
+    return {
+        "scene_index": int(scene_index),
+        "model_id": model_id or None,
+        "continue_task_id": continue_task_id,
+    }
 
 
 def decide_sheet_take(
