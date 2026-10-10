@@ -545,6 +545,66 @@ def test_publishing_visibility_is_the_channel_policy_and_the_stamp_is_its_versio
         assert row.privacy_status == "unlisted" and row.policy_version == 2
 
 
+@pytest.mark.parametrize("delay", [0, 30])
+def test_a_film_whose_licence_is_not_confirmed_goes_up_private_and_says_why(
+    runners, engine, tmp_path, monkeypatch, delay
+):
+    """2026-10-10 review: a film whose components do not all prove commercial use
+    (NEEDS_REVIEW: the voice's licence not confirmed) was asked for the channel's public
+    visibility; the gate's rights check refused it on every run and it was never uploaded at
+    all. It goes up private now, with no scheduled public release, and the record says why."""
+    from app.media.models import MediaAsset, VideoRenderJob
+    from app.publishing.models import PublicationRecord
+    from app.publishing.schemas import PublishPolicyCommand
+    from app.publishing.services import change_publish_policy
+    from sqlalchemy import select
+    from test_publish_policy import _to_production
+
+    channels = _seeded_channels(engine)
+    bundle = _serial_film(engine, tmp_path)
+    serial = channels["OFFICE_SERIAL"]["id"]
+    _bound(engine, serial, _connected(engine, "Serial account"))
+    _to_production(engine)
+    change_publish_policy(
+        engine,
+        serial,
+        PublishPolicyCommand(
+            command_id=uuid4(),
+            expected_version=1,
+            autonomous_privacy="public",
+            public_publish_enabled=True,
+            publish_delay_minutes=delay,
+        ),
+    )
+    voice = "narațiunea scenei 1 (ELEVENLABS): nicio confirmare de folosire comercială"
+    with Session(engine) as session, session.begin():
+        session.get(MediaAsset, bundle["asset_id"]).license_status = "NEEDS_REVIEW"
+        job = session.scalars(
+            select(VideoRenderJob).where(VideoRenderJob.output_asset_id == bundle["asset_id"])
+        ).one()
+        job.production_json = {"licences": {"missing_ro": [voice]}}
+    publisher = _RecordingPublisher()
+    monkeypatch.setattr("app.runbook.stages.selected_youtube", lambda *a, **k: publisher)
+    _director_and_publisher_agree(monkeypatch)
+
+    outcome = runners["publish"]()
+
+    assert outcome["status"] == "COMPLETED", outcome
+    (upload,) = publisher.uploads
+    assert upload["privacy_status"] == "private"
+    (record,) = outcome["artefacts"]["published"]
+    assert record["release_privacy"] == "private" and record["publish_at"] is None
+    assert record["private_until_licensed"] is True
+    assert record["visibility_reason"].startswith(
+        "încărcat privat: licența filmului nu este confirmată"
+    )
+    assert voice in record["visibility_reason"]
+    assert "încărcat privat: licența filmului nu este confirmată" in outcome["reason"]
+    with Session(engine) as session:
+        row = session.scalars(select(PublicationRecord)).one()
+        assert row.privacy_status == "private" and row.scheduled_publish_time is None
+
+
 def test_performance_intake_asks_each_channel_through_its_own_account(
     runners, engine, tmp_path, monkeypatch
 ):
@@ -2705,6 +2765,10 @@ def test_the_sheet_letter_says_what_the_film_waits_for_and_names_the_rule(
 # paid scene redo is bought only through may_act('media.scene_redo') under his rule, within
 # `film_max_paid_redos_per_scene` (1) and `film_max_paid_redos` (2); and a deterministic
 # Romanian letter always tells him what failed, what was done and what waits for him.
+#
+# 2026-10-10 (film babcf272): that mechanical repair is gone. The Director reads every failed
+# report and decides; her repair goes through the same paid path and limits. Its tests live in
+# `test_director_decides_qc.py` (the real path among them, on the film assembled below).
 
 
 def _assembled_staircase_film(engine, settings, tmp_path, monkeypatch):
@@ -2817,157 +2881,47 @@ def _scripted_qc(monkeypatch, verdicts: list[str]) -> list[str]:
     return looked
 
 
-def _events(engine, event_type: str) -> list[Any]:
-    from app.models import DomainEvent
-    from sqlalchemy import select
-
-    with Session(engine) as session:
-        rows = list(
-            session.scalars(select(DomainEvent).where(DomainEvent.event_type == event_type))
-        )
-        session.expunge_all()
-        return rows
-
-
-@requires_ffmpeg
-def test_a_failed_staircase_film_gets_its_free_fixes_and_one_paid_redo_and_qc_once_more(
-    engine, settings, tmp_path, monkeypatch
-):
-    from app.runbook import stages
-
-    storyboard_id, asset_id, world = _assembled_staircase_film(
-        engine, settings, tmp_path, monkeypatch
-    )
-    posts_before = world["models"].posts()
-    looked = _scripted_qc(monkeypatch, ["FAILED", "PASSED"])
-
-    outcome = stages._edit_and_qc(engine, None, settings, vault=None)
-
-    # The first film failed; the sound was remastered for 0 credits, scene 2's motion was
-    # bought once under his MODE rule, and the film that came of both was measured once more.
-    assert looked[0] == asset_id
-    assert len(looked) == 2, looked
-    assert looked[1] != asset_id
-    assert world["models"].posts() == posts_before + 1
-    assert outcome["artefacts"]["passed_assets"] == [looked[1]]
-    (repair,) = _events(engine, "runbook.qc_repair")
-    assert repair.payload["of_asset"] == asset_id
-    assert repair.payload["new_asset"] == looked[1]
-    assert [item["redo"] for item in repair.payload["applied"]] == ["audio"]
-    bought = [(item["redo"], item["scene_index"]) for item in repair.payload["bought"]]
-    assert bought == [("motion", 2)]
-    assert repair.payload["requalified"] == "PASSED"
-    # The redo is in the books under its own reference.
-    redo_costs = [
-        cost
-        for cost in _provider_costs(engine)
-        if (cost.attribution_json or {}).get("step") == "motion_redo"
-    ]
-    assert len(redo_costs) == 1
-    # And the Owner has one letter, in Romanian, with the deterministic report in it.
-    (letter,) = _owner_letters(engine, "owner_qc_failed")
-    assert letter.body_json["storyboard_id"] == storyboard_id
-    assert "Controlul calității: PICAT" in letter.body_text
-    assert "refăcut" in letter.body_text and "a trecut" in letter.body_text
-    assert _approvals(engine) == []
-
-    # The repaired film is not repaired again, and a second QC pass buys nothing.
-    again = stages._edit_and_qc(engine, None, settings, vault=None)
-    assert again["artefacts"].get("repairs", []) == []
-    assert world["models"].posts() == posts_before + 1
-
-
-@requires_ffmpeg
-def test_a_paid_redo_is_asked_under_every_paid_step_and_never_bought_unasked(
-    engine, settings, tmp_path, monkeypatch
-):
-    from app.models import OwnerPolicy
-    from app.runbook import stages
-
-    storyboard_id, _asset_id, world = _assembled_staircase_film(
-        engine, settings, tmp_path, monkeypatch
-    )
-    with Session(engine) as session, session.begin():
-        session.get(OwnerPolicy, 1).paid_media_approval = "EVERY_PAID_STEP"
-    posts_before = world["models"].posts()
-    looked = _scripted_qc(monkeypatch, ["FAILED", "FAILED", "PASSED"])
-
-    stages._edit_and_qc(engine, None, settings, vault=None)
-
-    assert world["models"].posts() == posts_before
-    (question,) = _approvals(engine)
-    assert question.action == "media.scene_redo" and question.result == "PENDING"
-    assert question.subject == storyboard_id
-    # The free sound fix was still applied and measured once more.
-    assert len(looked) == 2
-    (letter,) = _owner_letters(engine, "owner_qc_failed")
-    assert "așteaptă răspunsul tău" in letter.body_text
-
-    # His yes queues the film to continue; the continuation spends it on that redo at once,
-    # rejoins the film and measures it once more, and he is told the outcome.
-    from app.workflows.models import TaskQueueItem
-    from sqlalchemy import select
-
-    _answer(engine, question.id, "APPROVED", note="Da, reface scena 2.")
-    with Session(engine) as session:
-        (task,) = session.scalars(
-            select(TaskQueueItem).where(TaskQueueItem.task_type == "FILM_CONTINUE")
-        ).all()
-        assert task.payload["storyboard_id"] == storyboard_id
-
-    outcome = stages.continue_film(
-        engine, settings, None, None, storyboard_id, cause="x", correlation_id="c"
-    )
-
-    assert world["models"].posts() == posts_before + 1, outcome
-    assert len(looked) == 3 and looked[2] not in looked[:2]
-    assert outcome["passed_assets"] == [looked[2]]
-    letters = _owner_letters(engine, "owner_qc_failed")
-    assert len(letters) == 2 and "a trecut" in letters[-1].body_text
-    with Session(engine) as session:
-        from app.models import ApprovalRequest
-
-        assert session.get(ApprovalRequest, question.id).consumed_at is not None
-
-
-@requires_ffmpeg
-def test_the_paid_redo_limits_hold_and_the_letter_says_so(engine, settings, tmp_path, monkeypatch):
-    from app.runbook import stages
-
-    _storyboard_id, _asset_id, world = _assembled_staircase_film(
-        engine, settings, tmp_path, monkeypatch
-    )
-    settings.film_max_paid_redos = 0
-    posts_before = world["models"].posts()
-    _scripted_qc(monkeypatch, ["FAILED", "FAILED"])
-
-    stages._edit_and_qc(engine, None, settings, vault=None)
-
-    assert world["models"].posts() == posts_before
-    assert _approvals(engine) == []
-    (letter,) = _owner_letters(engine, "owner_qc_failed")
-    assert "limita" in letter.body_text
-
-
 @requires_ffmpeg
 def test_the_letter_is_written_even_when_the_diagnosis_model_fails(
     engine, settings, tmp_path, monkeypatch
 ):
+    """The Video Editor's diagnosis failing does not stop the film: the Director still reads
+    the report and decides, and the Owner gets her letter (since 2026-10-10 the Director's
+    path, not the mechanical repair's «Controlul calității: PICAT» letter)."""
+    from app.agents.models import Agent, ModelRecord
     from app.agents.reviews import ReviewError
+    from app.media.director_qc import LETTER_KIND
     from app.runbook import stages
+    from sqlalchemy import select
+    from test_director_decides_qc import ScriptedModel, _context_of, answer
 
     _assembled_staircase_film(engine, settings, tmp_path, monkeypatch)
-    settings.film_max_paid_redos = 0
     _scripted_qc(monkeypatch, ["FAILED", "FAILED"])
 
     def broken(*_args, **_kwargs):
         raise ReviewError("Diagnosticul randării nu respectă forma cerută")
 
-    monkeypatch.setattr(stages, "review_failed_render", broken)
-    monkeypatch.setattr(stages, "_has_language_model", lambda registry: True)
+    def director(prompt: str) -> str:
+        findings = _context_of(prompt)["findings"]
+        verdicts = [
+            {"finding": item["id"], "verdict": "ACCEPTED", "reason": "acceptat așa cum este"}
+            for item in findings
+        ]
+        return answer(verdicts, "ACCEPT", summary="Filmul se publică așa cum este.")
 
-    outcome = stages._edit_and_qc(engine, object(), settings, vault=None)
+    monkeypatch.setattr(stages, "review_failed_render", broken)
+    with Session(engine) as session, session.begin():
+        for model in session.scalars(select(ModelRecord)):
+            model.is_available = True
+        provider_id = session.scalar(select(Agent.provider_id))
+    registry = ProviderRegistry()
+    registry.register(provider_id, ScriptedModel(director))
+
+    outcome = stages._edit_and_qc(engine, registry, settings, vault=None)
 
     assert outcome["artefacts"]["diagnoses"][0]["error_class"] == "ReviewError"
-    (letter,) = _owner_letters(engine, "owner_qc_failed")
-    assert "Controlul calității: PICAT" in letter.body_text
+    assert outcome["artefacts"]["decisions"][0]["outcome"] == "ACCEPTED"
+    (letter,) = _owner_letters(engine, LETTER_KIND)
+    assert letter.intent == "STATUS"
+    assert "a decis singură" in letter.body_text
+    assert _owner_letters(engine, "owner_qc_failed") == []

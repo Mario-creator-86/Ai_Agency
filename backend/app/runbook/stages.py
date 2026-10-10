@@ -67,6 +67,7 @@ from app.agents.reviews import (
     prepare_publication,
     publication_hold,
     review_failed_render,
+    review_film_qc,
     review_narration,
 )
 from app.analytics.services import (
@@ -75,6 +76,7 @@ from app.analytics.services import (
 )
 from app.analytics.trends import is_fresh, refresh_trends
 from app.config import Settings
+from app.db import lock_for_write
 from app.economy.accountant import (
     AccountantError,
     budget_refusal_letter,
@@ -128,7 +130,7 @@ from app.media.prompt_agent import (
     hold_for_shot_plan,
     write_shot_prompts,
 )
-from app.media.qc import evaluate_media_qc
+from app.media.qc import evaluate_media_qc, rights_verdict
 from app.media.serial_storyboard import describe_serial_shots
 from app.media.services import generate_storyboard_from_script
 from app.models import DomainEvent
@@ -2233,7 +2235,6 @@ def _sheet_letter(
     own facts, never a model's account of them.
     """
     from app.agents.messages import post_message  # noqa: PLC0415
-    from app.db import lock_for_write  # noqa: PLC0415
     from app.decisions.sources import film_budget  # noqa: PLC0415
     from app.media.shooting_sheet import film_is_closed, sheet_url  # noqa: PLC0415
 
@@ -3504,11 +3505,12 @@ def _edit_and_qc(
 ) -> dict[str, Any]:
     """Measure every rendered file that has not been measured yet (or only ``asset_ids``).
 
-    Quality control is measured, never opined. What follows a failure is the Video Editor's
-    work: a diagnosis and a proposed correction, filed as an escalation for the Director; and,
-    for a film assembled from its takes, the repair itself (`repair_failed_film`, A8): the free
-    fixes applied at once, the paid scene redos bought only under the Owner's rule and within
-    his limits, QC once more on what came of them, and always a letter to him in Romanian.
+    Quality control is measured, never opined. What follows a failure is first the Video
+    Editor's diagnosis, then the Director's decision (`director_decides_failed_film`,
+    2026-10-10): she judges every finding and accepts the film, has only the scenes she lists
+    redone (bought under the Owner's rule and within his limits, then measured again and read
+    by her again), or closes it, and the Owner gets her letter in Romanian. Nothing is redone
+    before she has read the report; when she cannot decide, nothing is redone at all.
     """
     superseded = _repair_intermediates(engine)
     with Session(engine) as session:
@@ -3549,6 +3551,7 @@ def _edit_and_qc(
     passed_assets: list[str] = []
     failed_assets: list[str] = []
     repairs: list[dict[str, Any]] = []
+    decisions: list[dict[str, Any]] = []
     for asset_id in pending:
         # The Owner's ceiling on scenes that fell back to a slow push travels with the
         # measurement; without it quality control assumes half the scenes. So do the two
@@ -3575,6 +3578,7 @@ def _edit_and_qc(
             continue
         failed += 1
         failed_assets.append(asset_id)
+        diagnosis: dict[str, Any] | None = None
         if registry is not None and _has_language_model(registry):
             try:
                 diagnosis = review_failed_render(engine, registry, report["id"], str(uuid4()))
@@ -3589,25 +3593,21 @@ def _edit_and_qc(
                         "error_class": type(exc).__name__,
                     }
                 )
-        # Whatever the diagnosis model did, the film is repaired where the studio can, and
-        # the Owner is told in Romanian what failed, what was done and what waits for him.
-        repair = repair_failed_film(
-            engine, settings, vault, registry, str(report["id"]), asset_id, free=True
+        # The Director reads the report (and Kael's diagnosis) before anything is redone, and
+        # decides: accept, repair only what she lists, or close (2026-10-10, babcf272).
+        decided = director_decides_failed_film(
+            engine, settings, vault, registry, str(report["id"]), asset_id, diagnosis=diagnosis
         )
-        if repair.get("repaired"):
-            repairs.append(repair)
-            if repair.get("requalified") == "PASSED" and repair.get("new_asset"):
-                passed_assets.append(str(repair["new_asset"]))
+        decisions.append(_decision_summary(decided))
+        repairs.extend(decided.get("repairs") or [])
+        if decided.get("passed_asset"):
+            passed_assets.append(str(decided["passed_asset"]))
     reason = (
         f"{passed} {'a trecut' if passed == 1 else 'au trecut'} QC, "
         f"{failed} {'a picat' if failed == 1 else 'au picat'}."
     )
-    fixed = [item for item in repairs if item.get("requalified") == "PASSED"]
-    if repairs:
-        reason += (
-            f" {count(len(repairs), 'film refăcut', 'filme refăcute')} automat, "
-            f"{len(fixed)} {'a trecut' if len(fixed) == 1 else 'au trecut'} QC după refacere."
-        )
+    if decisions:
+        reason += " " + _decisions_words(decisions)
     return _outcome(
         COMPLETED,
         reason,
@@ -3616,28 +3616,39 @@ def _edit_and_qc(
         diagnoses=diagnoses,
         passed_assets=passed_assets,
         failed_assets=failed_assets,
+        decisions=decisions,
         repairs=[_repair_summary(item) for item in repairs],
     )
 
 
-# -------------------------------------------- a film that failed QC is repaired (A8) --
+# ------------------------------- a film that failed QC is decided by the Director --
 #
 # 2026-10-02 (CONTINUE_REDOS_E2E, A8). A film that failed quality control used to be abandoned:
-# the Video Editor's priced proposals were filed and never applied, the 0-credit fixes waited
-# for the Owner's click, and when her model failed he had no letter at all. Now, for a film
-# assembled from its takes: the free fixes (a re-encode from the same takes, a card
-# recomposed, the sound remastered) are applied at once; a scene's paid redo (a new picture,
-# new motion) is bought only through `redo_scene`, whose purchase passes `may_act` for
-# media.scene_redo with the redo's own plan_hash (his paid-media rule, the mode, the budgets,
-# the film's ceiling, the lease), and only within `film_max_paid_redos_per_scene` and
-# `film_max_paid_redos`; the film that came of them is measured once more, and only once; a
-# repaired film is never repaired again by itself. Every failed film gets one deterministic
-# letter (`qc_summary_ro` plus what was done), whether or not the diagnosis model answered.
+# the Video Editor's priced proposals were filed and never applied. From then on, for a film
+# assembled from its takes, the free fixes (a re-encode from the same takes, a card recomposed,
+# the sound remastered) and a scene's paid redo (a new picture, new motion) were applied by
+# code, every scene the report named: the paid ones only through `redo_scene`, whose purchase
+# passes `may_act` for media.scene_redo with the redo's own plan_hash (his paid-media rule, the
+# mode, the budgets, the film's ceiling, the lease), within `film_max_paid_redos_per_scene` and
+# `film_max_paid_redos`.
+#
+# 2026-10-10 (film babcf272, report d4ea68d2). That mechanical repair redid scenes 1 and 2
+# unasked: the report had read the studio's own burned-in subtitles as «text or a logo» on
+# every scene and the Owner's approved choice of a dark tunnel as a breach of the bible, and the
+# repair retired the still, the motion and the test shot he had approved, rewrote both scenes'
+# prompts and opened RunPod sessions, while the one real flaw (scene 5, three stacked panels)
+# waited behind them. The Owner: the agents check one another and the Director decides alone.
+# So the Director reads every failed report first (`director_decides_failed_film`): her
+# verdict per finding, then ACCEPT, REPAIR (only her list, through the same paid path and
+# limits; never a take he approved) or CLOSE, and her letter to him. With no model, nothing is
+# redone: the report waits for her.
 
 #: One repair of one failed film: what was applied, bought, asked, refused, and the verdict.
 QC_REPAIR_EVENT = "runbook.qc_repair"
 #: One scene's paid redo bought by a repair, counted against the Owner's limits.
 QC_PAID_REDO_EVENT = "runbook.qc_paid_redo"
+#: The mechanical repair's letter until 2026-10-10 (still in his inbox for older films); the
+#: Director's letter is `app.media.director_qc.LETTER_KIND`.
 QC_LETTER_KIND = "owner_qc_failed"
 #: The free fixes, in the order they are applied: the picture first, the sound last, so the
 #: remastered mix is the one that reaches the final film.
@@ -3670,7 +3681,52 @@ def _repaired_assets(session: Session) -> set[str]:
     return seen
 
 
+def _round_began(session: Session, event: DomainEvent) -> str:
+    """When a paid redo round began: its own ``started_at`` (written since 2026-10-10), else
+    the first thing its repair wrote (the round's event is written after its purchases, under
+    the repair's correlation)."""
+    payload = event.payload if isinstance(event.payload, dict) else {}
+    if payload.get("started_at"):
+        return str(payload["started_at"])
+    first = session.scalar(
+        select(func.min(DomainEvent.timestamp)).where(
+            DomainEvent.correlation_id == event.correlation_id
+        )
+    )
+    return str(first or event.timestamp)
+
+
+def _round_delivered(session: Session, storyboard_id: str, scene: int, since: str) -> bool:
+    """Whether a paid round of the scene that began at ``since`` delivered something: a still or
+    shot of the scene made after it that came with its file or may still come (the history
+    rule of `assembler._delivered_since`: APPROVED, PAID, SUBMITTED, or REJECTED with its
+    file), or a candidate written since into an older row (`director_qc.bought_since`) that
+    carries its file."""
+    from app.media import director_qc  # noqa: PLC0415 - media imports runbook
+    from app.media.assembler import _delivered_since  # noqa: PLC0415 - media imports runbook
+
+    if _delivered_since(session, storyboard_id, scene, since, []):
+        return True
+    return any(
+        row.sha256 and row.status in ("APPROVED", "PAID", "REJECTED")
+        for row in director_qc.bought_since(
+            session, storyboard_id, scene, director_qc.REJOIN, since
+        )
+    )
+
+
 def _paid_redo_rounds(session: Session, storyboard_id: str) -> dict[int, int]:
+    """The paid redo rounds of each scene, counted against his limits. The motion that follows
+    its scene's new still (its event ``continues`` the still's round) is the same round, not
+    another: a still bought in one walk and approved later by his look (or the vendor's late
+    delivery) would otherwise spend the scene's one round and leave the new still with no motion,
+    so never in a film (2026-10-10 review).
+
+    A round that delivered nothing is not counted (`_round_delivered`; 2026-10-10, babcf272: the
+    mechanical repair's two morning rounds, scenes 1 and 2, ended with every candidate REFUSED,
+    the GPU forced off, and spent the film's two paid redos, so the Director's repair of the
+    one real flaw, scene 5's three panels, was refused and she was steered to accept it). What
+    a round may buy is still the Policy Kernel's, the budgets' and the film ceiling's."""
     rounds: dict[int, int] = {}
     for event in session.scalars(
         select(DomainEvent).where(
@@ -3680,9 +3736,51 @@ def _paid_redo_rounds(session: Session, storyboard_id: str) -> dict[int, int]:
     ):
         payload = event.payload if isinstance(event.payload, dict) else {}
         scene = payload.get("scene_index")
-        if isinstance(scene, int):
+        if (
+            isinstance(scene, int)
+            and not payload.get("continues")
+            and _round_delivered(session, storyboard_id, scene, _round_began(session, event))
+        ):
             rounds[scene] = rounds.get(scene, 0) + 1
     return rounds
+
+
+def _open_still_rounds(session: Session, storyboard_id: str) -> dict[int, str]:
+    """Per scene, the paid round whose new still was bought and whose motion was not yet
+    (``open_motion``), by its event id: a motion of that scene continues it rather than
+    starting a round of its own. A motion that continued it, or a newer round of the scene,
+    closes it; a round that delivered nothing (`_round_delivered`) has no new still for a
+    motion to start from, and opens nothing."""
+    events = list(
+        session.scalars(
+            select(DomainEvent)
+            .where(
+                DomainEvent.event_type == QC_PAID_REDO_EVENT,
+                DomainEvent.aggregate_id == storyboard_id,
+            )
+            .order_by(DomainEvent.sequence)
+        )
+    )
+    closed = {
+        str(payload.get("continues"))
+        for event in events
+        if isinstance(payload := event.payload, dict) and payload.get("continues")
+    }
+    open_rounds: dict[int, str] = {}
+    for event in events:
+        payload = event.payload if isinstance(event.payload, dict) else {}
+        scene = payload.get("scene_index")
+        if not isinstance(scene, int) or payload.get("continues"):
+            continue
+        if (
+            payload.get("open_motion")
+            and str(event.event_id) not in closed
+            and _round_delivered(session, storyboard_id, scene, _round_began(session, event))
+        ):
+            open_rounds[scene] = str(event.event_id)
+        else:
+            open_rounds.pop(scene, None)
+    return open_rounds
 
 
 def _repair_summary(repair: dict[str, Any]) -> dict[str, Any]:
@@ -3690,7 +3788,18 @@ def _repair_summary(repair: dict[str, Any]) -> dict[str, Any]:
     return {key: repair.get(key) for key in keys}
 
 
-def repair_failed_film(
+#: The most rounds of the Director's review one film gets in one walk: a round is her reading
+#: of one report and what she decided; a repair that made a new film is measured and read by
+#: her again. The Owner's per-scene and per-film paid limits end the walk sooner; this ends a
+#: loop they do not see (a decision of which nothing could be done, read once more).
+DIRECTOR_QC_ROUNDS = 4
+#: What a paid redo she decided says on the Owner's question, should his rule ask him.
+DIRECTOR_REDO_NOTE = "Controlul calității a picat scena; refacere hotărâtă de Directoare."
+#: A redo that would retire a take the Owner approved: refused before anything is priced.
+OWNER_APPROVED_REDO = "OWNER_APPROVED"
+
+
+def director_decides_failed_film(
     engine: Engine,
     settings: Settings | None,
     vault: Any,
@@ -3698,64 +3807,521 @@ def repair_failed_film(
     report_id: str,
     asset_id: str,
     *,
-    free: bool = True,
+    diagnosis: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Repair one film that failed QC as far as the Owner's rule allows, and write to him.
+    """The Director decides one film that failed QC, and what she decided is carried out.
 
-    ``free`` applies the 0-credit fixes (once per film: a film a repair made or started from
-    gets none again). The paid scene redos are tried every time, bounded by his limits and
-    gated by `may_act` inside `redo_scene`: under EVERY_PAID_STEP each is a question to him,
-    and his yes continues the film the same day (FILM_CONTINUE). Never raises: a fault is a
-    line in his letter. Returns ``repaired`` False for a film not assembled from its takes
-    (only the letter), else what was applied, bought, asked and refused, and ``requalified``,
-    the verdict on the one film measured again (None when no new film was made)."""
-    correlation = str(uuid4())
-    result: dict[str, Any] = {
-        "repaired": False,
+    2026-10-10, film babcf272: the mechanical repair redid every scene the report named, the
+    Owner's approved takes with them, while the scenes' only real flaw was one still of panels
+    and the rest was the studio's own subtitles read as text. Now each round is her reading of
+    the report (`app.media.director_qc.film_qc_context`, `review_film_qc`): a verdict per
+    finding and one decision. ACCEPT writes the PASSED report her decision stands on (the
+    publishing gate then lets the film through; the rights and factual gates still run);
+    REPAIR redoes only her list, never a take he approved (`_director_repairs`), and a new film
+    is measured and read by her again; CLOSE closes the film. With no model, or an answer that
+    did not validate twice, nothing is redone: the report waits in her inbox and the watchdog
+    asks her again (`app.workflows.passes.director_qc_review`). Never raises.
+
+    Returns ``outcome`` (the last round's: ACCEPTED, ACCEPT_REFUSED, REPAIRED, ASKED,
+    BOUGHT_WAITING, CLOSED, NOTHING_DONE, WAITING), ``passed_asset`` (the film that may now be
+    published, or None),
+    ``rounds`` and ``repairs`` (what each repair applied, bought, asked and refused)."""
+    from app.media import director_qc  # noqa: PLC0415 - media imports runbook
+
+    outcome: dict[str, Any] = {
         "report_id": report_id,
         "of_asset": asset_id,
+        "outcome": None,
+        "passed_asset": None,
+        "rounds": [],
+        "repairs": [],
+    }
+    report, asset = report_id, asset_id
+    read_again = False
+    for number in range(DIRECTOR_QC_ROUNDS):
+        try:
+            step = _director_round(
+                engine,
+                settings,
+                vault,
+                registry,
+                report,
+                asset,
+                diagnosis=diagnosis if number == 0 else None,
+            )
+        except Exception as exc:  # noqa: BLE001 - a fault waits for her; it never redoes
+            logger.warning(
+                "director_qc_round_failed",
+                extra={"report_id": report, "error": type(exc).__name__},
+            )
+            try:
+                step = director_qc.wait_for_director(
+                    engine,
+                    {"report_id": report, "media_asset_id": asset, **_film_of(engine, asset)},
+                    error_words(exc),
+                    str(uuid4()),
+                )
+            except Exception as again:  # noqa: BLE001 - the stage's own record says it
+                logger.warning(
+                    "director_qc_wait_not_recorded",
+                    extra={"report_id": report, "error": type(again).__name__},
+                )
+                step = {"outcome": "WAITING", "reason": error_words(exc)}
+        outcome["outcome"] = step.get("outcome")
+        outcome["rounds"].append(
+            {
+                "report_id": report,
+                "asset_id": asset,
+                "outcome": step.get("outcome"),
+                "decision": (step.get("decision") or {}).get("decision"),
+                "reason": step.get("reason"),
+                "letter_id": step.get("letter_id"),
+            }
+        )
+        repair = step.get("repair")
+        if repair:
+            outcome["repairs"].append(repair)
+        kind = step.get("outcome")
+        if kind == "ACCEPTED":
+            outcome["passed_asset"] = asset
+            break
+        if kind == "REPAIRED" and repair:
+            if repair.get("requalified") == "PASSED" and repair.get("new_asset"):
+                outcome["passed_asset"] = str(repair["new_asset"])
+                break
+            if repair.get("requalified") == "FAILED" and repair.get("requalified_report_id"):
+                # The film her repair made failed too: she reads its report next.
+                report, asset = str(repair["requalified_report_id"]), str(repair["new_asset"])
+                continue
+            break
+        if kind == "NOTHING_DONE" and not read_again:
+            # Nothing of her list could be done (his approved takes, the limits, a free fix
+            # already made): she reads the report once more, knowing why.
+            read_again = True
+            continue
+        break
+    return outcome
+
+
+def _film_of(engine: Engine, asset_id: str) -> dict[str, Any]:
+    with Session(engine) as session:
+        job = session.scalar(
+            select(VideoRenderJob).where(VideoRenderJob.output_asset_id == asset_id).limit(1)
+        )
+        return {"storyboard_id": job.storyboard_id if job is not None else None}
+
+
+def _redo_allowance(
+    engine: Engine, settings: Settings | None, reading: dict[str, Any]
+) -> tuple[dict[str, Any], bool]:
+    """The paid redos his limits allow the film ({per_scene, per_film, spent, open_motion}:
+    the scenes whose new still was bought and whose motion may still follow in that round),
+    and whether a free fix was already applied to its line (it is done once)."""
+    storyboard_id = str(reading.get("storyboard_id") or "")
+    with Session(engine) as session:
+        spent = _paid_redo_rounds(session, storyboard_id) if storyboard_id else {}
+        open_rounds = _open_still_rounds(session, storyboard_id) if storyboard_id else {}
+        free_used = str(reading.get("media_asset_id")) in _repaired_assets(session)
+    limits = {
+        "per_scene": int(getattr(settings, "film_max_paid_redos_per_scene", 1)),
+        "per_film": int(getattr(settings, "film_max_paid_redos", 2)),
+        "spent": spent,
+        "open_motion": sorted(open_rounds),
+    }
+    return limits, free_used
+
+
+def _director_round(
+    engine: Engine,
+    settings: Settings | None,
+    vault: Any,
+    registry: ProviderRegistry | None,
+    report_id: str,
+    asset_id: str,
+    *,
+    diagnosis: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """One reading of one report by the Director, and what she decided, carried out.
+
+    A report she already decided is not read again. Her REPAIR that waited on something
+    outside her (`director_qc.PENDING_OUTCOMES`: his answer to the paid question, a take bought
+    for her list waiting for his look or the vendor) is carried on once that came
+    (`decision_state` ``ready``): only what is left of her list, never what was bought for it
+    already (``bought_so_far``), and she is not asked a second time; while it still waits it
+    stands. One whose wait lapsed (his no, an expired question, his look rejecting what was
+    bought) is hers to read again, with what came of it (2026-10-10 review). Any other final
+    decision stands."""
+    from app.media import director_qc  # noqa: PLC0415 - media imports runbook
+
+    correlation = str(uuid4())
+    standing = director_qc.decision_state(engine, report_id)
+    if standing["final"]:
+        decided = dict(standing["decision"] or {})
+        if standing["pending"] and standing["ready"]:
+            reading = failed_render_reading(engine, report_id)
+            carried = {
+                key: value
+                for key, value in decided.items()
+                if key not in ("outcome", "final", "done", "passed_report_id")
+            }
+            return _carry_out(
+                engine,
+                settings,
+                vault,
+                registry,
+                reading,
+                {**carried, "resumed": True},
+                correlation,
+            )
+        return {
+            "outcome": standing["outcome"],
+            "decision": decided,
+            "standing": True,
+            "reason": (
+                "Refacerea hotărâtă de Directoare așteaptă răspunsul tău sau aprobarea preluării "
+                "cumpărate."
+                if standing["pending"]
+                else "Directoarea a decis deja acest raport."
+            ),
+        }
+    reading = failed_render_reading(engine, report_id)
+    limits, free_used = _redo_allowance(engine, settings, reading)
+    context = director_qc.film_qc_context(
+        engine, reading, diagnosis=diagnosis, limits=limits, free_used=free_used
+    )
+    if registry is None or not _has_language_model(registry):
+        return director_qc.wait_for_director(
+            engine, reading, "niciun model de limbaj nu este configurat", correlation
+        )
+    try:
+        review = review_film_qc(engine, registry, context, correlation)
+    except (NoReviewer, ReviewError, ValueError) as exc:
+        return director_qc.wait_for_director(engine, reading, error_words(exc), correlation)
+    decided = {
+        "report_id": report_id,
+        "media_asset_id": asset_id,
+        "storyboard_id": reading.get("storyboard_id"),
+        "decided_by": director_qc.DIRECTOR,
+        "agent_id": review["agent_id"],
+        "agent_name": review["agent_name"],
+        "run_id": review["run_id"],
+        "decision": review["decision"],
+        "summary": review["summary"],
+        "verdicts": director_qc.annotate_verdicts(review["verdicts"], context),
+        "repairs": review["repairs"],
+        "resumed": False,
+    }
+    storyboard_id = str(reading.get("storyboard_id") or "")
+    if review["decision"] == "REPAIR" and storyboard_id:
+        # A take bought for her earlier REPAIR of this film, approved and in no film yet
+        # (`director_qc.bought_not_in_film`): her REPAIR of that scene carries it on (the film
+        # rejoined, or its motion) as bought for this decision, and never buys it again.
+        listed = {
+            item.get("scene_index")
+            for item in review["repairs"]
+            if item.get("redo") in ("still", "motion")
+        }
+        with Session(engine) as session:
+            bought_before = [
+                item
+                for item in director_qc.bought_not_in_film(session, storyboard_id)
+                if item["scene_index"] in listed
+            ]
+        if bought_before:
+            decided["bought_so_far"] = [
+                [item["kind"], item["scene_index"]] for item in bought_before
+            ]
+            decided["started_at"] = min(str(item["since"]) for item in bought_before)
+    return _carry_out(engine, settings, vault, registry, reading, decided, correlation)
+
+
+def _carry_out(
+    engine: Engine,
+    settings: Settings | None,
+    vault: Any,
+    registry: ProviderRegistry | None,
+    reading: dict[str, Any],
+    decided: dict[str, Any],
+    correlation: str,
+) -> dict[str, Any]:
+    """Her decision, done as she decided it and recorded (`media.director_qc_decision`), with
+    the Owner's letter once it is final; her inbox note about the report is then answered.
+
+    A REPAIR that bought something and made no film yet is BOUGHT_WAITING (2026-10-10 review:
+    a new still bought and waiting for his look was recorded «nothing could be done», with no
+    letter to him about the money and a note in her inbox saying nothing was done): he gets the
+    letter that lists the purchase, and the walk carries on her list once the take is approved.
+    ``bought_so_far`` (the (redo, scene) bought for this decision, across its resumptions) is
+    what a resumption never buys again."""
+    from app.media import director_qc  # noqa: PLC0415 - media imports runbook
+
+    report_id = str(reading["report_id"])
+    kind = str(decided.get("decision") or "")
+    step: dict[str, Any] = {"decision": decided}
+    done_lines: list[str] = []
+    if kind == "ACCEPT":
+        hard = [item for item in decided.get("verdicts") or [] if item.get("not_yours")]
+        if hard:
+            # Rights, claims, placeholder pictures, a file that is not its record: his or the
+            # sources' to settle; her ACCEPT does not reach them.
+            step["outcome"] = "ACCEPT_REFUSED"
+            step["event_id"] = director_qc.record_decision(
+                engine,
+                {**decided, "outcome": "ACCEPT_REFUSED", "final": True},
+                correlation,
+            )
+        else:
+            accepted = director_qc.accept_film(engine, reading, decided, correlation)
+            step.update(outcome="ACCEPTED", **accepted)
+    elif kind == "CLOSE":
+        closing = director_qc.close_film(engine, reading, decided, correlation)
+        step.update(outcome="CLOSED", closing=closing, event_id=closing["event_id"])
+    else:
+        before = [
+            [str(pair[0]), pair[1]]
+            for pair in decided.get("bought_so_far") or []
+            if isinstance(pair, list | tuple) and len(pair) == 2
+        ]
+        # When her REPAIR began to be carried out: a take approved after it is one bought for
+        # her list (`director_qc.new_approved_take`).
+        started_at = str(decided.get("started_at") or utc_now())
+        repair = _director_repairs(
+            engine,
+            settings,
+            vault,
+            registry,
+            reading,
+            list(decided.get("repairs") or []),
+            already=[(pair[0], pair[1]) for pair in before],
+            since=started_at,
+        )
+        bought_so_far = before + [
+            [str(item["redo"]), item.get("scene_index")] for item in repair.get("bought") or []
+        ]
+        # What still waits: this walk's purchases in no film, and the earlier ones whose take
+        # is not approved yet (one approved now was carried on above).
+        waiting = list(repair.get("waiting") or [])
+        seen = {(entry.get("scene_index"), entry.get("kind")) for entry in waiting}
+        # A film still not rejoined keeps the moment it first waited: `BOUGHT_WAIT_DAYS` count
+        # from there, not from each retry.
+        first_waited = {
+            (entry.get("scene_index"), entry.get("kind")): entry.get("waiting_since")
+            for entry in decided.get("waiting_so_far") or []
+            if isinstance(entry, dict) and entry.get("waiting_since")
+        }
+        for entry in waiting:
+            first = first_waited.get((entry.get("scene_index"), entry.get("kind")))
+            if first:
+                entry["waiting_since"] = first
+        storyboard_id = str(reading.get("storyboard_id") or "")
+        with Session(engine) as session:
+            for entry in decided.get("waiting_so_far") or []:
+                if (
+                    isinstance(entry, dict)
+                    and isinstance(entry.get("scene_index"), int)
+                    and (entry["scene_index"], entry.get("kind")) not in seen
+                    and not director_qc.new_approved_take(
+                        session,
+                        storyboard_id,
+                        int(entry["scene_index"]),
+                        str(entry.get("kind") or "still"),
+                        str(entry.get("since") or started_at),
+                    )
+                ):
+                    waiting.append(entry)
+        if repair.get("new_asset"):
+            result = "REPAIRED"
+        elif repair.get("asked"):
+            result = "ASKED"
+        elif repair.get("bought") or waiting:
+            result = "BOUGHT_WAITING"
+        else:
+            result = "NOTHING_DONE"
+        step.update(outcome=result, repair=repair, bought_so_far=bought_so_far)
+        done_lines = _repair_lines(repair)
+        step["event_id"] = director_qc.record_decision(
+            engine,
+            {
+                **decided,
+                "outcome": result,
+                "final": result in director_qc.FINAL_OUTCOMES,
+                "started_at": started_at,
+                "bought_so_far": bought_so_far,
+                "waiting_so_far": waiting,
+                "done": {
+                    key: repair.get(key)
+                    for key in (
+                        "applied",
+                        "bought",
+                        "asked",
+                        "refused",
+                        "limited",
+                        "skipped",
+                        "waiting",
+                        "new_asset",
+                        "requalified",
+                        "requalified_report_id",
+                    )
+                },
+            },
+            correlation,
+        )
+    if step["outcome"] in director_qc.FINAL_OUTCOMES:
+        try:
+            step["letter_id"] = director_qc.director_letter(
+                engine, reading, step, correlation, done_lines=done_lines
+            )
+            director_qc.settle_inbox(engine, report_id, step["outcome"], correlation)
+        except Exception as exc:  # noqa: BLE001 - her decision stands; the letter is logged
+            logger.warning("director_qc_letter_not_written", extra={"error": type(exc).__name__})
+    else:
+        # Nothing of her list could be done: she reads it again, and until then it waits.
+        director_qc.wait_for_director(
+            engine,
+            reading,
+            "nimic din refacerea hotărâtă nu se putea face: "
+            + "; ".join(line.lstrip("- ") for line in done_lines)[:300],
+            correlation,
+        )
+    return step
+
+
+def _director_repairs(
+    engine: Engine,
+    settings: Settings | None,
+    vault: Any,
+    registry: ProviderRegistry | None,
+    reading: dict[str, Any],
+    listed: list[dict[str, Any]],
+    *,
+    already: list[tuple[Any, Any]] | None = None,
+    since: str | None = None,
+) -> dict[str, Any]:
+    """Her REPAIR: only what she listed, through the paid redo path (`_apply_repairs`, every
+    purchase by `redo_scene` with ``unasked``: his paid-media rule, the caps, the lease and his
+    per-scene and per-film limits), never a take he approved (`director_qc.repair_list` skips
+    them, and `_apply_repairs` refuses a plan that would retire one), never against his choice
+    on the sheet (a scene he chose to animate locally gets no paid motion), then measured once
+    more. ``already``: what was bought for this decision before (it is not bought again);
+    ``since``: when the decision began to be carried out. Recorded as a `QC_REPAIR_EVENT` like
+    every repair. Never raises."""
+    from app.media import director_qc  # noqa: PLC0415 - media imports runbook
+
+    correlation = str(uuid4())
+    storyboard_id = str(reading.get("storyboard_id") or "")
+    asset_id = str(reading["media_asset_id"])
+    result: dict[str, Any] = {
+        "report_id": reading["report_id"],
+        "storyboard_id": storyboard_id or None,
+        "of_asset": asset_id,
         "new_asset": None,
+        "decided_by": director_qc.DIRECTOR,
+        "listed": listed,
         "applied": [],
         "bought": [],
         "asked": [],
         "refused": [],
         "limited": [],
+        "skipped": [],
+        "waiting": [],
         "made": [],
         "requalified": None,
     }
-    reading: dict[str, Any] = {}
+    image = (reading.get("production") or {}).get("image") or {}
+    if image.get("provider") != "SCENE_TAKES" or not storyboard_id or settings is None:
+        why = (
+            "fără configurația studioului nu se reface nimic"
+            if settings is None
+            else "filmul nu este asamblat din preluări: nu se reface scenă cu scenă"
+        )
+        result["skipped"] = [{**item, "status": "NOT_TAKES", "reason": why} for item in listed]
+        return result
     try:
-        reading = failed_render_reading(engine, report_id)
-        result["storyboard_id"] = reading.get("storyboard_id")
-        image = (reading.get("production") or {}).get("image") or {}
-        takes_film = image.get("provider") == "SCENE_TAKES" and bool(reading.get("storyboard_id"))
-        if takes_film and settings is not None:
-            result["repaired"] = True
-            _apply_repairs(engine, settings, vault, registry, reading, result, free, correlation)
-    except Exception as exc:  # noqa: BLE001 - the letter below is the record of it
+        with Session(engine) as session:
+            free_used = asset_id in _repaired_assets(session)
+            protected = director_qc.protected_redos(
+                session, storyboard_id, reading.get("production") or {}
+            )
+            choices = director_qc.owner_scene_choices(session, storyboard_id)
+        proposals, skipped = director_qc.repair_list(
+            listed,
+            kinds=director_qc.scene_kinds(reading.get("sheet")),
+            protected=protected,
+            proposals=reading.get("proposals") or [],
+            free_used=free_used,
+            choices=choices,
+            already=already or (),
+        )
+        result["skipped"] = skipped
+        if proposals:
+            _apply_repairs(
+                engine,
+                settings,
+                vault,
+                registry,
+                {**reading, "proposals": proposals},
+                result,
+                not free_used,
+                correlation,
+                note=DIRECTOR_REDO_NOTE,
+                since=since,
+            )
+    except Exception as exc:  # noqa: BLE001 - her letter is the record of it
         logger.warning(
-            "qc_repair_failed", extra={"asset_id": asset_id, "error": type(exc).__name__}
+            "director_repair_failed", extra={"asset_id": asset_id, "error": type(exc).__name__}
         )
         result["refused"].append({"what": "refacerea", "reason": error_words(exc)[:300]})
-    if result["repaired"]:
+    # Recorded once something was applied, bought or made: the film's line then had its free
+    # fix (`_repaired_assets`); a redo only asked of him leaves the line as it was.
+    if result["applied"] or result["bought"] or result["made"]:
         try:
             with Session(engine) as session, session.begin():
+                lock_for_write(session)
                 append_event(
                     session,
                     QC_REPAIR_EVENT,
                     "storyboard",
-                    str(result.get("storyboard_id")),
+                    storyboard_id,
                     1,
-                    {key: value for key, value in result.items() if key != "repaired"},
+                    {key: value for key, value in result.items() if key != "listed"},
                     correlation,
                 )
         except SQLAlchemyError:
             logger.warning("qc_repair_not_recorded", extra={"asset_id": asset_id})
-    try:
-        result["letter_id"] = _qc_letter(engine, reading, result, correlation)
-    except Exception as exc:  # noqa: BLE001 - a letter that cannot be written is logged
-        logger.warning("qc_letter_not_written", extra={"error": type(exc).__name__})
     return result
+
+
+def _decision_summary(decided: dict[str, Any]) -> dict[str, Any]:
+    return {key: decided.get(key) for key in ("report_id", "of_asset", "outcome", "passed_asset")}
+
+
+def _decisions_words(decisions: list[dict[str, Any]]) -> str:
+    """What the Director decided about the films that failed, in one sentence."""
+    tally: dict[str, int] = {}
+    for item in decisions:
+        tally[str(item.get("outcome"))] = tally.get(str(item.get("outcome")), 0) + 1
+    nouns = {
+        "ACCEPTED": ("film acceptat", "filme acceptate"),
+        "REPAIRED": ("film refăcut", "filme refăcute"),
+        "ASKED": (
+            "refacere în așteptarea răspunsului tău",
+            "refaceri în așteptarea răspunsului tău",
+        ),
+        "BOUGHT_WAITING": (
+            "refacere cumpărată care așteaptă aprobarea preluării noi",
+            "refaceri cumpărate care așteaptă aprobarea preluărilor noi",
+        ),
+        "CLOSED": ("film închis", "filme închise"),
+        "ACCEPT_REFUSED": ("film oprit la ce nu este al ei", "filme oprite la ce nu este al ei"),
+        "NOTHING_DONE": ("film fără refacere posibilă acum", "filme fără refacere posibilă acum"),
+        "WAITING": ("film așteaptă decizia ei", "filme așteaptă decizia ei"),
+    }
+    parts = [count(tally[key], *words) for key, words in nouns.items() if tally.get(key)]
+    passed = sum(1 for item in decisions if item.get("passed_asset"))
+    said = "Directoarea a decis: " + (", ".join(parts) if parts else "nimic încă") + "."
+    if passed:
+        said += f" {count(passed, 'film merge', 'filme merg')} la publicare."
+    return said
 
 
 def _apply_repairs(
@@ -3767,20 +4333,43 @@ def _apply_repairs(
     result: dict[str, Any],
     free: bool,
     correlation: str,
+    *,
+    note: str = DIRECTOR_REDO_NOTE,
+    since: str | None = None,
 ) -> None:
+    """Carry out ``reading['proposals']`` (the Director's list, `_director_repairs`): the free
+    fixes once per film, the paid redos scene by scene through `redo_scene` (unasked), within
+    his limits, the film rejoined from its takes where her list says so (`director_qc.REJOIN`),
+    and the film that came of them measured once more. A paid redo whose plan would retire a
+    take the Owner approved is refused before anything is priced (2026-10-10: babcf272's
+    approved still, motion and test shot were retired by an unasked repair).
+
+    Priced and bought with his choices on the sheet (`sheet_overrides`: a model he chose for a
+    scene, his LOCAL_MOVE), exactly as his own «Refă» prices them (2026-10-10 review: without
+    them a motion redo of babcf272's scene 5, his LOCAL_MOVE, was planned buyable at 340
+    credits on an auto-selected model). A motion that follows its scene's new still continues
+    that still's paid round (`_open_still_rounds`), so a still approved later can still reach a
+    film. Every take bought that is in no film yet is listed in ``result['waiting']``, with
+    ``since`` (when her REPAIR began to be carried out: a take of its scene approved after it
+    is the one it waits for, `director_qc.new_approved_take`)."""
+    from app.media import director_qc  # noqa: PLC0415 - media imports runbook
     from app.media.assembler import (  # noqa: PLC0415 - media imports runbook
         SceneRedoRefused,
         SpentStageError,
         redo_plan,
         redo_scene,
     )
+    from app.media.shooting_sheet import sheet_overrides  # noqa: PLC0415 - it imports runbook
 
     storyboard_id = str(reading["storyboard_id"])
     asset_id = str(reading["media_asset_id"])
     proposals = list(reading.get("proposals") or [])
     environment = studio_environment(engine)
+    since = since or utc_now()
+    result.setdefault("waiting", [])
     with Session(engine) as session:
         free_already = asset_id in _repaired_assets(session)
+        his_takes = director_qc.owner_approved_take_ids(session, storyboard_id)
 
     def newest(film: Any) -> None:
         if isinstance(film, dict) and film.get("output_asset_id"):
@@ -3820,7 +4409,11 @@ def _apply_repairs(
     per_film = int(getattr(settings, "film_max_paid_redos", 2))
     paid: dict[int, list[str]] = {}
     for proposal in proposals:
-        if not proposal.free and proposal.scene_index is not None:
+        if (
+            not proposal.free
+            and proposal.scene_index is not None
+            and proposal.redo in PAID_REDO_WORDS
+        ):
             paid.setdefault(int(proposal.scene_index), [])
             if proposal.redo not in paid[int(proposal.scene_index)]:
                 paid[int(proposal.scene_index)].append(proposal.redo)
@@ -3828,15 +4421,26 @@ def _apply_repairs(
     image = wiring.get("image_adapter")
     capabilities = list(wiring.get("capabilities") or []) or None
     resolution = wiring.get("resolution") or getattr(settings, "motion_resolution", None)
+    # His choices on the sheet, read once: the plan and the purchase price the same scene.
+    overrides = sheet_overrides(engine, storyboard_id) if paid else None
+    bought_kinds: dict[int, list[str]] = {}
+    next_words: dict[int, str] = {}
     for scene in sorted(paid):
         with Session(engine) as session:
             rounds = _paid_redo_rounds(session, storyboard_id)
-        if rounds.get(scene, 0) >= per_scene or sum(rounds.values()) >= per_film:
+            open_round = _open_still_rounds(session, storyboard_id).get(scene)
+        # Only her motion after the scene's new still continues the still's round.
+        continues = open_round if paid[scene] == ["motion"] else None
+        if continues is None and (
+            rounds.get(scene, 0) >= per_scene or sum(rounds.values()) >= per_film
+        ):
             result["limited"].append(
                 {"scene_index": scene, "per_scene": per_scene, "per_film": per_film}
             )
             continue
         bought_here = False
+        # When the round began: what it delivered is read from here (`_round_delivered`).
+        began = utc_now()
         for kind in sorted(paid[scene], key=("still", "motion").index):
             try:
                 plan = redo_plan(
@@ -3846,11 +4450,20 @@ def _apply_repairs(
                     scene,
                     capabilities=capabilities,
                     integration_id=wiring.get("integration_id"),
+                    overrides=overrides,
                     resolution=resolution,
                     stills_model=getattr(image, "model", None),
                 )
                 if not plan.get("buyable"):
                     raise SceneRedoRefused("NOTHING_TO_BUY", str(plan.get("reason_ro") or ""))
+                retiring = {*(plan.get("replaces") or []), *(plan.get("invalidates") or [])}
+                if retiring & his_takes:
+                    # Nobody retires a still or a clip the Owner approved himself, but him.
+                    raise SceneRedoRefused(
+                        OWNER_APPROVED_REDO,
+                        f"Scena {scene}: preluarea ei a fost aprobată de tine; o refacere "
+                        "nepornită de tine nu o retrage.",
+                    )
                 done = redo_scene(
                     engine,
                     storyboard_id,
@@ -3863,13 +4476,14 @@ def _apply_repairs(
                     capabilities=capabilities,
                     account=wiring.get("account"),
                     registry=registry,
+                    overrides=overrides,
                     resolution=resolution,
                     settings=settings,
                     environment=environment,
                     integration_id=wiring.get("integration_id"),
                     ffmpeg_path=settings.ffmpeg_path,
                     storage_root=wiring.get("storage_root"),
-                    note="Controlul calității a picat scena; refacere cerută de Video Editor.",
+                    note=note,
                     # The day's repair, nobody's press: his policy before every re-roll.
                     unasked=True,
                 )
@@ -3893,32 +4507,123 @@ def _apply_repairs(
                 )
                 break
             bought_here = True
+            bought_kinds.setdefault(scene, []).append(kind)
+            next_words[scene] = str(done.get("next_ro") or "")
             result["bought"].append(
                 {"redo": kind, "scene_index": scene, "credits": done.get("credits")}
             )
             newest(done.get("film"))
             if kind == "still" and (done.get("still") or {}).get("status") != "APPROVED":
-                result["refused"].append(
+                # Bought, and waiting for the vendor's late delivery or his look on the sheet:
+                # what follows it (its motion, or the film rejoined) waits with it.
+                result["waiting"].append(
                     {
-                        "what": f"scena {scene}: {PAID_REDO_WORDS['motion']}",
-                        "reason": str(done.get("next_ro") or ""),
+                        "scene_index": scene,
+                        "kind": "still",
+                        "status": (done.get("still") or {}).get("status"),
+                        "since": since,
+                        "next_ro": str(done.get("next_ro") or ""),
                     }
                 )
                 break
         if bought_here:
+            kinds = bought_kinds.get(scene, [])
             with Session(engine) as session, session.begin():
+                lock_for_write(session)
                 append_event(
                     session,
                     QC_PAID_REDO_EVENT,
                     "storyboard",
                     storyboard_id,
                     1,
-                    {"scene_index": scene, "of_asset": asset_id},
+                    {
+                        "scene_index": scene,
+                        "of_asset": asset_id,
+                        "kinds": kinds,
+                        # A new still without its motion yet: the motion may still follow,
+                        # in this round (a scene he chose to animate locally needs none).
+                        "open_motion": "still" in kinds and "motion" not in kinds,
+                        "continues": continues,
+                        "started_at": began,
+                    },
                     correlation,
                 )
 
+    # The film rejoined from its takes where her list says so (a new still of a scene he chose
+    # to animate locally, a shot bought earlier and approved since): 0 credits, once, and only
+    # when a take bought for her list is approved (`director_qc.new_approved_take`: never the
+    # old still a redo that delivered nothing gave back). It completes a paid redo, so it is
+    # not the film's one free fix.
+    rejoins = [
+        proposal
+        for proposal in proposals
+        if proposal.redo == director_qc.REJOIN and proposal.scene_index is not None
+    ]
+    if rejoins:
+        with Session(engine) as session:
+            ready = [
+                proposal
+                for proposal in rejoins
+                if director_qc.new_approved_take(
+                    session,
+                    storyboard_id,
+                    int(proposal.scene_index or 0),
+                    director_qc.REJOIN,
+                    since,
+                )
+            ]
+        if ready:
+            refused_before = len(result["refused"])
+            _reencode_from_takes(
+                engine,
+                settings,
+                vault,
+                storyboard_id,
+                result,
+                correlation,
+                redo=director_qc.REJOIN,
+                words=" ".join(proposal.reason for proposal in ready),
+            )
+            if not result["new_asset"]:
+                # The approved take is in no film yet: her decision waits for the film to be
+                # rejoined, tried again with the watchdog's back-off (2026-10-10 review: a
+                # refused rejoin on a resumed walk fell to NOTHING_DONE, and she was then told
+                # REPAIR was not possible and steered to accept the flaw it had replaced).
+                why = "; ".join(
+                    str(item.get("reason") or "") for item in result["refused"][refused_before:]
+                )
+                for proposal in ready:
+                    result["waiting"].append(
+                        {
+                            "scene_index": int(proposal.scene_index or 0),
+                            "kind": director_qc.REJOIN,
+                            "status": None,
+                            "since": since,
+                            "waiting_since": utc_now(),
+                            "next_ro": why[:300],
+                        }
+                    )
+
     if free and not free_already and "audio" in wanted:
         free_redo("audio", None, next(p.reason for p in proposals if p.redo == "audio"))
+
+    if not result["new_asset"]:
+        # Bought and in no film: a shot that waits for his look, a new still whose motion (or
+        # rejoin) was refused for now. Each waits; the walk carries on once it is approved.
+        listed = {(entry["scene_index"], entry["kind"]) for entry in result["waiting"]}
+        for scene, kinds in sorted(bought_kinds.items()):
+            kind = "motion" if "motion" in kinds else "still"
+            if {(scene, kind), (scene, "still"), (scene, director_qc.REJOIN)} & listed:
+                continue
+            result["waiting"].append(
+                {
+                    "scene_index": scene,
+                    "kind": kind,
+                    "status": None,
+                    "since": since,
+                    "next_ro": next_words.get(scene, ""),
+                }
+            )
 
     final = result["new_asset"]
     if final:
@@ -3945,10 +4650,15 @@ def _reencode_from_takes(
     storyboard_id: str,
     result: dict[str, Any],
     correlation: str,
+    *,
+    redo: str = "encode",
+    words: str | None = None,
 ) -> None:
     """The film encoded again from the same takes: no still and no shot is bought, and the
     narration already voiced is reused (BOOK_EVERY_PURCHASE); any narration left to buy goes
-    through the same question and hold as the day's assembly."""
+    through the same question and hold as the day's assembly. ``redo`` and ``words`` name it
+    in the repair's record (the Director's `director_qc.REJOIN`: the film rejoined with a
+    take bought for her list)."""
     from app.media.shooting_sheet import build_sheet  # noqa: PLC0415 - media imports runbook
 
     environment = studio_environment(engine)
@@ -3982,112 +4692,70 @@ def _reencode_from_takes(
         correlation,
         sheet_hash=str(sheet.get("sheet_hash") or "") or None,
     )
-    words = "Codare: filmul refăcut din aceleași preluări, fără credite pentru imagini sau cadre."
+    words = words or (
+        "Codare: filmul refăcut din aceleași preluări, fără credite pentru imagini sau cadre."
+    )
     if made.get("status") == "ASSEMBLED":
-        result["applied"].append({"redo": "encode", "scene_index": None, "reason": words})
+        result["applied"].append({"redo": redo, "scene_index": None, "reason": words})
         result["made"].append(str(made["asset_id"]))
         result["new_asset"] = str(made["asset_id"])
     else:
-        result["refused"].append({"what": "recodarea", "reason": str(made.get("reason") or "")})
-
-
-def _qc_letter(
-    engine: Engine, reading: dict[str, Any], result: dict[str, Any], correlation: str
-) -> str | None:
-    """One letter per failed report: the deterministic QC summary, what the studio did by
-    itself, what waits for his answer, and where the film stands now."""
-    from app.agents.messages import post_message  # noqa: PLC0415
-    from app.media.shooting_sheet import sheet_url  # noqa: PLC0415 - media imports runbook
-
-    report_id = str(result["report_id"])
-    storyboard_id = result.get("storyboard_id")
-    with Session(engine) as session, session.begin():
-        # One letter per failed report and per film a repair of it made: a repair his yes
-        # continued later is news, the same nothing twice is not.
-        if _owner_letter_exists(
-            session, QC_LETTER_KIND, report_id=report_id, new_asset=result.get("new_asset")
-        ):
-            return None
-        board = session.get(Storyboard, storyboard_id) if storyboard_id else None
-        title = str(board.title if board is not None else (storyboard_id or "")[:8] or "filmul")
-        lines = [
-            f"Către Owner. Filmul «{title}» nu a trecut controlul calității și nu se publică așa.",
-            str(reading.get("summary_ro") or "Raportul nu a putut fi citit."),
-            "",
-        ]
-        done: list[str] = []
-        for item in result["applied"]:
-            done.append(f"- Refăcut fără credite: {_no_stop(item['reason'])}.")
-        for item in result["bought"]:
-            done.append(
-                f"- Refăcut și cumpărat sub regula ta pentru pașii plătiți: scena "
-                f"{item['scene_index']}, {PAID_REDO_WORDS.get(item['redo'], item['redo'])} "
-                f"({_credits_words(item.get('credits'))})."
-            )
-        for item in result["asked"]:
-            cap = item.get("cap_usd")
-            done.append(
-                f"- {str(item['what']).capitalize()}: refacerea așteaptă răspunsul tău pe foaia "
-                "de filmare"
-                + (f" (plafon {decimal(float(cap))} USD)" if isinstance(cap, int | float) else "")
-                + "; nu se cumpără fără el."
-            )
-        for item in result["limited"]:
-            done.append(
-                f"- Scena {item['scene_index']}: nu se mai cumpără automat, s-a atins limita de "
-                f"{count(int(item['per_scene']), 'refacere plătită', 'refaceri plătite')} pe scenă"
-                f" și {count(int(item['per_film']), 'refacere plătită', 'refaceri plătite')} pe "
-                "film (STUDIO_FILM_MAX_PAID_REDOS_PER_SCENE, STUDIO_FILM_MAX_PAID_REDOS)."
-            )
-        for item in result["refused"]:
-            done.append(f"- {str(item['what']).capitalize()}: {_no_stop(item['reason'])}.")
-        if result["repaired"]:
-            lines.append("Ce a făcut studioul singur:")
-            lines.extend(done or ["- Nimic nu se putea reface fără decizia ta."])
-        elif done:
-            lines.extend(done)
-        verdict = result.get("requalified")
-        if verdict == "PASSED":
-            lines.append(
-                "Filmul refăcut a trecut controlul calității și merge la publicare, după "
-                "politica canalului."
-            )
-        elif verdict:
-            lines.append(
-                "Filmul refăcut nu a trecut nici el controlul calității; nu se publică și nu se "
-                "mai reface singur. Decizia este a ta."
-            )
-        else:
-            lines.append("Niciun film nou nu a fost făcut încă; filmul care a picat nu se publică.")
-        if storyboard_id:
-            lines.append(f"Foaia de filmare: {sheet_url(str(storyboard_id))}")
-        director = agent_for_role(session, "Director")
-        message = post_message(
-            session,
-            intent="ESCALATE",
-            # The subject names the outcome: one open letter per subject is kept for him
-            # (`post_message`), and "failed" then "repaired and passed" are two matters.
-            subject={
-                "PASSED": f"Filmul «{title}» a fost refăcut și a trecut controlul calității",
-                "FAILED": f"Filmul «{title}» refăcut nu a trecut controlul calității",
-            }.get(str(verdict), f"Filmul «{title}» nu a trecut controlul calității")[:200],
-            body={
-                "kind": QC_LETTER_KIND,
-                "report_id": report_id,
-                "storyboard_id": storyboard_id,
-                "media_asset_id": result.get("of_asset"),
-                "new_asset": result.get("new_asset"),
-                "requalified": verdict,
-                "applied": [item["redo"] for item in result["applied"]],
-                "bought": [[item["redo"], item["scene_index"]] for item in result["bought"]],
-                "asked": [item.get("approval_id") for item in result["asked"]],
-            },
-            body_text="\n".join(lines),
-            from_agent_id=director.id if director else None,
-            to_owner=True,
-            correlation_id=correlation,
+        result["refused"].append(
+            {
+                "what": "recodarea" if redo == "encode" else "reasamblarea filmului",
+                "reason": str(made.get("reason") or ""),
+            }
         )
-        return str(message.id)
+
+
+def _repair_lines(result: dict[str, Any]) -> list[str]:
+    """What one repair did, line by line in the Owner's words, for the Director's letter:
+    each free fix, each paid redo bought under his rule, each one waiting for his answer, the
+    limits reached, what was refused and what of her list was not carried out, with why."""
+    done: list[str] = []
+    for item in result.get("applied") or []:
+        done.append(f"- Refăcut fără credite: {_no_stop(item['reason'])}.")
+    for item in result.get("bought") or []:
+        done.append(
+            f"- Refăcut și cumpărat sub regula ta pentru pașii plătiți: scena "
+            f"{item['scene_index']}, {PAID_REDO_WORDS.get(item['redo'], item['redo'])} "
+            f"({_credits_words(item.get('credits'))})."
+        )
+    for item in result.get("asked") or []:
+        cap = item.get("cap_usd")
+        done.append(
+            f"- {str(item['what']).capitalize()}: refacerea așteaptă răspunsul tău pe foaia "
+            "de filmare"
+            + (f" (plafon {decimal(float(cap))} USD)" if isinstance(cap, int | float) else "")
+            + "; nu se cumpără fără el."
+        )
+    for item in result.get("limited") or []:
+        done.append(
+            f"- Scena {item['scene_index']}: nu se mai cumpără automat, s-a atins limita de "
+            f"{count(int(item['per_scene']), 'refacere plătită', 'refaceri plătite')} pe scenă"
+            f" și {count(int(item['per_film']), 'refacere plătită', 'refaceri plătite')} pe "
+            "film (STUDIO_FILM_MAX_PAID_REDOS_PER_SCENE, STUDIO_FILM_MAX_PAID_REDOS)."
+        )
+    for item in result.get("refused") or []:
+        done.append(f"- {str(item['what']).capitalize()}: {_no_stop(item['reason'])}.")
+    for item in result.get("waiting") or []:
+        if item.get("kind") == "rejoin":
+            done.append(
+                f"- Scena {item['scene_index']}: preluarea nouă este aprobată, dar filmul nu s-a "
+                "putut reasambla încă"
+                + (f" ({_no_stop(item.get('next_ro'))})" if item.get("next_ro") else "")
+                + "; studioul încearcă din nou, fără să cumpere nimic."
+            )
+            continue
+        what = "imaginea nouă" if item.get("kind") == "still" else "cadrul nou"
+        done.append(
+            f"- Scena {item['scene_index']}: {what} este cumpărată, dar nu este încă în film"
+            + (f": {_no_stop(item.get('next_ro'))}" if item.get("next_ro") else "")
+            + "."
+        )
+    for item in result.get("skipped") or []:
+        done.append(f"- Nu s-a refăcut: {_no_stop(item.get('reason'))}.")
+    return done or ["- Nimic nu se putea reface."]
 
 
 # ------------------------------------------- his yes continues the film the same day (A6) --
@@ -4255,8 +4923,9 @@ def _continue_rendered(
     title: str,
     done: Callable[..., dict[str, Any]],
 ) -> dict[str, Any]:
-    """A film already assembled: measured if it was not, its paid redos tried again if it
-    failed (his yes on a redo is what continued it), published if it passed."""
+    """A film already assembled: measured if it was not, decided by the Director if it failed
+    (her REPAIR his yes continued is carried out again; a report she has not decided is read
+    by her now, 2026-10-10), published if it passed."""
     with Session(engine) as session:
         report = session.scalar(
             select(QualityControlReport)
@@ -4278,20 +4947,16 @@ def _continue_rendered(
     elif verdict == "PASSED":
         passed = [asset_id]
     elif report_id is not None:
-        # His yes on a scene redo is what continued the film: the paid redos are tried again
-        # (the free fixes only if no repair ever touched this film).
-        repair = repair_failed_film(
-            engine, settings, vault, registry, str(report_id), asset_id, free=True
+        # The film failed QC: the Director decides it (her REPAIR his yes continued is carried
+        # out again; a report she never decided, babcf272's d4ea68d2 among them, is read now).
+        from app.media.director_qc import outcome_words  # noqa: PLC0415 - media imports runbook
+
+        decided = director_decides_failed_film(
+            engine, settings, vault, registry, str(report_id), asset_id
         )
-        if repair.get("requalified") == "PASSED" and repair.get("new_asset"):
-            passed = [str(repair["new_asset"])]
-        bought = count(len(repair.get("bought") or []), "refacere cumpărată", "refaceri cumpărate")
-        verdict_words = {"PASSED": "trecut", "FAILED": "picat"}.get(
-            str(repair.get("requalified")), "nerulat"
-        )
-        said.append(
-            f"Filmul «{title}»: {bought}; controlul calității după refacere: {verdict_words}."
-        )
+        if decided.get("passed_asset"):
+            passed = [str(decided["passed_asset"])]
+        said.append(outcome_words(title, decided))
     if not passed:
         return done(
             COMPLETED if said else SKIPPED,
@@ -4421,6 +5086,18 @@ def _publish_one(
     with Session(engine) as session:
         channel = session.get(ChannelRecord, channel_id)
         resolved = resolve_publish_visibility(channel, environment)
+        rights = _film_rights(session, asset_id)
+    if (
+        rights["passed"]
+        and not rights["public_allowed"]
+        and (resolved["privacy_status"] != "private" or resolved["publish_at"])
+    ):
+        # A film whose components do not all prove commercial use (NEEDS_REVIEW) may go up
+        # private and nothing more: the publishing gate's rights check (Gate 7) refuses it
+        # public, unlisted or scheduled. Asked for the channel's visibility, it was refused on
+        # every run and never uploaded at all (2026-10-10 review); it is uploaded private, and
+        # the record says why.
+        resolved = _private_until_licensed(resolved, rights)
     verdict = evaluate_publishing_gate(
         engine,
         asset_id,
@@ -4612,7 +5289,41 @@ def _publish_one(
             "publish_at": resolved["publish_at"],
             "policy_version": resolved["policy_version"],
             "visibility_reason": resolved["reason"],
+            "private_until_licensed": bool(resolved.get("private_until_licensed")),
         }
+    }
+
+
+def _film_rights(session: Session, asset_id: str) -> dict[str, Any]:
+    """What the film's licence status allows (`media.qc.rights_verdict`), read as the
+    publishing gate's rights check reads it: the asset's status and its render's manifest."""
+    asset = session.get(MediaAsset, asset_id)
+    job = session.scalar(
+        select(VideoRenderJob).where(VideoRenderJob.output_asset_id == asset_id).limit(1)
+    )
+    manifest = job.production_json if job is not None else None
+    return rights_verdict(
+        asset.license_status if asset is not None else None,
+        manifest if isinstance(manifest, dict) else {},
+    )
+
+
+def _private_until_licensed(resolved: dict[str, Any], rights: dict[str, Any]) -> dict[str, Any]:
+    """The channel's resolved visibility turned into a private upload, with no scheduled
+    release (a private upload with a publishAt is a public film later), and why, in the
+    Owner's words. The policy version stays the one that was resolved."""
+    missing = "; ".join(str(item) for item in rights.get("missing_ro") or [])
+    return {
+        **resolved,
+        "privacy_status": "private",
+        "publish_at": None,
+        "release_privacy": "private",
+        "reason": (
+            "încărcat privat: licența filmului nu este confirmată"
+            + (f" ({_no_stop(missing)[:300]})" if missing else "")
+            + "; devine public doar după ce licența este confirmată"
+        ),
+        "private_until_licensed": True,
     }
 
 
@@ -4764,6 +5475,7 @@ def _publish(
                 and not p["publish_at"]
                 else ""
             )
+            + (f"; {p['visibility_reason']}" if p.get("private_until_licensed") else "")
             + ")."
             for p in published
         )

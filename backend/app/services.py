@@ -1,6 +1,7 @@
 import hashlib
 import json
 import math
+from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 from uuid import UUID, uuid4
@@ -787,6 +788,24 @@ def _answered_approval(
     ]
     standing.sort(key=lambda request: request.decided_at or request.created_at, reverse=True)
     return standing[0] if standing else None
+
+
+def approval_answers(session: Session, approval_ids: Iterable[str]) -> dict[str, dict[str, Any]]:
+    """The Owner's answers to the questions named, as plain values: what he answered, when the
+    question expires, whether his yes was spent and his note. Reads only. The Director reads
+    what came of the questions her decisions raised (2026-10-10) through here, so the row that
+    carries his authority stays in this module (`test_phase_dg_closure_adversary`)."""
+    found: dict[str, dict[str, Any]] = {}
+    for approval_id in approval_ids:
+        row = session.get(ApprovalRequest, approval_id)
+        if row is not None:
+            found[approval_id] = {
+                "result": row.result,
+                "expires_at": row.expires_at,
+                "consumed_at": row.consumed_at,
+                "note": row.note,
+            }
+    return found
 
 
 def _spend_approval(session: Session, request: ApprovalRequest) -> None:

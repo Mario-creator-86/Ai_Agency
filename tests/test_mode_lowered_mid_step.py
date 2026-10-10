@@ -27,6 +27,7 @@ from app.media.assembler import SceneRedoRefused, motion_plan, redo_plan, redo_s
 from app.media.balance_rule import BALANCE_READ_EVENT
 from app.media.models import SceneTake
 from app.media.shooting_sheet import SheetStepRefused, build_sheet, run_sheet_step
+from app.media.stills_stage import GATE_REVIEWER
 from app.models import DomainEvent, OwnerPolicy
 from app.schemas import AutonomyModeCommand
 from app.services import change_autonomy_mode
@@ -67,6 +68,21 @@ def lower_mode(engine, mode: str = "MANUAL") -> None:
         AutonomyModeCommand(command_id=uuid4(), expected_version=version, autonomy_mode=mode),
     )
     assert result.status == "COMMITTED"
+
+
+def studio_chosen(engine, storyboard_id: str, scene: int = 3) -> None:
+    """The scene's still and clip as the stills gate and the clip QC approved them, with no
+    hand of the Owner's (no decision of his, nobody's ``owner``): a redo nobody pressed is
+    then refused by the mode, not by his choice (OWNER_APPROVED, 2026-10-10)."""
+    with Session(engine) as session, session.begin():
+        for row in session.scalars(
+            select(SceneTake).where(
+                SceneTake.storyboard_id == storyboard_id,
+                SceneTake.scene_number == scene,
+                SceneTake.status == "APPROVED",
+            )
+        ):
+            row.approved_by = GATE_REVIEWER if row.kind == "still" else "clip_qc"
 
 
 def stopped_events(engine) -> list[dict]:
@@ -232,6 +248,7 @@ def test_a_mode_lowered_during_the_motion_buys_no_further_shot(engine, tmp_path)
 def test_a_mode_lowered_during_an_unasked_still_redo_buys_no_reroll(engine, tmp_path):
     storyboard_id = film_with_stills(engine, tmp_path, scenes=4)
     filmed(engine, storyboard_id, tmp_path, b"clip")
+    studio_chosen(engine, storyboard_id)
     mode_studio(engine)
     images = SpyStills(balance=1_000)
 
@@ -349,6 +366,7 @@ def test_unasked_under_every_paid_step_the_balance_still_comes_before_his_questi
 def test_a_redo_asked_unasked_under_manual_is_refused_before_anything_is_bought(engine, tmp_path):
     storyboard_id = film_with_stills(engine, tmp_path, scenes=4)
     filmed(engine, storyboard_id, tmp_path, b"clip")
+    studio_chosen(engine, storyboard_id)
     mode_studio(engine)
     lower_mode(engine)
     images = SpyStills(balance=1_000)

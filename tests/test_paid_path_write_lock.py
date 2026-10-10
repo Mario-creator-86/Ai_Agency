@@ -919,7 +919,6 @@ _DEFERRED_ELSEWHERE = {
     ("runbook/stages.py", "_test_environment_letter"): f"lane S: {_LETTER}",
     ("runbook/stages.py", "_note_film_state"): "lane S: reads the film's state, then records it",
     ("runbook/stages.py", "_retire_film"): "lane S: reads the film, closes its books, writes",
-    ("runbook/stages.py", "_qc_letter"): f"lane S: {_LETTER}",
     ("runbook/stages.py", "_publish_one"): "lane S: reads the publication, then remembers it",
     ("runbook/stages.py", "archive_stale_reports"): "lane S: reads the inbox, then resolves",
     ("agents/command.py", "prioritise_backlog"): "lane S: reads the topics, then reorders them",

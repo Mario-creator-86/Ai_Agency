@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import Engine, select
+from sqlalchemy import Engine, and_, or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -4904,8 +4904,13 @@ def propose_clip_redos(
     (his question on the sheet and in the Decisions window, bound to the redo's plan_hash),
     the budgets, the film's ceiling and lease all decide; nothing is bought that his rule does
     not let through, and a question already waiting is the same question (`request_approval`
-    dedupes). ``wiring`` is the shooting sheet's (`runbook.stages.sheet_wiring`): integration_id,
-    capabilities, adapter_for_model, account, image_adapter, resolution, storage_root.
+    dedupes). A clip the Owner approved himself is never retired by it unasked: the redo of it
+    is his question, even where his rule and mode would let it buy unasked (``proposal``, his
+    card of 2026-10-10), and nothing is retired or bought before his yes for this plan; once
+    he said yes, the redo raised again (the next FILM_CONTINUE, his next press) spends it and
+    retires the clip it replaces (`_owner_yes_for_redo`). ``wiring`` is the shooting sheet's
+    (`runbook.stages.sheet_wiring`): integration_id, capabilities, adapter_for_model,
+    account, image_adapter, resolution, storage_root.
     ``scenes`` narrows it. Each outcome is an event (CLIP_REDO_PROPOSED_EVENT) and is returned:
     {scene_index, status (NEEDS_APPROVAL, BOUGHT, or the refusal's), approval_id, plan_hash,
     billed_seconds, cost_usd, cap_usd, reason_ro}."""
@@ -4991,8 +4996,10 @@ def propose_clip_redos(
                     )
                     + f" Studioul propune refacerea mișcării la {plan.get('billed_seconds')} s."
                 ),
-                # Nobody pressed it: his paid-media rule asks him (or lets his mode decide).
+                # Nobody pressed it: his paid-media rule asks him (or lets his mode decide),
+                # and a clip he approved himself is always his question (``proposal``).
                 unasked=True,
+                proposal=True,
             )
             outcome.update(status="BOUGHT", credits=done.get("credits"), reason_ro="")
         except SceneRedoRefused as exc:
@@ -8650,9 +8657,10 @@ def _bought_shots(
                 continue
             # The Owner's newest choice is the scene's shot whatever its length (2026-10-10):
             # a clip he chose is never bought over. One too short for its words is read
-            # CLIP_SHORT by the readiness and redone under his rule (`propose_clip_redos`),
-            # which retires it; planning a purchase here instead would buy a clip that his
-            # choice keeps out of the film, again at every step.
+            # CLIP_SHORT by the readiness; the studio proposes its redo as his question
+            # (`propose_clip_redos`), since nothing unasked retires what he approved, and only
+            # his yes to it or his own «Refă mișcarea» replaces it. Planning a purchase here
+            # instead would buy a clip that his choice keeps out of the film, at every step.
             shot = owner_clip_choice(session, storyboard_id, index, [fields]) or _shot_take(
                 session, storyboard_id, index, fields, motion_seconds(scene)
             )
@@ -10791,6 +10799,7 @@ def run_motion_step(
     meter: SpendMeter | None = None,
     unasked: bool = True,
     timezone: str | None = None,
+    proposal: bool = False,
 ) -> dict[str, Any]:
     """One step of the motion staircase (``test_shot`` or ``motion``), bought only under the
     Owner's yes for this plan and this cap.
@@ -10809,7 +10818,13 @@ def run_motion_step(
 
     ``step='scene_redo'`` with ``redo_scene`` buys that one scene's shot again under
     ``media.scene_redo`` (`redo_scene`, the per-scene redo): the scene's old shot takes are
-    retired (REJECTED, ``REDO.OWNER``) in the same transaction that spends the yes.
+    retired (REJECTED, ``REDO.OWNER``) in the same transaction that spends the yes; unasked,
+    a shot the Owner approved himself is never retired (`SceneRedoRefused` OWNER_APPROVED,
+    the transaction rolled back, 2026-10-10). Unasked with ``proposal`` (the studio's
+    proposal of a longer clip, `propose_clip_redos`), a redo of a shot he approved himself is
+    his question even where his rule and mode would let it buy unasked: it is raised (or his
+    standing answer for this plan read, a yes spent) in that transaction, and nothing is
+    retired or bought until his yes (his card of 2026-10-10).
 
     Before anything is planned, the film's SUBMITTED shots are collected by their task ids
     (`collect_submitted_takes`, a GET each, nothing bought), and every paid shot nobody has
@@ -10975,33 +10990,64 @@ def run_motion_step(
                 ),
                 plan=plan,
             )
+        evidence = (
+            f"{len(to_buy)} cadre (scenele {', '.join(map(str, to_buy))}), "
+            f"{step_plan['cost_credits']} credite, plafon {cap}; cost estimat "
+            f"{_usd_ro(step_plan['cost_usd'])}, plafon {_usd_ro(cap_usd)}"
+            # A redo the studio raised itself says why (2026-10-09, babcf272: a clip too
+            # short for its words, `propose_clip_redos`).
+            + (f". {redo_note}" if unasked and redo_scene is not None and redo_note else "")
+        )
         with Session(engine) as session, session.begin():
             verdict = may_act(
                 session,
                 actions[step],
                 requester=requester,
                 subject=storyboard_id,
-                evidence=(
-                    f"{len(to_buy)} cadre (scenele {', '.join(map(str, to_buy))}), "
-                    f"{step_plan['cost_credits']} credite, plafon {cap}; cost estimat "
-                    f"{_usd_ro(step_plan['cost_usd'])}, plafon {_usd_ro(cap_usd)}"
-                    # A redo the studio raised itself says why (2026-10-09, babcf272: a
-                    # clip too short for its words, `propose_clip_redos`).
-                    + (f". {redo_note}" if unasked and redo_scene is not None and redo_note else "")
-                ),
+                evidence=evidence,
                 # The cap, the most his yes lets the step spend (MONEY-08, A10): OVER_USD
                 # compares his threshold with it; the expected cost stays in the evidence.
                 cost_usd=cap_usd,
                 context=asked_about,
             )
+            if (
+                proposal
+                and unasked
+                and redo_scene is not None
+                and verdict["allowed"]
+                and not verdict.get("approval_id")
+                and owner_approved_among(
+                    session, _scene_shot_takes(session, storyboard_id, redo_scene)
+                )
+            ):
+                # His card of 2026-10-10: the studio proposes the redo of a shot he approved
+                # himself as his question, even where his rule and mode let it buy unasked.
+                verdict = _proposal_asks_him(
+                    session,
+                    verdict,
+                    action=actions[step],
+                    requester=requester,
+                    subject=storyboard_id,
+                    evidence=evidence,
+                    cost_usd=cap_usd,
+                    context=asked_about,
+                    scene_index=redo_scene,
+                )
             if verdict["allowed"] and redo_scene is not None:
                 # The yes is spent and the old shot retired together: the redo replaces it.
+                # A shot the Owner approved himself is retired only by his own press, or his
+                # yes for this plan (2026-10-10, babcf272): unasked and without it, this
+                # raises and rolls the yes back.
                 _retire_takes(
                     session,
                     _scene_shot_takes(session, storyboard_id, redo_scene),
                     REDO_FAILURE_CODE,
                     redo_note or "Proprietarul a cerut refacerea mișcării acestei scene.",
                     correlation_id,
+                    redo_kind="motion",
+                    owner_press=not unasked
+                    or _owner_yes_for_redo(session, storyboard_id, plan_hash, cap, verdict),
+                    plan_hash=plan_hash,
                 )
         if not verdict["allowed"]:
             raise MotionStepRefused(
@@ -12221,16 +12267,226 @@ def _scene_approved_stills(session: Session, storyboard_id: str, scene_index: in
     )
 
 
+# ------------------------------------ the Owner's approved takes are never retired unasked
+#
+# 2026-10-10 (film babcf272, «The Particle That Shouldn't Exist (But Does)»): the studio
+# assembled the film from takes the Owner had approved (scenes 1-4; scene 2 his approved test
+# shot); the film-level QC failed it, partly on the studio's own burned-in subtitles; and the
+# day's QC repair (`runbook.stages._apply_repairs`) redid scenes 1 and 2 by itself. Under his
+# OVER_USD 5 rule nothing asked him, so `_retire_takes` retired his approved still and clip of
+# scene 1 and his still and test shot of scene 2, the rewrite put new words on both scenes,
+# RunPod GPU sessions opened, he forced the GPU off, every new candidate ended REFUSED, and
+# both scenes were left with nothing to assemble. The Owner: nobody ever retires a still or
+# clip he approved himself; the studio repairs its own mistakes, not his choices. So:
+#
+# - a redo nobody pressed (``unasked``: the QC repair) that would retire a take whose newest
+#   decision is his APPROVED is refused before anything is asked, bought or written
+#   (OWNER_APPROVED, `redo_scene`), and `_retire_takes` refuses it again in the transaction
+#   that would spend the yes, for any path that reaches it. His own press of «Refă imaginea» /
+#   «Refă mișcarea» on the sheet is his decision and retires them as before, and so is his yes
+#   to the studio's question for that very plan (`_owner_yes_for_redo`). A clip too short for
+#   its words is that question (``proposal``, `propose_clip_redos`, his card of the same day):
+#   asking touches nothing of his, so it is raised even where his rule and mode would let the
+#   redo buy unasked, and nothing is retired or bought before his yes (`_proposal_asks_him`);
+# - a redo that retired takes and then delivered nothing (every candidate REFUSED, LOST or not
+#   sent, the GPU forced off, the step refused or interrupted) gives them back as they were,
+#   with the scene's words when the redo had rewritten them (`give_back_retired_takes`); the
+#   watchdog gives back, once, what redos that ended before this code left
+#   (`app.workflows.passes.restore_retired_takes`).
+#
+# Review of the same day: "delivered" is read from the takes' history, never from what they
+# are now. A candidate the stills gate or the clip QC turned down is on disk and waits for his
+# look (NEEDS_OWNER, «Decide Proprietarul»; `decide_take` lets him choose it): giving the old
+# takes back beside it, with the old words, left his pick matching nothing, and brought the
+# Director's retired defect (babcf272's three-panel scene 5) back into the next assembly. A
+# new still the Owner turns down days after his own redo delivered it does not bring back the
+# one he pressed away either.
+
+#: A redo nobody pressed that would retire a take the Owner himself approved (409).
+OWNER_APPROVED = "OWNER_APPROVED"
+#: A take a redo retired, and one given back after the redo delivered nothing usable.
+TAKE_RETIRED_EVENT = "media.scene_take_retired"
+TAKE_RESTORED_EVENT = "media.scene_take_restored"
+#: A scene's words put back as they were before a redo that delivered nothing rewrote them;
+#: a «media.prompt*» type, as the rewrite's is (the claim checker reads that prefix).
+SCENE_PROMPTS_RESTORED_EVENT = "media.prompts_restored"
+#: A take made after a retirement in one of these was delivered, or may still be (one
+#: SUBMITTED is still at the vendor), and so is a REJECTED one that carries its file (a gate,
+#: the clip QC or the Owner turned it down after it came): the retired takes are not given
+#: back beside it (`_delivered_since`).
+_MAY_STILL_DELIVER: tuple[str, ...] = ("APPROVED", "PAID", "SUBMITTED")
+_PICTURE_KINDS: tuple[str, ...] = ("still", *SHOT_TAKE_KINDS)
+_TAKE_WORDS_RO = {"still": "imaginea", "test_shot": "cadrul de probă", "motion": "clipul"}
+
+
+def _owner_stands_by(row: SceneTake, said: list[dict[str, Any]] | None, status: str) -> bool:
+    """Whether the Owner's own approval stands on a take that is (or was) ``status``: his
+    newest look on the sheet is APPROVED (`decide_take`), or the take is APPROVED by him
+    (``approved_by`` owner, as an adopted or seeded take records it) and he has not turned
+    it down since."""
+    newest = said[-1]["decision"] if said else None
+    if newest == "REJECTED":
+        return False
+    if newest == "APPROVED":
+        return True
+    return status == "APPROVED" and row.approved_by == TAKE_DECIDER
+
+
+def owner_approved_among(session: Session, take_ids: Sequence[str]) -> list[str]:
+    """The takes among ``take_ids`` that a redo nobody pressed may not retire: still usable
+    (APPROVED or PAID) and approved by the Owner himself (`_owner_stands_by`), in the order
+    given. Reads only."""
+    ids = list(dict.fromkeys(str(take_id) for take_id in take_ids if take_id))
+    if not ids:
+        return []
+    rows = {row.id: row for row in session.scalars(select(SceneTake).where(SceneTake.id.in_(ids)))}
+    decisions = owner_take_decisions(session, ids)
+    return [
+        take_id
+        for take_id in ids
+        if (row := rows.get(take_id)) is not None
+        and row.status in REUSABLE_TAKE_STATUSES
+        and _owner_stands_by(row, decisions.get(take_id), row.status)
+    ]
+
+
+def _owner_yes_for_redo(
+    session: Session,
+    storyboard_id: str,
+    plan_hash: str | None,
+    cap_credits: Any,
+    verdict: dict[str, Any] | None = None,
+) -> bool:
+    """Whether the Owner himself said yes to this redo's plan: the verdict that lets it buy
+    spent his answer (an ALLOWED verdict names an approval only when it spent his yes,
+    `services._ask_or_spend`), or his APPROVED answer to the question for this plan, its step
+    and its cap still stands, read as `may_act` reads it. Reads only.
+
+    His yes to the question the studio raised for a plan (a clip too short for its words,
+    `propose_clip_redos`; the day's QC repair, before 2026-10-10) is his decision on that
+    scene as his press of «Refă» is (review 2026-10-10): the studio's own re-run of the redo,
+    unasked, retires his takes on it instead of being refused OWNER_APPROVED with his yes left
+    unspent."""
+    if verdict is not None and verdict.get("allowed") and verdict.get("approval_id"):
+        return True
+    if not plan_hash:
+        return False
+    from app.services import _answered_approval  # noqa: PLC0415 - the kernel's own reading
+
+    try:
+        cap = int(cap_credits) if cap_credits is not None else None
+    except (TypeError, ValueError):
+        return False
+    answered = _answered_approval(
+        session,
+        REDO_ACTION,
+        storyboard_id,
+        {"plan_hash": str(plan_hash), "step": REDO_STEP, "cap_credits": cap},
+    )
+    return answered is not None and answered.result == "APPROVED"
+
+
+def _proposal_asks_him(
+    session: Session,
+    verdict: dict[str, Any],
+    *,
+    action: str,
+    requester: str,
+    subject: str,
+    evidence: str,
+    cost_usd: float,
+    context: dict[str, Any],
+    scene_index: int,
+) -> dict[str, Any]:
+    """The kernel's unasked ALLOWED for a redo the studio proposes of a shot the Owner
+    approved himself, made his question (his card of 2026-10-10): his standing answer for this
+    plan and cap is read as his paid-media rule reads it (`services._ask_or_spend`: a no
+    stands, a yes is spent), else the question his rule would raise is raised, bound to the
+    same plan and cap, so a later yes is the one `_owner_yes_for_redo` reads. Only after the
+    kernel's stop, safe mode, T4 and budget let the step through. Writes in the caller's
+    transaction."""
+    from app.services import _ask_or_spend, _paid_media_context  # noqa: PLC0415 - the kernel's
+
+    status, reason, approval_id = _ask_or_spend(
+        session,
+        action,
+        str(verdict["tier"]),
+        requester=requester,
+        subject=subject,
+        evidence=evidence,
+        cost_usd=cost_usd,
+        context=_paid_media_context(REDO_STEP, context),
+        ask_owner=True,
+        waiting=(
+            f"Scena {scene_index}: Proprietarul a aprobat el însuși clipul; studioul propune "
+            "refacerea lui, dar nu o cumpără și nu retrage nimic fără acordul lui. Întrebarea "
+            "așteaptă răspunsul lui pe foaia de filmare."
+        ),
+    )
+    return {
+        **verdict,
+        "allowed": status == "ALLOWED",
+        "status": status,
+        "reason": reason,
+        "approval_id": approval_id,
+    }
+
+
+def _owner_choice_stands_ro(session: Session, take_ids: Sequence[str], redo_kind: str) -> str:
+    """The Owner's line when a redo nobody pressed would retire what he approved himself."""
+    rows = list(session.scalars(select(SceneTake).where(SceneTake.id.in_(list(take_ids)))))
+    kinds = {row.kind for row in rows}
+    scenes = sorted({int(row.scene_number) for row in rows})
+    named = [_TAKE_WORDS_RO[kind] for kind in ("still", "test_shot", "motion") if kind in kinds]
+    what = (
+        " și ".join(named) if len(named) < 3 else f"{named[0]}, {named[1]} și {named[2]}"
+    ) or "înregistrările"
+    press = "«Refă imaginea»" if redo_kind == "still" else "«Refă mișcarea»"
+    where = ", ".join(map(str, scenes)) or "?"
+    return (
+        f"Scena {where}: Proprietarul a aprobat el însuși {what}; alegerea lui rămâne. O "
+        "refacere pe care nu a cerut-o el nu retrage ce a aprobat, așa că nu se cumpără și nu "
+        f"se schimbă nimic. Dacă vrea altceva, apasă el {press} pe foaia de filmare."
+    )
+
+
 def _retire_takes(
-    session: Session, take_ids: list[str], code: str, detail: str, correlation_id: str
+    session: Session,
+    take_ids: list[str],
+    code: str,
+    detail: str,
+    correlation_id: str,
+    *,
+    redo_kind: str,
+    owner_press: bool = False,
+    plan_hash: str | None = None,
 ) -> list[str]:
-    """REJECTED with the reason, inside the caller's transaction: never used in a film again."""
+    """REJECTED with the reason, inside the caller's transaction: never used in a film again
+    (unless the redo delivers nothing, `give_back_retired_takes`).
+
+    Unless ``owner_press`` (his own «Refă» on the sheet, or his yes for this plan,
+    `_owner_yes_for_redo`), a take the Owner approved himself is never retired:
+    `SceneRedoRefused` (OWNER_APPROVED) is raised before anything is written, and the
+    caller's transaction, his spent yes included, is rolled back (2026-10-10, film
+    babcf272). ``redo_kind`` (still | motion) names the press he would use instead. Each
+    retirement's event keeps what the take was (status, failure, approver), so it can be
+    given back exactly."""
+    standing = [] if owner_press else owner_approved_among(session, take_ids)
+    if standing:
+        raise SceneRedoRefused(
+            OWNER_APPROVED, _owner_choice_stands_ro(session, standing, redo_kind)
+        )
     retired: list[str] = []
     for take_id in take_ids:
         row = session.get(SceneTake, take_id)
         if row is None or row.status not in REUSABLE_TAKE_STATUSES:
             continue
-        previous = row.status
+        previous = {
+            "previous_status": row.status,
+            "previous_failure_code": row.failure_code,
+            "previous_failure_detail": row.failure_detail,
+            "previous_approved_by": row.approved_by,
+        }
         row.status = "REJECTED"
         row.failure_code = code
         row.failure_detail = detail[:TAKE_DETAIL_MAX]
@@ -12238,7 +12494,7 @@ def _retire_takes(
         sync_take_quality(session, row)
         append_event(
             session,
-            "media.scene_take_retired",
+            TAKE_RETIRED_EVENT,
             "scene_take",
             row.id,
             1,
@@ -12246,13 +12502,518 @@ def _retire_takes(
                 "storyboard_id": row.storyboard_id,
                 "scene_number": row.scene_number,
                 "kind": row.kind,
-                "previous_status": previous,
+                **previous,
                 "failure_code": code,
+                "owner_press": bool(owner_press),
+                "plan_hash": plan_hash,
             },
             correlation_id,
         )
         retired.append(row.id)
     return retired
+
+
+def _given_back_ids(
+    session: Session, event_type: str, key: str, aggregate_ids: Sequence[str]
+) -> set[str]:
+    """The ids (``payload[key]``) already given back by events of ``event_type`` on these
+    aggregates."""
+    found: set[str] = set()
+    for event in session.scalars(
+        select(DomainEvent).where(
+            DomainEvent.event_type == event_type,
+            DomainEvent.aggregate_id.in_(list(dict.fromkeys(aggregate_ids))),
+        )
+    ):
+        value = (event.payload or {}).get(key)
+        if value:
+            found.add(str(value))
+    return found
+
+
+def _unreturned_retirements(
+    session: Session,
+    storyboard_id: str,
+    scene_index: int,
+    correlation_id: str,
+    after_sequence: int | None,
+) -> list[DomainEvent]:
+    """One redo's retirements of this scene's takes (its correlation, after the mark) that
+    were not given back yet, oldest first."""
+    query = select(DomainEvent).where(
+        DomainEvent.event_type == TAKE_RETIRED_EVENT,
+        DomainEvent.correlation_id == correlation_id,
+    )
+    if after_sequence is not None:
+        query = query.where(DomainEvent.sequence > after_sequence)
+    events = [
+        event
+        for event in session.scalars(query.order_by(DomainEvent.sequence))
+        if (event.payload or {}).get("storyboard_id") == storyboard_id
+        and _as_int((event.payload or {}).get("scene_number")) == scene_index
+    ]
+    if not events:
+        return []
+    returned = _given_back_ids(
+        session, TAKE_RESTORED_EVENT, "retired_event_id", [str(e.aggregate_id) for e in events]
+    )
+    return [event for event in events if event.event_id not in returned]
+
+
+def _unreturned_rewrite(
+    session: Session,
+    storyboard_id: str,
+    scene_index: int,
+    correlation_id: str,
+    *,
+    before: int,
+    after: int | None,
+) -> DomainEvent | None:
+    """The rewrite of this scene's words by the same redo (written in the transaction that
+    retired its takes, just before them), unless its words were given back already."""
+    query = select(DomainEvent).where(
+        DomainEvent.event_type == SCENE_PROMPTS_REWRITTEN_EVENT,
+        DomainEvent.aggregate_id == storyboard_id,
+        DomainEvent.correlation_id == correlation_id,
+        DomainEvent.sequence < before,
+    )
+    if after is not None:
+        query = query.where(DomainEvent.sequence > after)
+    newest = next(
+        (
+            event
+            for event in session.scalars(query.order_by(DomainEvent.sequence.desc()))
+            if _as_int((event.payload or {}).get("scene_index")) == scene_index
+        ),
+        None,
+    )
+    if newest is None:
+        return None
+    restored = _given_back_ids(
+        session, SCENE_PROMPTS_RESTORED_EVENT, "rewritten_event_id", [storyboard_id]
+    )
+    return None if newest.event_id in restored else newest
+
+
+def _delivered_since(
+    session: Session, storyboard_id: str, scene_index: int, since: str, retired: Sequence[str]
+) -> bool:
+    """Whether a still or shot of the scene made after ``since`` (a retirement) was delivered,
+    or may still be: APPROVED, PAID, SUBMITTED (still at the vendor), or REJECTED with its
+    file (turned down by a gate, the clip QC or the Owner after it came: the redo delivered,
+    whatever became of it). Only takes that never brought a file (REFUSED, LOST, QUOTED:
+    refused, expired, never sent) leave the redo with nothing delivered."""
+    return (
+        session.scalar(
+            select(SceneTake.id)
+            .where(
+                SceneTake.storyboard_id == storyboard_id,
+                SceneTake.scene_number == scene_index,
+                SceneTake.kind.in_(_PICTURE_KINDS),
+                or_(
+                    SceneTake.status.in_(_MAY_STILL_DELIVER),
+                    and_(SceneTake.status == "REJECTED", SceneTake.sha256.is_not(None)),
+                ),
+                SceneTake.created_at > since,
+                SceneTake.id.not_in(list(retired)),
+            )
+            .limit(1)
+        )
+        is not None
+    )
+
+
+def _as_int(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _words_of(value: Any) -> str:
+    return " ".join(str(value or "").split())
+
+
+#: What a rewrite (`_scene_prompt_rewrite`) writes into a scene's package besides its two
+#: prompts: everything `prompt_agent.compile_prompts` returns, and the shot type it adds. An
+#: event from before 2026-10-10 did not keep their values before the rewrite.
+_REWRITE_COMPILED_KEYS: tuple[str, ...] = (
+    "scene_kind",
+    "shot_type",
+    "negative_prompt",
+    "look_block",
+    "camera_move",
+    "shot_size",
+    "motion_family",
+    "motion_intent",
+)
+
+
+def _package_before_rewrite(
+    payload: dict[str, Any], current: dict[str, Any], visual: str | None
+) -> tuple[dict[str, Any], str, bool, list[str]] | None:
+    """The scene's package and visual prompt as they were before the rewrite this event
+    records, whether they are exact, and the package's keys that stay the rewrite's; None
+    when the words were changed since the rewrite (they are then someone else's and are kept).
+
+    From 2026-10-10 the event carries the whole package and visual prompt it replaced
+    (exact, nothing stays). An older event carried only the old still and motion prompts:
+    they are put back over the rewritten package, and the old still prompt is also the
+    visual prompt, as `prompt_agent.write_shot_prompts` stores it (the event's old still
+    prompt was read from the stored still prompt, else from the visual prompt). What it did
+    not keep (`_REWRITE_COMPILED_KEYS`: the motion intent, the negative prompt, the camera
+    move, ...) stays as the rewrite wrote it, and is named (review 2026-10-10): the package put
+    back is then one that never existed."""
+    if isinstance(payload.get("old_package"), dict):
+        if current != payload.get("package") or visual != payload.get("visual_prompt"):
+            return None
+        old_visual = str(payload.get("old_visual_prompt") or "")
+        return dict(payload["old_package"]), old_visual, True, []
+    if _words_of(current.get("still_prompt")) != _words_of(payload.get("still_prompt")):
+        return None
+    if _words_of(current.get("motion_prompt")) != _words_of(payload.get("motion_prompt")):
+        return None
+    old_still = str(payload.get("old_still_prompt") or "")
+    if not old_still:
+        return None
+    package = {
+        **current,
+        "still_prompt": old_still,
+        "motion_prompt": str(payload.get("old_motion_prompt") or ""),
+    }
+    return package, old_still, False, [key for key in _REWRITE_COMPILED_KEYS if key in current]
+
+
+def _not_given_back(
+    row: SceneTake | None, payload: dict[str, Any], said: list[dict[str, Any]] | None
+) -> str | None:
+    """Why a retired take does not come back (None: it may): gone, changed since its
+    retirement (the Owner decided on it, another redo took it), not a usable take before,
+    turned down by the Owner himself, or its file missing or changed."""
+    if row is None:
+        return "TAKE_GONE"
+    if row.status != "REJECTED" or row.failure_code != payload.get("failure_code"):
+        return "CHANGED_SINCE"
+    if str(payload.get("previous_status")) not in REUSABLE_TAKE_STATUSES:
+        return "NOT_REUSABLE"
+    if said and said[-1]["decision"] == "REJECTED":
+        return "OWNER_REJECTED"
+    if not row.path or not row.sha256:
+        return "NO_FILE"
+    path = Path(str(row.path))
+    if not path.is_file() or _known_file_sha256(path) != row.sha256:
+        return "NO_FILE"
+    return None
+
+
+def give_back_retired_takes(
+    engine: Engine,
+    storyboard_id: str,
+    scene_index: int,
+    *,
+    correlation_id: str,
+    after_sequence: int | None = None,
+    cause: str,
+) -> dict[str, Any]:
+    """The takes one redo retired (its TAKE_RETIRED_EVENTs: ``correlation_id``, this scene,
+    after the event ``after_sequence`` when given) given back as they were, when nothing it
+    or anyone made since was delivered (`_delivered_since`: no still or shot of the scene
+    created after the retirement is APPROVED, PAID, still SUBMITTED, or REJECTED with its
+    file). 0 credits, no vendor asked; each retirement is given back at most once
+    (TAKE_RESTORED_EVENT names it).
+
+    A take comes back only as the redo left it (REJECTED with the redo's code), with its file
+    on disk unchanged, and never one the Owner turned down himself; the shots a retired still
+    took with it stay retired when that still cannot come back. Its status, failure and
+    approver come back from the retirement's event (an event from before 2026-10-10 kept only
+    the status; an APPROVED or PAID take carried no failure then).
+
+    When the same redo rewrote the scene's words (`_rewrite_scene_prompts`) and nobody changed
+    them since, they are put back too (`_package_before_rewrite`, SCENE_PROMPTS_RESTORED_EVENT)
+    so the takes match their prompt hash again. A take the Owner approved himself that the
+    words put back do not reproduce (an older event did not keep the motion intent the
+    rewrite replaced) is bound to the picture he approved: its prompt hash becomes the hash
+    of the scene as restored, and the hash it had stays on its event (``bound_to_picture``,
+    ``previous_prompt_hash``). Any other take that does not match comes back unmatched and is
+    not used until its words match (``unmatched``).
+
+    Words put back from an older event keep the rest of the rewritten package; the keys that
+    stay the rewrite's are named (``kept_from_rewrite``, on the outcome and on the event).
+
+    Returns {storyboard_id, scene_index, restored, bound_to_picture, unmatched, package
+    (None | "restored" | "exact" | "CHANGED_SINCE"), kept_from_rewrite, skipped [{take_id,
+    why}], why}."""
+    scene_index = int(scene_index)
+    outcome: dict[str, Any] = {
+        "storyboard_id": storyboard_id,
+        "scene_index": scene_index,
+        "restored": [],
+        "bound_to_picture": [],
+        "unmatched": [],
+        "package": None,
+        "kept_from_rewrite": [],
+        "skipped": [],
+        "why": None,
+    }
+    with Session(engine) as session:
+        retired = _unreturned_retirements(
+            session, storyboard_id, scene_index, correlation_id, after_sequence
+        )
+        if not retired:
+            outcome["why"] = "NOTHING_RETIRED"
+            return outcome
+        first = retired[0]
+        ids = [str(event.aggregate_id) for event in retired]
+        if _delivered_since(session, storyboard_id, scene_index, str(first.timestamp), ids):
+            outcome["why"] = "DELIVERED_SINCE"
+            return outcome
+        scene_row = session.scalar(
+            select(StoryboardScene).where(
+                StoryboardScene.storyboard_id == storyboard_id,
+                StoryboardScene.scene_index == scene_index,
+            )
+        )
+        if scene_row is None:
+            outcome["why"] = "NO_SCENE"
+            return outcome
+        rewrite = _unreturned_rewrite(
+            session,
+            storyboard_id,
+            scene_index,
+            correlation_id,
+            before=int(first.sequence),
+            after=after_sequence,
+        )
+        decisions = owner_take_decisions(session, ids)
+        rows: dict[str, SceneTake] = {}
+        for take_id in ids:
+            row = session.get(SceneTake, take_id)
+            if row is not None:
+                session.expunge(row)
+                rows[take_id] = row
+        view = scene_view(scene_row)
+        seen_package = dict(scene_row.prompt_json or {})
+        seen_visual = scene_row.visual_prompt
+        rewrite_payload = dict(rewrite.payload or {}) if rewrite is not None else {}
+        rewrite_id = rewrite.event_id if rewrite is not None else None
+
+    # Which takes may come back. A still that cannot keeps the shots filmed from it retired.
+    eligible: list[tuple[DomainEvent, SceneTake]] = []
+    still_stays = False
+    for event in retired:
+        payload = dict(event.payload or {})
+        take = rows.get(str(event.aggregate_id))
+        why = _not_given_back(take, payload, decisions.get(str(event.aggregate_id)))
+        if why is not None or take is None:
+            outcome["skipped"].append({"take_id": str(event.aggregate_id), "why": why})
+            if payload.get("kind") == "still" and payload.get("previous_status") == "APPROVED":
+                still_stays = True
+            continue
+        eligible.append((event, take))
+    if still_stays:
+        for event, take in [pair for pair in eligible if pair[1].kind in SHOT_TAKE_KINDS]:
+            if (event.payload or {}).get("failure_code") == REDO_STILL_REPLACED:
+                eligible.remove((event, take))
+                outcome["skipped"].append({"take_id": take.id, "why": "STILL_NOT_BACK"})
+    if not eligible:
+        outcome["why"] = "NOTHING_TO_GIVE_BACK"
+        return outcome
+
+    # The scene's words as they were before the redo, when it rewrote them.
+    package: dict[str, Any] | None = None
+    visual = ""
+    exact = False
+    kept: list[str] = []
+    if rewrite_id is not None:
+        before = _package_before_rewrite(rewrite_payload, seen_package, seen_visual)
+        if before is None:
+            outcome["package"] = "CHANGED_SINCE"
+        else:
+            package, visual, exact, kept = before
+            view = {**view, "prompt_json": dict(package), "visual_prompt": visual}
+
+    # Whether each take matches the scene as it will be, and what a take of his is bound to.
+    options = still_options(engine, view)
+    still_sha = next(
+        (
+            take.sha256
+            for event, take in eligible
+            if take.kind == "still" and (event.payload or {}).get("previous_status") == "APPROVED"
+        ),
+        None,
+    )
+    if still_sha is None and options:
+        with Session(engine) as session:
+            standing = usable_take(
+                session, storyboard_id, scene_index, "still", options, statuses=("APPROVED",)
+            )
+            still_sha = standing.sha256 if standing is not None else None
+    shot_identity = (
+        motion_fields(view, still_sha, from_prompt=False)
+        if still_sha
+        else motion_fields(view, None, from_prompt=True)
+    )
+    planned: list[dict[str, Any]] = []
+    for event, take in eligible:
+        payload = dict(event.payload or {})
+        previous = str(payload["previous_status"])
+        if take.kind == "still":
+            matches = any(take_hash(f, take.model_id) == take.prompt_hash for f in options)
+            primary: dict[str, Any] | None = options[0] if options else None
+        else:
+            matches = shot_identity_matches(take, view, still_sha)
+            primary = shot_identity
+        bind: str | None = None
+        if (
+            not matches
+            and package is not None
+            and primary is not None
+            and previous == "APPROVED"
+            and _owner_stands_by(take, decisions.get(take.id), previous)
+        ):
+            bind = take_hash(primary, take.model_id)
+        planned.append(
+            {
+                "event": event,
+                "payload": payload,
+                "take_id": take.id,
+                "seen_hash": take.prompt_hash,
+                "previous": previous,
+                "matches": matches,
+                "bind": bind,
+            }
+        )
+
+    now = utc_now()
+    with Session(engine) as session, session.begin():
+        lock_for_write(session)
+        scene_row = session.scalar(
+            select(StoryboardScene).where(
+                StoryboardScene.storyboard_id == storyboard_id,
+                StoryboardScene.scene_index == scene_index,
+            )
+        )
+        if (
+            scene_row is None
+            or dict(scene_row.prompt_json or {}) != seen_package
+            or scene_row.visual_prompt != seen_visual
+            or _delivered_since(session, storyboard_id, scene_index, str(first.timestamp), ids)
+        ):
+            # Written meanwhile: what was verified above no longer holds; the next look decides.
+            outcome["why"] = "CHANGED_SINCE"
+            return outcome
+        returned = _given_back_ids(
+            session, TAKE_RESTORED_EVENT, "retired_event_id", [item["take_id"] for item in planned]
+        )
+        for item in planned:
+            row = session.get(SceneTake, item["take_id"])
+            payload = item["payload"]
+            if (
+                item["event"].event_id in returned
+                or row is None
+                or row.status != "REJECTED"
+                or row.failure_code != payload.get("failure_code")
+                or row.prompt_hash != item["seen_hash"]
+            ):
+                outcome["skipped"].append({"take_id": item["take_id"], "why": "CHANGED_SINCE"})
+                continue
+            bind = item["bind"]
+            if bind is not None and session.scalar(
+                select(SceneTake.id)
+                .where(
+                    SceneTake.storyboard_id == row.storyboard_id,
+                    SceneTake.scene_number == row.scene_number,
+                    SceneTake.kind == row.kind,
+                    SceneTake.prompt_hash == bind,
+                    SceneTake.sha256 == row.sha256,
+                    SceneTake.id != row.id,
+                )
+                .limit(1)
+            ):
+                bind = None  # the same file under those words is another row already
+            row.status = item["previous"]
+            # What the take carried before the redo; an older event kept the status only.
+            row.failure_code = payload.get("previous_failure_code")
+            row.failure_detail = payload.get("previous_failure_detail")
+            if "previous_approved_by" in payload:
+                row.approved_by = payload.get("previous_approved_by")
+            if bind is not None:
+                row.prompt_hash = bind
+            row.updated_at = now
+            sync_take_quality(session, row)
+            append_event(
+                session,
+                TAKE_RESTORED_EVENT,
+                "scene_take",
+                row.id,
+                1,
+                {
+                    "storyboard_id": storyboard_id,
+                    "scene_number": scene_index,
+                    "kind": row.kind,
+                    "status": row.status,
+                    "retired_event_id": item["event"].event_id,
+                    "retired_code": payload.get("failure_code"),
+                    "cause": cause,
+                    "prompt_matches": bool(item["matches"]),
+                    "bound_to_picture": bind is not None,
+                    **({"previous_prompt_hash": item["seen_hash"]} if bind is not None else {}),
+                    "package_restored": package is not None,
+                },
+                correlation_id,
+            )
+            outcome["restored"].append(row.id)
+            if bind is not None:
+                outcome["bound_to_picture"].append(row.id)
+            elif not item["matches"]:
+                outcome["unmatched"].append(row.id)
+        if outcome["restored"] and package is not None and rewrite_id is not None:
+            scene_row.prompt_json = dict(package)
+            scene_row.visual_prompt = visual
+            append_event(
+                session,
+                SCENE_PROMPTS_RESTORED_EVENT,
+                "storyboard",
+                storyboard_id,
+                1,
+                {
+                    "storyboard_id": storyboard_id,
+                    "scene_index": scene_index,
+                    "rewritten_event_id": rewrite_id,
+                    "still_prompt": _words_of(package.get("still_prompt")),
+                    "motion_prompt": _words_of(package.get("motion_prompt")),
+                    "replaced_still_prompt": _words_of(seen_package.get("still_prompt")),
+                    "replaced_motion_prompt": _words_of(seen_package.get("motion_prompt")),
+                    "exact": exact,
+                    # What an older event could not put back: still as the rewrite wrote it.
+                    "kept_from_rewrite": list(kept),
+                    "cause": cause,
+                    "takes": list(outcome["restored"]),
+                },
+                correlation_id,
+            )
+            outcome["package"] = "exact" if exact else "restored"
+            outcome["kept_from_rewrite"] = list(kept)
+    outcome["why"] = "GIVEN_BACK" if outcome["restored"] else "NOTHING_TO_GIVE_BACK"
+    return outcome
+
+
+def given_back_ro(returned: dict[str, Any]) -> str:
+    """The Owner's line for takes given back after a redo that delivered nothing usable."""
+    index = returned.get("scene_index")
+    words = (
+        f"Refacerea scenei {index} nu a adus nimic folosibil, așa că înregistrările retrase au "
+        "fost repuse cum erau"
+    )
+    if returned.get("package") in ("restored", "exact"):
+        words += ", cu promptul scenei de dinainte"
+    words += "; filmul se poate asambla din ele."
+    if returned.get("bound_to_picture"):
+        words += (
+            " Pentru înregistrările aprobate de Proprietar, aprobarea lui ține de imaginea "
+            "aleasă: rămân ale scenei chiar dacă vechiul prompt nu a putut fi refăcut întocmai."
+        )
+    return words
 
 
 def _latest_film(engine: Engine, storyboard_id: str) -> dict[str, Any] | None:
@@ -12431,7 +13192,8 @@ def redo_plan(
 # look, `compose_serial_prompt`) and a package with no plan to compile keep their words.
 
 #: A scene whose prompts the studio compiled again for a redo: {storyboard_id, scene_index,
-#: old_still_prompt, still_prompt, old_motion_prompt, motion_prompt, reason, plan_hash}. A
+#: old_still_prompt, still_prompt, old_motion_prompt, motion_prompt, reason, plan_hash} and,
+#: from 2026-10-10, {old_package, old_visual_prompt, package, visual_prompt}. A
 #: «media.prompt*» type: the claim checker (`agents.reviews.check_work_claims`) proves «am
 #: rescris promptul» only by one, and an agent's true report of this repair was labelled
 #: NEEFĂCUT under the first name, "media.scene_prompts_rewritten" (review 2026-10-09).
@@ -12598,6 +13360,14 @@ def _rewrite_scene_prompts(
             **{key: rewrite[key] for key in ("scene_index", *_REWRITE_SHOWN)},
             "reason": "redo",
             "plan_hash": plan_hash,
+            # The whole package and visual prompt before and after (2026-10-10, babcf272): a
+            # redo that delivers nothing puts the old words back exactly, so the takes it
+            # retired match their prompt hash again (`give_back_retired_takes`). The two
+            # prompts above alone could not restore the motion intent the hash also reads.
+            "old_package": dict(rewrite["stored_package"]),
+            "old_visual_prompt": rewrite["stored_visual"],
+            "package": dict(rewrite["package"]),
+            "visual_prompt": str(rewrite["visual_prompt"]),
         },
         correlation_id,
     )
@@ -13535,13 +14305,29 @@ def redo_scene(
     clip_judge: Callable[[int, list[Path]], Any] | None = None,
     clip_check: Callable[..., Any] | None = None,
     unasked: bool = False,
+    proposal: bool = False,
 ) -> dict[str, Any]:
     """Redo one scene (``still`` | ``motion`` | ``card``) or the film's sound (``audio``).
 
     ``unasked`` is a redo nobody pressed (the day's QC repairs, `_apply_repairs`): refused
     before the balance is read when the Policy Kernel refuses it outright, and stopped before a
     later re-roll or retry when the Owner's mode or rule no longer lets it buy (`mode_guard`,
-    spec 51). The default, False, is his own press.
+    spec 51). The default, False, is his own press. Unasked, a redo that would retire a take
+    the Owner approved himself is refused first (OWNER_APPROVED, 409): nothing is collected,
+    asked, bought or written (2026-10-10, film babcf272), unless he already said yes to the
+    studio's question for this very plan (`_owner_yes_for_redo`): that yes is his decision.
+
+    ``proposal`` (with ``unasked``, a motion redo) is a redo the studio proposes for him to
+    answer (a clip too short for its words, `propose_clip_redos`; his card of 2026-10-10):
+    asking him touches nothing of his, so it is not refused OWNER_APPROVED here. The motion
+    step raises his question for it even where his rule and mode would let it buy unasked
+    (what the kernel refuses outright, MANUAL or the stop, stays refused), and retires and
+    buys nothing before his yes for this plan (`run_motion_step`).
+
+    A paid redo that retired takes and then delivered nothing (no candidate came with its
+    file, `_delivered_since`) gives them back, with the scene's words if it rewrote them
+    (`give_back_retired_takes`): its result carries ``given_back`` and says so in ``next_ro``;
+    a refusal raised after the retirement says so in its reason.
 
     A motion redo's new shot goes through clip QC like any shot of the motion step
     (``registry``, ``clip_judge``, ``face_counter``, ``clip_check``), with its one retry
@@ -13577,6 +14363,24 @@ def redo_scene(
     if kind in ("card", "audio"):
         free = _free_redo(engine, storyboard_id, correlation_id, plan, ffmpeg_path=ffmpeg_path)
         return _redo_done(engine, correlation_id, plan, free, {}, (0.0, None))
+    if unasked and not (proposal and kind == "motion"):
+        # 2026-10-10 (babcf272): the day's QC repair retired the Owner's own approved takes of
+        # scenes 1 and 2 under his OVER_USD rule. A redo nobody pressed never retires what he
+        # approved himself: refused here, before anything is collected, asked or bought, and
+        # without a question to him (his choice stands; his own press still redoes it). His
+        # yes already given to the studio's question for this very plan is his decision too
+        # (`_owner_yes_for_redo`, review 2026-10-10): the redo goes on and spends it. A
+        # proposal is that question: the motion step asks it, and buys only on his yes.
+        with Session(engine) as session:
+            standing = owner_approved_among(
+                session, [*plan.get("replaces", []), *plan.get("invalidates", [])]
+            )
+            if standing and not _owner_yes_for_redo(
+                session, storyboard_id, plan_hash, plan.get("cap_credits")
+            ):
+                raise SceneRedoRefused(
+                    OWNER_APPROVED, _owner_choice_stands_ro(session, standing, kind), plan=plan
+                )
 
     storage_root = storage_root or media_root(settings)
     if kind == "still" and image_adapter is not None:
@@ -13644,6 +14448,7 @@ def redo_scene(
         "clip_judge": clip_judge,
         "clip_check": clip_check,
         "unasked": unasked,
+        "proposal": proposal,
     }
     try:
         with film_purchase_lease(
@@ -13735,14 +14540,21 @@ def _paid_redo(
     clip_judge: Callable[[int, list[Path]], Any] | None,
     clip_check: Callable[..., Any] | None,
     unasked: bool = False,
+    proposal: bool = False,
 ) -> dict[str, Any]:
     """The paid part of `redo_scene`, under the film's lease and the step's budget hold: the
-    hold is settled once the redo is in the books and let go when nothing was bought."""
+    hold is settled once the redo is in the books and let go when nothing was bought.
+
+    What it retired comes back when it delivered nothing usable, whether it returned or
+    raised (`_give_back_after_redo`, 2026-10-10)."""
     from app.media.shooting_sheet import close_step_hold, release_step_hold  # noqa: PLC0415
 
     detail: dict[str, Any] = {}
     film: dict[str, Any] | None = None
     reference = _redo_reference(plan, correlation_id)
+    # Only this call's retirements are given back: the same correlation runs a still redo and
+    # then a motion redo of one scene in the day's QC repair.
+    mark = _event_mark(engine)
     billing_source = image_adapter if kind == "still" else account
     if billing_source is None and kind == "motion" and adapter_for_model is not None:
         billing_source = adapter_for_model(str(plan.get("model_id")))
@@ -13787,6 +14599,7 @@ def _paid_redo(
                 clip_check=clip_check,
                 meter=meter,
                 unasked=unasked,
+                proposal=proposal,
                 timezone=getattr(settings, "timezone", None),
             )
             detail["motion"] = summary
@@ -13816,17 +14629,23 @@ def _paid_redo(
             )
             detail["still"] = outcome
             spent = (float(outcome["spent_credits_quoted"]), outcome["spent_credits_measured"])
-    except SceneRedoRefused:
-        raise  # its hold is let go by `redo_scene`
+    except SceneRedoRefused as exc:
+        # Its hold is let go by `redo_scene`. Refused after the retirement (2026-10-10,
+        # babcf272: the GPU forced off before the round was sent), what it retired comes back.
+        _say_given_back(exc, _give_back_after_redo(engine, plan, correlation_id, mark))
+        raise
     except MotionStepRefused as exc:
-        raise SceneRedoRefused(
+        refused = SceneRedoRefused(
             exc.status,
             exc.reason_ro,
             approval_id=exc.approval_id,
             plan=plan,
             findings=exc.findings,
-        ) from exc
+        )
+        _say_given_back(refused, _give_back_after_redo(engine, plan, correlation_id, mark))
+        raise refused from exc
     except Exception as exc:
+        _give_back_after_redo(engine, plan, correlation_id, mark)
         try:
             _redo_interrupted(engine, plan, meter, exc, correlation_id)
         except SpentStageError as spent_error:
@@ -13852,11 +14671,64 @@ def _paid_redo(
         reference=reference,
         correlation_id=correlation_id,
     )
+    # Bought and booked, and nothing usable came of it (every candidate refused, the round
+    # stopped): the takes it retired are given back as they were.
+    given_back = _give_back_after_redo(engine, plan, correlation_id, mark)
+    if given_back is not None:
+        detail["given_back"] = given_back
     if kind == "motion":
         film = _film_after_motion(
             engine, storyboard_id, correlation_id, plan, detail["motion"], ffmpeg_path, environment
         )
     return _redo_done(engine, correlation_id, plan, film, detail, spent)
+
+
+def _event_mark(engine: Engine) -> int:
+    """The newest event's sequence: what a redo writes from here on comes after it."""
+    with Session(engine) as session:
+        newest = session.scalar(
+            select(DomainEvent.sequence).order_by(DomainEvent.sequence.desc()).limit(1)
+        )
+    return int(newest or 0)
+
+
+def _give_back_after_redo(
+    engine: Engine, plan: dict[str, Any], correlation_id: str, mark: int
+) -> dict[str, Any] | None:
+    """What this redo retired (its events after ``mark``), given back when it delivered
+    nothing usable (`give_back_retired_takes`); None when nothing came back. Never raises:
+    the redo's own result or error is what its caller reports, and the watchdog looks again
+    (`app.workflows.passes.restore_retired_takes`)."""
+    if plan.get("scene_index") is None:
+        return None
+    try:
+        returned = give_back_retired_takes(
+            engine,
+            str(plan["storyboard_id"]),
+            int(plan["scene_index"]),
+            correlation_id=correlation_id,
+            after_sequence=mark,
+            cause="redo_delivered_nothing",
+        )
+    except Exception as exc:  # noqa: BLE001 - logged; the watchdog gives them back later
+        logger.warning(
+            "redo_takes_not_given_back",
+            extra={
+                "storyboard_id": plan.get("storyboard_id"),
+                "scene_index": plan.get("scene_index"),
+                "error": type(exc).__name__,
+            },
+        )
+        return None
+    return returned if returned["restored"] else None
+
+
+def _say_given_back(refused: SceneRedoRefused, returned: dict[str, Any] | None) -> None:
+    """A refusal raised after the redo retired takes says they came back."""
+    if returned is None:
+        return
+    refused.reason_ro = f"{refused.reason_ro} {given_back_ro(returned)}"
+    refused.args = (refused.reason_ro,)
 
 
 def _redo_reference(plan: dict[str, Any], correlation_id: str) -> str:
@@ -14120,6 +14992,12 @@ def _redo_done(
             "credits_measured": measured,
             "film_asset_id": (film or {}).get("output_asset_id"),
             "of_asset": plan["base_asset_id"],
+            # The takes it retired and gave back after it delivered nothing usable.
+            **(
+                {"given_back": list(detail["given_back"]["restored"])}
+                if detail.get("given_back")
+                else {}
+            ),
             # A still redo's balance before and after, read by the film that uses it
             # (film_step_spend); a motion redo's are on its own motion step's event.
             **(
@@ -14215,6 +15093,8 @@ def _redo_next_step(
 ) -> str:
     """What happens next, in one Romanian line for the Owner."""
     index = plan["scene_index"]
+    if detail.get("given_back"):
+        return given_back_ro(detail["given_back"])
     if plan["kind"] == "still":
         if (detail.get("still") or {}).get("status") == "IN_FLIGHT":
             return (
@@ -14433,13 +15313,22 @@ def _redo_still(
                     correlation_id=correlation_id,
                 )
             # The yes is spent and the old picture retired together, with every shot that
-            # started from it: a shot never outlives the still it was filmed from.
+            # started from it: a shot never outlives the still it was filmed from. What the
+            # Owner approved himself is retired only by his own press, or his yes for this
+            # plan (2026-10-10, babcf272): unasked and without it, this raises and rolls back
+            # the rewrite and the yes with it.
+            his = not unasked or _owner_yes_for_redo(
+                session, storyboard_id, plan_hash, cap, verdict
+            )
             _retire_takes(
                 session,
                 list(plan["replaces"]),
                 REDO_FAILURE_CODE,
                 note or "Proprietarul a cerut o imagine nouă pentru această scenă.",
                 correlation_id,
+                redo_kind="still",
+                owner_press=his,
+                plan_hash=plan_hash,
             )
             _retire_takes(
                 session,
@@ -14448,6 +15337,9 @@ def _redo_still(
                 f"Cadrul a fost filmat din imaginea veche a scenei {index}, înlocuită la cererea "
                 "Proprietarului; nu se mai folosește.",
                 correlation_id,
+                redo_kind="still",
+                owner_press=his,
+                plan_hash=plan_hash,
             )
     if not verdict["allowed"]:
         raise SceneRedoRefused(
