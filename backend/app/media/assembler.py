@@ -5305,9 +5305,7 @@ def clip_choice(
         return refused("NOT_DELIVERED", "Clipul nu a sosit încă de la furnizor.")
     code = str(take.failure_code or "")
     if code.startswith(_SENT_BACK_PREFIX):
-        return refused(
-            "SENT_BACK", "Furnizorul a refuzat mișcarea: nu există niciun clip de ales."
-        )
+        return refused("SENT_BACK", "Furnizorul a refuzat mișcarea: nu există niciun clip de ales.")
     if code == DUPLICATE_FILE_CODE:
         return refused(
             "DUPLICATE",
@@ -7133,23 +7131,67 @@ def assemble_video_job(
                 _fail_job(reason, reason)
                 raise RenderEngineUnavailable(reason)
             target = work_dir / f"shot_{scene['scene_index']:02d}.mp4"
-            shot_args = _shot_command(
-                ffmpeg_exe,
-                shot_still,
-                moving,
-                span,
-                target,
-                fps=TIMELINE_FPS,
-                hold=holds[position],
-                dither=dither,
-                slow=slow,
-                interpolate=interpolate,
-            )
-            try:
-                shot = run_encoder(shot_args, work_dir)
-            except RenderEngineUnavailable as exc:
-                _fail_job(f"Shot {scene['scene_index']} could not be built", str(exc))
-                raise
+            shot_picture: Path = shot_still
+
+            def build_shot(
+                fill: str,
+                *,
+                _still: Path = shot_picture,
+                _clip: Path | None = moving,
+                _span: float = span,
+                _target: Path = target,
+                _hold: float = holds[position],
+                _slow: float = slow,
+            ) -> tuple[subprocess.CompletedProcess[str] | None, str]:
+                args = _shot_command(
+                    ffmpeg_exe,
+                    _still,
+                    _clip,
+                    _span,
+                    _target,
+                    fps=TIMELINE_FPS,
+                    hold=_hold,
+                    dither=dither,
+                    slow=_slow,
+                    interpolate=fill,
+                )
+                try:
+                    return run_encoder(args, work_dir), ""
+                except RenderEngineUnavailable as exc:
+                    return None, str(exc)
+
+            def unbuilt(
+                result: subprocess.CompletedProcess[str] | None, _target: Path = target
+            ) -> bool:
+                return (
+                    result is None
+                    or result.returncode != 0
+                    or not _target.is_file()
+                    or _target.stat().st_size == 0
+                )
+
+            slowed_with = interpolate
+            shot, engine_error = build_shot(interpolate)
+            if unbuilt(shot) and slow > 1.0 and interpolate != "framerate":
+                # 2026-10-10 (babcf272 scene 3): minterpolate died in this encoder build after
+                # 1.5 s with an access violation (exit 3221225477, nothing on stderr) on the
+                # scene's 5.0 s particle clip, and the film was refused for a filter the shot
+                # did not need; framerate built the same shot in 0.6 s. A slowed clip whose
+                # best interpolation fails is blended instead, and the shot says so.
+                logger.warning(
+                    "slowdown_filter_failed",
+                    extra={
+                        "scene_index": scene["scene_index"],
+                        "filter": interpolate,
+                        "exit": getattr(shot, "returncode", None),
+                        "error": engine_error[:200],
+                    },
+                )
+                slowed_with = "framerate"
+                shot, engine_error = build_shot("framerate")
+            if shot is None:
+                _fail_job(f"Shot {scene['scene_index']} could not be built", engine_error)
+                raise RenderEngineUnavailable(engine_error)
             if shot.returncode != 0 or not target.is_file() or target.stat().st_size == 0:
                 log = f"shot {scene['scene_index']} failed\n{shot.stdout}\n{shot.stderr}"
                 _fail_job(f"Shot {scene['scene_index']} could not be built", log)
@@ -7179,7 +7221,8 @@ def assemble_video_job(
                 dither=dither,
                 fps=TIMELINE_FPS,
                 slow=slow,
-                interpolate=interpolate,
+                # What built it, so a one-scene redo rebuilds it the same way.
+                interpolate=slowed_with,
             )
             shot_records.append(record)
         # One look (audit Q8): every filmed shot pulled toward the hero's light and colour,
@@ -13172,21 +13215,31 @@ def _rebuild_film(
             frames_have = max(1, round(have * fps))
             slow = (max(1, round(span * fps)) + SLOWDOWN_EXTRA_FRAMES) / frames_have
             interpolate = slowdown_filter(ffmpeg_exe) or "framerate"
-    built = _run_ffmpeg(
-        _shot_command(
-            ffmpeg_exe,
-            moving,
-            moving,
-            span,
-            shot,
-            fps=fps,
-            hold=hold,
-            dither=has_filter(ffmpeg_exe, "zscale"),
-            slow=slow,
-            interpolate=interpolate or "framerate",
-        ),
-        folder,
-    )
+
+    def build(fill: str) -> subprocess.CompletedProcess[str]:
+        return _run_ffmpeg(
+            _shot_command(
+                ffmpeg_exe,
+                moving,
+                moving,
+                span,
+                shot,
+                fps=fps,
+                hold=hold,
+                dither=has_filter(ffmpeg_exe, "zscale"),
+                slow=slow,
+                interpolate=fill,
+            ),
+            folder,
+        )
+
+    built = build(interpolate or "framerate")
+    failed = built.returncode != 0 or not shot.is_file() or shot.stat().st_size == 0
+    if failed and slow > 1.0 and interpolate not in (None, "framerate"):
+        # The render's own fallback (2026-10-10, babcf272 scene 3): minterpolate can die on a
+        # clip in this encoder build; the slowed shot is blended instead.
+        interpolate = "framerate"
+        built = build(interpolate)
     if built.returncode != 0 or not shot.is_file() or shot.stat().st_size == 0:
         raise SceneRedoRefused(
             "ENCODE_FAILED", f"Cadrul nou al scenei {scene_index} nu a putut fi construit."

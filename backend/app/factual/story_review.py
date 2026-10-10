@@ -91,9 +91,9 @@ MAX_EXCHANGES = 20
 
 #: Said when the studio goes on past a second matter-of-taste REVISE (see `_taste_only`).
 TASTE_SETTLED_RO = (
-    "Scenariul trece toate verificările a doua oară la rând, iar Directorul a cerut din nou "
-    "doar retușuri de gust: studioul merge mai departe, iar notele lui rămân sugestii pentru "
-    "filmare."
+    "Scenariul trece toate verificările, iar Directorul a cerut din nou doar retușuri de gust, "
+    "după ce povestea fusese deja rescrisă o dată pentru gust: studioul merge mai departe, iar "
+    "notele lui rămân sugestii pentru filmare."
 )
 
 
@@ -107,8 +107,9 @@ def _taste_only(review: StoryReview | None) -> bool:
     in, until the repair paused and wrote to the Owner. Taste may send a passing draft back
     once, with her notes for the writer; a second time in a row it is a loop, not a review,
     and the studio decides on its own (the Owner: «studioul trebuie să rezolve singur, fără
-    intervenții»). A reading recorded before the marker counts when its failures were stored
-    and none of them refuses."""
+    intervenții»). Once per story, not once in a row: the same day the rewrites alternated
+    between her taste and a check the rewrite broke, and never met twice in a row. A reading
+    recorded before the marker counts when its failures were stored and none of them refuses."""
     if review is None or review.verdict != "REVISE":
         return False
     notes = review.notes_json or {}
@@ -316,8 +317,10 @@ def review_story(
                 .order_by(StoryReview.created_at.desc())
             ).first()
         earlier_notes = list((previous.notes_json or {}).get("notes") or []) if previous else []
-        # Whether the last reading of this story already sent it back on taste alone.
-        taste_spent = _taste_only(previous)
+        # Whether any earlier reading of this story already sent it back on taste alone. Not
+        # only the last one: live the same day, the rewrites alternated (taste, a check the
+        # rewrite broke, taste again...), and "twice in a row" never came.
+        taste_spent = any(_taste_only(review) for review in history)
 
     every_failure = failed(checks)
     # What the arithmetic may refuse on, and what it may only point at.
@@ -374,9 +377,9 @@ def review_story(
             retention = opinion.retention.model_dump()
             notes.extend(str(note) for note in opinion.notes[:6])
             # The Director may send back a script the checks did not catch; she may not wave
-            # through one they did. Taste can be stricter than a rule, never looser — once in
-            # a row: a second REVISE on taste alone, after a rewrite that passes every check
-            # again, is a loop, and the studio goes on (`_taste_only`). Her REJECT stays hers.
+            # through one they did. Taste can be stricter than a rule, never looser — once per
+            # story: a second REVISE on taste alone, on a draft that passes every check, is a
+            # loop, and the studio goes on (`_taste_only`). Her REJECT stays hers.
             if opinion.verdict == "REVISE" and verdict == "PASS" and taste_spent:
                 taste_settled = True
                 notes.append(TASTE_SETTLED_RO)

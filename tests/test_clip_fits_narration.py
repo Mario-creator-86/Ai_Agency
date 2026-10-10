@@ -716,6 +716,51 @@ def test_a_5_s_clip_under_a_59_s_span_is_slowed_locally_and_the_film_is_assemble
 
 
 @requires_ffmpeg
+def test_a_slowed_shot_whose_interpolation_crashes_is_blended_and_the_film_still_made(
+    engine: Engine, settings: Any, tmp_path: Path, monkeypatch: Any
+) -> None:
+    """2026-10-10, babcf272 scene 3 live: minterpolate died in this encoder build after 1.5 s
+    (exit 3221225477, an access violation, nothing on stderr) and the whole film was refused
+    for a filter the shot did not need. The shot is built again blended (framerate)."""
+    import subprocess
+
+    from app.media import assembler
+
+    real = assembler.run_encoder
+    crashed: list[str] = []
+
+    def encoder(command, folder, **kwargs):
+        if any("minterpolate" in str(part) for part in command):
+            crashed.append(str(command[-1]))
+            return subprocess.CompletedProcess(list(command), 3221225477, "", "Stream mapping:")
+        return real(command, folder, **kwargs)
+
+    monkeypatch.setattr(assembler, "run_encoder", encoder)
+    monkeypatch.setattr(assembler, "slowdown_filter", lambda _ffmpeg: "minterpolate")
+    words = "A field that gives every particle its mass."
+    storyboard_id = a_board(engine, tmp_path, [words])
+    in_environment(engine, "PRODUCTION")
+    a_shot_take(engine, storyboard_id, 1, 5.0, a_clip(tmp_path / "motion.mp4", 5.0))
+
+    film = assemble_from_takes(
+        engine,
+        storyboard_id,
+        str(uuid4()),
+        storage_root=tmp_path / "media",
+        tts_adapter=ToneVoice({words: 5.9}),
+        environment="PRODUCTION",
+        settings=settings,
+    )
+
+    assert crashed, "the best interpolation was tried first"
+    (shot,) = film["production"]["shots"]
+    assert shot["source"]["slow"] > 1.0
+    assert shot["source"]["interpolate"] == "framerate", "a redo rebuilds it the way it was made"
+    with Session(engine) as session:
+        assert session.get(VideoRenderJob, film["job_id"]).status == "COMPLETED"
+
+
+@requires_ffmpeg
 def test_measured_at_the_render_scene_3_is_refused_recorded_and_the_sheet_agrees(
     engine: Engine, settings: Any, tmp_path: Path
 ) -> None:

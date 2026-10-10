@@ -1566,6 +1566,42 @@ def test_taste_alone_sends_a_passing_story_back_once_then_the_studio_goes_on(eng
     assert stored["taste_settled"] is True and stored["taste_only"] is False
 
 
+def test_taste_is_spent_once_per_story_even_when_a_broken_check_comes_between(engine, studio):
+    """Live the same day after the first fix: taste, then a rewrite that broke a check
+    (duration), then taste again — "twice in a row" never came. Taste is once per story."""
+    from app.factual.story_review import TASTE_SETTLED_RO, review_story
+
+    topic_id = a_topic(engine)
+    registry, _ = registry_with(studio, _director_says("REVISE", "Strânge scena 3."))
+    first = review_story(
+        engine, registry, a_script(engine, topic_id, status="VERIFIED_PASS"), target_seconds=30
+    )
+    assert first["verdict"] == "REVISE" and first["failed"] == []
+
+    # The rewrite after her notes broke a check: sent back by the arithmetic, not by taste.
+    broken = a_script(engine, topic_id, status="VERIFIED_PASS")
+    with Session(engine) as session, session.begin():
+        session.add(
+            StoryReview(
+                id=str(uuid4()),
+                script_id=broken,
+                verdict="REVISE",
+                checks_json={},
+                retention_json={},
+                scores_json={},
+                notes_json={"notes": ["Prea lung."], "failed": ["duration_is_realistic"]},
+                estimated_seconds=57.5,
+                created_at=utc_now(),
+            )
+        )
+
+    third = review_story(
+        engine, registry, a_script(engine, topic_id, status="VERIFIED_PASS"), target_seconds=30
+    )
+    assert third["failed"] == [] and third["verdict"] == "PASS"
+    assert TASTE_SETTLED_RO in third["notes"]
+
+
 def test_her_reject_and_a_taste_round_after_a_failed_check_still_stand(engine, studio):
     """Only a REVISE on taste right after another one goes on: her REJECT is a decision and
     stays hers, and a taste REVISE after a draft the checks themselves sent back is her first."""
