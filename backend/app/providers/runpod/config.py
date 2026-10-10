@@ -147,6 +147,14 @@ class RunPodConfig(BaseSettings):
     off_poll_seconds: float = Field(default=2.0, gt=0, le=60)
     #: A session not renewed for this long is forced off by the guard.
     session_stale_seconds: int = Field(default=300, ge=10, le=86_400)
+    #: How long a /run answered 409 «Endpoint is paused (max_workers=0)» right after the
+    #: switch-on is sent again (`batch._post_run`), on a monotonic clock. Live 2026-10-09 the
+    #: queue saw the switch-on after ~1 s, ~3 s, ~15 s and more than 30 s (motion, 17:24 UTC,
+    #: when the wait was 30 s and the step was booked as paid). Nothing is queued and no worker
+    #: runs meanwhile, so the wait costs nothing; the session is renewed at every retry, so the
+    #: guard's ``session_stale_seconds`` never ends it. Past it the step is refused
+    #: RUNPOD_PAUSED: nothing bought, nothing booked.
+    paused_wait_seconds: int = Field(default=180, ge=0, le=1800)
     session_max_seconds: int = Field(default=14_400, ge=60, le=604_800)
     gpu_busy_wait_seconds: int = Field(default=600, ge=0, le=86_400)
     guard_interval_seconds: int = Field(default=60, ge=5, le=3600)

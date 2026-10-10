@@ -24,7 +24,16 @@ secunda, deci trebuie oprit imediat dupa generare». So:
   the Owner's «Oprește GPU acum», the guard or a shutdown raise `GpuForcedOff`). A stop cancels
   every unfinished job: what finished is collected and booked, the rest «nu s-a cumpărat».
 * The meter counts a round's price when it is submitted (possibly charged), and gives back the
-  items RunPod never made (cancelled, or never sent).
+  items RunPod never made (cancelled, or never sent). A round RunPod queued nothing of comes
+  back as an unsent `BatchRefused` (`batch.refused_unqueued`: a paused 409 past its wait, a
+  4xx, a 429, the GPU switched off or the step stopped during that wait): its whole price goes
+  back and the stage refuses with RunPod's words, booking nothing (2026-10-09 17:24 UTC: a
+  paused 409 kept the round on the meter and the sheet wrote the Owner he had paid). Only when
+  the step had bought nothing before: once its meter holds a purchase (an earlier round, or the
+  motion step's scenes on a per-second model bought before its RunPod part), a refusal, or a
+  GPU that would not switch on, ends the step on what it bought, so the sheet books it (review
+  2026-10-10: refused unsent, the sheet let the hold go and 340 Runway credits really spent
+  left the books). ``summary['refusal']`` keeps RunPod's code, status and words.
 * A result that proves the endpoint's weights wrong (another mirror revision, MODELS_MISSING;
   `providers.runpod.weights`) stops the step: what is left is cancelled, no further round is
   sent, the session's close sets workers.max=0, and the Owner gets a card with the console
@@ -35,21 +44,32 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import ExitStack, contextmanager
 from typing import Any, Literal
 
 from sqlalchemy import Engine
 
 from app.providers.media_http import MediaProviderError
 from app.providers.runpod.batch import (
+    NOT_QUEUED_REST_STOP,
     NOT_QUEUED_STOP,
     UNCERTAIN,
     UNSENT,
+    BatchRefused,
     BatchRequest,
     ItemOutcome,
     SubmittedItem,
+    refusal_words,
+    step_stop,
 )
-from app.providers.runpod.gpu_session import GpuForcedOff, StepPermit, gpu_session, precheck
+from app.providers.runpod.gpu_session import (
+    GpuForcedOff,
+    GpuSessionRefused,
+    StepPermit,
+    gpu_session,
+    precheck,
+)
 
 logger = logging.getLogger("studio.media")
 
@@ -101,6 +121,70 @@ def fit_round(
     while fitted and price_credits(fitted) > left + 1e-9:
         fitted.pop()
     return fitted
+
+
+#: The kernel's statuses a guard's stop keeps as the refusal's code (`_stop_status`): his own
+#: decision, which the day waits on (`runbook.stages.OWNER_DECIDES`, a test keeps them in it).
+#: Never NEEDS_APPROVAL: the guard reads the kernel with ask_owner=False, so no question stands
+#: behind it, and refused so, the day told him «așteaptă răspunsul tău» with nothing in his
+#: Decisions window to answer (review 2026-10-09). Every other stop stays STOPPED.
+HIS_DECISION_STOPS = frozenset({"BLOCKED_MODE", "BLOCKED_NO_BUDGET"})
+
+
+def _stop_status(guard: Any, refused: MediaProviderError) -> str | None:
+    """The kernel's status of a stop the step's guard recorded (his mode lowered, his daily
+    budget removed) for a round refused STOPPED while RunPod still answered «paused», so the
+    day reads it as his decision, not a fault of the film; None for any other stop."""
+    if guard is None or refused.code != "STOPPED":
+        return None
+    recorded = getattr(guard, "stopped", None)
+    status = recorded.get("status") if isinstance(recorded, dict) else None
+    return str(status) if status in HIS_DECISION_STOPS else None
+
+
+def _bought(meter: Any) -> bool:
+    """Whether the step's meter holds a purchase (possibly charged): an earlier round, or what
+    the step bought before its RunPod part (the motion step's per-second scenes)."""
+    return float(meter.committed) > 1e-9
+
+
+def _refusal_record(exc: MediaProviderError) -> dict[str, Any]:
+    """What stopped the step's RunPod part, for the step's result and the sheet: the code,
+    RunPod's status and its own words (sanitised by media_http), never the log alone."""
+    detail = " ".join(str(exc.detail or "").split())[:300]
+    return {
+        "code": str(exc.code) if exc.code else None,
+        "http_status": exc.http_status,
+        "detail": detail or None,
+    }
+
+
+@contextmanager
+def _gpu_for_rounds(
+    engine: Engine,
+    adapter: Any,
+    *,
+    purpose: Literal["image", "video"],
+    permit: StepPermit,
+    meter: Any,
+    refused: list[MediaProviderError],
+) -> Iterator[Any]:
+    """`gpu_session` for the rounds; None (its refusal in ``refused``) when the GPU would not
+    switch on after the step had already bought elsewhere (`_bought`): the step then ends on
+    what it bought instead of refusing unsent, which would let the sheet drop that purchase
+    from the books (review 2026-10-10). With nothing bought the refusal travels up as before.
+    An error inside the rounds still reaches the session's close (STEP_FAILED)."""
+    with ExitStack() as stack:
+        try:
+            session = stack.enter_context(
+                gpu_session(engine, adapter, purpose=purpose, permit=permit)
+            )
+        except GpuSessionRefused as exc:
+            if not _bought(meter):
+                raise
+            refused.append(exc)
+            session = None
+        yield session
 
 
 def _keep_alive(session: Any) -> str | None:
@@ -160,7 +244,13 @@ def _prove_unsent(
     if not proven:
         return
     every_uncertain = all(o.item.job_row_id in ids for o in outcomes if o.error == UNCERTAIN)
-    whole = len(proven) == len(outcomes) and not list(getattr(run, "remote_job_ids", []) or [])
+    # Every item of the round is proven never queued, or was never sent (a later chunk the
+    # studio held back after a refusal: its share already went back as unmade), and RunPod
+    # accepted no job of it (review 2026-10-10: a lost chunk proven, then a paused one past its
+    # wait, kept the GPU start on the meter and his letter said «ce s-a cumpărat … rămâne»).
+    whole = all(
+        o.item.job_row_id in ids or (o.state == "FAILED" and o.error == UNSENT) for o in outcomes
+    ) and not list(getattr(run, "remote_job_ids", []) or [])
     # Nothing of the round reached RunPod: what the meter kept for it goes back, its GPU start
     # included (no worker started for it). Otherwise only the proven items' share.
     given_back = (
@@ -181,7 +271,8 @@ def _prove_unsent(
     summary["not_queued_items"] = len(proven)
     summary["not_queued_credits"] = given_back
     if every_uncertain and summary.get("stopped") == UNCERTAIN:
-        summary["stopped"] = NOT_QUEUED_STOP
+        # Once an earlier round (or the step's per-second scenes) was bought, never «nothing».
+        summary["stopped"] = NOT_QUEUED_REST_STOP if _bought(meter) else NOT_QUEUED_STOP
 
 
 def run_rounds(
@@ -206,8 +297,11 @@ def run_rounds(
     """Buy the step's rounds inside one GPU session; returns what happened.
 
     Raises `GpuSessionRefused` / `BatchRefused` when the first round could not even be sent
-    (nothing spent): the stage turns them into its own refusal. ``stopped()`` is the autonomy
-    stop (or any reason to stop the step), ``guard`` the step's `PurchaseGuard` (or None).
+    (nothing spent) and the step's ``meter`` held nothing before it: the stage turns them into
+    its own refusal. With a purchase already on the meter the step ends on it instead
+    (``summary['stopped']`` and ``summary['refusal']``), so it is booked. ``stopped()`` is the
+    autonomy stop (or any reason to stop the step), ``guard`` the step's `PurchaseGuard` (or
+    None).
 
     ``credits_for_seconds`` turns billed GPU-seconds into the step's credits (the budget rate,
     `media.assembler.gpu_seconds_to_credits`). When a round's jobs report their times, the
@@ -240,7 +334,15 @@ def run_rounds(
         "reconciled_credits": 0.0,
         # The weights the endpoint loaded were not the expected ones (`weights.WeightsProblem`).
         "weights_problem": None,
+        # What refused the step's RunPod part when it ended on what it bought instead of
+        # refusing (`_refusal_record`: code, RunPod's status and words), or None.
+        "refusal": None,
     }
+    # The refusal that ended the rounds (a /run RunPod queued nothing of, a GPU that would not
+    # switch on): its words are chosen once the close's proof has settled the meter, so they
+    # say «nothing bought» exactly when the step's meter holds nothing (review 2026-10-10).
+    ended_by: MediaProviderError | None = None
+    not_opened: list[MediaProviderError] = []
     problem: Any = None
     billed: list[float | None] = []
     overhead = float(price_credits([]))
@@ -255,8 +357,12 @@ def run_rounds(
             return reason
         return guard.stop_reason(None) if guard is not None else None
 
-    with gpu_session(engine, adapter, purpose=purpose, permit=permit) as session:
-        requests = list(first_round)
+    with _gpu_for_rounds(
+        engine, adapter, purpose=purpose, permit=permit, meter=meter, refused=not_opened
+    ) as session:
+        requests = list(first_round) if session is not None else []
+        if not_opened:
+            ended_by = not_opened[0]
         while requests:
             reason = stop_reason()
             if reason:
@@ -279,17 +385,31 @@ def run_rounds(
             meter.committed += price
             meter.attempts += 1
             try:
-                run = adapter.submit_batch(fitted, session=session, on_submitted=on_submitted)
+                # The step's stop rides along: read before every wait for a paused endpoint
+                # and before every /run sent again after it (`batch.STEP_STOP`).
+                with step_stop(stop_reason):
+                    run = adapter.submit_batch(fitted, session=session, on_submitted=on_submitted)
             except MediaProviderError as exc:
-                if exc.unsent or exc.http_status in (400, 401, 403, 404, 413, 422):
-                    # Proven not sent (or refused before anything was made): nothing charged.
-                    meter.committed -= price
-                    meter.attempts -= 1
-                    if summary["rounds"] == 0:
-                        raise
-                    summary["stopped"] = str(getattr(exc, "reason_ro", None) or exc)
-                    break
-                raise
+                if not exc.unsent:
+                    raise
+                # RunPod queued nothing of the round: never sent, or refused whole (the batch
+                # raises every such answer as an unsent `BatchRefused`, `refused_unqueued`; one
+                # list, 2026-10-09). Nothing charged: the round's price goes back.
+                meter.committed -= price
+                meter.attempts -= 1
+                if summary["rounds"] == 0 and not _bought(meter):
+                    # The step bought nothing at all: it refuses, and the stage books nothing.
+                    status = _stop_status(guard, exc)
+                    if status is not None:
+                        raise BatchRefused(
+                            status, str(getattr(exc, "reason_ro", None) or exc)
+                        ) from exc
+                    raise
+                # An earlier round, or the step's per-second scenes, were bought: the step ends
+                # on what it bought (booked by the sheet), never «nothing was bought».
+                ended_by = exc
+                summary["forced_off"] = summary["forced_off"] or exc.code == "GPU_FORCED_OFF"
+                break
             summary["rounds"] += 1
             summary["items_sent"] += len(fitted)
             summary["overhead_credits"] += overhead
@@ -373,6 +493,17 @@ def run_rounds(
                 uncertain_round = (run, outcomes, kept)
             if halted is not None:
                 break
+            refused = getattr(run, "refused", None)
+            if refused is not None:
+                # The round stopped sending after an earlier chunk had left (a paused endpoint
+                # past its wait, the GPU off or the step stopped during it): what left was
+                # collected above, the rest was never sent (given back), and no further round
+                # goes out, so a re-roll never waits ~3 minutes on a paused endpoint again.
+                ended_by = refused
+                summary["forced_off"] = summary["forced_off"] or (
+                    getattr(refused, "code", None) == "GPU_FORCED_OFF"
+                )
+                break
             if uncertain_round is not None:
                 # A round whose answer was lost: its items may have been served. Nothing more
                 # is sent in this step; the same keys go out again in a later step, where the
@@ -393,6 +524,10 @@ def run_rounds(
             overhead=overhead,
             on_unsent=on_unsent,
         )
+    if ended_by is not None:
+        # After the proof: «nothing was bought» only when the step's meter holds nothing.
+        summary["refusal"] = _refusal_record(ended_by)
+        summary["stopped"] = refusal_words(ended_by, bought_before=_bought(meter))
     if problem is not None:
         # After the close (workers.max=0): the card in his Decisions window, once per endpoint.
         from app.providers.runpod.weights import raise_weights_card  # noqa: PLC0415

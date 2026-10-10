@@ -160,11 +160,12 @@ class RunPodGenerationProvider:
             )
             return self._status(row.id, data, polled=False)
         except MediaProviderError as exc:
+            from app.providers.runpod.batch import refused_unqueued  # noqa: PLC0415
+
             saved = self.store.read(row.id, target=self.target)
-            if not saved.remote_job_id and (
-                exc.unsent
-                or (exc.http_status in (400, 401, 403, 404, 413, 422) and not exc.unanswered)
-            ):
+            # The studio's one list of "refused, nothing queued" (2026-10-09: four copies of it
+            # disagreed and the step's meter read the one without 409).
+            if not saved.remote_job_id and refused_unqueued(exc):
                 self.store.update(
                     row.id,
                     status="FAILED",

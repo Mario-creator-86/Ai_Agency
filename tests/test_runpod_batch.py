@@ -72,12 +72,13 @@ class Session_:
     def __init__(self):
         self.id = str(uuid4())
         self.jobs = []
+        self.renewals = 0
 
     def note_job(self, job, *, session=None):
         self.jobs.append(job)
 
     def renew(self):
-        pass
+        self.renewals += 1
 
     def check(self):
         pass
@@ -110,6 +111,8 @@ class Cloud:
         assert host == "api.runpod.ai", host
         if method == "POST" and parts.path.endswith("/run"):
             answer = self.run_answers.pop(0) if self.run_answers else None
+            if callable(answer):  # an answer decided when the /run arrives (a side effect)
+                answer = answer()
             if isinstance(answer, Exception):
                 raise answer
             job = f"job-{len(self.jobs) + 1}"
@@ -386,34 +389,116 @@ def paused():
     )
 
 
-def test_a_paused_endpoint_is_asked_again_until_it_takes_the_job(engine, tmp_path, monkeypatch):
+class FakeClock:
+    """The paused wait's monotonic clock: time moves only when the batch sleeps."""
+
+    def __init__(self):
+        self.now = 0.0
+        self.slept = []
+
+    def __call__(self):
+        return self.now
+
+    async def sleep(self, seconds):
+        self.slept.append(seconds)
+        self.now += seconds
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    fake = FakeClock()
+    monkeypatch.setattr(batch_module, "paused_clock", fake)
+    monkeypatch.setattr(batch_module, "paused_sleep", fake.sleep)
+    return fake
+
+
+def pause_events(engine):
+    from app.models import DomainEvent
+
+    with Session(engine) as s:
+        return [
+            e.payload
+            for e in s.scalars(
+                select(DomainEvent).where(DomainEvent.event_type == batch_module.PAUSE_EVENT)
+            )
+        ]
+
+
+def test_a_paused_endpoint_is_asked_again_until_it_takes_the_job(engine, tmp_path, clock, caplog):
     # 2026-10-09, live: the /run left 0.1 s after the switch-on PATCH and RunPod answered 409
     # «Endpoint is paused (max_workers=0)»: the setting had not reached its queue yet.
-    monkeypatch.setattr(batch_module, "PAUSED_RETRY_SECONDS", (0.0, 0.0))
+    import logging
+
+    caplog.set_level(logging.INFO, logger="studio.runpod")
     cloud = Cloud()
     cloud.run_answers = [paused(), paused()]
     made = adapter(engine, tmp_path, cloud)
     taken = []
-    made.submit_batch([request()], session=Session_(), on_submitted=taken.append)
+    session = Session_()
+    made.submit_batch([request()], session=session, on_submitted=taken.append)
     assert len(cloud.posts()) == 3 and len(taken) == 1
+    assert clock.slept == [1.0, 2.0]
+    # The session is renewed before and after every wait, never left to go stale.
+    assert session.renewals == 4
     with Session(engine) as s:
         row = s.scalar(select(GenerationJob))
         assert str(row.remote_job_id).startswith("job-1") and row.error_code is None
+    # How long RunPod took is kept, in the log and in the studio's own events.
+    (cleared,) = [r for r in caplog.records if r.getMessage() == "runpod_run_paused_cleared"]
+    assert cleared.seconds == 3.0 and cleared.paused_answers == 2
+    (event,) = pause_events(engine)
+    assert event["cleared"] is True and event["seconds"] == 3.0 and event["ended"] is None
 
 
-def test_an_endpoint_still_paused_after_the_waits_is_refused_and_nothing_is_uncertain(
-    engine, tmp_path, monkeypatch
-):
-    monkeypatch.setattr(batch_module, "PAUSED_RETRY_SECONDS", (0.0,))
+def test_a_cleared_pause_saves_the_job_before_its_event(engine, tmp_path, clock, monkeypatch):
+    # Review 2026-10-09: the pause's event (a write that may wait out the 30 s busy timeout)
+    # was written after RunPod accepted the job and before its id was saved on the rows and
+    # the session: a «Oprește GPU acum» meanwhile could not cancel a job nothing named yet.
+    from app.providers.runpod import gpu_session
+
+    real = gpu_session._write_event
+    session = Session_()
+    seen = []
+
+    def write(engine_, kind, aggregate_id, payload, correlation):
+        if kind == batch_module.PAUSE_EVENT:
+            with Session(engine) as s:
+                seen.append((s.scalar(select(GenerationJob)).remote_job_id, list(session.jobs)))
+        real(engine_, kind, aggregate_id, payload, correlation)
+
+    monkeypatch.setattr(gpu_session, "_write_event", write)
     cloud = Cloud()
-    cloud.run_answers = [paused(), paused()]
+    cloud.run_answers = [paused()]
     made = adapter(engine, tmp_path, cloud)
-    with pytest.raises(MediaProviderError):
+    made.submit_batch([request()], session=session, on_submitted=lambda item: None)
+    ((saved, noted),) = seen
+    assert str(saved).startswith("job-1") and noted == ["job-1"]
+    assert len(pause_events(engine)) == 1
+
+
+def test_an_endpoint_still_paused_past_its_budget_is_refused_unsent_in_runpods_words(
+    engine, tmp_path, clock
+):
+    cloud = Cloud()
+    cloud.run_answers = [paused() for _ in range(20)]
+    made = adapter(engine, tmp_path, cloud, paused_wait_seconds=60)
+    with pytest.raises(batch_module.BatchRefused) as refused:
         made.submit_batch([request()], session=Session_(), on_submitted=lambda item: None)
-    assert len(cloud.posts()) == 2
+    # 1 + 2 + 4 + 8 + 15 + 30 s: the budget is time, on the clock, not a count of answers.
+    assert clock.slept == [1.0, 2.0, 4.0, 8.0, 15.0, 30.0] and len(cloud.posts()) == 7
+    assert refused.value.code == "RUNPOD_PAUSED" and refused.value.unsent
+    assert refused.value.http_status == 409
+    assert "în pauză" in refused.value.reason_ro and "60 s" in refused.value.reason_ro
+    assert "nu s-a cumpărat nimic" in refused.value.reason_ro
+    assert "Endpoint is paused (max_workers=0)" in refused.value.reason_ro
     with Session(engine) as s:
         row = s.scalar(select(GenerationJob))
         assert row.status == "FAILED" and row.error_code == "HTTP_409" and row.cost_value == "0"
+        answer = row.output["run_refusal"]
+        assert answer["http_status"] == 409 and answer["code"] == "RUNPOD_PAUSED"
+        assert answer["detail"].startswith("Endpoint is paused") and answer["at"]
+    (event,) = pause_events(engine)
+    assert event["cleared"] is False and event["ended"] == "RUNPOD_PAUSED"
 
 
 def test_uncertain_run_is_resent_with_the_same_keys_next_round(engine, tmp_path):
@@ -668,10 +753,21 @@ def price(requests):
     return 10.0 * len(requests) + 5.0  # 10 credits an item, 5 a round
 
 
-def rounds(engine, made, first, *, next_round=None, cap=1000.0, stopped=lambda: None, **kw):
+def rounds(
+    engine,
+    made,
+    first,
+    *,
+    next_round=None,
+    cap=1000.0,
+    stopped=lambda: None,
+    meter=None,
+    guard=None,
+    **kw,
+):
     from app.media.gpu_batch import run_rounds
 
-    meter = Meter()
+    meter = meter if meter is not None else Meter()
     seen = []
     summary = run_rounds(
         engine,
@@ -682,7 +778,7 @@ def rounds(engine, made, first, *, next_round=None, cap=1000.0, stopped=lambda: 
         next_round=next_round or (lambda outcomes: []),
         price_credits=price,
         cap_left=lambda: cap - meter.committed,
-        guard=None,
+        guard=guard,
         stopped=stopped,
         on_submitted=lambda item: None,
         on_outcome=seen.append,
@@ -902,6 +998,619 @@ def test_a_refused_first_round_spends_nothing(engine, tmp_path, fake_session):
     with pytest.raises(batch_module.BatchRefused):
         rounds(engine, made, [request("1", 0)])
     # The meter is given back before the refusal travels up.
+
+
+# ------------------------------------------------- a refusal that bought nothing books nothing
+
+
+def refused_round(engine, made, first, **kw):
+    """`rounds` that must refuse: the refusal and the meter it left."""
+    meter = Meter()
+    with pytest.raises(batch_module.BatchRefused) as refused:
+        rounds(engine, made, first, meter=meter, **kw)
+    return refused.value, meter
+
+
+def only_row(engine):
+    with Session(engine) as s:
+        (row,) = s.scalars(select(GenerationJob)).all()
+        s.expunge(row)
+        return row
+
+
+@pytest.mark.parametrize(
+    ("error", "proven"),
+    [
+        (MediaProviderError("no route", unsent=True), True),
+        (paused(), True),
+        (
+            MediaProviderError(
+                "api.runpod.ai refused the request (HTTP 409)",
+                http_status=409,
+                detail="Endpoint is paused (max_workers=0).",
+                unanswered=True,
+            ),
+            False,
+        ),
+        (MediaProviderError("conflict", http_status=409, detail="job already exists"), False),
+        (MediaProviderError("slow down", http_status=429), True),
+        (MediaProviderError("bad", http_status=422), True),
+        (MediaProviderError("gone", http_status=404), True),
+        (MediaProviderError("updating", http_status=503), False),
+        (MediaProviderError("lost", unanswered=True), False),
+        (batch_module.RunPodProtocolError("RunPod did not return a valid job id"), False),
+        (ValueError("not a vendor answer"), False),
+    ],
+)
+def test_one_list_says_what_refused_and_queued_nothing_means(error, proven):
+    assert batch_module.refused_unqueued(error) is proven
+
+
+def test_a_paused_endpoint_past_its_wait_books_nothing(engine, tmp_path, fake_session, clock):
+    # 2026-10-09 17:24 UTC: the motion /run stayed paused past the wait; the raw 409 went up,
+    # the meter kept the round, and the sheet wrote the Owner that the step had paid.
+    cloud = Cloud()
+    cloud.run_answers = [paused() for _ in range(20)]
+    made = adapter(engine, tmp_path, cloud, paused_wait_seconds=30)
+    refused, meter = refused_round(engine, made, [request("1", 0)])
+    assert refused.code == "RUNPOD_PAUSED" and refused.unsent
+    assert meter.committed == 0 and meter.attempts == 0
+    assert fake_session[0]["closed"] and fake_session[0]["session"].renewals == 10
+
+
+def test_the_gpu_switched_off_during_the_paused_wait_books_nothing(
+    engine, tmp_path, fake_session, clock
+):
+    cloud = Cloud()
+
+    def paused_then_off():
+        fake_session[-1]["session"].forced = True  # his «Oprește GPU acum» meanwhile
+        return paused()
+
+    cloud.run_answers = [paused_then_off, *[paused() for _ in range(10)]]
+    made = adapter(engine, tmp_path, cloud)
+    refused, meter = refused_round(engine, made, [request("1", 0)])
+    assert refused.code == "GPU_FORCED_OFF" and refused.unsent
+    assert "GPU-ul a fost oprit" in refused.reason_ro and "în pauză" in refused.reason_ro
+    assert meter.committed == 0 and meter.attempts == 0
+    assert len(cloud.posts()) == 1 and clock.slept == []  # no wait and no /run after it
+    row = only_row(engine)
+    assert row.error_code == "HTTP_409" and row.output["run_refusal"]["code"] == "GPU_FORCED_OFF"
+
+
+def test_a_stop_during_the_paused_wait_sends_no_further_run(engine, tmp_path, fake_session, clock):
+    cloud = Cloud()
+    pressed = []
+
+    def paused_then_stop():
+        pressed.append(1)  # STOP AUTONOMIE pressed while RunPod still answers «paused»
+        return paused()
+
+    cloud.run_answers = [paused_then_stop, *[paused() for _ in range(10)]]
+    made = adapter(engine, tmp_path, cloud)
+    refused, meter = refused_round(
+        engine,
+        made,
+        [request("1", 0)],
+        stopped=lambda: "Proprietarul a oprit autonomia." if pressed else None,
+    )
+    assert refused.code == "STOPPED" and "Proprietarul a oprit autonomia." in refused.reason_ro
+    assert meter.committed == 0 and meter.attempts == 0
+    assert len(cloud.posts()) == 1 and clock.slept == []
+
+
+def test_his_mode_lowered_during_the_paused_wait_is_his_decision_not_a_fault(
+    engine, tmp_path, fake_session, clock
+):
+    class Guard:
+        stopped = None
+
+        def stop_reason(self, scene):
+            if pressed:
+                self.stopped = {"status": "BLOCKED_MODE", "reason_ro": "Modul s-a schimbat."}
+                return "Modul s-a schimbat."
+            return None
+
+    cloud = Cloud()
+    pressed = []
+    cloud.run_answers = [lambda: (pressed.append(1), paused())[1]]
+    made = adapter(engine, tmp_path, cloud)
+    refused, meter = refused_round(engine, made, [request("1", 0)], guard=Guard())
+    assert refused.code == "BLOCKED_MODE" and refused.unsent
+    assert meter.committed == 0 and len(cloud.posts()) == 1
+
+
+@pytest.mark.parametrize(
+    ("status", "code"),
+    [
+        ("NEEDS_APPROVAL", "STOPPED"),
+        ("BLOCKED_SAFE_MODE", "STOPPED"),
+        ("BLOCKED_NO_BUDGET", "BLOCKED_NO_BUDGET"),
+    ],
+)
+def test_a_question_the_guard_meets_during_the_paused_wait_is_a_stop_never_an_unasked_question(
+    engine, tmp_path, fake_session, clock, status, code
+):
+    # Review 2026-10-09: the guard of an unasked step reads the kernel with ask_owner=False,
+    # so a NEEDS_APPROVAL it records has no question behind it. Refused NEEDS_APPROVAL, the
+    # day wrote him «așteaptă răspunsul tău» and his Decisions window held nothing to answer.
+    # Only a stop the day reads as his own decision keeps its status.
+    class Guard:
+        stopped = None
+
+        def stop_reason(self, scene):
+            if pressed:
+                self.stopped = {"status": status, "reason_ro": "Politica s-a schimbat."}
+                return "Politica s-a schimbat."
+            return None
+
+    cloud = Cloud()
+    pressed = []
+    cloud.run_answers = [lambda: (pressed.append(1), paused())[1]]
+    made = adapter(engine, tmp_path, cloud)
+    refused, meter = refused_round(engine, made, [request("1", 0)], guard=Guard())
+    assert refused.code == code and refused.unsent
+    assert getattr(refused, "approval_id", None) is None
+    assert meter.committed == 0 and meter.attempts == 0 and len(cloud.posts()) == 1
+
+
+def test_the_stops_kept_as_his_decision_are_the_ones_the_day_waits_on():
+    from app.media.gpu_batch import HIS_DECISION_STOPS
+    from app.runbook.stages import OWNER_DECIDES
+
+    assert HIS_DECISION_STOPS <= OWNER_DECIDES
+    assert "NEEDS_APPROVAL" not in HIS_DECISION_STOPS
+
+
+@pytest.mark.parametrize("where", ["renew", "stop"])
+def test_a_locked_database_during_the_paused_wait_books_nothing(
+    engine, tmp_path, fake_session, clock, where
+):
+    # Review 2026-10-09: the paused wait renews the session and reads the step's stop (both
+    # write under the lock) while the round is on the meter. A «database is locked» (REL-01,
+    # busy_timeout 30 s) went up raw, so the sheet booked a round RunPod never queued and
+    # wrote him «s-a oprit după ce a plătit»: the 17:24 UTC false booking by another road.
+    from sqlalchemy.exc import OperationalError
+
+    locked = OperationalError("UPDATE gpu_sessions", {}, Exception("database is locked"))
+    pressed = []
+
+    def paused_then_locked():
+        pressed.append(1)
+        if where == "renew":
+
+            def renew():
+                raise locked
+
+            fake_session[-1]["session"].renew = renew
+        return paused()
+
+    def stopped():
+        if where == "stop" and pressed:
+            raise locked
+        return None
+
+    cloud = Cloud()
+    cloud.run_answers = [paused_then_locked, *[paused() for _ in range(10)]]
+    made = adapter(engine, tmp_path, cloud)
+    refused, meter = refused_round(engine, made, [request("1", 0)], stopped=stopped)
+    assert refused.code == "WAIT_UNREADABLE" and refused.unsent
+    assert "nu s-a cumpărat nimic" in refused.reason_ro
+    assert meter.committed == 0 and meter.attempts == 0
+    assert len(cloud.posts()) == 1 and clock.slept == []  # no wait and no /run after it
+    row = only_row(engine)
+    assert row.status == "FAILED" and row.error_code == "HTTP_409" and row.cost_value == "0"
+    assert row.output["run_refusal"]["code"] == "WAIT_UNREADABLE"
+
+
+def test_a_session_unreadable_before_the_first_chunk_sends_nothing_and_books_nothing(
+    engine, tmp_path, fake_session, monkeypatch
+):
+    from sqlalchemy.exc import OperationalError
+
+    def locked(self):
+        raise OperationalError("SELECT gpu_sessions", {}, Exception("database is locked"))
+
+    monkeypatch.setattr(Session_, "check", locked)
+    cloud = Cloud()
+    made = adapter(engine, tmp_path, cloud)
+    refused, meter = refused_round(engine, made, [request("1", 0)])
+    assert refused.code == "WAIT_UNREADABLE" and "nu s-a cumpărat nimic" in refused.reason_ro
+    assert meter.committed == 0 and meter.attempts == 0 and not cloud.posts()
+    row = only_row(engine)
+    assert row.status == "FAILED" and row.error_code == "UNSENT" and row.cost_value == "0"
+
+
+class LockedJournal:
+    """`JobStore.update` answering «database is locked» once ``on()`` was called: a writer held
+    past the busy timeout (REL-01) that outlives the renewal reaches the refusal's own journal
+    writes too (review 2026-10-10)."""
+
+    def __init__(self, monkeypatch):
+        from app.providers.runpod import jobs
+        from sqlalchemy.exc import OperationalError
+
+        self.error = OperationalError("UPDATE generation_jobs", {}, Exception("database is locked"))
+        self.locked = False
+        self.refused_writes = 0
+        real = jobs.JobStore.update
+
+        def update(store, identifier, **values):
+            if self.locked:
+                self.refused_writes += 1
+                raise self.error
+            return real(store, identifier, **values)
+
+        monkeypatch.setattr(jobs.JobStore, "update", update)
+
+    def on(self):
+        self.locked = True
+        return self.error
+
+
+def test_a_lock_that_outlives_the_renewal_still_refuses_unsent_and_books_nothing(
+    engine, tmp_path, fake_session, clock, monkeypatch
+):
+    # Review 2026-10-10: the renewal failed «database is locked», so the paused /run was refused
+    # WAIT_UNREADABLE; but the refusal's own journal writes met the same lock, the raw
+    # OperationalError left the round on the meter, and the sheet booked a round RunPod never
+    # queued with the «a plătit» letter: the 17:24 UTC false booking by yet another road.
+    journal = LockedJournal(monkeypatch)
+
+    def paused_then_locked():
+        def renew():
+            raise journal.on()
+
+        fake_session[-1]["session"].renew = renew
+        return paused()
+
+    cloud = Cloud()
+    cloud.run_answers = [paused_then_locked]
+    made = adapter(engine, tmp_path, cloud)
+    refused, meter = refused_round(engine, made, [request("1", 0)])
+    assert refused.code == "WAIT_UNREADABLE" and refused.unsent
+    assert "nu s-a cumpărat nimic" in refused.reason_ro
+    assert meter.committed == 0 and meter.attempts == 0
+    assert len(cloud.posts()) == 1 and journal.refused_writes >= 1
+    # The row could not be written FAILED: it stays reserved and was never answered with a job,
+    # so the next step sends it again under the SAME key (`reserve_item`: RESEND).
+    row = only_row(engine)
+    assert row.status == "STARTING" and row.remote_job_id is None
+    journal.locked = False
+    made.submit_batch([request("1", 0)], session=Session_(), on_submitted=lambda item: None)
+    again = only_row(engine)
+    assert again.idempotency_key == row.idempotency_key and again.remote_job_id
+    assert len(cloud.posts()) == 2
+
+
+@pytest.mark.parametrize(
+    ("road", "code", "posts"),
+    [
+        ("refused_429", "RUNPOD_HTTP_429", 1),
+        ("session_unread", "WAIT_UNREADABLE", 0),
+        ("upload_failed", "INPUT_UPLOAD_FAILED", 0),
+        ("reservation_locked", "JOURNAL_UNWRITABLE", 0),
+    ],
+)
+def test_a_refusal_whose_journal_write_is_locked_still_books_nothing(
+    engine, tmp_path, fake_session, monkeypatch, road, code, posts
+):
+    # Review 2026-10-10: every road that proves nothing was queued writes the journal before it
+    # refuses; a «database is locked» there went up raw (not a MediaProviderError), so the step
+    # kept the round on its meter and the sheet booked it as an estimated purchase.
+    journal = LockedJournal(monkeypatch)
+    cloud = Cloud()
+    first = [request("1", 0)]
+    made = adapter(engine, tmp_path, cloud)
+    if road == "refused_429":
+
+        def rate_limited():
+            journal.on()
+            return MediaProviderError(
+                "api.runpod.ai refused the request (HTTP 429)",
+                http_status=429,
+                detail="Too many requests",
+            )
+
+        cloud.run_answers = [rate_limited]
+    elif road == "session_unread":
+
+        def unreadable(self):
+            raise journal.on()
+
+        monkeypatch.setattr(Session_, "check", unreadable)
+    elif road == "upload_failed":
+
+        async def refused_put(*args, **kwargs):
+            journal.on()
+            raise MediaProviderError("bucket refused the upload", http_status=403)
+
+        monkeypatch.setattr(batch_module.s3, "put_bytes", refused_put)
+        made = adapter(engine, tmp_path, cloud, cls=RunPodVideoAdapter)
+        first = [request("1", 0, operation="video")]
+    else:
+
+        def locked(session):
+            raise journal.on()
+
+        monkeypatch.setattr(batch_module, "lock_for_write", locked)
+    refused, meter = refused_round(engine, made, first)
+    assert refused.code == code and refused.unsent
+    assert "nimic" in refused.reason_ro
+    assert meter.committed == 0 and meter.attempts == 0
+    assert len(cloud.posts()) == posts
+
+
+def test_a_409_in_other_words_is_uncertain_and_the_close_proves_it_for_free(
+    engine, tmp_path, proving_session
+):
+    cloud = Cloud()
+    cloud.run_answers = [
+        MediaProviderError(
+            "api.runpod.ai refused the request (HTTP 409)",
+            http_status=409,
+            detail="Conflict: request already in progress",
+        )
+    ]
+    made = adapter(engine, tmp_path, cloud)
+    summary, meter, seen = rounds(engine, made, [request("1", 0)])
+    assert len(cloud.posts()) == 1  # not the paused words: never sent again
+    assert [o.error for o in seen] == ["SUBMISSION_UNCERTAIN"]
+    # The GPU-off read the queue empty and the bucket holds no claim: proven, given back.
+    assert summary["unsent_proof"]["proven"] is True
+    assert meter.committed == 0
+    row = only_row(engine)
+    assert row.error_code == "UNSENT" and row.output["not_queued"]["by"] == "proof"
+    assert row.output["run_refusal"]["http_status"] == 409
+    assert row.output["run_refusal"]["code"] == "SUBMISSION_UNCERTAIN"
+
+
+@pytest.mark.parametrize(
+    ("status", "words"),
+    [(429, "prea multe cereri"), (422, "nu acceptă conținutul"), (401, "cheia studioului")],
+)
+def test_a_refused_run_books_nothing_and_says_why(engine, tmp_path, fake_session, status, words):
+    cloud = Cloud()
+    cloud.run_answers = [
+        MediaProviderError(
+            f"api.runpod.ai refused the request (HTTP {status})",
+            http_status=status,
+            detail="RunPod's own reason",
+        )
+    ]
+    made = adapter(engine, tmp_path, cloud)
+    refused, meter = refused_round(engine, made, [request("1", 0)])
+    assert refused.code == f"RUNPOD_HTTP_{status}" and refused.unsent
+    assert words in refused.reason_ro and "«RunPod's own reason»" in refused.reason_ro
+    assert meter.committed == 0 and meter.attempts == 0
+    row = only_row(engine)
+    assert row.status == "FAILED" and row.error_code == f"HTTP_{status}"
+    assert row.cost_value == "0" and row.output["run_refusal"]["code"] == f"RUNPOD_HTTP_{status}"
+    # Never served: the same key goes out again on the next press, a free reuse at worst.
+    key = row.idempotency_key
+    made.submit_batch([request("1", 0)], session=Session_(), on_submitted=lambda item: None)
+    assert only_row(engine).idempotency_key == key and len(cloud.posts()) == 2
+
+
+def test_a_later_round_refused_gives_back_that_round_only(engine, tmp_path, fake_session, clock):
+    cloud = Cloud()
+    cloud.run_answers = [None, *[paused() for _ in range(5)]]
+    made = adapter(engine, tmp_path, cloud, paused_wait_seconds=0)
+    made.core.transport = made.core.client.transport = finishing(cloud)
+    summary, meter, _seen = rounds(
+        engine,
+        made,
+        [request("1", 0)],
+        next_round=lambda outcomes: [request("1", 0, attempt=2)] if len(outcomes) == 1 else [],
+    )
+    assert summary["rounds"] == 1 and len(cloud.posts()) == 2
+    assert summary["stopped"].startswith("RunPod a răspuns că endpointul este în pauză")
+    assert meter.committed == price([1]) == 15.0
+    # Round one was bought: the stop never tells him the step bought nothing (review
+    # 2026-10-09: «nu s-a cumpărat nimic» sat next to the 15 credits booked for the stair).
+    assert "nu s-a cumpărat nimic" not in summary["stopped"]
+    assert "ce s-a cumpărat înainte rămâne" in summary["stopped"]
+
+
+def test_a_later_chunk_refused_stops_the_round_and_the_step(engine, tmp_path, fake_session, clock):
+    cloud = Cloud()
+    cloud.run_answers = [None, *[paused() for _ in range(5)]]
+    # One item per job (a 300 s execution cap): three chunks, the second one refused.
+    made = adapter(
+        engine, tmp_path, cloud, execution_timeout_cap_seconds=300, paused_wait_seconds=0
+    )
+    made.core.transport = made.core.client.transport = finishing(cloud)
+    asked = []
+    summary, meter, seen = rounds(
+        engine,
+        made,
+        [request(str(n), 0) for n in (1, 2, 3)],
+        next_round=lambda outcomes: asked.append(outcomes) or [],
+    )
+    assert len(cloud.posts()) == 2  # the third chunk never leaves
+    assert sorted((o.state, o.error) for o in seen) == [
+        ("COMPLETED", None),
+        ("FAILED", "UNSENT"),
+        ("FAILED", "UNSENT"),
+    ]
+    assert asked == [] and summary["stopped"].startswith("RunPod a răspuns")
+    assert "nu s-a cumpărat nimic" not in summary["stopped"]
+    assert "ce s-a cumpărat înainte rămâne" in summary["stopped"]
+    # 3 x 10 + 5 for the round, the two items never made (2 x 10) given back.
+    assert meter.committed == 15.0
+
+
+def bought_on_runway_first():
+    """The step's meter as a motion step leaves its own loop: one scene bought on a per-second
+    model (Runway, 340 credits) before the scenes it defers to RunPod."""
+    meter = Meter()
+    meter.committed, meter.attempts = 340.0, 1
+    return meter
+
+
+def test_a_first_round_refused_after_the_step_bought_elsewhere_ends_the_step_booked(
+    engine, tmp_path, fake_session, clock
+):
+    # Review 2026-10-10: raised unsent, the stage refused and the sheet let the hold go,
+    # dropping the 340 Runway credits the step had really spent from the books.
+    cloud = Cloud()
+    cloud.run_answers = [paused() for _ in range(20)]
+    made = adapter(engine, tmp_path, cloud, paused_wait_seconds=30)
+    meter = bought_on_runway_first()
+    summary, meter, seen = rounds(engine, made, [request("1", 0)], meter=meter)
+    assert summary["rounds"] == 0 and seen == []
+    assert meter.committed == 340.0 and meter.attempts == 1  # RunPod's round given back
+    assert "nu s-a cumpărat nimic" not in summary["stopped"]
+    assert summary["stopped"].startswith("RunPod a răspuns că endpointul este în pauză")
+    assert "ce s-a cumpărat înainte rămâne" in summary["stopped"]
+    assert summary["refusal"]["code"] == "RUNPOD_PAUSED"
+    assert summary["refusal"]["http_status"] == 409
+    assert fake_session[0]["closed"]
+
+
+def test_a_gpu_that_would_not_start_after_the_step_bought_elsewhere_ends_the_step_booked(
+    engine, tmp_path, monkeypatch
+):
+    from contextlib import contextmanager
+
+    from app.media import gpu_batch
+    from app.providers.runpod.gpu_session import GpuSessionRefused
+
+    @contextmanager
+    def busy(engine, adapter, *, purpose, permit):
+        raise GpuSessionRefused("GPU_BUSY", "GPU-ul RunPod este deja folosit de alt pas.")
+        yield  # pragma: no cover - never reached
+
+    monkeypatch.setattr(gpu_batch, "gpu_session", busy)
+    cloud = Cloud()
+    made = adapter(engine, tmp_path, cloud)
+    summary, meter, _seen = rounds(engine, made, [request("1", 0)], meter=bought_on_runway_first())
+    assert cloud.posts() == [] and summary["rounds"] == 0
+    assert meter.committed == 340.0 and meter.attempts == 1
+    assert "nu s-a cumpărat nimic" not in summary["stopped"]
+    assert "GPU_BUSY" in summary["stopped"]
+    assert "ce s-a cumpărat înainte rămâne" in summary["stopped"]
+    assert summary["refusal"]["code"] == "GPU_BUSY"
+    # Nothing bought before: still a refusal, so the stage books nothing (as before).
+    with pytest.raises(GpuSessionRefused):
+        rounds(engine, made, [request("1", 0)])
+
+
+@pytest.mark.parametrize(
+    ("code", "words"),
+    [
+        (
+            "COMPUTE_NOT_READY",
+            "GPU-ul RunPod nu a putut fi pornit; nu s-a trimis și nu s-a cheltuit nimic.",
+        ),
+        ("RUNPOD_OFF", None),
+        ("NOT_CONFIGURED", "RunPod Serverless nu este configurat pentru acest pas."),
+        ("STOPPED", "Nu s-a trimis și nu s-a cumpărat nimic; pasul se poate porni din nou."),
+    ],
+)
+def test_a_refusal_after_a_purchase_never_says_nothing_was_spent(code, words):
+    # Review 2026-10-10: the GPU's own refusals are written for a step that bought nothing
+    # («nu s-a cheltuit nimic»); after the step bought elsewhere they keep their reason and
+    # code, lose that clause, and say what stays. Unchanged when nothing was bought.
+    from app.providers.runpod.gpu_session import RUNPOD_OFF_WORDS, GpuSessionRefused
+
+    said = words or RUNPOD_OFF_WORDS
+    refused = GpuSessionRefused(code, said)
+    after = batch_module.refusal_words(refused, bought_before=True)
+    assert "nimic" not in after
+    assert f"({code})" in after or after.startswith(f"{code}:")
+    assert after.endswith(batch_module.REST_NOT_SENT_RO)
+    assert batch_module.refusal_words(refused, bought_before=False) == said
+
+
+def test_a_forced_off_after_a_purchase_keeps_its_own_words():
+    from app.providers.runpod.gpu_session import FORCED_OFF_WORDS, GpuForcedOff
+
+    assert batch_module.refusal_words(GpuForcedOff(), bought_before=True) == FORCED_OFF_WORDS
+
+
+def test_a_round_whose_lost_chunk_is_proven_and_whose_next_was_refused_bought_nothing(
+    engine, tmp_path, proving_session, clock
+):
+    # Review 2026-10-10: chunk 1 unanswered, chunk 2 paused past its wait, chunk 3 never sent.
+    # The close proves chunk 1 never queued: nothing of the round reached RunPod, so its GPU
+    # start goes back too and his letter says nothing was bought (it kept 5 credits and said
+    # «ce s-a cumpărat înainte rămâne»).
+    cloud = Cloud()
+    cloud.run_answers = [
+        MediaProviderError("lost", unanswered=True),
+        *[paused() for _ in range(10)],
+    ]
+    made = adapter(
+        engine, tmp_path, cloud, execution_timeout_cap_seconds=300, paused_wait_seconds=0
+    )
+    summary, meter, seen = rounds(engine, made, [request(str(n), 0) for n in (1, 2, 3)])
+    assert sorted(o.error for o in seen) == ["SUBMISSION_UNCERTAIN", "UNSENT", "UNSENT"]
+    assert summary["unsent_proof"]["proven"] is True
+    assert meter.committed == 0
+    assert summary["stopped"].startswith("RunPod a răspuns că endpointul este în pauză")
+    assert "nu s-a cumpărat nimic" in summary["stopped"]
+    assert "ce s-a cumpărat înainte rămâne" not in summary["stopped"]
+
+
+def test_a_lost_round_proven_unsent_after_an_earlier_round_was_bought_never_says_nothing(
+    engine, tmp_path, proving_session
+):
+    # Round one bought, round two's /run lost and proven never queued: the stop says the rest
+    # was not bought, never «nu s-a cumpărat nimic» next to round one's credits.
+    cloud = Cloud()
+    cloud.run_answers = [None, MediaProviderError("lost", unanswered=True)]
+    made = adapter(engine, tmp_path, cloud)
+    made.core.transport = made.core.client.transport = finishing(cloud)
+    summary, meter, _seen = rounds(
+        engine,
+        made,
+        [request("1", 0)],
+        next_round=lambda outcomes: [request("1", 0, attempt=2)] if len(outcomes) == 1 else [],
+    )
+    assert summary["rounds"] == 2 and summary["unsent_proof"]["proven"] is True
+    assert meter.committed == price([1]) == 15.0
+    assert "nu s-a cumpărat nimic" not in summary["stopped"].lower()
+    assert "ce s-a cumpărat înainte rămâne" in summary["stopped"]
+
+
+def test_an_open_purchase_under_the_same_key_refuses_unsent(engine, tmp_path, fake_session):
+    cloud = Cloud()
+    made = adapter(engine, tmp_path, cloud)
+    made.submit_batch([request("1", 0)], session=Session_(), on_submitted=lambda item: None)
+    refused, meter = refused_round(engine, made, [request("1", 0, prompt="other words")])
+    assert refused.code == "IDEMPOTENCY_CONFLICT" and meter.committed == 0
+    assert meter.attempts == 0 and len(cloud.posts()) == 1
+
+
+def test_a_request_the_worker_contract_refuses_is_never_booked(
+    engine, tmp_path, fake_session, monkeypatch
+):
+    def broken(raw):
+        raise contract.ContractError("items[0].seed must be an integer")
+
+    monkeypatch.setattr(batch_module.contract, "validate_input", broken)
+    cloud = Cloud()
+    made = adapter(engine, tmp_path, cloud)
+    refused, meter = refused_round(engine, made, [request("1", 0)])
+    assert refused.code == "REQUEST_INVALID" and meter.committed == 0 and meter.attempts == 0
+    assert not cloud.posts() and only_row(engine).error_code == "UNSENT"
+
+
+def test_a_lone_pod_submit_answered_429_keeps_its_key_reusable(engine):
+    from test_runpod_generation import FakeTransport, provider
+    from test_runpod_generation import request as pod_request
+
+    transport = FakeTransport(
+        [MediaProviderError("slow down", http_status=429), {"id": "remote", "status": "QUEUED"}]
+    )
+    pod = provider(engine, transport)
+    with pytest.raises(MediaProviderError):
+        asyncio.run(pod.generate_image(pod_request()))
+    first = only_row(engine)
+    assert first.status == "FAILED" and first.error_code == "HTTP_429" and first.cost_value == "0"
+    again = asyncio.run(pod.generate_image(pod_request()))
+    assert again.id == first.id and again.idempotency_key == first.idempotency_key
 
 
 # ----------------------------------------------------------------------- the stills step

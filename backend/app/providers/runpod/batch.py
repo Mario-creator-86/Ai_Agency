@@ -29,6 +29,14 @@ once, makes every item in index order, and scales to zero 1 s (idleTimeout) afte
   is closed, `BatchRun.prove_unsent` reads what its off recorded (the queue before the purge,
   RunPod's purge count, the verified off) and the worker's bucket record: proven never queued
   and never made, the items are UNSENT at 0 cost (2026-10-09); otherwise they stay uncertain.
+* A /run RunPod refused whole (`refused_unqueued`: never left, a paused 409, its 4xx refusals,
+  429) is raised as `BatchRefused` (unsent) with RunPod's words when nothing of the round left
+  the studio: every layer above already turns that into a refusal that books nothing. Live
+  2026-10-09 17:24 UTC a paused 409 travelled up raw instead, and the sheet booked the round as
+  a purchase and wrote the Owner «s-a oprit după ce a plătit»; in the daily run it would have
+  opened safe mode. Each refused row keeps RunPod's answer (``output.run_refusal``); those
+  journal writes are best effort, so a «database is locked» never turns a refusal that queued
+  nothing into a purchase (review 2026-10-10, `_journal_failed`).
 
 Nothing here switches the GPU on or off: that is `gpu_session` (the caller's ``session``).
 """
@@ -38,8 +46,11 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import re
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Iterator, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -48,6 +59,7 @@ from urllib.parse import quote
 
 from runpod_worker import contract
 from sqlalchemy import Engine, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.db import lock_for_write
@@ -83,6 +95,14 @@ NOT_QUEUED_STOP = (
     "nimic în lucru, niciun worker pornit), iar lucrătorul nu a început nimic din ea. Nu s-a "
     "cumpărat nimic și nu se retrimite automat; pasul se poate porni din nou."
 )
+#: The same proof for a step that had already bought an earlier round (or, in the motion step,
+#: a scene on a per-second model): what was bought stays (review 2026-10-10: «Nu s-a cumpărat
+#: nimic» stood next to the round booked before it).
+NOT_QUEUED_REST_STOP = (
+    "RunPod nu a primit ultima cerere: la oprirea GPU-ului coada era goală (nicio lucrare "
+    "scoasă, nimic în lucru, niciun worker pornit), iar lucrătorul nu a început nimic din ea. "
+    "Restul pasului nu s-a cumpărat și nu se retrimite automat; ce s-a cumpărat înainte rămâne."
+)
 #: The event of each proof attempt, proven or not (aggregate: the GPU session).
 PROOF_EVENT = "runpod.run_queue_proof"
 #: The item states an outcome takes.
@@ -90,11 +110,112 @@ OutcomeState = Literal["COMPLETED", "FAILED", "CANCELLED", "PENDING"]
 
 
 class BatchRefused(MediaProviderError):
-    """Nothing was sent and nothing spent: the round could not even be prepared."""
+    """Nothing was queued and nothing spent: the round could not even be prepared, or RunPod
+    refused its /run whole (`refused_unqueued`). ``http_status`` and ``detail`` are RunPod's
+    answer when it gave one. ``after_purchase_ro`` is the same refusal for a step that had
+    already bought an earlier round or chunk (`refusal_words`), when ``reason_ro`` says that
+    nothing was bought."""
 
-    def __init__(self, code: str, reason_ro: str) -> None:
-        super().__init__(reason_ro, code=code, unsent=True)
+    def __init__(
+        self,
+        code: str,
+        reason_ro: str,
+        *,
+        http_status: int | None = None,
+        detail: str | None = None,
+        after_purchase_ro: str | None = None,
+    ) -> None:
+        super().__init__(reason_ro, code=code, unsent=True, http_status=http_status, detail=detail)
         self.reason_ro = reason_ro
+        self.after_purchase_ro = after_purchase_ro
+
+
+#: The clause of a refusal written for a step that bought nothing («; nu s-a trimis și nu s-a
+#: cheltuit nimic», «Nu s-a trimis și nu s-a cumpărat nimic; …»), up to its sentence's end.
+_NOTHING_CLAUSE = re.compile(r"[;,]?\s*nu s-a (?:trimis|cheltuit|cumpărat)\b[^.]*\.?", re.I)
+
+
+def refusal_words(exc: BaseException, *, bought_before: bool) -> str:
+    """The Owner's words for a refusal that stopped a step. Once the step had bought an earlier
+    round or chunk (or, in the motion step, a scene on a per-second model before its RunPod
+    part), the words never say it bought nothing (review 2026-10-09: «nu s-a cumpărat nimic»
+    stood in his letter next to the credits booked for that stair). A refusal with no words of
+    its own for that case (the GPU would not switch on: GPU_BUSY, COMPUTE_NOT_READY,
+    RUNPOD_OFF …) keeps its reason without the «nothing spent» clause, its code, and says
+    what stays (review 2026-10-10)."""
+    said = str(getattr(exc, "reason_ro", None) or exc)
+    if not bought_before:
+        return said
+    later = getattr(exc, "after_purchase_ro", None)
+    if later:
+        return str(later)
+    code = getattr(exc, "code", None)
+    if code == "GPU_FORCED_OFF":
+        return said  # `gpu_session.FORCED_OFF_WORDS`: what was bought stays, the rest was not
+    core = _NOTHING_CLAUSE.sub("", said).strip().rstrip(".;:, ")
+    named = f" ({code})" if code else ""
+    return f"{core}{named}. {REST_NOT_SENT_RO}" if core else f"{code}: {REST_NOT_SENT_RO}"
+
+
+#: RunPod's statuses that refuse a /run whole: the request was judged and turned away before
+#: any job existed (no job id), so nothing was queued and no worker ran for it. 400/401/403/
+#: 404/413/422 were already the studio's list (docs/RUNPOD_INTEGRATION.md: «definite
+#: non-billable … refusal»). 429 was not, so a rate-limited /run became SUBMISSION_UNCERTAIN and
+#: held its scene until the close-time proof (2026-10-09 audit). RunPod's own pages were not
+#: read for it here (no network); the studio already takes 429 for «not served, ask again»
+#: from every vendor it buys from (`app.providers.retry.SAFE_TO_RESEND_STATUSES`, Runway's
+#: documented "May retry"; `media.assembler.possibly_charged`: any 4xx made nothing).
+REFUSED_STATUSES = frozenset({400, 401, 403, 404, 413, 422, 429})
+
+
+def endpoint_paused(exc: BaseException) -> bool:
+    """RunPod's «Endpoint is paused (max_workers=0)» refusal of a /run: answered, 409, its
+    words say so. Nothing is queued: the endpoint takes no job while workers.max is 0."""
+    if not isinstance(exc, MediaProviderError):
+        return False
+    words = f"{exc.detail or ''} {exc}".lower()
+    return (
+        exc.http_status == 409
+        and not exc.unanswered
+        and ("paused" in words or "max_workers" in words)
+    )
+
+
+def refused_unqueued(exc: BaseException) -> bool:
+    """Whether a failed /run (or a lone Pod submit) proves RunPod queued nothing: it never
+    left this machine, or RunPod answered a refusal (`REFUSED_STATUSES`, a paused 409).
+
+    The one list (2026-10-09): four copies disagreed, and the one the step's meter read had no
+    409, so a paused endpoint's refusal was booked as a purchase. A 409 in other words is NOT
+    proof (it could name a job that exists): its items stay SUBMISSION_UNCERTAIN, and the GPU
+    session's close proves them never queued for free (`BatchRun.prove_unsent`)."""
+    if not isinstance(exc, MediaProviderError):
+        return False
+    if exc.unsent:
+        return True
+    if exc.unanswered:
+        return False
+    return exc.http_status in REFUSED_STATUSES or endpoint_paused(exc)
+
+
+#: The step's stop (the autonomy stop, his mode, his plan: `gpu_batch.run_rounds`' stop
+#: reason), read before each wait for a paused endpoint and before each /run sent again after
+#: it (2026-10-09 audit: a STOP pressed during the ~3 minute wait did not stop the /run). It rides
+#: on the context because the adapter's ``submit_batch`` (adapters.py) has no parameter for it;
+#: `submit_round` also takes it explicitly (``should_stop``), which wins.
+STEP_STOP: ContextVar[Callable[[], str | None] | None] = ContextVar(
+    "runpod_step_stop", default=None
+)
+
+
+@contextmanager
+def step_stop(should_stop: Callable[[], str | None] | None) -> Iterator[None]:
+    """``should_stop`` is the step's stop for every round submitted inside the block."""
+    token = STEP_STOP.set(should_stop)
+    try:
+        yield
+    finally:
+        STEP_STOP.reset(token)
 
 
 @dataclass(frozen=True)
@@ -456,6 +577,10 @@ class BatchRun:
     _deadline: float = 0.0
     #: What the results proved about the endpoint's weights (`weights.check_result`).
     weights_problems: list[weights.WeightsProblem] = field(default_factory=list)
+    #: Why the round stopped sending before its last chunk although an earlier chunk had left
+    #: (a paused endpoint past its wait, the GPU switched off or the step stopped meanwhile):
+    #: the rest was never sent, and `gpu_batch.run_rounds` sends no further round.
+    refused: BatchRefused | None = None
 
     @property
     def weights_problem(self) -> weights.WeightsProblem | None:
@@ -1254,9 +1379,13 @@ def submit_round(
     session: GpuSession,
     on_submitted: Callable[[SubmittedItem], None],
     transport: Transport | None = None,
+    should_stop: Callable[[], str | None] | None = None,
 ) -> BatchRun:
     """Reserve every item, upload the pictures, POST the round's chunks back-to-back, save
-    each job id on its items and call ``on_submitted`` per item; no poll here."""
+    each job id on its items and call ``on_submitted`` per item; no poll here.
+
+    Raises `BatchRefused` when nothing of the round left (nothing queued, nothing bought).
+    ``should_stop`` (else `STEP_STOP`) is the step's stop: words when no /run may leave now."""
     if not requests:
         raise ValueError("an empty round is not submitted")
     operations = {r.operation for r in requests}
@@ -1288,7 +1417,33 @@ def submit_round(
     )
     to_send: list[tuple[SubmittedItem, GenerationJob]] = []
     for request in requests:
-        row, action, effective = reserve_item(store, config, integration_id, request)
+        try:
+            row, action, effective = reserve_item(store, config, integration_id, request)
+        except IdempotencyConflict as exc:
+            # Before any upload or /run: this round bought nothing (the open purchase under
+            # that key was booked by its own step), so it refuses unsent, never «paid».
+            said = (
+                f"Scena {request.scene_id} are deja o cumpărare deschisă cu alt conținut sub "
+                "aceeași cheie."
+            )
+            raise BatchRefused(
+                "IDEMPOTENCY_CONFLICT",
+                f"{said} {_NOTHING_SENT_RO}",
+                after_purchase_ro=f"{said} {REST_NOT_SENT_RO}",
+            ) from exc
+        except SQLAlchemyError as exc:
+            # Review 2026-10-10: a «database is locked» (REL-01) while reserving went up raw
+            # with the round already on the step's meter, and the sheet booked as a purchase a
+            # round that never left the studio. Before any upload or /run: refused unsent.
+            logger.warning(
+                "runpod_reserve_unwritable",
+                extra={"scene_id": request.scene_id, "error_class": type(exc).__name__},
+            )
+            raise BatchRefused(
+                JOURNAL_UNWRITABLE,
+                f"{JOURNAL_UNWRITABLE_RO} {_NOTHING_SENT_RO}",
+                after_purchase_ro=f"{JOURNAL_UNWRITABLE_RO} {REST_NOT_SENT_RO}",
+            ) from exc
         item = SubmittedItem(effective, row.id, row.idempotency_key, row.remote_job_id)
         run.items.append(item)
         if action == "TRACK":
@@ -1300,45 +1455,142 @@ def submit_round(
     if config.mock:
         _submit_mock(run, to_send, session, on_submitted)
         return run
-    asyncio.run(_submit_remote(run, to_send, session, on_submitted, operation))
+    stop = should_stop if should_stop is not None else STEP_STOP.get()
+    asyncio.run(_submit_remote(run, to_send, session, on_submitted, operation, stop))
     return run
 
 
 #: RunPod's /run answers 409 «Endpoint is paused (max_workers=0)» for a while after the
 #: switch-on PATCH was applied: live 2026-10-09 the queue saw it after ~3 s (stills), ~15 s
 #: (test shot) and more than 30 s (motion). A 409 is a refusal, nothing queued and no worker
-#: running, so the same body goes again after each wait (about 3 minutes in all).
-PAUSED_RETRY_SECONDS: tuple[float, ...] = (1.0, 2.0, 4.0, 8.0, 15.0, 30.0, 30.0, 30.0, 30.0, 30.0)
+#: running, so the same body goes again after each wait: these first, then every
+#: `PAUSED_EVERY_SECONDS`, until ``RunPodConfig.paused_wait_seconds`` (180 s) is spent.
+PAUSED_RETRY_SECONDS: tuple[float, ...] = (1.0, 2.0, 4.0, 8.0, 15.0)
+PAUSED_EVERY_SECONDS = 30.0
+#: The paused wait's clock and sleep: module attributes, so a test runs the time budget on a
+#: fake clock instead of waiting for it.
+paused_clock: Callable[[], float] = time.monotonic
+paused_sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
+#: The event of each paused wait, cleared or not (aggregate: the GPU session): how long
+#: RunPod really took to see the switch-on, the figure ``paused_wait_seconds`` is tuned from
+#: (2026-10-09: it was read off studio.log timestamps by hand).
+PAUSE_EVENT = "runpod.run_paused"
+
+#: The Owner's words for a /run RunPod refused whole, by its status (RunPod's own follow).
+_REFUSED_RO = {
+    400: "RunPod a refuzat cererea: nu are forma pe care o acceptă",
+    401: "RunPod nu a acceptat cheia studioului",
+    403: "cheia RunPod nu are acces la acest endpoint",
+    404: "RunPod nu găsește endpointul",
+    413: "cererea este prea mare pentru RunPod",
+    422: "RunPod nu acceptă conținutul cererii",
+    429: "RunPod primește prea multe cereri acum",
+}
+#: What every refusal of this kind adds: nothing was bought, the step may run again.
+_NOTHING_BOUGHT_RO = (
+    "RunPod nu a pus lucrarea la coadă, deci nu s-a cumpărat nimic; pasul se poate porni din nou."
+)
+#: The same refusal once the step had already bought an earlier round or chunk: what was
+#: bought stays (review 2026-10-09: «nu s-a cumpărat nimic» sat in his letter next to the
+#: credits booked for that stair).
+REST_NOT_QUEUED_RO = (
+    "RunPod nu a pus la coadă restul pasului, deci restul nu s-a cumpărat; ce s-a cumpărat "
+    "înainte rămâne."
+)
+#: The same pair for a round the studio itself never sent.
+_NOTHING_SENT_RO = "Nu s-a trimis și nu s-a cumpărat nimic; pasul se poate porni din nou."
+REST_NOT_SENT_RO = (
+    "Restul pasului nu s-a trimis la RunPod și nu s-a cumpărat; ce s-a cumpărat înainte rămâne."
+)
+#: The paused wait could not read the session or the step's stop (`_wait_ended`).
+WAIT_UNREADABLE = "WAIT_UNREADABLE"
+WAIT_UNREADABLE_RO = (
+    "Starea pasului nu a putut fi citită (baza de date a studioului nu a răspuns la timp), "
+    "așa că nu s-a mai trimis nicio cerere."
+)
 
 
-def _endpoint_paused(exc: MediaProviderError) -> bool:
-    """RunPod's «endpoint is paused» refusal of a /run: answered, 409, nothing queued."""
-    words = f"{exc.detail or ''} {exc}".lower()
-    return (
-        exc.http_status == 409
-        and not exc.unanswered
-        and ("paused" in words or "max_workers" in words)
-    )
-
-
-def _switched_off(session: Any) -> bool:
-    """True when the step's GPU session was switched off from outside (`GpuForcedOff`)."""
+def _wait_ended(
+    session: Any, should_stop: Callable[[], str | None] | None, *, renew: bool
+) -> tuple[str, str] | None:
+    """(code, words) when no /run may leave now: the step's GPU session was switched off
+    from outside (`GpuForcedOff`: his «Oprește GPU acum», the guard, a shutdown) or the step
+    was stopped (``should_stop``), or either could not be read (`WAIT_UNREADABLE`); else None.
+    ``renew`` keeps the session alive while the studio waits on RunPod (2026-10-09 audit: the
+    paused wait only checked it, and the guard could take a step waiting ~3 minutes for a dead
+    one). It never raises: the round is on the step's meter while it runs."""
     from app.providers.runpod.gpu_session import GpuForcedOff  # noqa: PLC0415 - import cycle
 
-    check = getattr(session, "check", None)
-    if not callable(check):
-        return False
+    keep = getattr(session, "renew", None) if renew else None
+    if not callable(keep):
+        keep = getattr(session, "check", None)
     try:
-        check()
-    except GpuForcedOff:
-        return True
-    return False
+        if callable(keep):
+            keep()
+        reason = should_stop() if should_stop is not None else None
+    except GpuForcedOff as exc:
+        return "GPU_FORCED_OFF", str(exc.reason_ro)
+    except Exception as exc:  # noqa: BLE001 - an unread stop ends the wait, never books it
+        # Review 2026-10-09: the renewal and the step's stop (the guard writes its record) take
+        # the write lock while the round sits on the meter; a «database is locked» (REL-01,
+        # busy_timeout 30 s) went up raw past every layer that refuses unsent, and the sheet
+        # booked a round RunPod never queued. Nothing more leaves: what was answered «paused»
+        # is refused unsent, in RunPod's words.
+        logger.warning(
+            "runpod_wait_unreadable",
+            extra={"error_class": type(exc).__name__, "renew": renew},
+        )
+        return WAIT_UNREADABLE, WAIT_UNREADABLE_RO
+    if reason:
+        return "STOPPED", str(reason)
+    return None
 
 
-def _forced_off_words() -> str:
-    from app.providers.runpod.gpu_session import FORCED_OFF_WORDS  # noqa: PLC0415
+def _runpod_words(failure: MediaProviderError) -> str:
+    """RunPod's own answer, already sanitised by media_http, as the Owner reads it."""
+    detail = " ".join(str(failure.detail or "").split())[:300]
+    if not detail:
+        return ""
+    status = f" (HTTP {failure.http_status})" if failure.http_status else ""
+    return f" Răspunsul RunPod{status}: «{detail}»."
 
-    return FORCED_OFF_WORDS
+
+def _refusal(
+    failure: MediaProviderError, ended: tuple[str, str] | None, waited: float
+) -> BatchRefused:
+    """The refusal of a /run RunPod queued nothing of (`refused_unqueued`), in the Owner's
+    words with RunPod's own (2026-10-09: a failed /run said only «refused, reason unknown»;
+    RunPod's answer reached studio.log alone)."""
+    words = _runpod_words(failure)
+    status = failure.http_status if not failure.unsent else None
+    if ended is not None:
+        code, said = ended
+        if code == "RUNPOD_PAUSED":
+            said = (
+                "RunPod a răspuns că endpointul este în pauză (0 workeri permiși) la fiecare "
+                f"cerere, timp de {round(waited)} s după pornirea GPU-ului."
+            )
+        else:
+            said = f"{said} RunPod încă răspundea că endpointul este în pauză."
+        reason = f"{said} {_NOTHING_BOUGHT_RO}{words}"
+    elif failure.unsent:
+        code = "RUNPOD_UNSENT"
+        said = "Cererea nu a putut pleca spre RunPod (conexiunea nu s-a deschis)."
+        reason = (
+            "Cererea nu a putut pleca spre RunPod (conexiunea nu s-a deschis); nu s-a trimis "
+            "și nu s-a cumpărat nimic; pasul se poate porni din nou."
+        )
+    else:
+        code = f"RUNPOD_HTTP_{status}"
+        said = f"{_REFUSED_RO.get(int(status or 0), 'RunPod a refuzat cererea')} (HTTP {status})."
+        reason = f"{said} {_NOTHING_BOUGHT_RO}{words}"
+    return BatchRefused(
+        code,
+        reason,
+        http_status=status,
+        detail=failure.detail,
+        after_purchase_ro=f"{said} {REST_NOT_QUEUED_RO}{words}",
+    )
 
 
 def _save_job(
@@ -1381,12 +1633,209 @@ def _submit_mock(
         on_submitted(item)
 
 
+@dataclass
+class _Posted:
+    """What one chunk's /run came to (`_post_run`)."""
+
+    job: str | None = None
+    #: The last failure, when RunPod gave no job id.
+    failure: MediaProviderError | None = None
+    #: (code, words) when the wait for a paused endpoint ended without a job: its time budget
+    #: spent (RUNPOD_PAUSED), the GPU switched off (GPU_FORCED_OFF), the step stopped (STOPPED).
+    ended: tuple[str, str] | None = None
+    #: Seconds from the first /run to the last answer (0 when RunPod answered at once).
+    waited: float = 0.0
+    #: The paused wait's record for `PAUSE_EVENT` (None when RunPod never answered «paused»),
+    #: written by `_note_pause` only once the chunk's job id, if any, is saved.
+    pause: dict[str, Any] | None = None
+
+
+async def _post_run(
+    run: BatchRun,
+    client: RunPodClient,
+    body: dict[str, Any],
+    key: str,
+    *,
+    session: Any,
+    should_stop: Callable[[], str | None] | None,
+    endpoint: str | None,
+    items: int,
+) -> _Posted:
+    """POST the chunk's /run; while RunPod answers «paused», the same body again after each
+    wait, inside ``paused_wait_seconds`` on a monotonic clock. Before each wait and before each
+    /run sent again the session is renewed and the step's stop read, so a press of his «Oprește
+    GPU acum» or STOP AUTONOMIE sends no further /run (2026-10-09 audit)."""
+    started = paused_clock()
+    budget = float(run.config.paused_wait_seconds)
+    schedule = iter(PAUSED_RETRY_SECONDS)
+    paused = 0
+    posted = _Posted()
+    while True:
+        try:
+            data = await client.call("POST", "/run", body, key=key)
+            job = data.get("id")
+            if not isinstance(job, str) or not job or len(job) > 90:
+                raise RunPodProtocolError("RunPod did not return a valid job id")
+            posted.job, posted.failure = job, None
+            break
+        except MediaProviderError as refusal:
+            posted.failure = refusal
+            if not endpoint_paused(refusal):
+                break
+            paused += 1
+            posted.waited = paused_clock() - started
+            left = budget - posted.waited
+            if left <= 0:
+                posted.ended = ("RUNPOD_PAUSED", "")
+                break
+            # A refusal, nothing queued: the same body again once the switch-on reached
+            # RunPod's queue. No worker runs meanwhile, so the wait costs nothing.
+            posted.ended = _wait_ended(session, should_stop, renew=True)
+            if posted.ended is not None:
+                break
+            wait = min(next(schedule, PAUSED_EVERY_SECONDS), left)
+            logger.info(
+                "runpod_run_paused_retry",
+                extra={"endpoint_id": endpoint, "items": items, "wait_seconds": wait},
+            )
+            await paused_sleep(wait)
+            posted.ended = _wait_ended(session, should_stop, renew=True)
+            if posted.ended is not None:
+                posted.waited = paused_clock() - started
+                break
+    if paused:
+        posted.waited = paused_clock() - started
+        cleared = posted.job is not None
+        record = {
+            "endpoint_id": endpoint,
+            "items": items,
+            "cleared": cleared,
+            "seconds": round(posted.waited, 3),
+            "paused_answers": paused,
+            "ended": posted.ended[0] if posted.ended else None,
+            "budget_seconds": budget,
+        }
+        logger.log(
+            logging.INFO if cleared else logging.WARNING,
+            "runpod_run_paused_cleared" if cleared else "runpod_run_paused_refused",
+            extra=record,
+        )
+        posted.pause = record
+    return posted
+
+
+def _note_pause(run: BatchRun, posted: _Posted) -> None:
+    """The paused wait's event on the GPU session. Called AFTER `_save_job` for a /run RunPod
+    took (review 2026-10-09: written before it, a write that may wait out the 30 s busy timeout
+    held an accepted, billing job id in memory alone, so a «Oprește GPU acum» meanwhile could
+    not cancel it by id). `_write_event` never raises."""
+    if posted.pause is None or not run.session_id:
+        return
+    from app.providers.runpod.gpu_session import _write_event  # noqa: PLC0415 - cycle
+
+    _write_event(run.engine, PAUSE_EVENT, run.session_id, posted.pause, run.session_id)
+
+
+#: The studio's own journal could not reserve a row before anything was sent (`submit_round`).
+JOURNAL_UNWRITABLE = "JOURNAL_UNWRITABLE"
+JOURNAL_UNWRITABLE_RO = (
+    "Jurnalul cumpărăturilor RunPod nu a putut fi scris (baza de date a studioului nu a "
+    "răspuns la timp), așa că nu s-a trimis nicio cerere."
+)
+
+
+def _journal_failed(what: str, exc: BaseException) -> None:
+    """A journal write of a refusal already proven to have queued nothing could not be made:
+    logged, never raised (review 2026-10-10). The «database is locked» that ends a paused wait
+    (`_wait_ended`, REL-01) can outlive it and reach these writes; raised raw (not a
+    MediaProviderError) it left the round on the step's meter and the sheet booked a round
+    RunPod never queued, with the «a plătit» letter. A row left unwritten is safe: it holds no
+    job id, so `reserve_item` sends it again under the SAME key (RESEND), and nothing of it was
+    queued (RunPod refused it, or it never left), so there is nothing to collect or book."""
+    logger.warning(
+        "runpod_refusal_journal_failed",
+        extra={"what": what, "error_class": type(exc).__name__},
+    )
+
+
+def _journal_answer(
+    store: JobStore,
+    pairs: Sequence[tuple[SubmittedItem, GenerationJob]],
+    failure: MediaProviderError,
+    answer: dict[str, Any],
+    *,
+    proven: bool,
+    session_id: str | None,
+) -> None:
+    """RunPod's answer on every row of a chunk whose /run gave no job id (2026-10-09: it
+    reached studio.log only), so the sheet, the takes and the watchdog can read why without
+    the log. A proven refusal's writes are best effort (`_journal_failed`); an uncertain one's
+    are not: a /run RunPod may have queued stays on the step's meter if its mark fails."""
+    try:
+        for _item, row in pairs:
+            output = {**dict(store.read(row.id).output or {}), "run_refusal": answer}
+            if proven:
+                store.update(
+                    row.id,
+                    status="FAILED",
+                    finished_at=now(),
+                    error_code=UNSENT if failure.unsent else f"HTTP_{failure.http_status}",
+                    cost_value="0",
+                    gpu_seconds_value="0",
+                    output=output,
+                )
+            else:
+                # The session is named on the row (2026-10-09): what its close reads about
+                # RunPod's queue is the evidence for these items (`BatchRun.prove_unsent`).
+                store.update(
+                    row.id,
+                    error_code=UNCERTAIN,
+                    gpu_session_id=session_id,
+                    output=output,
+                )
+    except Exception as exc:  # noqa: BLE001 - a proven refusal is never turned into a purchase
+        if not proven:
+            raise
+        _journal_failed("run_refused", exc)
+
+
+def _unsent_rest(
+    run: BatchRun,
+    store: JobStore,
+    left: Sequence[tuple[SubmittedItem, GenerationJob]],
+    refusal: BatchRefused,
+) -> None:
+    """The round stops sending: ``left`` never left the studio and costs nothing (FAILED
+    UNSENT, its keys reusable). The round goes on with what was sent; `BatchRun.refused`
+    tells the step to send no further round. The journal writes are best effort
+    (`_journal_failed`): the refusal and the round's own account never depend on them."""
+    try:
+        for _item, row in left:
+            store.update(
+                row.id,
+                status="FAILED",
+                finished_at=now(),
+                error_code=UNSENT,
+                cost_value="0",
+                gpu_seconds_value="0",
+            )
+    except Exception as exc:  # noqa: BLE001 - never sent: never turned into a purchase
+        _journal_failed("unsent_rest", exc)
+    run.refused = refusal
+    if not left:
+        return
+    run.chunks.append(_Chunk(None, [item for item, _ in left], {}, time.monotonic()))
+    for item, _row in left:
+        run._pending_report.append(ItemOutcome(item, "FAILED", None, None, None, UNSENT))
+
+
 async def _submit_remote(
     run: BatchRun,
     to_send: list[tuple[SubmittedItem, GenerationJob]],
     session: GpuSession,
     on_submitted: Callable[[SubmittedItem], None],
     operation: Literal["image", "video"],
+    should_stop: Callable[[], str | None] | None = None,
 ) -> None:
     config = run.config
     bucket = config.bucket()
@@ -1423,21 +1872,28 @@ async def _submit_remote(
                 entry["fps"] = contract.CLIP_FPS
             built.append(cast(contract.BatchItem, entry))
     except MediaProviderError as exc:
-        # Nothing was sent to RunPod: the rows stay reusable under their keys.
-        for _item, row in to_send:
-            store.update(
-                row.id,
-                status="FAILED",
-                error_code=UNSENT,
-                finished_at=now(),
-                cost_value="0",
-                gpu_seconds_value="0",
-            )
+        # Nothing was sent to RunPod: the rows stay reusable under their keys (best effort,
+        # `_journal_failed`: a row left reserved is sent again under the same key).
+        try:
+            for _item, row in to_send:
+                store.update(
+                    row.id,
+                    status="FAILED",
+                    error_code=UNSENT,
+                    finished_at=now(),
+                    cost_value="0",
+                    gpu_seconds_value="0",
+                )
+        except Exception as journal_exc:  # noqa: BLE001 - never sent: never a purchase
+            _journal_failed("upload_refused", journal_exc)
         if isinstance(exc, BatchRefused):
             raise
         raise BatchRefused(
             "INPUT_UPLOAD_FAILED",
             "Imaginile de pornire nu au putut fi urcate în bucket; nu s-a trimis nimic la RunPod.",
+            after_purchase_ro=(
+                f"Imaginile de pornire nu au putut fi urcate în bucket. {REST_NOT_SENT_RO}"
+            ),
         ) from exc
     endpoint = config.endpoint_for(operation)
     client = RunPodClient(
@@ -1452,25 +1908,28 @@ async def _submit_remote(
     spans = chunk_items(config, operation, len(to_send))
     for number, span in enumerate(spans):
         pairs = [to_send[i] for i in span]
-        if _switched_off(session):
-            # The Owner's «Oprește GPU acum», the guard or a shutdown ended the session: no
-            # /run leaves the studio outside it (a late job would wait in RunPod's queue for
-            # the next step's GPU and bill there). What is left was never sent and costs nothing.
-            left = [to_send[i] for later in spans[number:] for i in later]
-            for _item, row in left:
-                store.update(
-                    row.id,
-                    status="FAILED",
-                    finished_at=now(),
-                    error_code=UNSENT,
-                    cost_value="0",
-                    gpu_seconds_value="0",
+        rest = [to_send[i] for later in spans[number + 1 :] for i in later]
+        # The step's own stop is read by `gpu_batch.run_rounds` before each round (and inside
+        # the paused wait below); the chunks of one round leave back to back.
+        stop = _wait_ended(session, None, renew=False)
+        if stop is not None:
+            # The Owner's «Oprește GPU acum», the guard or a shutdown ended the session (or it
+            # could not be read): no /run leaves the studio outside it (a late job would wait in
+            # RunPod's queue for the next step's GPU and bill there). What is left was never
+            # sent and costs nothing.
+            code, said = stop
+            refused = (
+                BatchRefused(code, said)  # its words already say what stays and what not
+                if code == "GPU_FORCED_OFF"
+                else BatchRefused(
+                    code,
+                    f"{said} {_NOTHING_SENT_RO}",
+                    after_purchase_ro=f"{said} {REST_NOT_SENT_RO}",
                 )
+            )
+            _unsent_rest(run, store, [*pairs, *rest], refused)
             if not sent_any and not uncertain_any:
-                raise BatchRefused("GPU_FORCED_OFF", _forced_off_words())
-            run.chunks.append(_Chunk(None, [item for item, _ in left], {}, time.monotonic()))
-            for item, _row in left:
-                run._pending_report.append(ItemOutcome(item, "FAILED", None, None, None, UNSENT))
+                raise refused
             break
         items: list[dict[str, Any]] = [{**built[i], "index": n} for n, i in enumerate(span)]
         keys = [str(it["idempotency_key"]) for it in items]
@@ -1488,34 +1947,38 @@ async def _submit_remote(
             },
             "policy": policy,
         }
-        contract.validate_input(body["input"])
-        chunk_items_list = [item for item, _row in pairs]
-        failure: MediaProviderError | None = None
-        job: Any = ""
-        for wait in (*PAUSED_RETRY_SECONDS, None):
-            try:
-                data = await client.call("POST", "/run", body, key=contract.batch_key(keys))
-                job = data.get("id")
-                if not isinstance(job, str) or not job or len(job) > 90:
-                    raise RunPodProtocolError("RunPod did not return a valid job id")
-                failure = None
-                break
-            except MediaProviderError as refusal:
-                failure = refusal
-                if wait is None or not _endpoint_paused(refusal) or _switched_off(session):
-                    break
-                # A refusal, nothing queued: the same body again once the switch-on reached
-                # RunPod's queue. No worker runs meanwhile, so the wait costs nothing.
-                logger.info(
-                    "runpod_run_paused_retry",
-                    extra={"endpoint_id": endpoint, "items": len(pairs), "wait_seconds": wait},
-                )
-                await asyncio.sleep(wait)
-        if failure is not None:
-            proven = failure.unsent or (
-                failure.http_status in (400, 401, 403, 404, 409, 413, 422)
-                and not failure.unanswered
+        try:
+            contract.validate_input(body["input"])
+        except contract.ContractError as exc:
+            # The studio's own request breaks the worker's contract: refused here, before any
+            # /run, so nothing of it was bought (before, it went up raw and the step booked
+            # the round as a purchase).
+            said = f"Cererea către RunPod nu respectă contractul lucrătorului ({str(exc)[:200]})."
+            refused = BatchRefused(
+                "REQUEST_INVALID",
+                f"{said} {_NOTHING_SENT_RO}",
+                after_purchase_ro=f"{said} {REST_NOT_SENT_RO}",
             )
+            _unsent_rest(run, store, [*pairs, *rest], refused)
+            if not sent_any and not uncertain_any:
+                raise refused from exc
+            break
+        chunk_items_list = [item for item, _row in pairs]
+        posted = await _post_run(
+            run,
+            client,
+            body,
+            contract.batch_key(keys),
+            session=session,
+            should_stop=should_stop,
+            endpoint=endpoint,
+            items=len(pairs),
+        )
+        failure = posted.failure
+        if posted.job is None and failure is not None:
+            _note_pause(run, posted)  # no job id to save first
+            proven = refused_unqueued(failure)
+            refusal = _refusal(failure, posted.ended, posted.waited) if proven else None
             # RunPod's own answer, already sanitised by media_http: without it a failed /run
             # read only «refused, reason unknown» (2026-10-09, the first live stills round).
             logger.warning(
@@ -1530,22 +1993,16 @@ async def _submit_remote(
                     "detail": (failure.detail or "")[:300],
                     "error_class": type(failure).__name__,
                     "cause_class": type(failure.__cause__).__name__ if failure.__cause__ else None,
+                    "refusal_code": refusal.code if refusal is not None else None,
                 },
             )
-            for _item, row in pairs:
-                if proven:
-                    store.update(
-                        row.id,
-                        status="FAILED",
-                        finished_at=now(),
-                        error_code=UNSENT if failure.unsent else f"HTTP_{failure.http_status}",
-                        cost_value="0",
-                        gpu_seconds_value="0",
-                    )
-                else:
-                    # The session is named on the row (2026-10-09): what its close reads about
-                    # RunPod's queue is the evidence for these items (`BatchRun.prove_unsent`).
-                    store.update(row.id, error_code=UNCERTAIN, gpu_session_id=run.session_id)
+            answer = {
+                "http_status": failure.http_status,
+                "detail": (failure.detail or "")[:300] or None,
+                "code": refusal.code if refusal is not None else UNCERTAIN,
+                "at": now(),
+            }
+            _journal_answer(store, pairs, failure, answer, proven=proven, session_id=run.session_id)
             if not proven:
                 note = getattr(session, "note_uncertain", None)
                 if callable(note):
@@ -1554,15 +2011,26 @@ async def _submit_remote(
                 _Chunk(None, chunk_items_list, policy, time.monotonic(), uncertain=not proven)
             )
             uncertain_any = uncertain_any or not proven
-            if not sent_any and not uncertain_any and proven:
-                raise failure  # nothing was sent at all: the step refuses before spending
+            if refusal is not None and not sent_any and not uncertain_any:
+                # Nothing of the round left: the step refuses before spending, in RunPod's
+                # words (unsent: the meter gives the round back, the stage books nothing).
+                if rest:
+                    _unsent_rest(run, store, rest, refusal)
+                raise refusal from failure
             for item, _row in pairs:
                 run._pending_report.append(
                     ItemOutcome(item, "FAILED", None, None, None, UNSENT if proven else UNCERTAIN)
                 )
+            if refusal is not None and posted.ended is not None:
+                # The wait for a paused endpoint ended (its budget, the GPU off, a stop): no
+                # later chunk is sent either, and the step sends no further round.
+                _unsent_rest(run, store, rest, refusal)
+                break
             continue
         # Saved BEFORE the session note, the takes or any poll.
+        job = str(posted.job)
         _save_job(run.engine, pairs, job, run.session_id, session)
+        _note_pause(run, posted)  # after the id is saved, never before (`_note_pause`)
         sent_any = True
         run.remote_job_ids.append(job)
         run.chunks.append(_Chunk(job, chunk_items_list, policy, time.monotonic()))
