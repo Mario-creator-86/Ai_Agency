@@ -66,6 +66,7 @@ from app.agents.reviews import (
     failed_render_reading,
     prepare_publication,
     publication_hold,
+    review_bought_pictures,
     review_failed_render,
     review_film_qc,
     review_narration,
@@ -3950,11 +3951,53 @@ def _director_round(
     already (``bought_so_far``), and she is not asked a second time; while it still waits it
     stands. One whose wait lapsed (his no, an expired question, his look rejecting what was
     bought) is hers to read again, with what came of it (2026-10-10 review). Any other final
-    decision stands."""
+    decision stands.
+
+    Candidates bought for her REPAIR that a gate refused are looked at by her first
+    (`_director_looks`): her choice makes the decision ready and it is carried on in this
+    round; her REJECT lapses it and she reads the report again, her reasons in front of her."""
     from app.media import director_qc  # noqa: PLC0415 - media imports runbook
 
     correlation = str(uuid4())
     standing = director_qc.decision_state(engine, report_id)
+    if not (standing["pending"] and standing["look"]):
+        return _director_reads(
+            engine, settings, vault, registry, report_id, asset_id, standing, diagnosis, correlation
+        )
+    looked = _director_looks(
+        engine, settings, registry, report_id, dict(standing["decision"] or {}), correlation
+    )
+    if looked["outcome"] == "WAITING":
+        return looked
+    step = _director_reads(
+        engine,
+        settings,
+        vault,
+        registry,
+        report_id,
+        asset_id,
+        director_qc.decision_state(engine, report_id),
+        diagnosis,
+        correlation,
+    )
+    return {**step, "look": looked}
+
+
+def _director_reads(
+    engine: Engine,
+    settings: Settings | None,
+    vault: Any,
+    registry: ProviderRegistry | None,
+    report_id: str,
+    asset_id: str,
+    standing: dict[str, Any],
+    diagnosis: dict[str, Any] | None,
+    correlation: str,
+) -> dict[str, Any]:
+    """`_director_round` once her looks are done: a decision that stands, one carried on, or
+    her reading of the report (``standing``: `director_qc.decision_state`)."""
+    from app.media import director_qc  # noqa: PLC0415 - media imports runbook
+
     if standing["final"]:
         decided = dict(standing["decision"] or {})
         if standing["pending"] and standing["ready"]:
@@ -4033,6 +4076,78 @@ def _director_round(
             ]
             decided["started_at"] = min(str(item["since"]) for item in bought_before)
     return _carry_out(engine, settings, vault, registry, reading, decided, correlation)
+
+
+def _director_looks(
+    engine: Engine,
+    settings: Settings | None,
+    registry: ProviderRegistry | None,
+    report_id: str,
+    decision: dict[str, Any],
+    correlation: str,
+) -> dict[str, Any]:
+    """The Director looks at the candidates bought for her REPAIR that the stills gate or the
+    clip QC refused, and decides (2026-10-10, the Owner: «El ar trebui să hotărască dacă poza
+    este bună sau nu»): she is shown each one with the gate's own reasons
+    (`director_qc.look_entries`, `review_bought_pictures`) and chooses one, which becomes the
+    scene's take approved by her, or rejects them all, and the report is hers again at once
+    (`director_qc.record_look`); the Owner gets a STATUS letter (`director_qc.look_letter`).
+    Nothing is bought here.
+
+    With no model, no seeing model or an answer that did not validate twice, nothing is
+    chosen: the report waits (`wait_for_director`, the watchdog's back-off), and the decision
+    lapses after `director_qc.BOUGHT_WAIT_DAYS` as before. Returns ``outcome`` LOOKED (with
+    ``looks``) or WAITING."""
+    import tempfile  # noqa: PLC0415
+    from pathlib import Path  # noqa: PLC0415
+
+    from app.media import director_qc  # noqa: PLC0415 - media imports runbook
+
+    reading = {
+        "report_id": report_id,
+        "media_asset_id": decision.get("media_asset_id"),
+        "storyboard_id": decision.get("storyboard_id"),
+    }
+
+    def wait(why: str) -> dict[str, Any]:
+        return director_qc.wait_for_director(
+            engine,
+            reading,
+            why,
+            correlation,
+            words=(
+                "Directoarea nu a putut privi variantele cumpărate pentru refacerea ei, pe care "
+                f"controlul studioului le refuzase ({why}); studioul o întreabă din nou la "
+                "trecerea următoare."
+            ),
+        )
+
+    with tempfile.TemporaryDirectory(prefix="director_look_") as work:
+        entries = director_qc.look_entries(
+            engine,
+            decision,
+            ffmpeg_path=getattr(settings, "ffmpeg_path", None),
+            work_dir=Path(work),
+        )
+    looks: list[dict[str, Any]] = []
+    for entry in entries:
+        answer: dict[str, Any] | None = None
+        if entry["offered"]:
+            if registry is None or not _has_language_model(registry):
+                return wait("niciun model de limbaj nu este configurat")
+            try:
+                answer = review_bought_pictures(
+                    engine, registry, entry["shown"], entry["images"], correlation
+                )
+            except (NoReviewer, ReviewError, ValueError) as exc:
+                return wait(error_words(exc))
+        look = director_qc.record_look(engine, decision, entry, answer, correlation)
+        try:
+            look["letter_id"] = director_qc.look_letter(engine, decision, look, correlation)
+        except Exception as exc:  # noqa: BLE001 - her look stands; the letter is logged
+            logger.warning("director_look_letter_not_written", extra={"error": type(exc).__name__})
+        looks.append(look)
+    return {"outcome": "LOOKED", "looks": looks}
 
 
 def _carry_out(

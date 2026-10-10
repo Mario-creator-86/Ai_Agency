@@ -13,8 +13,10 @@ final decision of hers (`app.media.director_qc.decision_state`), and queues the 
 continuation (FILM_CONTINUE, `app.services.queue_film_continue`): the walk reads the report,
 she decides, and what she decided is carried out under his rules. A REPAIR of hers that waits
 on a take bought for it (BOUGHT_WAITING) is queued again once that take is approved (``ready``:
-a still the vendor delivered late and the gate approved has no look of his to queue it); one
-whose wait lapsed (his no, an expired question) is hers again and queued like an undecided one.
+a still the vendor delivered late and the gate approved has no look of his to queue it), and
+when candidates bought for it that a gate refused wait for her own look (``look``: the walk
+shows them to her, 2026-10-10, the Owner: she decides whether the picture is good); one whose
+wait lapsed (his no, an expired question) is hers again and queued like an undecided one.
 
 One continuation per report and run of it (the key counts the continuations that already ran
 for the report). Once she was asked, the next waits `RETRY_MINUTES`; a walk that never reached
@@ -107,7 +109,7 @@ def queue_director_reviews(context: WatchdogContext) -> dict[str, Any]:
             if report is None or report.status != "FAILED" or str(report.verified_at) < since:
                 continue
             state = decision_state(context.engine, str(report.id))
-            if state["final"] and not (state["pending"] and state["ready"]):
+            if state["final"] and not (state["pending"] and (state["ready"] or state["look"])):
                 continue
             cause = f"{CAUSE_PREFIX}{report.id}"
             runs = sorted(

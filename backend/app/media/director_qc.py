@@ -36,6 +36,11 @@ decided, then QC again) is `app.runbook.stages.director_decides_failed_film`:
   rejecting what was bought, nothing delivered, `BOUGHT_WAIT_DAYS` waited in vain). A take
   given back after a redo that delivered nothing is never read as the new one
   (`new_approved_take`).
+- `look_entries`, `record_look`, `look_letter`: the candidates bought for her REPAIR that the
+  stills gate or the clip QC refused wait for her own look, not for his (the Owner, 20:06 local
+  the same day: «El ar trebui să hotărască dacă poza este bună sau nu»). She is shown them with
+  the gate's reasons and chooses one (approved by her, `DIRECTOR_APPROVER`, never in his name)
+  or rejects them all (the report is hers again at once); he gets a STATUS letter.
 - `accept_film` writes the PASSED report her ACCEPT stands on: the original checks kept, a
   ``director_qc`` check listing every verdict, her overrules among them, so the publishing QC gate
   lets the film through (the rights and factual gates still run on their own). `close_film`
@@ -52,11 +57,13 @@ Nothing here buys, calls a vendor or answers in the Owner's name: a REPAIR is bo
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -98,17 +105,32 @@ OWNER = "owner"
 
 #: A REPAIR whose carrying out waits on something outside her (2026-10-10 review): his answer
 #: to the paid question (ASKED), or a take bought for her list that is not in a film yet
-#: (BOUGHT_WAITING: a new still waiting for his look or for the vendor, a shot waiting for his
-#: look, motion refused after its new still). Her decision stands while it waits: the walk
-#: carries on what is left of her list once the wait is over (`decision_state` ``ready``), and
-#: puts the report before her again once it lapsed (his no, an expired question, his look
-#: rejecting what was bought).
+#: (BOUGHT_WAITING: a new still waiting for the vendor or the gate's verdict, candidates the gate
+#: refused waiting for her own look, motion refused after its new still). Her decision stands
+#: while it waits: the walk carries on what is left of her list once the wait is over
+#: (`decision_state` ``ready``), and puts the report before her again once it lapsed (his no,
+#: an expired question, his look or hers rejecting what was bought).
 PENDING_OUTCOMES = frozenset({"ASKED", "BOUGHT_WAITING"})
-#: How long a BOUGHT_WAITING decision waits for what cannot come by itself: candidates the
-#: gate turned down that wait for his look («Decide Proprietarul»), or a film that could not be
-#: rejoined from an approved take bought for her list. After it the report is hers again, so a
-#: film is never left waiting for a look nobody gives (2026-10-10 review).
+#: How long a BOUGHT_WAITING decision waits for what cannot come by itself: refused candidates
+#: nobody could look at (no model of the studio sees), or a film that could not be rejoined
+#: from an approved take bought for her list. After it the report is hers again, so a film is
+#: never left waiting for a look nobody gives (2026-10-10 review).
 BOUGHT_WAIT_DAYS = 3
+#: Her look at the candidates bought for her REPAIR that the stills gate or the clip QC refused
+#: (aggregate: the report): what she was shown, what was not offered to her and why, the one
+#: she chose or that she rejected them all, and her reason.
+LOOK_EVENT = "media.director_take_look"
+#: The Owner's STATUS letter about one look of hers.
+LOOK_LETTER_KIND = "owner_director_look"
+#: `SceneTake.approved_by` of a take she chose by looking. Never his "owner": «nobody retires a
+#: take he approved» means his own approvals (`owner_approved_take_ids`,
+#: `assembler.owner_approved_among`), and his later look at the take (`assembler.decide_take`)
+#: replaces hers.
+DIRECTOR_APPROVER = "director"
+#: The most candidates one look shows her, newest first; older ones count as seen.
+LOOK_MAX_CANDIDATES = 6
+#: The words of the stills gate's degenerate check (`still_gate.local_checks`): no picture.
+_NO_PICTURE_WORDS = "Imaginea nu e o imagine"
 #: The outcomes that end her work on a report (the pending ones while they stand): the
 #: watchdog does not ask her about it again. NOTHING_DONE (a repair of which nothing could be
 #: carried out) is not one of them.
@@ -712,6 +734,7 @@ def film_qc_context(
         earlier = (
             _earlier(session, decisions_of_film(session, storyboard_id)) if storyboard_id else []
         )
+        looks = looks_of_film(session, storyboard_id) if storyboard_id else []
         found = dict(diagnosis) if diagnosis else _diagnosis_of(session, report_id)
     captions = production.get("captions") if isinstance(production.get("captions"), dict) else {}
     burned = (captions or {}).get("burned_in")
@@ -749,6 +772,9 @@ def film_qc_context(
         "money": MONEY_NOTE,
         "video_editor_diagnosis": found or None,
         "earlier_reviews": earlier,
+        # Her own looks at the pictures a gate refused: after she rejected them all, the
+        # report is hers again with her reasons in front of her.
+        "your_looks": looks,
         "checks": _compact_checks(checks if isinstance(checks, Mapping) else {}),
         "redo_proposals": [
             proposal.as_dict() if isinstance(proposal, RedoProposal) else dict(proposal)
@@ -984,33 +1010,94 @@ def _asked_state(session: Session, decision: Mapping[str, Any]) -> str:
     return "lapsed"
 
 
+def _waiting_entries(decision: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    """What a BOUGHT_WAITING decision waits for, one entry per (scene, kind)."""
+    listed = decision.get("waiting_so_far")
+    if not isinstance(listed, list):
+        listed = _done_of(decision).get("waiting") or []
+    return [
+        entry
+        for entry in listed
+        if isinstance(entry, Mapping) and isinstance(entry.get("scene_index"), int)
+    ]
+
+
+def _looked_by_owner(session: Session, take_ids: Iterable[str]) -> set[str]:
+    """The takes among these that his own look on the sheet decided (`decide_take`)."""
+    from app.media.assembler import TAKE_DECIDED_EVENT  # noqa: PLC0415 - a large module
+
+    ids = sorted(set(take_ids))
+    if not ids:
+        return set()
+    return {
+        str(event.aggregate_id)
+        for event in session.scalars(
+            select(DomainEvent).where(
+                DomainEvent.event_type == TAKE_DECIDED_EVENT, DomainEvent.aggregate_id.in_(ids)
+            )
+        )
+        if str(_payload(event).get("decided_by") or "").lower() == OWNER
+    }
+
+
+def _her_looks(session: Session, report_id: str) -> list[dict[str, Any]]:
+    """Her looks at the pictures bought for her REPAIRs of this report, oldest first."""
+    return [
+        {**_payload(event), "at": event.timestamp, "event_id": event.event_id}
+        for event in session.scalars(
+            select(DomainEvent)
+            .where(DomainEvent.event_type == LOOK_EVENT, DomainEvent.aggregate_id == report_id)
+            .order_by(DomainEvent.sequence)
+        )
+    ]
+
+
+def _owed_her_look(
+    session: Session, candidates: Iterable[SceneTake], seen: set[str]
+) -> list[SceneTake]:
+    """The candidates that wait for her look: refused (by the stills gate or the clip QC),
+    with their file on disk, and looked at by neither her nor him (his look decides them: it
+    wins over hers)."""
+    refused = [
+        row
+        for row in candidates
+        if row.status == "REJECTED"
+        and row.sha256
+        and row.path
+        and Path(str(row.path)).is_file()
+        and row.id not in seen
+    ]
+    his = _looked_by_owner(session, (row.id for row in refused))
+    return [row for row in refused if row.id not in his]
+
+
 def _bought_state(session: Session, decision: Mapping[str, Any]) -> str:
     """BOUGHT_WAITING: ``ready`` (a take bought for her list is approved now, so what follows
-    it can be carried out: its motion, or the film rejoined from its takes), ``waiting``
-    (something bought for it can still come: a candidate at the vendor or waiting for a
-    verdict, or one the gate turned down that waits for his look, «Decide Proprietarul») or
-    ``lapsed`` (nothing waits: his look rejected what was bought, every candidate came back
-    refused or lost and the takes it replaced were given back, or what could not come by
-    itself waited `BOUGHT_WAIT_DAYS`: a turned-down candidate he never looked at, a film that
-    could not be rejoined).
+    it can be carried out: its motion, or the film rejoined from its takes), ``look``
+    (candidates the stills gate or the clip QC refused, on disk, wait for her own look:
+    `look_entries`), ``waiting`` (something bought for it can still come: a candidate at the
+    vendor or waiting for the gate's verdict) or ``lapsed`` (nothing waits: his look or hers
+    rejected what was bought, every candidate came back refused or lost and the takes it
+    replaced were given back, or what could not come by itself waited `BOUGHT_WAIT_DAYS`:
+    refused candidates nobody could look at, a film that could not be rejoined).
+
+    Refused candidates used to wait for his look («Decide Proprietarul»). The Owner, 2026-10-10:
+    the Director decides whether the picture is good; his look on the sheet still wins.
 
     Only what was bought since the entry's moment is read (`bought_since`): the scene's older
     takes (a runner-up the stills step left PAID, the still a redo gave back) wait for nothing
     (2026-10-10 review: a REPAIR whose candidates were all REFUSED with the GPU forced off
     stood «waiting» for ever)."""
-    from app.media.assembler import TAKE_DECIDED_EVENT  # noqa: PLC0415 - a large module
-
     storyboard_id = str(decision.get("storyboard_id") or "")
-    listed = decision.get("waiting_so_far")
-    if not isinstance(listed, list):
-        listed = _done_of(decision).get("waiting") or []
-    entries = [
-        entry
-        for entry in listed
-        if isinstance(entry, Mapping) and isinstance(entry.get("scene_index"), int)
-    ]
+    entries = _waiting_entries(decision)
     if not storyboard_id or not entries:
         return "lapsed"
+    seen = {
+        str(take)
+        for look in _her_looks(session, str(decision.get("report_id") or ""))
+        for take in look.get("seen") or []
+    }
+    rank = {"lapsed": 0, "waiting": 1, "look": 2}
     state = "lapsed"
     for entry in entries:
         scene = int(entry["scene_index"])
@@ -1028,23 +1115,12 @@ def _bought_state(session: Session, decision: Mapping[str, Any]) -> str:
             return "ready"
         candidates = bought_since(session, storyboard_id, scene, kind, since)
         if any(row.status in ("SUBMITTED", "PAID") for row in candidates):
-            state = "waiting"
+            found = "waiting"
+        elif not _older_than(since, BOUGHT_WAIT_DAYS) and _owed_her_look(session, candidates, seen):
+            found = "look"
+        else:
             continue
-        # Turned down by the gate, with its file: his to choose on the sheet, for a while.
-        turned_down = {row.id for row in candidates if row.status == "REJECTED" and row.sha256}
-        if turned_down and not _older_than(since, BOUGHT_WAIT_DAYS):
-            looked = {
-                str(event.aggregate_id)
-                for event in session.scalars(
-                    select(DomainEvent).where(
-                        DomainEvent.event_type == TAKE_DECIDED_EVENT,
-                        DomainEvent.aggregate_id.in_(sorted(turned_down)),
-                    )
-                )
-                if str(_payload(event).get("decided_by") or "").lower() == OWNER
-            }
-            if turned_down - looked:
-                state = "waiting"
+        state = max(state, found, key=rank.__getitem__)
     return state
 
 
@@ -1052,9 +1128,11 @@ def decision_state(engine: Engine, report_id: str) -> dict[str, Any]:
     """Where her work on one report stands: ``final`` (an outcome that ends it, or a pending
     one that still stands), ``pending`` (her REPAIR waits on something outside her),
     ``ready`` (what it waited for came: the walk carries on what is left of her list without
-    asking her again), ``lapsed`` (a pending REPAIR whose wait ended without it — his no, an
-    expired question, his look rejecting what was bought: the report is hers again, 2026-10-10
-    review: an ASKED she never heard back about stood «final» forever), the newest
+    asking her again), ``look`` (candidates bought for it that a gate refused wait for her own
+    look: the walk shows them to her, `look_entries`), ``lapsed`` (a pending REPAIR whose wait
+    ended without it — his no, an expired question, his look or hers rejecting what was bought:
+    the report is hers again, 2026-10-10 review: an ASKED she never heard back about stood
+    «final» forever), the newest
     ``outcome`` and ``decision`` (its payload), ``tries`` (times nothing final came of asking
     her: every such round writes one `WAITING_EVENT`) and ``last_at``."""
     with Session(engine) as session:
@@ -1083,6 +1161,7 @@ def decision_state(engine: Engine, report_id: str) -> dict[str, Any]:
         "final": stands and not lapsed,
         "pending": stands and outcome in PENDING_OUTCOMES and not lapsed,
         "ready": wait == "ready",
+        "look": wait == "look",
         "lapsed": lapsed,
         "outcome": outcome,
         "decision": decision,
@@ -1438,6 +1517,342 @@ def _closing(
         }
 
 
+# ------------------------------------------------- her look at the pictures a gate refused
+#
+# 2026-10-10, 20:06 local, the Owner: «Directorul ce face? El ar trebui să hotărască dacă poza
+# este bună sau nu.» babcf272's scene 5: her REPAIR bought a new still, the stills gate refused
+# every candidate on a local reading (a black night sky at the top read as a flat band between
+# panels) before anything looked at them, and her decision waited for his look on the sheet.
+# Now she looks at them herself (`runbook.stages._director_looks`); his look still wins.
+
+
+def looks_of_film(session: Session, storyboard_id: str) -> list[dict[str, Any]]:
+    """Her newest looks at the pictures bought for this film, as she reads them again."""
+    out: list[dict[str, Any]] = []
+    for event in session.scalars(
+        select(DomainEvent)
+        .where(DomainEvent.event_type == LOOK_EVENT)
+        .order_by(DomainEvent.sequence)
+    ):
+        payload = _payload(event)
+        if str(payload.get("storyboard_id") or "") != storyboard_id:
+            continue
+        out.append(
+            {
+                "report_id": payload.get("report_id"),
+                "at": event.timestamp,
+                "scene_index": payload.get("scene_index"),
+                "kind": payload.get("kind"),
+                "decision": payload.get("decision"),
+                "shown": len(payload.get("shown") or []),
+                "chosen_candidate": payload.get("candidate"),
+                "approved": payload.get("approved"),
+                "reason": _short(payload.get("reason"), 400),
+            }
+        )
+    return out[-6:]
+
+
+def no_picture(row: SceneTake, ffmpeg: str | None) -> str | None:
+    """Why a candidate is no picture at all (the degenerate check: stripes, bands, a blank
+    field), or None: the gate's own words, else measured again (`qc.still_is_degenerate`).
+
+    Never hers to choose: there is nothing in it to judge, and choosing it would put an empty
+    frame in the film. Every other refusal (panels, sharpness, motion blur, palette, the vision
+    checklist's verdict, faces) is a reading of a picture, and a reading can be wrong
+    (babcf272's night sky read as a band between panels): those she judges by looking."""
+    from app.media.assembler import DEGENERATE_FAILURE_CODE  # noqa: PLC0415 - a large module
+    from app.media.qc import still_is_degenerate  # noqa: PLC0415 - a large module
+
+    detail = str(row.failure_detail or "")
+    if row.failure_code == DEGENERATE_FAILURE_CODE or _NO_PICTURE_WORDS in detail:
+        return _short(detail, 200) or "nu este o imagine"
+    if row.kind == "still" and row.path:
+        return still_is_degenerate(ffmpeg, Path(str(row.path)))
+    return None
+
+
+def look_pictures(row: SceneTake, ffmpeg_path: str | None, work_dir: Path) -> list[str]:
+    """What she is shown of one candidate, as quality control shows it (`picture_qc`): a still
+    at 1080 px, or a shot's first, middle and last frames. Empty when it cannot be prepared."""
+    from app.media.picture_qc import still_image  # noqa: PLC0415 - a large module
+    from app.media.qc import clip_frames  # noqa: PLC0415 - a large module
+    from app.media.toolchain import find_ffmpeg  # noqa: PLC0415
+
+    ffmpeg = find_ffmpeg(ffmpeg_path)
+    if row.kind == "still":
+        image = still_image(ffmpeg, str(row.path))
+        return [image] if image else []
+    frames = clip_frames(ffmpeg, str(row.path), work_dir)
+    images = [still_image(ffmpeg, path) for _at, _time, path in frames]
+    return [image for image in images if image] if frames and all(images) else []
+
+
+def _file_sha256(path: Path) -> str | None:
+    digest = hashlib.sha256()
+    try:
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1 << 20), b""):
+                digest.update(chunk)
+    except OSError:
+        return None
+    return digest.hexdigest()
+
+
+def look_entries(
+    engine: Engine, decision: Mapping[str, Any], *, ffmpeg_path: str | None, work_dir: Path
+) -> list[dict[str, Any]]:
+    """What she is shown, per scene of her BOUGHT_WAITING decision whose refused candidates
+    wait for her look (`_owed_her_look`): ``shown`` (the scene's intent, its picture prompt,
+    the film's look, the bible's rules, and per candidate the gate's own reasons for refusing
+    it), ``images`` (each candidate's pictures in order, `look_pictures`) and ``offered`` (their
+    take ids, newest first). ``not_offered`` lists the others with why: no picture at all
+    (`no_picture`), a file that is not the one bought, a shot he could not choose either
+    (`assembler.clip_choice`: filmed from another still or for another motion prompt), pictures
+    that cannot be prepared, or more than `LOOK_MAX_CANDIDATES`. ``seen``: every candidate
+    considered, so no look is owed for them again. Reads only."""
+    from app.media.assembler import (  # noqa: PLC0415 - a large module
+        SHOT_TAKE_KINDS,
+        clip_choice,
+        scene_clip_context,
+    )
+    from app.media.prompt_lint import bible_face_rule  # noqa: PLC0415
+    from app.media.stills_stage import _bible_rules  # noqa: PLC0415 - the gate's own rules
+    from app.media.toolchain import find_ffmpeg  # noqa: PLC0415
+
+    storyboard_id = str(decision.get("storyboard_id") or "")
+    planned: list[tuple[int, str, str, list[SceneTake], dict[str, Any]]] = []
+    with Session(engine) as session:
+        board = session.get(Storyboard, storyboard_id) if storyboard_id else None
+        if board is None:
+            return []
+        title = _title(session, storyboard_id)
+        bible = dict(board.visual_bible_json) if isinstance(board.visual_bible_json, dict) else {}
+        seen = {
+            str(take)
+            for look in _her_looks(session, str(decision.get("report_id") or ""))
+            for take in look.get("seen") or []
+        }
+        for entry in _waiting_entries(decision):
+            kind = str(entry.get("kind") or "still")
+            scene = int(entry["scene_index"])
+            since = str(entry.get("since") or decision.get("started_at") or "")
+            if kind == REJOIN or new_approved_take(session, storyboard_id, scene, kind, since):
+                continue
+            candidates = bought_since(session, storyboard_id, scene, kind, since)
+            if any(row.status in ("SUBMITTED", "PAID") for row in candidates):
+                continue  # the gate's verdict may still come
+            owed = _owed_her_look(session, candidates, seen)
+            if not owed:
+                continue
+            row = session.scalars(
+                select(StoryboardScene).where(
+                    StoryboardScene.storyboard_id == storyboard_id,
+                    StoryboardScene.scene_index == scene,
+                )
+            ).first()
+            package = (
+                row.prompt_json if row is not None and isinstance(row.prompt_json, dict) else {}
+            )
+            visual = row.visual_prompt if row is not None else ""
+            view: dict[str, Any] = {
+                "scene_index": scene,
+                "narration": _short(row.voiceover_segment if row is not None else "", 300),
+                "intent": _short(visual, 400),
+                "picture_prompt": _short(package.get("still_prompt") or visual, 800),
+                "look": _short(package.get("look_block"), 400) or None,
+                "camera_move": package.get("camera_move"),
+            }
+            if kind != "still":
+                view["motion_prompt"] = _short(package.get("motion_prompt"), 400) or None
+            for take in owed:
+                session.expunge(take)
+            planned.append((scene, kind, since, owed, view))
+    ffmpeg = find_ffmpeg(ffmpeg_path)
+    rules = list(_bible_rules(bible))[:12]
+    faces = bible_face_rule(bible) is not None
+    out: list[dict[str, Any]] = []
+    for scene, kind, since, owed, view in planned:
+        shot = kind != "still"
+        clip_scene, still_sha, other_stills = (
+            scene_clip_context(engine, storyboard_id, scene) if shot else (None, None, [])
+        )
+        offered: list[str] = []
+        not_offered: list[dict[str, str]] = []
+        shown: list[dict[str, Any]] = []
+        images: list[str] = []
+        for take in owed:  # newest first
+            why: str | None = None
+            if len(offered) >= LOOK_MAX_CANDIDATES:
+                why = f"i se arată o dată doar cele mai noi {LOOK_MAX_CANDIDATES} variante"
+            elif _file_sha256(Path(str(take.path))) != take.sha256:
+                why = "fișierul de pe disc nu mai este cel cumpărat"
+            elif (broken := no_picture(take, ffmpeg)) is not None:
+                why = f"nu este o imagine ({broken})"
+            elif take.kind in SHOT_TAKE_KINDS:
+                verdict = clip_choice(
+                    take, scene=clip_scene, still_sha256=still_sha, other_stills=other_stills
+                )
+                if not verdict["eligible"]:
+                    why = str(verdict["why_not_ro"])
+            pictures = [] if why else look_pictures(take, ffmpeg_path, work_dir)
+            if why is None and not pictures:
+                why = "imaginea nu a putut fi pregătită pentru privire (lipsește codorul)"
+            if why is not None:
+                not_offered.append({"take_id": take.id, "why": _short(why, 300)})
+                continue
+            offered.append(take.id)
+            images += pictures
+            shown.append(
+                {
+                    "candidate": len(offered),
+                    "failure_code": take.failure_code,
+                    "gate_reasons": [
+                        part.strip()
+                        for part in str(take.failure_detail or "").split("; ")
+                        if part.strip()
+                    ][:8],
+                }
+            )
+        out.append(
+            {
+                "scene_index": scene,
+                "kind": kind,
+                "since": since,
+                "offered": offered,
+                "not_offered": not_offered,
+                "seen": [take.id for take in owed],
+                "images": images,
+                "shown": {
+                    "film": title,
+                    "kind": "shot" if shot else "still",
+                    "refused_by": "the clip QC" if shot else "the stills gate",
+                    "scene": view,
+                    "faces_forbidden": faces,
+                    "bible_rules": rules,
+                    "candidates": shown,
+                },
+            }
+        )
+    return out
+
+
+def _choice_refused(
+    session: Session, row: SceneTake | None, storyboard_id: str, sha_now: str | None
+) -> str | None:
+    """Why the candidate she chose cannot be approved now, or None: it changed since she was
+    shown it (his look came first, it is no longer refused), the film was closed, or its file
+    is no longer the one bought."""
+    from app.media.shooting_sheet import film_is_closed  # noqa: PLC0415 - it imports runbook
+
+    if row is None:
+        return "preluarea nu mai există"
+    if _looked_by_owner(session, [row.id]):
+        return "Proprietarul s-a uitat deja la ea; privirea lui rămâne"
+    if row.status != "REJECTED":
+        return f"preluarea nu mai este refuzată (acum {row.status})"
+    if film_is_closed(session, storyboard_id):
+        return "filmul este închis"
+    if not row.sha256 or sha_now != row.sha256:
+        return "fișierul de pe disc nu mai este cel cumpărat"
+    return None
+
+
+def record_look(
+    engine: Engine,
+    decision: Mapping[str, Any],
+    entry: Mapping[str, Any],
+    answer: Mapping[str, Any] | None,
+    correlation: str,
+) -> dict[str, Any]:
+    """Her look, written in one transaction: `LOOK_EVENT` (what she was shown, what was not
+    offered to her and why, her decision and reason) and, when she chose, the chosen candidate
+    approved by her. ``answer`` None: nothing could be shown to her (NOTHING_TO_SEE).
+
+    Her choice is written as the gate writes its own approval (`stills_stage._set_verdicts`):
+    APPROVED with no failure left on the take (the gate's refusal stays on her event), so the
+    walk carries on exactly as with a still the gate approved: the film rejoined for a scene he
+    chose to animate locally, else the motion step under every money gate. A failure left on
+    it would hold the scene for his look (`assembler.owner_chose_flagged_still`), the very wait
+    her look replaces. It is not his approval: ``approved_by`` is `DIRECTOR_APPROVER`, no
+    `TAKE_DECIDED_EVENT` is written, and his later look on the sheet replaces hers. Not applied
+    (``approved`` False, ``not_applied`` why) when the take changed since she was shown it.
+    Nothing is bought."""
+    from app.providers.runpod.wiring import sync_take_quality  # noqa: PLC0415
+
+    report_id = str(decision.get("report_id") or "")
+    storyboard_id = str(decision.get("storyboard_id") or "")
+    offered = [str(take) for take in entry.get("offered") or []]
+    verb = str((answer or {}).get("decision") or "NOTHING_TO_SEE")
+    number = (answer or {}).get("candidate")
+    chosen = (
+        offered[number - 1]
+        if verb == "CHOOSE" and isinstance(number, int) and 0 < number <= len(offered)
+        else None
+    )
+    if answer is not None:
+        reason = _short(answer.get("reason"), 600)
+    else:
+        reason = _short("; ".join(item["why"] for item in entry.get("not_offered") or []), 600)
+    with Session(engine) as session:
+        path = (
+            session.scalar(select(SceneTake.path).where(SceneTake.id == chosen)) if chosen else None
+        )
+    # Hashed before the write lock is taken: a clip is megabytes.
+    sha_now = _file_sha256(Path(str(path))) if path else None
+    shown = (entry.get("shown") or {}).get("candidates") or []
+    payload: dict[str, Any] = {
+        "report_id": report_id,
+        "storyboard_id": storyboard_id,
+        "media_asset_id": decision.get("media_asset_id"),
+        "scene_index": entry.get("scene_index"),
+        "kind": entry.get("kind"),
+        "since": entry.get("since"),
+        "decided_by": DIRECTOR,
+        "decision": verb,
+        "candidate": number if chosen else None,
+        "chosen_take_id": chosen,
+        "approved": False,
+        "not_applied": None,
+        "reason": reason,
+        "shown": offered,
+        "gate": [
+            {"take_id": take, **dict(view)} for take, view in zip(offered, shown, strict=False)
+        ],
+        "not_offered": list(entry.get("not_offered") or []),
+        "seen": [str(take) for take in entry.get("seen") or []],
+        **{key: (answer or {}).get(key) for key in ("agent_id", "agent_name", "run_id", "model")},
+    }
+    with Session(engine) as session, session.begin():
+        lock_for_write(session)
+        if chosen:
+            row = session.get(SceneTake, chosen)
+            why = _choice_refused(session, row, storyboard_id, sha_now)
+            if why is None and row is not None:
+                payload.update(
+                    previous_status=row.status,
+                    previous_failure_code=row.failure_code,
+                    previous_failure_detail=row.failure_detail,
+                )
+                row.status = "APPROVED"
+                row.approved_by = DIRECTOR_APPROVER
+                row.failure_code = None
+                row.failure_detail = None
+                sync_take_quality(session, row, accepted=True, reason=reason)
+                row.updated_at = utc_now()
+                payload["approved"] = True
+            payload["not_applied"] = why
+        event = append_event(
+            session, LOOK_EVENT, "quality_control_report", report_id, 1, payload, correlation
+        )
+        payload["event_id"] = str(event.event_id)
+    logger.info(
+        "director_take_look",
+        extra={"report_id": report_id, "decision": verb, "approved": payload["approved"]},
+    )
+    return payload
+
+
 # --------------------------------------------------------------------- telling the others
 
 
@@ -1463,11 +1878,17 @@ def _open_inbox_notes(session: Session, report_id: str) -> list[AgentMessage]:
 
 
 def wait_for_director(
-    engine: Engine, reading: Mapping[str, Any], reason: str, correlation: str
+    engine: Engine,
+    reading: Mapping[str, Any],
+    reason: str,
+    correlation: str,
+    *,
+    words: str | None = None,
 ) -> dict[str, Any]:
     """She could not decide: nothing is redone and no take is retired. A `WAITING_EVENT`, and
     one open note in her inbox per report (kept, not repeated), so the watchdog asks her again
-    later (`app.workflows.passes.director_qc_review`)."""
+    later (`app.workflows.passes.director_qc_review`). ``words``: the note's text when it is
+    not a report she has not decided (her look at the pictures bought for her REPAIR)."""
     report_id = str(reading.get("report_id") or "")
     storyboard_id = str(reading.get("storyboard_id") or "")
     with Session(engine) as session, session.begin():
@@ -1504,7 +1925,8 @@ def wait_for_director(
                     "media_asset_id": reading.get("media_asset_id"),
                     "reason": _short(reason, 500),
                 },
-                body_text=(
+                body_text=words
+                or (
                     f"Filmul «{title}» nu a trecut controlul calității. Nimic nu s-a refăcut și "
                     "nicio preluare nu s-a retras: decizia este a Directoarei. Acum nu a putut "
                     f"decide ({_short(reason, 300)}); studioul o întreabă din nou la trecerea "
@@ -1568,9 +1990,10 @@ def _outcome_line(outcome: str, step: Mapping[str, Any]) -> str:
     if outcome == "BOUGHT_WAITING":
         return (
             "Ce s-a cumpărat pentru refacerea ei nu este încă într-un film: așteaptă judecata "
-            "studioului sau privirea ta pe foaia de filmare. Când este aprobat, studioul duce "
-            "refacerea mai departe singur, fără să cumpere din nou ce a cumpărat; filmul care a "
-            "picat nu se publică."
+            "studioului, iar ce refuză poarta privește Directoarea însăși și alege sau respinge "
+            "(privirea ta pe foaia de filmare rămâne mai presus de a ei). Când este aprobat, "
+            "studioul duce refacerea mai departe singur, fără să cumpere din nou ce a cumpărat; "
+            "filmul care a picat nu se publică."
         )
     if outcome == "REPAIRED":
         if repair.get("requalified") == "PASSED":
@@ -1687,6 +2110,109 @@ def director_letter(
         return str(message.id)
 
 
+def look_letter(
+    engine: Engine, decision: Mapping[str, Any], look: Mapping[str, Any], correlation: str
+) -> str | None:
+    """The Owner's letter about one look of hers (`record_look`): a short STATUS note in
+    Romanian, never a question: what she was shown, the one she chose or that she rejected
+    them all, and why. Once per look; returns the letter's id, or None when it was written."""
+    from app.media.shooting_sheet import sheet_url  # noqa: PLC0415 - it imports runbook
+
+    storyboard_id = str(decision.get("storyboard_id") or "")
+    event_id = str(look.get("event_id") or "")
+    with Session(engine) as session, session.begin():
+        lock_for_write(session)
+        for message in session.scalars(
+            select(AgentMessage).where(
+                AgentMessage.to_agent_id.is_(None), AgentMessage.intent == "STATUS"
+            )
+        ):
+            body = message.body_json if isinstance(message.body_json, dict) else {}
+            if (
+                is_for_owner(message)
+                and body.get("kind") == LOOK_LETTER_KIND
+                and body.get("look_event_id") == event_id
+            ):
+                return None
+        title = _title(session, storyboard_id)
+        name = str(look.get("agent_name") or decision.get("agent_name") or "Directoarea")
+        scene = look.get("scene_index")
+        shot = look.get("kind") != "still"
+        shown = len(look.get("shown") or [])
+        gate = "controlul clipului" if shot else "poarta imaginilor"
+        verb = str(look.get("decision") or "")
+        # What she looked at and what she said of it, as Romanian agrees it.
+        what, refused, none = {
+            (False, True): ("imaginea cumpărată", "o refuzase", "nu o alege, nu intră în film"),
+            (True, True): ("clipul cumpărat", "îl refuzase", "nu îl alege, nu intră în film"),
+            (False, False): (
+                f"cele {count(shown, 'imagine', 'imagini')} cumpărate",
+                "le refuzase",
+                "nu alege niciuna, niciuna nu intră în film",
+            ),
+            (True, False): (
+                f"cele {count(shown, 'clip', 'clipuri')} cumpărate",
+                "le refuzase",
+                "nu alege niciunul, niciunul nu intră în film",
+            ),
+        }[(shot, shown == 1)]
+        lines = [
+            f"Către Owner. {name}, Directoarea, a privit {what} pentru refacerea scenei {scene} "
+            f"a filmului «{title}», pe care {gate} {refused}, și a decis singură: "
+            + (f"a ales varianta {look.get('candidate')}." if verb == "CHOOSE" else f"{none}."),
+        ]
+        if verb == "NOTHING_TO_SEE":
+            lines = [
+                f"Către Owner. Variantele cumpărate pentru refacerea scenei {scene} a filmului "
+                f"«{title}», refuzate de {gate}, nu i-au putut fi arătate Directoarei."
+            ]
+        if look.get("reason"):
+            lines.append(sentence(_short(look["reason"], 600)))
+        if verb == "CHOOSE" and look.get("previous_failure_detail"):
+            lines.append(f"Ce spusese {gate}: «{_short(look['previous_failure_detail'], 300)}».")
+        if verb == "CHOOSE" and look.get("approved"):
+            lines.append(
+                "Varianta aleasă intră în film fără să se cumpere nimic din nou; dacă te uiți tu "
+                "la ea pe foaia de filmare, privirea ta rămâne mai presus de a ei."
+            )
+        else:
+            if verb == "CHOOSE":
+                lines.append(f"Alegerea ei nu s-a aplicat: {_short(look.get('not_applied'), 200)}.")
+            lines.append(
+                "Raportul filmului este din nou al ei: poate reface scena, accepta filmul sau "
+                "închide filmul, în limitele tale."
+            )
+        if storyboard_id:
+            lines.append(f"Foaia de filmare: {sheet_url(storyboard_id)}")
+        subject = {
+            "CHOOSE": f"Directoarea a ales {'clipul' if shot else 'imaginea'} scenei {scene} "
+            f"din filmul «{title}»",
+            "REJECT": f"Directoarea a respins {'clipurile' if shot else 'imaginile'} noi ale "
+            f"scenei {scene} din filmul «{title}»",
+        }.get(verb, f"Filmul «{title}»: nimic de privit pentru scena {scene}")
+        director = agent_for_role(session, "Director")
+        message = post_message(
+            session,
+            intent="STATUS",
+            subject=subject[:200],
+            body={
+                "kind": LOOK_LETTER_KIND,
+                "report_id": decision.get("report_id"),
+                "storyboard_id": storyboard_id,
+                "look_event_id": event_id,
+                "decision": verb,
+                "scene_index": scene,
+                "chosen_take_id": look.get("chosen_take_id"),
+                "approved": bool(look.get("approved")),
+            },
+            body_text="\n".join(lines),
+            from_agent_id=director.id if director else None,
+            to_owner=True,
+            correlation_id=correlation,
+        )
+        return str(message.id)
+
+
 def settle_inbox(engine: Engine, report_id: str, outcome: str, correlation: str) -> list[str]:
     """Her decision answers the note that waited for it in her inbox."""
     with Session(engine) as session, session.begin():
@@ -1734,9 +2260,12 @@ def outcome_words(title: str, outcome: Mapping[str, Any]) -> str:
 __all__ = [
     "BOUGHT_WAIT_DAYS",
     "DECISION_EVENT",
+    "DIRECTOR_APPROVER",
     "FINAL_OUTCOMES",
     "INBOX_KIND",
     "LETTER_KIND",
+    "LOOK_EVENT",
+    "LOOK_LETTER_KIND",
     "PENDING_OUTCOMES",
     "REJOIN",
     "WAITING_EVENT",
@@ -1750,12 +2279,18 @@ __all__ = [
     "film_qc_context",
     "film_takes",
     "is_not_yours",
+    "look_entries",
+    "look_letter",
+    "look_pictures",
+    "looks_of_film",
     "new_approved_take",
+    "no_picture",
     "outcome_words",
     "owner_approved_take_ids",
     "owner_scene_choices",
     "protected_redos",
     "record_decision",
+    "record_look",
     "repair_list",
     "report_findings",
     "scene_kinds",

@@ -32,10 +32,18 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.agents.editorial import VISION, frames_for, model_can_see
-from app.agents.models import Agent, Capability, ModelCapability, Role
+from app.agents.models import Agent, Capability, ModelCapability, ModelRecord, Role
 from app.media.toolchain import find_ffmpeg
 
-__all__ = ["SPAN_FRAME_WIDTH", "VISION", "frames_at", "frames_for", "model_can_see", "vision_agent"]
+__all__ = [
+    "SPAN_FRAME_WIDTH",
+    "VISION",
+    "frames_at",
+    "frames_for",
+    "model_can_see",
+    "seeing_model",
+    "vision_agent",
+]
 
 #: The width quality control cuts a film's frames at: the delivered 1080 px, so a face or a
 #: letter the viewer will see is there to be seen. `frames_for` cuts 480 px for one quick
@@ -132,3 +140,46 @@ def vision_agent(session: Session, *prefer_roles: str) -> tuple[str, str] | None
             return agent.id, agent.display_name
     agent = found[0][0]
     return agent.id, agent.display_name
+
+
+def _sees(session: Session, model_id: str) -> bool:
+    """Whether the provider says this model can look at a picture, and it is available."""
+    return bool(
+        session.scalar(
+            select(ModelCapability.capability_id)
+            .join(Capability, Capability.id == ModelCapability.capability_id)
+            .join(ModelRecord, ModelRecord.id == ModelCapability.model_id)
+            .where(
+                ModelCapability.model_id == model_id,
+                Capability.name == VISION,
+                ModelRecord.is_available.is_(True),
+            )
+            .limit(1)
+        )
+    )
+
+
+def seeing_model(session: Session, agent_id: str, *borrow_from: str) -> str | None:
+    """The model an employee looks at a picture with (a `model_record.id`), or None.
+
+    Her own model when the provider says it sees; else the first of her second and third
+    slots that sees (the Owner's configuration for her); else the model of the studio's
+    seeing employee (`vision_agent`, ``borrow_from`` asked first). The run stays hers whichever
+    answers: her identity, her policy and her record, only the model changes, and the run
+    records the one that answered (`run_agent_task`'s ``model_id``). A decision about a picture
+    needs eyes, and an employee's model may have none: 2026-10-10, the Director was to decide
+    herself about the stills the gate had refused, on a model chosen for her writing.
+    """
+    agent = session.get(Agent, agent_id)
+    if agent is None:
+        return None
+    for model_id in (agent.model_id, agent.secondary_model_id, agent.tertiary_model_id):
+        if model_id and _sees(session, model_id):
+            return str(model_id)
+    looker = vision_agent(session, *borrow_from)
+    if looker is None:
+        return None
+    other = session.get(Agent, looker[0])
+    if other is None or not other.model_id or not _sees(session, other.model_id):
+        return None
+    return str(other.model_id)

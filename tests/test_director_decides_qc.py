@@ -32,7 +32,8 @@ The second review (babcf272 walked after the restart) added: a paid round that d
 nothing does not spend his limits; a still given back after a redo that delivered nothing is
 never the new still (no rejoin of the same film); a refused rejoin keeps her decision waiting
 and is tried again, and an approved take bought for her and in no film is something she can
-still do; candidates the gate turned down wait for his look for a few days, not for ever.
+still do; candidates the gate turned down wait (since the same evening, for her own look,
+tests/test_director_looks_at_pictures.py) for a few days, not for ever.
 """
 
 from __future__ import annotations
@@ -2362,26 +2363,36 @@ def test_an_approved_take_bought_for_her_and_in_no_film_is_something_she_can_sti
     assert redo.calls == [("still", 5, True), ("rejoin", None, False)]  # not bought twice
 
 
-def test_candidates_the_gate_turned_down_wait_for_his_look_then_the_film_is_hers_again(
-    engine, settings, studio, monkeypatch
+def test_candidates_the_gate_turned_down_wait_for_her_look_then_the_film_is_hers_again(
+    engine, settings, studio, monkeypatch, tmp_path
 ):
-    """Her new still came with its file and the gate turned it down: it waits for his look
-    («Decide Proprietarul»), for `BOUGHT_WAIT_DAYS`; never looked at, the report is hers again
-    (it used to wait for ever)."""
+    """Her new still came with its file and the gate turned it down: it waits for her own look
+    (it used to wait for his, «Decide Proprietarul»: the Owner, the same evening, wants her to
+    decide), for `BOUGHT_WAIT_DAYS`; never looked at (nobody's model sees), the report is hers
+    again (it used to wait for ever). Her look itself: tests/test_director_looks_at_pictures.py."""
     from app.media.director_qc import BOUGHT_WAIT_DAYS
     from app.runbook import stages
 
     film = failed_film(engine, local_move=False)
     registry, _model = director_says(studio, answer(verdicts_for(film), "REPAIR", REPAIR_5))
-    FakeRedoPath(engine, monkeypatch, still_status="REJECTED")
+    redo = FakeRedoPath(engine, monkeypatch, still_status="REJECTED")
 
     first = stages.director_decides_failed_film(
         engine, settings, None, registry, film["report"], film["asset"]
     )
 
     assert first["outcome"] == "BOUGHT_WAITING"
+    (refused,) = redo.new_stills
     state = decision_state(engine, film["report"])
-    assert state["final"] and state["pending"] and not state["ready"]
+    # No file on disk: nothing to look at, nothing waits for anybody.
+    assert state["lapsed"] and not state["look"]
+    picture = tmp_path / "refused.png"
+    picture.write_bytes(b"refused still")
+    with Session(engine) as session, session.begin():
+        row = session.get(SceneTake, refused)
+        row.path = str(picture)
+    state = decision_state(engine, film["report"])
+    assert state["final"] and state["pending"] and state["look"] and not state["ready"]
 
     monkeypatch.setattr("app.media.director_qc.utc_now", lambda: _in(days=BOUGHT_WAIT_DAYS + 1))
     state = decision_state(engine, film["report"])

@@ -54,11 +54,14 @@ def structured_run[T: BaseModel](
     temperature: float = 0.1,
     format_tokens: int = 0,
     extra: dict[str, Any] | None = None,
+    model_id: str | None = None,
 ) -> tuple[T | None, dict[str, Any], dict[str, Any] | None]:
     """Run the task; when no object validates, run it once more with native thinking.
 
     Returns (parsed or None, the first run, the second run or None). ``schema_hint`` and
     ``format_tokens`` are kept for callers; the second attempt is the same prompt.
+    ``model_id`` runs both attempts on that model instead of the agent's own
+    (`run_agent_task`), e.g. one that can see the pictures attached.
     """
     del schema_hint, format_tokens
     attempts: list[dict[str, Any]] = []
@@ -82,6 +85,7 @@ def structured_run[T: BaseModel](
             temperature=temperature,
             emit_message=False,
             extra={**(NATIVE_THINKING if native else JSON_ONLY), **(extra or {})},
+            model_id=model_id,
         )
         attempts.append(result)
         text = result.get("output_text") or ""

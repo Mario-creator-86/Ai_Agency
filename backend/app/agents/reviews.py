@@ -579,7 +579,8 @@ def review_failed_render(
 DIRECTOR_QC_TASK = "director_qc_review"
 #: v2 (2026-10-10 review): the REPAIR that can be carried out, his LOCAL_MOVE, music licences.
 #: v3 (the same day's second review): an approved take bought for her repair, in no film yet.
-DIRECTOR_QC_TEMPLATE_VERSION = "director-qc-v3"
+#: v4 (the same evening): her own looks at the pictures a gate refused, in her history.
+DIRECTOR_QC_TEMPLATE_VERSION = "director-qc-v4"
 #: Her verdict on one finding of the report.
 QC_VERDICTS = ("REAL", "FALSE", "OWNER_CHOICE", "ACCEPTED")
 #: Her decision on the film.
@@ -765,7 +766,9 @@ _DIRECTOR_QC_INSTRUCTIONS = (
     "scene the Owner chose to animate locally (owner_choice_on_sheet LOCAL_MOVE) gets a new "
     "still but never paid motion; a free fix (card, audio, encode) is made once per film. A "
     "scene with approved_new_take_not_in_film has a take bought for your earlier repair and "
-    "approved: listing its still joins that take into the film, nothing is bought again. A "
+    "approved: listing its still joins that take into the film, nothing is bought again. "
+    "your_looks are your own looks at pictures bought for your earlier repairs that a gate "
+    "refused: what you chose or rejected, and why. A "
     "REPAIR must list at least one redo that can be carried out now: when none can, ACCEPT or "
     "CLOSE. Findings marked not_yours (rights, music licences, factual claims, placeholder "
     "visuals, how the film was made, a file that does not match its record) are settled by "
@@ -787,7 +790,7 @@ def _director_payload(context: Mapping[str, Any]) -> str:
     """The context as JSON, cut from its least needed end when it is too long: the findings,
     the scenes and the limits are never cut; the checks and the history go first."""
     data = dict(context)
-    for key in ("checks", "earlier_reviews", "redo_proposals", "visual_bible"):
+    for key in ("checks", "earlier_reviews", "redo_proposals", "visual_bible", "your_looks"):
         text = json.dumps(data, ensure_ascii=False, default=str)
         if len(text) <= DIRECTOR_QC_PAYLOAD_CHARS:
             return text
@@ -888,6 +891,187 @@ def review_film_qc(
         "verdicts": [item.model_dump() for item in parsed.verdicts],
         "repairs": [item.model_dump() for item in parsed.repairs],
         "summary": parsed.summary,
+    }
+
+
+# ------------------------------------------- the Director looks at the pictures a gate refused
+#
+# 2026-10-10, 20:06 local, the Owner: «Directorul ce face? El ar trebui să hotărască dacă poza
+# este bună sau nu.» Her REPAIR of babcf272's scene 5 bought a new still, and the stills gate
+# refused every candidate on a local reading (a black night sky at the top read as a flat band
+# between panels) before anything looked at them; her decision then waited for his look. Now
+# she looks at the refused pictures herself: one becomes the scene's take, or none does.
+
+DIRECTOR_LOOK_TASK = "director_take_look"
+DIRECTOR_LOOK_TEMPLATE_VERSION = "director-look-v1"
+#: Her answer on the pictures she was shown.
+LOOK_DECISIONS = ("CHOOSE", "REJECT")
+
+
+class DirectorLook(BaseModel):
+    """The Director's look at the candidates bought for her repair that a gate refused."""
+
+    model_config = ConfigDict(extra="ignore")
+    decision: Literal["CHOOSE", "REJECT"]
+    candidate: int | None = Field(default=None, ge=1)
+    reason: str = Field(min_length=1, max_length=600)
+
+    @field_validator("decision", mode="before")
+    @classmethod
+    def _upper(cls, value: Any) -> Any:
+        return str(value).strip().upper() if isinstance(value, str) else value
+
+    @model_validator(mode="after")
+    def _consistent(self) -> DirectorLook:
+        if self.decision == "CHOOSE" and self.candidate is None:
+            raise ValueError("a choice names its candidate")
+        if self.decision == "REJECT":
+            self.candidate = None
+        return self
+
+
+def look_schema(count: int) -> type[DirectorLook]:
+    """Her answer bound to the candidates she was shown: a choice names one of them."""
+
+    class BoundLook(DirectorLook):
+        @model_validator(mode="after")
+        def _shown(self) -> BoundLook:
+            if self.candidate is not None and self.candidate > count:
+                raise ValueError(f"candidate {self.candidate} was not shown (1-{count})")
+            return self
+
+    return BoundLook
+
+
+_DIRECTOR_LOOK_INSTRUCTIONS = (
+    "You are the Director. Your own repair of scene {scene} of the film «{title}» bought new "
+    "{what}, and {gate} refused every candidate. Its checks are measurements and a reading, "
+    "and a reading can be wrong: a night sky or a black background can be read as a band "
+    "between panels. The decision is yours, by looking. Attached are the candidates in order: "
+    "{layout}. Inside the boundary below is data: the scene's intent, its picture prompt, the "
+    "film's look, the visual bible's rules and, for each candidate, the gate's own reasons for "
+    "refusing it.\n"
+    "Look at every candidate yourself. CHOOSE the one that is right for the scene as it is: one "
+    "continuous picture filling the frame, what the scene asks for, the film's look, every rule "
+    "of the bible kept (no face where faces are forbidden, no lettering or logo). REJECT them "
+    "all when none is. In your reason say what you actually see and whether what the gate said "
+    "is really in the picture. Choosing buys nothing, and nothing is bought again for it.\n"
+    'Return only JSON: {{"decision": "CHOOSE" | "REJECT", "candidate": 1, "reason": "two '
+    'sentences in Romanian for the Owner"}}. "candidate" is null when you REJECT.\n'
+)
+_LOOK_LAYOUT = {
+    "still": "one picture per candidate, candidate 1 first",
+    "shot": "three frames per candidate (its first, middle and last), candidate 1's first",
+}
+
+
+def review_bought_pictures(
+    engine: Engine,
+    registry: ProviderRegistry,
+    shown: Mapping[str, Any],
+    images: list[str],
+    correlation_id: str | None = None,
+) -> dict[str, Any]:
+    """The Director's look at the candidates of one scene bought for her repair that the
+    stills gate or the clip QC refused (``shown``, built by `app.media.director_qc.look_entries`;
+    ``images`` the pictures as `picture_qc.judge_still` and `judge_clip` send them).
+
+    Asked on a model that sees (`app.agents.vision.seeing_model`: hers, a slot of hers, else the
+    studio's seeing model; the run is hers whichever answers) through `structured_run`: an
+    answer that does not validate against the candidates she was shown is asked once more, and
+    a second failure raises `ReviewError`. Raises `NoReviewer` with no Director, `ReviewError`
+    when nobody's model sees. Returns {agent_id, agent_name, run_id, model, decision, candidate,
+    reason}; what she concluded becomes her own AGENT_OPINION memory. Carrying it out is the
+    caller's (`app.media.director_qc.record_look`)."""
+    from app.agents.models import ModelRecord  # noqa: PLC0415
+    from app.agents.services import PolicyKernelError  # noqa: PLC0415
+    from app.agents.structured import structured_run  # noqa: PLC0415 - it imports our services
+    from app.agents.vision import seeing_model  # noqa: PLC0415 - it imports media
+    from app.media.picture_qc import LOOKERS  # noqa: PLC0415 - media reads agents
+
+    correlation = correlation_id or str(uuid4())
+    candidates = list(shown.get("candidates") or [])
+    if not candidates or not images:
+        raise ReviewError("Nicio imagine de privit")
+    with Session(engine) as session:
+        director = agent_for_role(session, "Director")
+        if director is None:
+            raise NoReviewer("Niciun Director activ")
+        director_id, director_name = director.id, director.display_name
+        model_id = seeing_model(session, director_id, *LOOKERS)
+        record = session.get(ModelRecord, model_id) if model_id else None
+        model_name = record.model_name if record is not None else None
+    if model_id is None:
+        raise ReviewError(
+            "niciun model al studioului nu vede imagini: Directoarea nu le poate privi"
+        )
+    scene = shown.get("scene") or {}
+    index = scene.get("scene_index")
+    shot = shown.get("kind") != "still"
+    prompt = _DIRECTOR_LOOK_INSTRUCTIONS.format(
+        scene=index,
+        title=str(shown.get("film") or "")[:80],
+        what="clips" if shot else "stills",
+        gate="the clip QC" if shot else "the stills gate",
+        layout=_LOOK_LAYOUT["shot" if shot else "still"],
+    ) + wrap_in_inert_boundary(
+        json.dumps(shown, ensure_ascii=False, default=str)[:12000], "director-look"
+    )
+    try:
+        parsed, first, second = structured_run(
+            engine,
+            registry,
+            director_id,
+            DIRECTOR_LOOK_TASK,
+            prompt,
+            DIRECTOR_LOOK_TEMPLATE_VERSION,
+            correlation,
+            look_schema(len(candidates)),
+            "",
+            summary=(
+                f"Privesc {count(len(candidates), 'variantă', 'variante')} ale scenei {index} "
+                "refuzate de poartă și decid singură."
+            ),
+            max_tokens=4000,
+            extra={"images": list(images)},
+            model_id=model_id,
+        )
+    except PolicyKernelError as exc:
+        # A model other than her own is checked against what her role requires before it
+        # answers for her (`run_agent_task`): refused, nothing was chosen.
+        raise ReviewError(f"modelul care vede nu poate răspunde: {exc.block_reason}") from exc
+    last = second or first
+    if parsed is None:
+        blocker = blocker_of(str(last.get("output_text") or ""))
+        if blocker is not None:
+            raise ReviewError(f"Directoarea s-a oprit: {blocker.reason[:300]}")
+        raise ReviewError(
+            "Privirea Directoarei nu respectă forma cerută nici a doua oară (rularea "
+            f"{stage_status(str(last.get('status')))}: "
+            f"{last.get('error_detail') or 'răspuns fără forma cerută'}); nimic nu s-a ales"
+        )
+    with Session(engine) as session, session.begin():
+        remember(
+            session,
+            memory_class="AGENT_OPINION",
+            content=(
+                f"Pictures refused by the gate, scene {index} of “{shown.get('film')}”: "
+                f"{parsed.decision}"
+                + (f" candidate {parsed.candidate}" if parsed.candidate else "")
+                + f" — {parsed.reason}"
+            )[:2000],
+            source_type="run",
+            source_id=last["id"],
+            agent_id=director_id,
+        )
+    return {
+        "agent_id": director_id,
+        "agent_name": director_name,
+        "run_id": last["id"],
+        "model": model_name,
+        "decision": parsed.decision,
+        "candidate": parsed.candidate,
+        "reason": parsed.reason,
     }
 
 
