@@ -294,6 +294,11 @@ def enqueue_task(
     now = utc_now()
     with Session(engine) as session, session.begin():
         if idempotency_key:
+        # The lock first: the key is looked up and then the task inserted. 2026-10-09 16:47:25
+        # UTC a FILM_CONTINUE deferral (the continuation of a paid yes) died here on «database
+        # is locked» when a commit landed between the two (`app.db.lock_for_write`), and the
+        # film was left to a dead letter. Writer from the first statement, it waits its turn.
+        lock_for_write(session)
             existing = session.scalars(
                 select(TaskQueueItem).where(TaskQueueItem.idempotency_key == idempotency_key)
             ).first()
@@ -530,6 +535,7 @@ def retry_dead_letter_task(engine: Engine, task_id: str) -> dict:
     now_str = utc_now()
     with Session(engine) as session, session.begin():
         task = session.get(TaskQueueItem, task_id)
+        lock_for_write(session)  # reads the dead task, then re-queues it (see enqueue_task)
         if task is None:
             raise ValueError(f"Task {task_id} not found")
         if task.status != "DEAD_LETTER":
@@ -697,6 +703,10 @@ def ensure_scheduled_job(
     """
     with Session(engine) as session, session.begin():
         existing = session.scalars(select(ScheduledJob).where(ScheduledJob.name == name)).first()
+        # Read, then the hour rewritten: the lock first. At start-up the outbox dispatcher, the
+        # lease reclaim and the GPU guard already commit beside it, and a refusal here is raised
+        # out of the start-up itself (review 2026-10-09; `app.db.lock_for_write`).
+        lock_for_write(session)
         if existing is not None:
             if run_at_local is not None and timezone is not None:
                 if (existing.run_at_local, existing.timezone) != (run_at_local, timezone):
@@ -719,6 +729,7 @@ def ensure_scheduled_job(
     if first_run_at is not None or not active or run_at_local is not None:
         with Session(engine) as session, session.begin():
             job = session.get(ScheduledJob, created["id"])
+            lock_for_write(session)  # reads the new job, then sets its hour (see above)
             if job is not None:
                 if run_at_local is not None and timezone is not None:
                     job.run_at_local = run_at_local
@@ -743,6 +754,10 @@ def set_job_active(engine: Engine, job_id: str, active: bool, correlation_id: st
     now_dt = datetime.now(UTC)
     with Session(engine) as session, session.begin():
         job = session.get(ScheduledJob, job_id)
+        # The lock first: the job is read, then switched. Review 2026-10-09: a commit between
+        # the two refused his «stop» with a 500 and left the daily job active, so the day
+        # still started at its hour and bought under his paid-step rule.
+        lock_for_write(session)
         if job is None:
             raise ValueError(f"Scheduled job {job_id} not found")
         if job.is_active == active:

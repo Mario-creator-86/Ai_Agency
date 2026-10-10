@@ -209,6 +209,7 @@ def seed_chart_of_accounts(engine: Engine) -> int:
     """Create any missing accounts. Idempotent; never edits an account that already exists."""
     created = 0
     with Session(engine) as session, session.begin():
+        lock_for_write(session)  # reads the accounts there are, then adds the missing ones
         existing = set(session.scalars(select(LedgerAccount.code)).all())
         for code, name, kind, normal, money_class, description in CHART_OF_ACCOUNTS:
             if code in existing:
@@ -394,6 +395,7 @@ def record_revenue_evidence(
 
     correlation = correlation_id or str(uuid4())
     with Session(engine) as session, session.begin():
+        lock_for_write(session)  # the duplicate check and the insert, in order
         duplicate = session.scalar(
             select(RevenueEvidence).where(
                 RevenueEvidence.source == source,
@@ -447,6 +449,7 @@ def settle_evidence(engine: Engine, evidence_id: str, *, correlation_id: str | N
     """Mark evidence as settled. Still mints nothing; minting stays a separate decision."""
     correlation = correlation_id or str(uuid4())
     with Session(engine) as session, session.begin():
+        lock_for_write(session)  # reads the evidence, then settles it
         evidence = session.get(RevenueEvidence, evidence_id)
         if evidence is None:
             raise EconomyError("No such evidence.")
@@ -485,6 +488,7 @@ def mint_from_evidence(
     """
     correlation = correlation_id or str(uuid4())
     with Session(engine) as session, session.begin():
+        lock_for_write(session)  # reads the evidence, then mints it once
         evidence = session.get(RevenueEvidence, evidence_id)
         if evidence is None:
             raise EconomyError("No such evidence.")
@@ -537,6 +541,7 @@ def reverse_transaction(
         raise EconomyError("A reversal needs a reason; it stays in the books beside the posting.")
     correlation = correlation_id or str(uuid4())
     with Session(engine) as session, session.begin():
+        lock_for_write(session)  # reads the posting, then mirrors it once
         original = session.get(LedgerTransaction, transaction_id)
         if original is None:
             raise EconomyError("No such transaction.")
@@ -632,6 +637,7 @@ def record_owner_funding(
         }
     )
     with Session(engine) as session, session.begin():
+        lock_for_write(session)  # recalls the command, then posts the funding
         if command_id is not None:
             # Read inside the writing transaction, so two callers arriving together cannot both
             # find nothing and both post.
@@ -730,6 +736,15 @@ def record_provider_cost(
 
     correlation = correlation_id or str(uuid4())
     with Session(engine) as session, session.begin():
+        # The lock first, before the duplicate is looked up. 2026-10-09 14:17 UTC: a pressed
+        # stills step ran 2100 s of GPU, then this booking read the reference, something
+        # committed beside it (the outbox, the lease keeper), and the INSERT was refused at
+        # once with «database is locked» (a stale read snapshot; `app.db.lock_for_write`).
+        # The money was spent, the books did not show it, the press answered 500, and the
+        # next cap check would have read too low a spend. As a writer from the first
+        # statement it waits its turn instead, and two bookings of one reference meet the
+        # duplicate check in order: one row, and the other is told so.
+        lock_for_write(session)
         duplicate = session.scalar(
             select(ProviderCostRecord).where(
                 ProviderCostRecord.provider == provider,
@@ -791,6 +806,8 @@ def bill_provider_cost(engine: Engine, cost_id: str, *, correlation_id: str | No
     """Confirm an estimate became a real bill, and post it once."""
     correlation = correlation_id or str(uuid4())
     with Session(engine) as session, session.begin():
+        # Reads the estimate, then posts it: the lock first, as in `record_provider_cost`.
+        lock_for_write(session)
         cost = session.get(ProviderCostRecord, cost_id)
         if cost is None:
             raise EconomyError("No such provider cost.")
