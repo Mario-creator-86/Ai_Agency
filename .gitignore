@@ -53,3 +53,7 @@ art-source/unreal/env_report.rejected_*.json
 
 # The env report before day_state was merged (kept beside the live one for rollback)
 art-source/unreal/env_report.before_day_state.json
+
+# The Owner's licensed music files beside config/music_library.json (scripts/music_add.py):
+# never committed, never shipped (redistributable: false).
+config/music/

@@ -33,6 +33,16 @@ def pytest_collection_modifyitems(config, items):
 
 
 @pytest.fixture(autouse=True)
+def shipped_music_library(monkeypatch):
+    """Every test reads the music library the release ships (empty), never the Owner's own
+    library beside his files (config/music/, 2026-10-11): what a film does without music,
+    and which cards the audit seeds, must not depend on the machine the suite runs on."""
+    from app.media import music_library
+
+    monkeypatch.setattr(music_library, "LIBRARY_PATH", music_library.SHIPPED_LIBRARY)
+
+
+@pytest.fixture(autouse=True)
 def quick_final_encode(request, monkeypatch):
     """The film's final encode on the veryfast preset, unless the test is about the encode.
 

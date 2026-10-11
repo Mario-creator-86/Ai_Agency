@@ -28,16 +28,36 @@ import hashlib
 import json
 import os
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[3]
-#: The library the studio reads: config/music_library.json, or the file STUDIO_MUSIC_LIBRARY
-#: names (a buyer's own library, kept outside the release). Read once, at start-up.
-LIBRARY_PATH = Path(
-    os.environ.get("STUDIO_MUSIC_LIBRARY") or ROOT / "config" / "music_library.json"
-)
+#: The library the release ships, empty: a buyer's music is his own choice.
+SHIPPED_LIBRARY = ROOT / "config" / "music_library.json"
+#: The Owner's own library, beside his files: config/music/ is ignored by git, so nothing of
+#: it is committed or shipped (2026-10-11, his first twenty beds and five ambiences from
+#: YouTube's Audio Library, registered with scripts/music_add.py).
+OWNER_LIBRARY = ROOT / "config" / "music" / "music_library.json"
+
+
+def library_path(
+    env: Mapping[str, str] | None = None,
+    *,
+    owner: Path = OWNER_LIBRARY,
+    shipped: Path = SHIPPED_LIBRARY,
+) -> Path:
+    """The library the studio reads: the file STUDIO_MUSIC_LIBRARY names (a library kept
+    anywhere), else the Owner's library beside his files when it exists, else the shipped
+    one. Read once, at start-up."""
+    named = (os.environ if env is None else env).get("STUDIO_MUSIC_LIBRARY")
+    if named:
+        return Path(named)
+    return owner if owner.is_file() else shipped
+
+
+LIBRARY_PATH = library_path()
 
 #: Moods a bed may carry, and the words (English and Romanian, as scripts are written in
 #: either) that call for them in a film's core message, title, purposes and words.
