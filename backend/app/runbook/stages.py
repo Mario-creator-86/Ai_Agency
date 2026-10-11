@@ -1618,6 +1618,8 @@ def _ladder_continues(engine: Engine, storyboard_id: str, correlation: str) -> s
     walk rewrites and buys on (`queue_film_continue`; only in PRODUCTION)."""
     try:
         with Session(engine) as session, session.begin():
+            # Read-then-write in the queue: the write lock first (the 2026-10-09 14:17 loss).
+            lock_for_write(session)
             return queue_film_continue(
                 session,
                 storyboard_id,

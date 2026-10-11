@@ -64,6 +64,7 @@ PRICED_CONSTRUCTION_SITES = {
 UNPRICED_ON_PURPOSE = {
     "backend/app/economy/credits.py": "reads the subscription balance; generates nothing",
     "backend/app/integrations/discovery.py": "lists models and voices; generates nothing",
+    "backend/app/integrations/plan_licence.py": "reads the plan's commercial licence; generates nothing",
 }
 
 
