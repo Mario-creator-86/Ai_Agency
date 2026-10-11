@@ -346,16 +346,19 @@ def earlier_briefs(session: Session, storyboard_id: str, scene_index: int) -> li
         payload = _payload(event)
         if payload.get("scene_index") != scene_index:
             continue
-        briefs.append(
-            {
-                "at": str(event.timestamp)[:16],
-                "layer": payload.get("layer"),
-                "rewritten": payload.get("rewritten"),
-                "diagnosis": payload.get("diagnosis"),
-                "avoid": payload.get("avoid") or [],
-                "change": payload.get("change") or [],
-            }
-        )
+        brief = {
+            "at": str(event.timestamp)[:16],
+            "layer": payload.get("layer"),
+            "rewritten": payload.get("rewritten"),
+            "diagnosis": payload.get("diagnosis"),
+            "avoid": payload.get("avoid") or [],
+            "change": payload.get("change") or [],
+        }
+        if not payload.get("rewritten"):
+            # An attempt that rewrote nothing (her brief refused, his rewrite blocked): she is
+            # told why, so she does not write the same brief again (2026-10-11).
+            brief["reason"] = payload.get("reason") or ""
+        briefs.append(brief)
     return briefs
 
 
@@ -563,9 +566,9 @@ def rewritten_package(
             merged[name] = value
     avoid: list[str] = []
     for item in [
-        *(stored.get("avoid") or []),
         *(brief.get("avoid") or []),
         *(new.get("avoid") or []),
+        *(stored.get("avoid") or []),
     ]:
         text = " ".join(str(item).split())
         if text and text.lower() not in {a.lower() for a in avoid}:
@@ -877,7 +880,8 @@ def _record_brief(
             },
             correlation_id,
         )
-        if asked.get("agent_id"):
+        if asked.get("agent_id") and brief:
+            # Only a brief she wrote is hers to remember; a failed attempt has no diagnosis.
             remember(
                 session,
                 memory_class="AGENT_OPINION",
@@ -981,10 +985,21 @@ def _rung(
         asked = director_brief(engine, registry, context, correlation_id)
     except Exception as exc:  # noqa: BLE001 - a fault waits; it never buys
         logger.warning("director_brief_failed", extra={"error": type(exc).__name__})
-        outcome["reason"] = f"Brief-ul Directoarei nu a putut fi cerut ({type(exc).__name__})."
-        return outcome
+        asked = {
+            "brief": None,
+            "run_id": None,
+            "agent_id": None,
+            "reason": f"Brief-ul Directoarei nu a putut fi cerut ({type(exc).__name__}).",
+        }
     if asked["brief"] is None:
+        # 2026-10-11, 14:20 UTC, the cyclotron film: her brief was refused twice and nothing was
+        # written, so the walk's stop read as the Owner's, `earlier_briefs` never saw the attempt
+        # and the watchdog had nothing to read. A brief that failed is recorded like one that
+        # did — rewritten False, with the reason — and no letter goes to the Video Editor, since
+        # there is nothing to hand him.
         outcome["reason"] = str(asked["reason"])
+        failed = {"rewritten": False, "layer": None, "reason": outcome["reason"], "run_id": None}
+        _record_brief(engine, context, asked, failed, None, correlation_id)
         return outcome
     try:
         done = rewrite_scene(engine, registry, context, asked["brief"], correlation_id)

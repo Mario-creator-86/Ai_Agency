@@ -14,11 +14,15 @@ changes; change this file, and `IDENTITY_VERSION` changes with it.
 
 from __future__ import annotations
 
+import collections.abc
+import enum
 import hashlib
 import json
-from collections.abc import Callable
+import re
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
-from typing import Any
+from types import UnionType
+from typing import Annotated, Any, Literal, Union, get_args, get_origin
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -401,8 +405,207 @@ def joined(limit: int) -> Callable[[Any], Any]:
     return join
 
 
-def parse_structured(text: str, model: type[BaseModel]) -> BaseModel | None:
-    """Parse a model's answer as JSON against a schema; None when no object matches.
+# ----------------------------------------------------------------------------- fitting
+#
+# 2026-10-11, film aa170155 (cyclotron): the Director's decision on the failed film was asked
+# five times, and every first answer was a complete, sensible REPAIR refused for one thing — a
+# repair reason of 773 (652, 902...) characters where the schema allowed 400. Every second
+# attempt, with her thinking on, spent its budget on reasoning and answered nothing, so the film
+# waited for her hourly for a character limit; her scene brief went the same way at 14:20 (a
+# diagnosis of a thousand characters, 800 allowed). The Video Editor's shot plan had the same
+# fault fixed in `app.media.prompt_agent._coerce`; here is the same fit for every structured
+# answer: before an object is refused for its shape it is fitted to its schema, and only what
+# still fails after that is refused — with its reasons, for the model and for the Owner's note.
+
+#: What a cut leaves at a word boundary and does not keep.
+_CUT_TAIL = " \t\r\n,;:"
+#: What a code word is stripped of before it is matched (a quoted or full-stopped «REPAIR.»).
+_CODE_QUOTES = " \t\r\n\"'`.,"
+#: A pattern that is a plain choice of code words — ^(PASS|FAIL)$ (`story.review.EpisodeVerdict`,
+#: `factual.story_review.StoryVerdict`) — whose words are matched like a Literal's.
+_CHOICE_PATTERN = re.compile(r"^\^?\(?([A-Za-z0-9_ -]+(?:\|[A-Za-z0-9_ -]+)+)\)?\$?$")
+_SEQUENCES = (
+    list,
+    tuple,
+    set,
+    frozenset,
+    collections.abc.Sequence,
+    collections.abc.MutableSequence,
+)
+#: How much of a refusal is said: the first errors, and how many more there were.
+MAX_REFUSAL_LINES = 6
+MAX_REFUSAL_CHARS = 700
+
+
+def cut_at_word(text: str, limit: int) -> str:
+    """``text`` cut to at most ``limit`` characters at a word boundary: the opening is kept, the
+    tail dropped, never a word cut in two. One word longer than the limit is the exception —
+    nothing shorter of it can be kept, so it is cut."""
+    if limit < 0 or len(text) <= limit:
+        return text
+    head = text[:limit]
+    if not text[limit].isspace():
+        # The cut fell inside a word: back to the space before it.
+        boundary = max(head.rfind(" "), head.rfind("\n"), head.rfind("\t"))
+        if boundary > 0:
+            head = head[:boundary]
+    return head.rstrip(_CUT_TAIL)
+
+
+def _limit_of(metadata: Iterable[Any]) -> int | None:
+    """The ``max_length`` among a field's constraints (pydantic keeps Field(max_length=) there)."""
+    for meta in metadata:
+        limit = getattr(meta, "max_length", None)
+        if isinstance(limit, int) and not isinstance(limit, bool):
+            return limit
+    return None
+
+
+def _pattern_of(metadata: Iterable[Any]) -> str | None:
+    for meta in metadata:
+        pattern = getattr(meta, "pattern", None)
+        if isinstance(pattern, str):
+            return pattern
+        source = getattr(pattern, "pattern", None)
+        if isinstance(source, str):
+            return source
+    return None
+
+
+def _unwrap(annotation: Any, metadata: Iterable[Any]) -> tuple[Any, tuple[Any, ...]]:
+    """An annotation without its Annotated[] layers, their constraints joined to ``metadata``."""
+    found = tuple(metadata)
+    while get_origin(annotation) is Annotated:
+        annotation, *more = get_args(annotation)
+        found = (*found, *more)
+    return annotation, found
+
+
+def _code_word(value: str, options: Iterable[str]) -> str:
+    """``value`` as the option it names in another case or spacing («owner choice» is
+    OWNER_CHOICE, « Still» is still), or as it was when it names none."""
+    said = " ".join(value.split()).strip(_CODE_QUOTES)
+    words = [option for option in options if isinstance(option, str)]
+    if said in words:
+        return said
+
+    def key(text: str) -> str:
+        return re.sub(r"[\s\-]+", "_", text.casefold())
+
+    wanted = key(said)
+    for option in words:
+        if key(option) == wanted:
+            return option
+    return value
+
+
+def _fits(value: Any, annotation: Any) -> bool:
+    """Whether ``value`` has the Python shape ``annotation`` reads (a union picks by this)."""
+    annotation, _ = _unwrap(annotation, ())
+    origin = get_origin(annotation)
+    if origin is Literal:
+        return isinstance(value, str | int | bool)
+    if origin in _SEQUENCES:
+        return isinstance(value, list)
+    if origin in (dict, collections.abc.Mapping):
+        return isinstance(value, dict)
+    if isinstance(annotation, type):
+        if issubclass(annotation, BaseModel):
+            return isinstance(value, dict)
+        if issubclass(annotation, enum.Enum) or annotation is str:
+            return isinstance(value, str)
+        if annotation is bool:
+            return isinstance(value, bool)
+        if annotation in (int, float):
+            return isinstance(value, int | float) and not isinstance(value, bool)
+    return True
+
+
+def _fit_value(value: Any, annotation: Any, metadata: Iterable[Any]) -> Any:
+    annotation, found = _unwrap(annotation, metadata)
+    origin = get_origin(annotation)
+    if origin in (Union, UnionType):
+        if value is None:
+            return None
+        for option in get_args(annotation):
+            if option is not type(None) and _fits(value, option):
+                return _fit_value(value, option, found)
+        return value
+    if origin is Literal:
+        return _code_word(value, get_args(annotation)) if isinstance(value, str) else value
+    if origin in _SEQUENCES:
+        if not isinstance(value, list):
+            return value
+        limit = _limit_of(found)
+        items = value[:limit] if limit is not None and len(value) > limit else list(value)
+        inner = get_args(annotation)
+        if origin is tuple and not (len(inner) == 2 and inner[1] is Ellipsis):
+            return items  # tuple[str, int]: each place its own type, not fitted here
+        if inner:
+            items = [_fit_value(item, inner[0], ()) for item in items]
+        return items
+    if isinstance(annotation, type):
+        if issubclass(annotation, BaseModel):
+            return fit_to_schema(value, annotation)
+        if issubclass(annotation, enum.Enum) and isinstance(value, str):
+            by_word: dict[str, Any] = {}
+            for member in annotation:
+                if isinstance(member.value, str):
+                    by_word[member.value] = member.value
+                by_word.setdefault(member.name, member.value)
+            matched = _code_word(value, by_word)
+            return by_word.get(matched, matched)
+        if annotation is str and isinstance(value, str):
+            pattern = _pattern_of(found)
+            choice = _CHOICE_PATTERN.match(pattern) if pattern else None
+            if choice is not None:
+                value = _code_word(value, choice.group(1).split("|"))
+            limit = _limit_of(found)
+            return cut_at_word(value, limit) if limit is not None else value
+    return value
+
+
+def fit_to_schema(data: Any, model: type[BaseModel]) -> Any:
+    """A decoded answer fitted to ``model`` before it is validated, the way
+    `app.media.prompt_agent._coerce` fits the Video Editor's shot plan: a string longer than its
+    max_length is cut at a word boundary (the opening kept, the tail dropped), a list longer than
+    its max_length is truncated, a nested model and a list of models are fitted the same way,
+    and a Literal, an Enum or a code-word pattern is matched whatever its case and spacing.
+    Nothing is added, removed or retyped: what pydantic would refuse for its content it still
+    refuses. A copy; what the model said is not changed."""
+    if not isinstance(data, dict):
+        return data
+    fitted = dict(data)
+    for name, info in model.model_fields.items():
+        for key in (name, info.alias):
+            if isinstance(key, str) and key in fitted:
+                fitted[key] = _fit_value(fitted[key], info.annotation, info.metadata)
+    return fitted
+
+
+def refusal_words(exc: ValidationError) -> str:
+    """Why a schema refused an answer, in plain words for the model that wrote it and for the
+    note the Owner reads: ``where: what`` per error, pydantic's prefixes dropped."""
+    errors = exc.errors(include_url=False)
+    lines: list[str] = []
+    for error in errors[:MAX_REFUSAL_LINES]:
+        where = ".".join(str(part) for part in error.get("loc") or ()) or "the answer"
+        message = str(error.get("msg") or error.get("type") or "invalid")
+        for prefix in ("Value error, ", "Assertion failed, "):
+            if message.startswith(prefix):
+                message = message[len(prefix) :]
+        lines.append(f"{where}: {message}")
+    if len(errors) > len(lines):
+        lines.append(f"and {len(errors) - len(lines)} more")
+    return "; ".join(lines)[:MAX_REFUSAL_CHARS]
+
+
+def read_structured(text: str, model: type[BaseModel]) -> tuple[BaseModel | None, str | None]:
+    """Parse a model's answer as JSON against a schema: (the object, None); (None, why) when an
+    object was there and the schema refused it even fitted (`refusal_words` of the candidate
+    closest to the schema: most of its fields present, then fewest errors); (None, None) when the
+    text holds no object at all — which is the difference between an answer to ask again for,
+    corrected, and one to ask again with the model's own thinking (`agents.structured`).
 
     The object may be fenced, bare, or — as thinking models write when asked not to think
     aloud — after paragraphs of analysis that themselves contain braces. Every ``{`` is
@@ -416,6 +619,7 @@ def parse_structured(text: str, model: type[BaseModel]) -> BaseModel | None:
     decoder = json.JSONDecoder()
     start = raw.find("{")
     tried = 0
+    closest: tuple[int, int, str] | None = None
     while start >= 0 and tried < 400:
         tried += 1
         try:
@@ -425,11 +629,20 @@ def parse_structured(text: str, model: type[BaseModel]) -> BaseModel | None:
             continue
         if isinstance(data, dict):
             try:
-                return model.model_validate(data)
-            except ValidationError:
-                pass
+                return model.model_validate(fit_to_schema(data, model)), None
+            except ValidationError as exc:
+                present = sum(1 for name in model.model_fields if name in data)
+                candidate = (-present, exc.error_count(), refusal_words(exc))
+                if closest is None or candidate[:2] < closest[:2]:
+                    closest = candidate
         start = raw.find("{", start + 1)
-    return None
+    return None, (closest[2] if closest is not None else None)
+
+
+def parse_structured(text: str, model: type[BaseModel]) -> BaseModel | None:
+    """Parse a model's answer as JSON against a schema, fitted first (`fit_to_schema`); None
+    when no object validates. `read_structured` says why."""
+    return read_structured(text, model)[0]
 
 
 class Blocker(BaseModel):

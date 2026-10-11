@@ -652,19 +652,22 @@ def test_director_qc_both_attempts_send_doubled_limit_to_ollama(seeded, monkeypa
     clear_stop(seeded["engine"])
     with Session(seeded["engine"]) as session, session.begin():
         session.get(Role, seeded["role_id"]).allowed_task_types += "," + DIRECTOR_QC_TASK
-    first = {
+    # Narration with no object: the one failure that still earns the thinking retry (since
+    # 2026-10-11 a reason too long is fitted and validates the first time, and an object refused
+    # for its content is asked again with thinking off; see tests/test_structured_answers_fitted).
+    first = "Let me read the report first. {not the object} Scene 1 shows the wrong image."
+    second = {
         "verdicts": [{"finding": 1, "verdict": "REAL", "reason": "The image is wrong."}],
         "decision": "REPAIR",
-        "repairs": [{"scene_index": 1, "redo": "still", "reason": "x" * 500}],
+        "repairs": [{"scene_index": 1, "redo": "still", "reason": "Remove panels."}],
         "summary": "Refacem scena.",
     }
-    second = {**first, "repairs": [{"scene_index": 1, "redo": "still", "reason": "Remove panels."}]}
-    answers = iter([first, second])
+    answers = iter([first, json.dumps(second)])
     bodies = []
 
     def reply(_path, body, **_kwargs):
         bodies.append(body)
-        return {"response": json.dumps(next(answers)), "prompt_eval_count": 10, "eval_count": 100}
+        return {"response": next(answers), "prompt_eval_count": 10, "eval_count": 100}
 
     adapter = OllamaProvider("http://127.0.0.1:11434")
     monkeypatch.setattr(adapter, "_post", reply)
