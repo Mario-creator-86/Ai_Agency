@@ -1,4 +1,133 @@
-# CURRENT STATUS — State on 2026-10-09
+# CURRENT STATUS — State on 2026-10-11
+
+Current proof: the 2026-10-01/02 paid film readiness audit was proven on fakes only;
+AGENT_SCENARIO_ACCEPTANCE later used actual Ollama Cloud calls, with normal serial
+acceptance and real GPU/media/upload still pending. Current local UI evidence is reported
+separately below and does not prove those external workflows.
+
+## Active claim — CYCLOTRON_QC_AUTONOMY (2026-10-11)
+
+Codex /root: Owner asks the studio to diagnose the cyclotron film's failed QC itself,
+judge each finding as real or false, locate the affected scene and layer, correct the
+prompt and redo/recheck only what is necessary. Scope: existing Director/film continuation
+workflow, current film evidence and regressions for concrete gaps. Director x2 is already
+implemented and loaded; related baseline 123 tests pass (one live-provider skip), nine
+focused tests pass, four source modules pass mypy and the secret/document gates pass.
+Preserve existing Owner STOP, budget/approval, accepted takes and rights gates. Work through
+the durable worker and its normal film lease; do not replace QC results or manufacture a pass.
+No new interface or unrelated feature. Live model/media actions can occur only through the
+existing authorized production workflow and are reported separately from offline tests.
+
+## The loop without progress is braked, the serial follows the Owner's office and continues the same day, the music sits under the voice, and the Director may replace what he approved unless he marked it final (2026-10-11)
+
+- Claim: Claude Fable 5.1 session 23d615c3 (evening). The Owner, 21:50: «Verifică te rog, se repetă? Este un loop fără progres?» — it was: the serial's board f06808c9 («The Zero Script Club», the first approved episode) had six sheet-repair rounds in 23 minutes (18:26–18:49 UTC), each UNRESOLVED on the same eight TEMPLATE_LABEL blockers, no media bought, only model calls. Two causes, both fixed in the tree before his restart: the live server (started 21:17) ran the serial composer from before 45dc313 (it put «Camera:» back after every rewrite), and the brake of 2026-10-03 counted attempts by a fingerprint that changed every round.
+- Done: 45dc313 (serial shots said in sentences, a motion of their own); 6510d04 (serial look v2: the Owner's own office picture — warm hand-drawn studio house, faces seen and kept, 445-character block); 528ec93 (the sheet repair's brake counts the blockers (kind, code, scene), never their wording or the sheet's hash); 2e20ecf (the Voice Artist plans the music under the words — bed 20 LU under the voice measured in speech, lifts only in silences ≥0.8 s, the Director reads the sound plan and re-asks a refused mix); 343382d (trends for US,GB,CA,AU); 44fc998 (portraits as bible references); e565a6b (the approved serial episode gets its storyboard the same day and the filming is queued; serial_unfilmed pass, order 160).
+- Tested on fakes only: serial look 16, sheet repair guard + blocker repair 27, sound/Director/editorial QC 182, serial continuation/pipeline/self-recovery/one-click/autonomous day 183. Nothing live was pressed; the restart is the Owner's.
+- Live after the restart (expected): the serial sheet's lint passes (sentences), stills are bought for the episode under his rule; every new film gets a sound plan; the cyclotron film (aa170155) still waits on the Owner-approved-take doctrine (card answered: the Director may redo what he approved unless he marked it «final») — next commit.
+- Owner items: the three invoice cards; if his .env sets STUDIO_TRENDS_GEO it must be changed by him (the default is now US,GB,CA,AU); the «Aprobat (final)» option on the sheet comes with the doctrine commit (the API takes `final`; the pixel session owns the page).
+- 5f5414c — the Owner's card («Directoarea poate reface și ce am aprobat eu»): the Director's confirmed repair replaces a take he approved unless he marked the approval «final» (API `final` on POST /media/takes/{id}/decision, or a note saying «finală»/«definitiv»); his letter says what of his was replaced and why; every other unasked redo still spares whatever he approved. Live after the restart: the cyclotron film (aa170155, report 2a3b5130) is re-read by the hourly pass and her REPAIR of scenes 4-5 runs over his 14:30-14:31 approvals, which were not marked final.
+
+## CODEX_HANDOFF_AND_LEVEL_1 — compiler finished, Director repair desk, mail loops, token budget (2026-10-11)
+
+- Claim: Claude Fable 5.1 session 23d615c3 (continuing Codex's work after it ran out of credits; the Owner: «Continuă munca la care lucra CODEX»).
+- Done: 6b907b1 (the ladder's continuation locks first; plan_licence is an unpriced reader), 77b5e62 (prompt compiler: the still names its whole scene, the look's place/season/weather/daylight left to a scene that names its own, no "no X" negations in positive prompts — veo's negative channel only; Codex's intent fixture of aa170155 scenes 4-5), 536f380 (Codex: Director token multiplier ×2, director-qc-v5 maxima, finished-film QC reads the prompts a take was bought on), 54bd847 (Level 1: `app.agents.repairs` — reprice, agent_health, film_cost, threads, stale_decisions, unbilled, desk; DIRECTOR_REPAIR task), 0196aac (the agents' mail stops looping), 7520a6f (QC context tests), music research report docs/project/MUSIC_YOUTUBE_AUDIO_LIBRARY_2026-10-11.md.
+- Facts behind it (database copy, 2026-10-11 UTC): the cyclotron film's five Director QC decisions were all complete REPAIR objects refused only for a repairs[].reason over 400 chars; every thinking retry hit the token cap with no output; the Director's scene brief at 14:20 was refused for a diagnosis over 800 chars. Episode 043317d3 is the serial's first APPROVED episode ever (10:43) and has no storyboard until the next morning by design. All 8 character bibles have empty reference slots while the portraits exist in «Agents ID and Bible/*.png».
+- Tested on fakes only: 281 prompt-compiling tests, 333 Level-1/Codex tests, 52 Director QC tests, 21 paid-path lock tests pass. In flight: workflow wf_0b525d07-da4 (A: structured answers fitted to schema + error-carrying retry + ladder retry pass; B: serial same-day continuation; C: character portraits as bible references).
+
+## DIRECTOR_TOKEN_BUDGET_X2 — offline checks complete; runtime activated (2026-10-11)
+
+Codex /root: complete; active claim released after offline checks and verified runtime
+activation. The Owner asked for Director token budgets doubled after the cyclotron film
+QC review at 18:11. The first answer used 1,128 completion tokens but four repair reasons
+exceeded the existing 400-character schema limit; the second used all 6,000 completion
+tokens and returned no visible answer (`EMPTY_OUTPUT`). Recorded usage does not establish
+how many tokens were private reasoning.
+
+`STUDIO_DIRECTOR_TOKEN_MULTIPLIER` defaults to 2 (validated 1..4). `run_agent_task`
+applies it once to explicit limits only when the resolved role is `Director`: QC
+6,000 -> 12,000 on both structured attempts; inbox 24,000 -> 48,000. Other roles and
+`max_tokens=None` retain their behavior. New runs record requested limit, multiplier
+and effective limit under `context_json.generation_limits`. QC prompt v5 states the
+schema's existing 400-character reasons, 800-character summary, 80 findings and 24
+repairs; invalid structured answers log `structured_answer_invalid`.
+
+Proof: baseline 63 passed / 1 live skip; new regressions RED 7 failed / 1 passed before
+production changes, then GREEN 8 passed. Latest focused run, including the added
+Director `None` case: 9 passed / 18 deselected (2.82 s). Final related suite remains
+123 passed / 1 skipped (98.91 s). Changed-file Ruff and four-source mypy pass. Independent review found no
+actionable issue. Two existing fictitious licence-test credentials were marked with
+inline secret-scanner allowlist comments; their values, scanner and baseline are unchanged.
+Five licence tests and Ruff pass. USD/daily-token/STOP gates and history are preserved.
+
+Runtime: controlled restart with no agents/tasks/days/cloud jobs in flight and no GPU
+or spend reservations. New API server PID 2096 started at 16:24:28 UTC (19:24 Bucharest),
+live/ready health returned 200 HEALTHY, worker OK; effective Settings multiplier is 2.
+No new AgentRun existed at the post-restart 19:25 check. This proves activation, not a
+successful new QC answer from Kimi. No paid model test or media redo was initiated.
+Report and rollback: [DIRECTOR_TOKEN_BUDGET_2026-10-11.md](DIRECTOR_TOKEN_BUDGET_2026-10-11.md).
+
+## DIRECTOR_PROMPT_LADDER — a refused scene's prompt is read and rewritten (2026-10-11)
+
+- Claim: Claude Opus 5.5 session 23d615c3, the Owner's rule of 2026-10-11 («Deci directoarea citește promptul și după îl cere la rescriere cu informații clare, ce să evite ca să treacă la QC!»).
+- Done (699bc64, f98ffc8, 32585f1): `app.media.scene_rewrite` — for a scene QC refused (QC.CLIP, LOCAL.STILL_GATE) the Director reads its package, the prompts sent, the bible and the refusals' reasons and writes a brief (diagnosis, avoid, keep, change, layer); the Video Editor rewrites that one scene (compiled, linted, stored on that scene only); letters between them, settled. Motion layer keeps the still's words; still layer rewrites the picture and its motion; after a failed motion rewrite or a still-gate refusal only the picture; a still the Owner approved is never rewritten. `scene_memory` reads her rewrite as a decision (hold lifted, attempts counted again). `_film_staircase` runs her rounds (3 a walk, then a continuation). A paid redo after a failed film QC is bought only on a corrected prompt (PROMPT_NOT_CORRECTED). CLOSE for quality refused. Paid-redo limits default 5 a scene, 20 a film.
+- Tested on fakes only: tests/test_director_rewrites_failed_scene.py (5) plus 196 + 314 + 127 related tests pass. Not yet proven on a real vendor: the cyclotron film aa170155 (scenes 4, 5) is walked after the 16:41 restart.
+
+## SCENE_FITS_CLIP_AND_SERIAL_V7 — complete on fakes, loaded live (2026-10-11)
+
+Claude, 2026-10-11. Proven on fakes; the studio restarted on ea9458a at 13:00 local on the Owner's card.
+
+- 51f4d1b: a scene up to 25 % over its model's longest clip is bought at that clip and slowed at
+  assembly (a native clip always wins); a longer one blocks the sheet before anything is bought
+  (SCENE_TOO_LONG → the Director's story repair splits it); the story review refuses it first.
+  Live check on a copy: NASA 6fe6a577 scenes 3 and 4 now PLANNED, LTX-2.5 10 s slowed 12 % / 25 %.
+- 5c339b7: serial brief v7 (three offered speakers), drafts measured by the review's own checks
+  before storing (incl. «filmable»), one more ask with the reasons; a refused day is told again up
+  to 3 drafts, then the oldest untold day.
+- e33eb4e, ea9458a: a board a story repair replaced is closed by the Director (223fac3a closed
+  live after the restart) and left out of the media list.
+- 9709593: the media list shows a film's newest upload («publicat · privat», linked).
+- 91129b6, 071d789: licence-held private uploads go public once the ElevenLabs licence is
+  recorded; the plan is re-read hourly (it read «free»; the Owner upgrades).
+
+Owner rules today: starting work is the 05:00 schedule or his «Pornește rularea de azi», never
+the Director by herself; the studio does the rest alone.
+
+## DIRECTOR_DECIDES_QC — complete on fakes, live use pending a restart (2026-10-10)
+
+Claude, 2026-10-10. Proven on fakes only; no provider was called by any test.
+
+- 6e4f043: a bought test shot pins the scene's hero (no second hero request).
+- 41bc032, 8eaa021: answered Owner letters close themselves (`media.answered_letters`), on the
+  pending-approvals invariant.
+- 63d4d07: the panel prompts (prompt agent, series look, prompt lint, still gate, picture QC).
+- 480ca89: decision producers and watchdog passes are registries (`app.decisions.producers`,
+  `app.workflows.passes`), loaded by package.
+- 50ff993 (WP1): a refused batch is not queued and books nothing; a paused wait is 180 s.
+- 2697382, 32e1479, c46f409 (WP2): queue writers take the write lock.
+- e921ad7 (WP29): `scripts/docs_note.py`, the secrets check hashes, record narrowing.
+- fa4038d (WP10): a clip is sized to its narration; a short clip is slowed locally up to 25%.
+- 43c13c1: the story loop ends itself on taste-only notes; a free Owner choice walks the film on
+  (`owner_choice_continuation`); only a language model down reaches the Owner as a pause card.
+- d271058: a crashed slow-down filter falls back to frame repetition; films whose render failed
+  before a restart are walked again once.
+- 07153ad: the voice's commercial licence is read from the ElevenLabs plan by API once a day
+  (`vendor_plan_licence`, the Owner's card «Da, citește singur»); a paid, active plan records
+  the evidence, anything else records nothing and the film stays private.
+- baa2a11: film picture QC judges clean shot frames, or the film cut around the studio's own
+  caption rows; burnt-in captions are no longer read as writing in the picture.
+- 7f30429: the Director decides a failed film QC (ACCEPT / CLOSE / REPAIR of her list only;
+  rights, music licence and production path are not hers to accept); a paid round that
+  delivered nothing does not use the film's limit; an unasked redo never retires a take the
+  Owner approved (refused OWNER_APPROVED), his too-short clip still gets his question; a redo
+  that delivered nothing gives back what it retired, and the `restore_retired_takes` pass gives
+  back earlier ones; a film whose licence is unconfirmed is uploaded private and says why.
+  Combined run: 804 passed, 3 xfailed (the deferred write-lock markers).
+
+Live state: film babcf272 assembled, QC failed; the day's QC repair redid the Owner's approved
+scenes 1 and 2 unasked (takes 76e59c5c, 405e87d8, 50fe4807, 3685dd5b retired). GPU forced off and
+STOP AUTONOMIE set on the Owner's card. Both channels release autonomous uploads publicly on his
+card. Next, on his restart card: the studio restarts on 7f30429, STOP AUTONOMIE is lifted, the
+restore pass gives his takes back and the Director decides the film. Not yet proven live.
 
 ## RUNPOD_STILLS_GATE_BILLING_ORDER — complete on fakes (2026-10-09)
 
@@ -16,6 +145,35 @@ cut left out goes first next round. Sheet statuses read in Romanian. The Owner c
 still himself (take 76e59c5c, score 182). Open: the 2511 reference route still waits for scene
 1 (his card); docs/RUNPOD_INTEGRATION.md wording. Tests: 177 backend, 18 paid-path safety, 50
 frontend; ruff, mypy, tsc.
+
+## PIXEL_BACKEND_ANIMATION_ACCEPTANCE — complete locally, claim released (2026-10-09)
+
+Owner follow-up: remove work-state labels from the portrait itself; keep status facts
+outside the image. Complete: eight real inspector headers and eight roster cards have no
+portrait overlay; actual status facts remain visible. 909 units/types, rebuild and read-only
+Playwright profile/roster/390 px phone/served-byte checks pass, zero page errors.
+
+Eight front-facing profile portraits with individual role backgrounds, original identity-bound
+v10 art; seated office ensembles still face their monitors. All headers visually inspected,
+actual production roster/profile/390 px phone read-only checks pass. Roster uses actual seated
+pixel positions rather than obsolete HQ manifest (false «fără birou» removed).
+
+Found/fixed missing aggregate_version in live outbox payloads. Policy refresh now follows
+scalar state/version/lifecycle changes with serialized, bounded debounced/retry reads; no
+matching fresh intent means no gesture. Legacy versionless events repair through coalesced
+Owner-authenticated committed layout reads, supporting the current running backend.
+
+909 frontend units/types; 72 scoped backend/docs; eight sequential bounded scene cases;
+1 real disposable-backend/production-page acceptance (84.219 s): 48 states across eight hires,
+real outbox/WebSocket/Owner HTTP, raster movement, pause/resume, rapid/late/legacy/reconnect/
+stale recovery, zero page errors. Paid vendors replaced and outbound sockets denied; no
+production mutations/provider calls by this task. Heavy owner-flow game guard unchanged.
+
+Frontend rebuilt/served bytes verified with hash freshness; readiness 200, approved base
+unchanged, no backend restart. Additive backend serializer loads at next ordinary startup;
+legacy repair already works now. Docs/architecture/scan and targeted Ruff pass, baseline
+unchanged. Report PIXEL_BACKEND_ANIMATION_ACCEPTANCE.md; evidence/provenance/rollback there.
+External RunPod/film work and its separately recorded acceptance limits remain unchanged.
 
 ## RUNPOD_UNSENT_PROOF — complete on fakes, live retry pending a restart (2026-10-09)
 
@@ -51,6 +209,41 @@ confirmation; a closed sheet disables steps, takes and redo. Tests: test_film_cl
 neighbouring backend cases and 896 frontend cases pass; the full backend suite was not run
 (the Owner was playing; shared commit memory).
 
+## PIXEL_LIVING_STUDIO — complete, current seating and live motion verified (2026-10-09)
+
+Claim released. All eight original employees have individualized caster office chairs,
+registered rear-view upper poses and fixed floor contacts. Seat/backrest/pelvis rise 5.4
+world px without lifting the wheels. Nadia faces rear-left, slightly inclined toward her
+desk, with a physical upright monitor/bezel/stand touching the calibrated desktop.
+The final v9 correction removes the drafting board through a bounded original-art repair,
+calibrates glass to its real upright frame and retains a visible pedestal above desktop y=484.
+Actual Nadia close-up inspected; panel/desktop intersection regression and pixel-locality
+proof pass (2430 changed pixels inside, zero outside). Sunet/Film controls respect drawer insets.
+Read-only Owner presentation policies derive gestures from actual state/version: work,
+thinking/review, coffee/hair/repositioning and monitor power. Expiry/mismatch rejects actions.
+Bounded 2D contact/springs, wind-driven paper and foliage, rare soft lamp dips, nine actual
+screen planes and original local sound are implemented. Sunet requires browser activation.
+Authenticated fresh HTTP policies bridge an event-socket reconnect; stale main data still
+freezes motion. Actual 24 s socket-closed rehearsal: three policy reads, all eight real
+IDLE employees moving, scene/wall ratio 1.000066, zero page errors/refused requests.
+
+898 frontend units/types, eight bounded Playwright cases and 81 scoped backend/docs/scan
+cases pass. Six runtime fixtures/360 checkpoints, 481 seating samples, codec/video/audio,
+expiry/version/owner-cleanup guards and nine real dialogs pass. Final game-skill client:
+three inspected shots/text states at 3/6/9 s, eight employees, no errors.
+Actual 32.012500 s H.264/AAC clip: all eight real ACTIVE/IDLE staff and street actors move,
+seven actual idle actions, normal travel (scene/wall 1.000072), nine screens and original
+sound; pause/reload/resume and hover pass. Current JS/CSS served byte-identical, approved
+background unchanged, foundation health 200. Graceful backend reload occurred after a fresh
+zero-running/queued-task read. No policy/database commands or GPU/media/upload jobs issued.
+
+Real library has two configured channels, zero playable publications/local films: Film
+shows the true empty state. Real channel playback still needs an eligible film; only a
+separate labelled codec fixture proves moving video pixels. Original v8 art sources/prompts/
+terms and v7 history retained. Report: PIXEL_LIVING_STUDIO.md; verification:
+data/pixel-living-2026-10-09/verification.json; output/playwright/living-studio-2026-10-09/.
+External production acceptance and concurrent RunPod/film changes remain separate.
+
 ## RUNPOD_COPY_POD_FIRST_ACCEPT — fixed on fakes, live retry pending (2026-10-09)
 
 Live setup done with the Owner today (his accounts, his keys pasted by him): RunPod key
@@ -67,18 +260,29 @@ once (his RunPod cards had waited for a restart). Tests: RunPod copy/switch/poli
 integration settings and every decision-card test file pass. The live retry needs a studio
 restart and his accept; the first film on RunPod follows the copy.
 
-## PIXEL_DEPTH_PHYSICS — claimed (2026-10-09)
+## PIXEL_DEPTH_PHYSICS — complete, actual front/back verified (2026-10-09)
 
-Owner requests a complete front/back and ground-contact audit. Scope: original foreground
-foliage/fence occlusion, street actors/vehicle/pet/clock depth, indoor seating/furniture,
-speech/state overlays and DOM dialogs/controls. Preserve approved art, the 10% scale,
-motion/live/replay/pause guards, menus and backend reality. Verify pixel overlaps, full
-routes, actual live UI and controls with Playwright. No backend restart or production job.
+Claim released. Shared floor/base ordering fixes pets, bicycle, clock and traffic; the
+original near flowers/fence now cover passing street actors with transparent road gaps.
+All empty chairs cleared before floor-sorted seated ensembles; dialogue above all people.
+Pointer selection uses the same order from front to back. Night actors are ambient graded,
+headlights remain emissive. Existing background PNG, stations, 0.9 scale, life/outdoor
+settings and backend states unchanged; no new art. Cached contours are configuration.
 
-Current proof: the 2026-10-01/02 paid film readiness audit was proven on fakes only;
-AGENT_SCENARIO_ACCEPTANCE later used actual Ollama Cloud calls, with normal serial
-acceptance and real GPU/media/upload still pending. Current local UI evidence is reported
-separately below and does not prove those external workflows.
+Actual menu overlap reproduced: at narrow desktop widths the Research key was intercepted
+by an overflowing Media icon. Correct icon/named-button widths; ordinary presses pass at
+seven widths 1051–2560 px. Nine actual dialogs/top-layer/backdrop/focus/Escape and toolbar/
+roster pass. 883 frontend/type, seven bounded Playwright and 66 scoped backend/docs/secret
+cases pass; docs/secret scans green. Depth fixtures: 64 s/257 frames, three garden zones,
+day/night, four cars, weather and pointer overlap. Existing 80 s street/60 s seating pass.
+
+Actual read-only 31.917 s clip: eight ACTIVE/IDLE staff, four pedestrians,
+bicycle/dog/two cats and four cars moving. Readout: 11:11 · Parțial înnorat 23°C.
+Scene/wall ratio 1.000144; zero page errors/refused requests.
+Combined served build current, static art byte-equal, foundation health 200. No backend
+restart, production policy/database command, GPU/media/upload job or artwork generation.
+External workflow acceptance limits remain separate. PIXEL_DEPTH_PHYSICS.md;
+data/pixel-depth-2026-10-09/verification.json; output/playwright/depth-physics-2026-10-09/.
 
 ## RUNPOD_OWNER_SWITCH_SETUP — complete on fakes (2026-10-09)
 

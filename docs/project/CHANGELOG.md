@@ -1,5 +1,84 @@
 # Changelog
 
+## 2026-10-11 — Sheet repair brake, serial look v2 and same-day continuation, sound plan under the voice, the Owner's final approval
+
+- 6510d04 — config/serial_series_look.json v2: the serial's look follows the Owner's office picture (warm hand-drawn 2D, the studio house, faces seen and kept the same person; 445 characters, under half the prompt cap); shots described under v1 are described again.
+- 528ec93 — backend/app/media/blocker_repair.py: `issue_key` (kind, code, scene) is what the ceiling and the back-off count on; a sheet rewritten with the same blockers is the same problem; attempts before the change still read by the old fingerprint.
+- 2e20ecf — backend/app/media/sound_design.py (new), toolchain.mix_bed(levels=), assembler.film_mix/remix_film_sound/repair_audio, qc.audio_mix_verdict in speech, director_qc.sound_reading, the Voice Artist's `sound_design` task type seeded at start; the registry reaches every mix.
+- e565a6b — backend/app/story/serial_stage.py, backend/app/workflows/passes/serial_unfilmed.py: an approved episode is storyboarded and queued for filming the same day; the watchdog pass picks up an episode left unfilmed.
+- 5f5414c — assembler.decide_take(final=), owner_approved_among(final_only=), _retire_takes/redo_scene(director_repair=); director_qc.owner_approved_take_ids(final_only=), protected_redos(final_only=True), film_qc_context `owner_approval_final` / `owner_approved_would_be_replaced_by`; stages._apply_repairs runs her redos as `director_repair` and records `replaced_his` for the letter; reviews director-qc-v7; schemas TakeDecisionCommand.final; the sheet shows `owner_final`.
+
+## 2026-10-11 — The characters' portraits are bible references; Google's trends read for the audience's countries
+
+- Claim: Claude Fable 5.1 session 23d615c3. Done: 44fc998 (config/character_references.json → Agents ID and Bible/portraits/*-portrait.png cut clean from the ChatGPT sheets; watchdog pass character_references fills the empty portrait slot once per hash, never a locked look, never a slot whose asset still exists; the Owner's locks untouched), 343382d (STUDIO_TRENDS_GEO takes several codes, default US,GB,CA,AU; per-country feeds, merged lines with their countries). Both tested on fakes (42 + 40 tests). Live effect needs the running process to have the code (the Owner restarted at 21:17 local with the passes on disk) — verified from a database copy, see CURRENT_STATUS.
+
+## 2026-10-11 — The Director's answers land: fitted to the schema, a refusal told to the model, the ladder retried by the studio
+
+- Claim: Claude Fable 5.1 session 23d615c3 (workflow wf_0b525d07-da4, package A, adversarially reviewed READY). Done: d5c41bf (identity.parse_structured fits strings/lists/nested models/enum words before refusing; structured_run retries with the refusal quoted and thinking off when an object was refused, with native thinking only when no object came; a failed brief is recorded; passes/ladder_retry walks a film left WAITING on QC-refused scenes again after 20 min, 6 a day, PRODUCTION only), 962e4c2 (the walk's words say the studio retries). Evidence: aa170155's five QC decisions refused only for a 400-char reason; the thinking retry spent 6000 tokens for nothing. Tested on fakes (42 tests of the package); not yet proven live: the next Director QC answer on kimi-k3 after the restart.
+
+## 2026-10-11 — The Owner's music library: 25 tracks from YouTube's Audio Library, registered beside their files
+
+- Claim: Claude Fable 5.1 session 23d615c3. The Owner (2026-10-11): «Ai acces, fă asta pentru mine. Copiază tot ce ai nevoie pentru un studio». Done: 20 beds + 5 ambiences downloaded in his Chrome session from YouTube Studio → Bibliotecă audio (filter «Atribuirea nu este obligatorie»), registered with the new scripts/music_add.py into config/music/music_library.json (files beside it, config/music/ git-ignored); music_library.library_path prefers it when it exists; the shipped config/music_library.json stays empty; tests read the shipped one (conftest). 25 usable, 0 refused (scripts/music_add.py --check). Takes effect at the next restart (the library is read at start-up). Not yet proven in a real film mix.
+
+## 2026-10-11 — Codex's work finished and committed; the Director's repair desk and the mail fixes land
+
+- Claim: Claude Fable 5.1 session 23d615c3 (continuing Codex's work after it ran out of credits; the Owner: «Continuă munca la care lucra CODEX»).
+- Done: 6b907b1 (the ladder's continuation locks first; plan_licence is an unpriced reader), 77b5e62 (prompt compiler: the still names its whole scene, the look's place/season/weather/daylight left to a scene that names its own, no "no X" negations in positive prompts — veo's negative channel only; Codex's intent fixture of aa170155 scenes 4-5), 536f380 (Codex: Director token multiplier ×2, director-qc-v5 maxima, finished-film QC reads the prompts a take was bought on), 54bd847 (Level 1: `app.agents.repairs` — reprice, agent_health, film_cost, threads, stale_decisions, unbilled, desk; DIRECTOR_REPAIR task), 0196aac (the agents' mail stops looping), 7520a6f (QC context tests), music research report docs/project/MUSIC_YOUTUBE_AUDIO_LIBRARY_2026-10-11.md.
+- Facts behind it (database copy, 2026-10-11 UTC): the cyclotron film's five Director QC decisions were all complete REPAIR objects refused only for a repairs[].reason over 400 chars; every thinking retry hit the token cap with no output; the Director's scene brief at 14:20 was refused for a diagnosis over 800 chars. Episode 043317d3 is the serial's first APPROVED episode ever (10:43) and has no storyboard until the next morning by design. All 8 character bibles have empty reference slots while the portraits exist in «Agents ID and Bible/*.png».
+- Tested on fakes only: 281 prompt-compiling tests, 333 Level-1/Codex tests, 52 Director QC tests, 21 paid-path lock tests pass. In flight: workflow wf_0b525d07-da4 (A: structured answers fitted to schema + error-carrying retry + ladder retry pass; B: serial same-day continuation; C: character portraits as bible references).
+
+## 2026-10-11 — Director token allowance doubled; QC schema limits made explicit
+
+- Double every explicitly bounded Director model call by default, through configurable
+  `STUDIO_DIRECTOR_TOKEN_MULTIPLIER` (1..4). QC 6,000 -> 12,000 for both attempts; inbox
+  24,000 -> 48,000; other roles and unspecified limits retain their behavior.
+- Record requested/effective token limits and multiplier on new run contexts.
+- QC prompt v5 names its existing reason/summary/list limits; structured-output failures
+  log `structured_answer_invalid` instead of assuming the answer narrated reasoning.
+- 9 focused regressions pass, including Director `None`; related suite remains
+  123 passed / 1 live-provider skip (98.91 s),
+  changed-file Ruff, four-source mypy and independent review pass. Activated by a clean
+  restart at 19:24 Bucharest: new process, healthy API/worker, effective multiplier 2.
+- Mark two pre-existing fictitious licence-test credentials with inline secret-scanner
+  allowlist comments; values, scanner and baseline unchanged. Five licence tests pass.
+- No paid model test, media redo or historical-record rewrite; a new Kimi QC success
+  has not been proven. Evidence: [DIRECTOR_TOKEN_BUDGET_2026-10-11.md](DIRECTOR_TOKEN_BUDGET_2026-10-11.md).
+
+## 2026-10-11 — The Director reads a refused scene's prompt and has it rewritten
+
+- Claim: Claude Opus 5.5 session 23d615c3, the Owner's rule of 2026-10-11 («Deci directoarea citește promptul și după îl cere la rescriere cu informații clare, ce să evite ca să treacă la QC!»).
+- Done (699bc64, f98ffc8, 32585f1): `app.media.scene_rewrite` — for a scene QC refused (QC.CLIP, LOCAL.STILL_GATE) the Director reads its package, the prompts sent, the bible and the refusals' reasons and writes a brief (diagnosis, avoid, keep, change, layer); the Video Editor rewrites that one scene (compiled, linted, stored on that scene only); letters between them, settled. Motion layer keeps the still's words; still layer rewrites the picture and its motion; after a failed motion rewrite or a still-gate refusal only the picture; a still the Owner approved is never rewritten. `scene_memory` reads her rewrite as a decision (hold lifted, attempts counted again). `_film_staircase` runs her rounds (3 a walk, then a continuation). A paid redo after a failed film QC is bought only on a corrected prompt (PROMPT_NOT_CORRECTED). CLOSE for quality refused. Paid-redo limits default 5 a scene, 20 a film.
+- Tested on fakes only: tests/test_director_rewrites_failed_scene.py (5) plus 196 + 314 + 127 related tests pass. Not yet proven on a real vendor: the cyclotron film aa170155 (scenes 4, 5) is walked after the 16:41 restart.
+
+## 2026-10-10: the Director decides a failed QC; his approved takes stay his
+
+- The Director decides a failed film QC; the old mechanical repair is gone (7f30429).
+- The Owner's approved takes are never retired by an unasked redo; empty redos give back what
+  they retired; the `restore_retired_takes` watchdog pass (7f30429).
+- A film whose licence is unconfirmed is uploaded private and says why (7f30429).
+- Film picture QC no longer reads the studio's burnt-in captions as text (baa2a11).
+- The voice licence is read from the ElevenLabs plan by API, daily (07153ad).
+- A crashed slow-down filter falls back to frame repetition; films that failed before a restart
+  are walked again (d271058).
+- The story loop ends itself; a free Owner choice walks the film on (43c13c1).
+- A clip is sized to its narration; a short one is slowed locally up to 25% (fa4038d).
+- Queue writers take the write lock (WP2); refused batches book nothing (WP1); answered letters
+  close themselves; registries for decision producers and watchdog passes.
+
+## 2026-10-09 — front employee profiles and reliable backend animation updates
+
+- Remove state/action badges from portrait images as requested; keep actual status in the
+  separate inspector facts and beside each employee card picture.
+- All eight profile faces look toward the viewer, with original role-specific room art.
+  Identity/appearance/role binding preserves personal faces; office seating stays unchanged.
+- Emit the committed aggregate version live and refresh action intent on actual state changes;
+  serialize/retry bounded reads and reject stale/late authorization. Versionless older events
+  repair from authenticated committed layout, without guessed frontend state.
+- Employee cards use current seated pixel positions, removing false «fără birou» labels.
+- 48 backend-to-page state changes, eight profile/movement cases and all recovery paths pass;
+  909 units/types, 72 scoped backend/docs, eight bounded scene and one backend/page test.
+  Live read-only profile/roster/phone/delivery proof; original art unchanged, no backend restart.
+
 ## 2026-10-09 — RunPod stills: a fair sharpness check, true GPU seconds, every scene first
 
 - The sharpness check reads the sharp part of a picture: a sharp subject on a dark, soft
@@ -16,6 +95,19 @@
 - Today's held scene becomes the Owner's card with what was recorded; his yes frees it.
 - «Refă imaginea» on a RunPod model now runs one GPU round under its own cap.
 
+## 2026-10-09 — higher individual office chairs and a living studio
+
+- Raise all eight seats while preserving wheel/floor contacts. Nadia sits rear-left toward
+  her own desk; add a physical upright monitor with correctly mapped content and a desk stand.
+- Read-only backend policies authorize individual gestures and monitor power using real
+  state/version. Damped upper joints, bounded contacts, wind paper/foliage and rare light dips.
+- Nine screen surfaces, authenticated bounded local-video decoder and privacy player for
+  confirmed YouTube films. Empty production library remains visibly empty.
+- Original directional WebAudio with user-activated Sunet/volume, bounded sources and pauses.
+  Fresh authenticated HTTP data keeps motion through a short socket reconnect.
+- 898 frontend/types, eight bounded browser and 81 scoped backend/docs/scan cases; actual
+  32 s video with sound and all eight staff/street movement verified. PIXEL_LIVING_STUDIO.md.
+
 ## 2026-10-09 — the Owner can close a stuck film («Închide filmul»)
 
 - A film waiting on his decision held the studio: no new topic was chosen. His shooting sheet
@@ -31,6 +123,17 @@
 - A refused create now tells him RunPod's own reason (sanitised, token cut) on the card and in
   the log `runpod_mirror_copy_refused`.
 - Saving a connection proposes its cards at once; the RunPod cards had waited for a restart.
+
+## 2026-10-09 — coherent front/back and menu pointer layers
+
+- Near plants/fence reuse the approved artwork pixels above street actors, retaining road
+  gaps. Sort pedestrians/pets/bicycle/clock/cars by ground contact, independent of facing.
+- Clear chairs before people; paint ensembles by floor and dialogue last. Pointer hits
+  target the nearest painted person. Ambient-grade night actors, retain emissive lamps.
+- Fix narrow named-menu overflow that let Media intercept Research; seven desktop widths
+  and nine actual modal/backdrop/focus/Escape checks pass.
+- 883 frontend/types, seven bounded Playwright, 66 scoped backend/docs/secret checks;
+  64 s depth fixture and actual 32 s motion clip. PIXEL_DEPTH_PHYSICS.md.
 
 ## 2026-10-09 — full street motion and detailed cars
 

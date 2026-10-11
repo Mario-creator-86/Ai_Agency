@@ -1,5 +1,139 @@
 # Architectural / Product Decision Log v5
 
+## The same blockers; the serial's look; music under the voice; the Owner's final approval (2026-10-11)
+
+- «The same blockers» for the sheet repair's ceiling and back-off are the blockers' kind, code and scene, never their wording or the sheet's hash (528ec93). Why: the Owner's safety of 2026-10-03 did not engage on 2026-10-11 because every rewrite changed the fingerprint; a loop without progress ran every five minutes. Consequence: fewer or other blockers start again from zero; the same ones under rewritten prompts do not.
+- The serial's look is the Owner's own office picture (6510d04), a proposal he may change; faces are allowed in the serial and must stay the same person (the bibles' reference portraits). Why: «acesta este biroul; serialul ar trebui să păstreze oarecum o tematică» and «aici sunt permise și fețele … să nu pice la QC».
+- Music is mixed by a plan the Voice Artist writes per film (2e20ecf): the bed 20 LU under the voice measured where the words are, lifts only in silences, the Director reads the plan and re-asks a refused mix. Why: the Owner, 2026-10-11: «mare grijă totuși să nu acopere vocea», and his loop rule (Director → agent → repair → QC → her accept).
+- The Director's confirmed repair may replace a take the Owner approved; only an approval he marked «final» stands against it (5f5414c). Why: his card of 2026-10-11 on the cyclotron film («Trebuie să fie în lucru să îl refacă, nu?» → «Directoarea poate reface și ce am aprobat eu»): a film is never left failed because his earlier look chose a take QC later measured as defective. Consequence: `director_repair` redos retire non-final approvals and tell him; every other unasked redo keeps the 2026-10-10 rule (nobody retires what he approved); the «Aprobat (final)» option is the API's `final` (the sheet's button is the pixel session's).
+
+## ADR-POSITIVE-PROMPTS-ONLY — a plan's exclusions never enter a positive prompt as negations (2026-10-11)
+
+- Decision (2026-10-11): the compiled still and motion prompts never say "no X"; a plan's `avoid` items stay in the package and reach only a model's negative channel (veo). The look block keeps rendering, palette, lens and grain; its place, season, weather and daylight are left unsaid where the scene names its own. Reason: image and video models read the words of a negation; config/factual_look.json's note and the lint already refused them; Codex's half-done rework had put FORBIDDEN_FACES blocks on every Nepal prompt. Evidence: aa170155 scene 4 (daylight and a beige lamp drawn over a lamp-lit night desk; people improvised when the motion prompt named nothing).
+
+## ADR-DIRECTOR-TOKEN-BUDGET-X2 — role-scoped generation allowance (2026-10-11)
+
+**Status:** Accepted by the Owner; implementation verified offline and runtime activated.
+
+**Context.** The cyclotron QC review at 18:11 first produced an object whose four repair
+reasons exceeded 400 characters, then returned no visible answer after consuming the
+6,000-token completion allowance. The recorded counts do not prove a private-reasoning
+token split. The Owner asks for twice the Director's allowance.
+
+**Decision.** Scale explicit output limits once in `run_agent_task`, based on the resolved
+`Role.name == "Director"`, rather than on model names or a single task. Configure
+`STUDIO_DIRECTOR_TOKEN_MULTIPLIER` / `Settings.director_token_multiplier` with default 2
+and bounds 1..4. Both structured QC attempts receive 12,000; the inbox receives 48,000.
+Other roles and unspecified limits retain their behavior. Record requested/effective
+limits and multiplier in each executed run's context. QC prompt v5 communicates the
+existing schema bounds and logs invalid structured output accurately.
+
+**Alternatives rejected.** Increasing only the QC call-site constant (leaves other
+Director tasks unchanged); changing the studio's daily-token or USD limits (separate
+Owner policy); weakening validation or retrying the historical film as a test.
+
+**Impact and proof.** No migration or architecture-package change. USD/daily-token/STOP
+gates, attempt count, private-reasoning handling and workflow history are preserved.
+Nine focused regressions pass, including Director `None`; related suite remains
+123 passed / 1 live skip. Ruff, mypy and
+independent review pass. Controlled restart at 19:24 Bucharest: new server PID 2096,
+live/ready 200 HEALTHY, worker OK, effective multiplier 2 verified. A larger allowance
+can increase cost/latency and still return an invalid or empty answer; live-model QC
+success is not claimed. Set multiplier 1 and perform the normal controlled restart
+to restore the earlier allowance.
+Detailed evidence: [DIRECTOR_TOKEN_BUDGET_2026-10-11.md](DIRECTOR_TOKEN_BUDGET_2026-10-11.md).
+
+## ADR-DIRECTOR-PROMPT-LADDER — redo until QC passes, on corrected prompts (2026-10-11)
+
+- Claim: Claude Opus 5.5 session 23d615c3, the Owner's rule of 2026-10-11 («Deci directoarea citește promptul și după îl cere la rescriere cu informații clare, ce să evite ca să treacă la QC!»).
+- Done (699bc64, f98ffc8, 32585f1): `app.media.scene_rewrite` — for a scene QC refused (QC.CLIP, LOCAL.STILL_GATE) the Director reads its package, the prompts sent, the bible and the refusals' reasons and writes a brief (diagnosis, avoid, keep, change, layer); the Video Editor rewrites that one scene (compiled, linted, stored on that scene only); letters between them, settled. Motion layer keeps the still's words; still layer rewrites the picture and its motion; after a failed motion rewrite or a still-gate refusal only the picture; a still the Owner approved is never rewritten. `scene_memory` reads her rewrite as a decision (hold lifted, attempts counted again). `_film_staircase` runs her rounds (3 a walk, then a continuation). A paid redo after a failed film QC is bought only on a corrected prompt (PROMPT_NOT_CORRECTED). CLOSE for quality refused. Paid-redo limits default 5 a scene, 20 a film.
+- Tested on fakes only: tests/test_director_rewrites_failed_scene.py (5) plus 196 + 314 + 127 related tests pass. Not yet proven on a real vendor: the cyclotron film aa170155 (scenes 4, 5) is walked after the 16:41 restart.
+
+## ADR-2026-10-10 — the Director decides a failed film QC; only the budget reaches the Owner (2026-10-10)
+
+**Status:** Accepted (Owner, 2026-10-10). **Commits:** 07153ad, baa2a11, 7f30429.
+
+**Context.** The day's mechanical QC repair of film babcf272 redid the Owner's approved scenes 1
+and 2 unasked and, with the GPU forced off, left both scenes with nothing to assemble. The Owner:
+«ESTE DIRECTOR! ESTE RESPONSABILĂ DE PRODUCTIVITATE! La mine ajunge doar dacă este depășit
+bugetul!» and «Scopul este să ajungem să publicăm, NU să facem reparații».
+
+**Decision.**
+- A failed film QC is decided by the Director: each finding real, false or the Owner's own
+  choice; ACCEPT (a PASSED report), CLOSE, or REPAIR of the scenes she lists. Rights, the music
+  licence and the production path are never hers to accept away.
+- An unasked redo never retires a take the Owner approved (OWNER_APPROVED), unless he said yes
+  to that plan; a redo that delivered nothing gives back what it retired, words included.
+- A paid round that delivered nothing does not count toward the film's paid-redo limit.
+- The voice licence is read from the ElevenLabs plan by API («Da, citește singur»); a film whose
+  licence is unconfirmed is uploaded private rather than refused.
+- Only an exceeded budget (his paid-media rule, the daily budget, the film ceiling) asks him;
+  money gates (`may_act`, budgets, ceiling) are unchanged.
+
+**Alternatives rejected.** Keeping the mechanical repair with a guard list (it would still
+redo by rule what the Director should judge); asking the Owner on every failed QC (against his
+operating model).
+
+## ADR-PIXEL-PROFILES — front portraits and version-bound immediate action reads (2026-10-09)
+
+The Owner's inspector screenshot requests front-facing faces with profile backgrounds. Keep
+separate original front portrait art for all eight identity-bound employees; office ensembles
+continue to face their monitors. Require exact identity, saved appearance and allowed role;
+unknown/changed profiles use their own frontal authored fallback. One original built-in
+imagegen output, copied unchanged. Provenance: art-source/pixel/front-portraits-v10/README.md.
+
+A real disposable backend rehearsal exposed missing aggregate_version in live outbox payloads:
+the page showed WORKING but retained version 1, refusing policy version 2. Include committed
+aggregate_version in future live events. Read-only presentation policy refresh is now debounced
+on scalar state/version/lifecycle changes, serialized across in-flight reads, Owner-epoch-bound
+and retried only within configured timing. Mismatched/stale policies authorize no gestures.
+Older event payloads trigger a coalesced authenticated committed-layout repair, without guessed
+frontend versions. This also works against the current running backend without restarting it.
+
+No schema migration or domain/Owner-policy change. Existing history remains immutable. The
+bounded acceptance lane uses fresh disposable DB identities, real commits/outbox/WebSocket/HTTP,
+faked paid vendors and denied outbound sockets. No production state commands. Original heavy
+owner-flow game guard remains intact. Rollback source files from evidence before/ and rebuild;
+retaining the additive event version field is compatible. Tests/report:
+PIXEL_BACKEND_ANIMATION_ACCEPTANCE.md.
+
+## ADR-PIXEL-LIVING — grounded ensemble, authoritative actions and bounded room life (2026-10-09)
+
+Owner requests desk ergonomics, office chairs for everybody, Nadia angled toward her monitor,
+varied backend-driven activity and a living office with sound. Original v8 art includes each
+person/chair; fixed lower-body/caster layer plus registered upper poses prevents chair jumps.
+Raise seat/pelvis over a longer stem, retaining wheel anchors and the existing 0.9 scale.
+Per-seat floor/soles/furniture/gaze and per-screen corners are configured, not guessed each
+frame. Nadia's rear-left chair mask and upright monitor glass are calibrated individually. The Owner
+rejected the slanted board overlay: v9 locally replaces that board with original drawn LCD/
+pedestal art. Only the registered repair polygon changes; screen content follows its glass.
+Panel/desktop intersections are now refused, with an actual close-up and pixel-locality proof.
+
+Read-only presentation endpoint phases actions from actual lifecycle/runtime/version.
+Frontend springs blend only authorized actions; mismatch/expiry/stale main data rejects them.
+A finite fresh authenticated HTTP snapshot bridges temporary socket loss. Physics is bounded
+2D joint/contact/paper motion, not a claimed full 3D rigid-body scene. Room props stay limited,
+cached and tied to actual available weather. No task/status/policy writes for cosmetic life.
+
+Decode one eligible local film inside existing authenticated media roots with a 64 MiB cap;
+map its pixels onto nine actual screen planes. Confirmed public/unlisted processed YouTube
+films open in a correctly sized privacy player, with narrow CSP frame permission. Never read
+cross-origin video pixels or insert fixture media into production. Current empty library is
+reported honestly. Original WebAudio needs a user click and follows motion/state/contact.
+Primary game presentation informed cadence/depth; no game sprites/audio copied and no claim
+to enumerate every game animation. Source/proof/limits/rollback: PIXEL_LIVING_STUDIO.md.
+
+## ADR-PIXEL-DEPTH — ground contact and native foreground silhouettes (2026-10-09)
+
+Owner requests front/back throughout the UI; screenshot has traffic over near flowers.
+Use floor/base depth independently of facing and roster order. Include dog/leash, cats,
+bicycle, clock and vehicles in one street queue. Restore bounded original near foliage/
+fence pixels above it, with transparent road gaps and cached matching light. Preserve the
+approved PNG and personal seating. Clear empty chairs first, sort ensembles by floor,
+paint dialogue last, choose nearest pointer target first. Configured night actor grading
+keeps lamps emissive. Fix the independently reproduced narrow room-menu overflow without
+changing its actions. Pixel/motion/weather/DOM/live proof: PIXEL_DEPTH_PHYSICS.md.
+
 ## ADR-PIXEL-STREET-REFINEMENT — proportional actors and full-width travel (2026-10-09)
 
 Owner requests Playwright inspection, 10% smaller characters, normal street motion,
