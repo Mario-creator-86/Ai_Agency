@@ -631,17 +631,25 @@ def test_pictures_paid_for_on_the_retired_words_are_collected_never_approved(eng
 # ------------------------------------------ 9. a serial episode keeps the series' own words
 
 
-def test_a_serial_episode_keeps_its_own_words_on_a_still_redo(engine, tmp_path):
+def test_a_serial_episode_is_composed_again_in_its_own_look_on_a_still_redo(engine, tmp_path):
     """An episode of the office serial is composed from the series' look
     (`compose_serial_prompt`); compiling it again as a documentary would buy its new still
-    in the wrong look. Only the serial check keeps its words: its package has a plan
-    (subject, action, environment) the compiler could read."""
+    in the wrong look. Its words are the composer's (2026-10-12, f06808c9): a still redo buys
+    the serial composer's words of today when the stored ones are older — never the
+    documentary compile — and keeps them once they are today's."""
+    from app.media.prompt_agent import compose_serial_prompt
+    from app.media.serial_storyboard import ASPECT_RATIO
+    from app.media.series_look import load_series_look, series_bible
+
     storyboard_id, clean = compiled_film(engine, tmp_path)
     serial_words = "Warm office sitcom look of the series, soft key light. " + " ".join(
         clean[3]["still_prompt"].split()
     )
     with Session(engine) as session, session.begin():
-        session.get(Storyboard, storyboard_id).series_key = "office_serial"
+        board = session.get(Storyboard, storyboard_id)
+        board.series_key = "office_serial"
+        # The serial's own bible (faces allowed, 6510d04), as its storyboards carry it.
+        board.visual_bible_json = series_bible(load_series_look(), ASPECT_RATIO)
         row = session.scalar(
             select(StoryboardScene).where(
                 StoryboardScene.storyboard_id == storyboard_id, StoryboardScene.scene_index == 3
@@ -657,22 +665,30 @@ def test_a_serial_episode_keeps_its_own_words_on_a_still_redo(engine, tmp_path):
             )
         ).one()
         still.prompt_hash = take_hash(still_fields(serial_words, None), "seedream5_pro")
+        todays = " ".join(compose_serial_prompt(dict(row.prompt_json), load_series_look()).split())
     filmed(engine, storyboard_id, tmp_path, coloured_clip(tmp_path, "navy"))
-    before = packages(engine, storyboard_id)
+    assert todays != serial_words
+    assert todays.startswith(load_series_look()["block"].split(".")[0])
+    assert not todays.startswith(clean[3]["still_prompt"][:40]), "compiled as a documentary"
 
     plan = redo_plan(engine, storyboard_id, "still", 3)
-    assert "prompt_rewrite" not in plan
-    assert plan["still_prompt"] == serial_words
-    assert "rescris" not in plan["reason_ro"]
+    assert plan["prompt_rewrite"]["old_still_prompt"] == serial_words
+    assert plan["prompt_rewrite"]["still_prompt"] == todays
 
     images = SpyStills(balance=1_000)
     result = approved_still_redo(engine, storyboard_id, tmp_path, images, plan)
 
     assert len(images.asked) == 1
-    assert images.asked[0]["prompt"].startswith(serial_words)
-    assert result["still"]["prompt_rewritten"] is False
-    assert packages(engine, storyboard_id) == before, "a serial episode's package was rewritten"
-    assert rewritten_events(engine) == []
+    assert images.asked[0]["prompt"].startswith(todays)
+    assert result["still"]["prompt_rewritten"] is True
+    stored, visual = packages(engine, storyboard_id)[3]
+    assert json.loads(stored)["still_prompt"] == todays and visual == todays
+    assert len(rewritten_events(engine)) == 1
+
+    # Said once: the words are today's now, and the next redo keeps them.
+    again = redo_plan(engine, storyboard_id, "still", 3)
+    assert "prompt_rewrite" not in again
+    assert again["still_prompt"] == todays
 
 
 # ----------------------------- 10. a plan the compiler cannot read: refused, nothing bought

@@ -223,9 +223,9 @@ _REWRITE_INSTRUCTIONS = (
     "'no' or 'without', it draws the word. When the bible says people's faces must not be seen, "
     "show people only from behind, small and distant, or only their hands. Never ask for writing "
     "in the picture. Do not add facts, numbers, dates or events that are not in the narration. "
-    "Choose camera_move from: static, slow push-in, slow pull-back, slow pan left, slow pan "
-    "right, tilt up, tilt down, aerial drift forward, pedestal up, slow orbit. Name colours in "
-    "words. Return only JSON with this shot: "
+    "Give the shot one ample, specific camera move with its path and tempo (where it starts, "
+    "where it ends over the clip's seconds) and write what the subject does as verbs; choose "
+    "camera_move from: {moves}. Name colours in words. Return only JSON with this shot: "
     '{{"scene_index": {scene}, "subject": "...", "action": "...", "environment": "...", '
     '"camera": "...", "camera_move": "...", "lighting": "...", "composition": "...", '
     '"motion": "...", "emotion": "...", "background": "...", "continuity": "...", '
@@ -656,7 +656,12 @@ def rewrite_scene(
         outcome["reason"] = "Niciun Video Editor activ."
         return outcome
     base = _REWRITE_INSTRUCTIONS.format(
-        scene=index, title=context["title"], layer=_LAYER_RULE[layer]
+        scene=index,
+        title=context["title"],
+        layer=_LAYER_RULE[layer],
+        # The whole vocabulary («Mișcare v2», 2026-10-12): the old ten slow moves alone sent
+        # every redo back to a slow move.
+        moves=", ".join(lint.CAMERA_MOVES),
     ) + wrap_in_inert_boundary(
         _data(context, director_brief=brief, lessons=lessons), "scene-rewrite"
     )
@@ -896,12 +901,105 @@ def _record_brief(
             )
 
 
-def rewrite_failed_scene(
-    engine: Engine, registry: Any, storyboard_id: str, scene_index: int, correlation_id: str
+#: The reason a serial scene's words are said again on the record (`SCENE_PROMPTS_REWRITTEN`).
+SERIAL_RECOMPOSE_REASON = "serial_recompose"
+
+
+def _serial_scene(engine: Engine, storyboard_id: str) -> bool:
+    """Whether the film is an episode of the office serial (its scenes are composed, not
+    rewritten by the Video Editor from a brief)."""
+    from app.agents.editorial import is_serial_film  # noqa: PLC0415 - agents import media
+
+    with Session(engine) as session:
+        board = session.get(Storyboard, storyboard_id)
+        if board is None:
+            return False
+        script = session.get(ScriptDraft, board.script_draft_id) if board.script_draft_id else None
+        return bool(is_serial_film(board, script))
+
+
+def serial_recomposition(
+    session: Session, storyboard_id: str, scene_index: int
+) -> dict[str, Any] | None:
+    """A serial scene's prompts composed again from its stored plan, as the studio composes
+    them today, when they differ from the stored ones; None when they do not, when the film
+    is not the serial's, or when the scene has no plan. Reads only; 0 credits, no model.
+
+    2026-10-12 (f06808c9, scenes 3 and 4): the stored stills carried the plan's camera path
+    and chain of moments that an image model draws as stacked panels; the composer was fixed
+    (48bbcd1) and nothing said the stored words again — the sheet repair runs only on lint
+    blockers, and the Director's rewrite (`scene_context`) does not read serial scenes, so
+    the film waited for the Owner. A serial scene's words are the composer's, not a model's
+    rewrite: said again with today's composer, the scene is hers to redo."""
+    from app.agents.editorial import is_serial_film  # noqa: PLC0415 - agents import media
+    from app.media.prompt_agent import (  # noqa: PLC0415 - it imports this module's neighbours
+        _serial_camera_move,
+        compose_serial_motion,
+        compose_serial_prompt,
+    )
+    from app.media.series_look import load_series_look  # noqa: PLC0415
+
+    board = session.get(Storyboard, storyboard_id)
+    if board is None:
+        return None
+    script = session.get(ScriptDraft, board.script_draft_id) if board.script_draft_id else None
+    if not is_serial_film(board, script):
+        return None
+    rows = list(
+        session.scalars(
+            select(StoryboardScene)
+            .where(StoryboardScene.storyboard_id == storyboard_id)
+            .order_by(StoryboardScene.scene_index)
+        )
+    )
+    target = next((row for row in rows if int(row.scene_index) == scene_index), None)
+    if target is None or str(target.scene_kind or "LIVE").upper() != "LIVE":
+        return None
+    stored = dict(target.prompt_json or {})
+    if not str(stored.get("action") or "").strip() and not stored.get("in_frame"):
+        return None
+    moves = [
+        str((row.prompt_json or {}).get("camera_move") or "")
+        for row in rows
+        if int(row.scene_index) < scene_index
+        and str(row.scene_kind or "LIVE").upper() == "LIVE"
+        and (row.prompt_json or {}).get("camera_move")
+    ]
+    look = load_series_look()
+    old_still = " ".join(str(stored.get("still_prompt") or target.visual_prompt or "").split())
+    old_motion = " ".join(str(stored.get("motion_prompt") or "").split())
+    new_still = " ".join(compose_serial_prompt(stored, look).split())
+    move = _serial_camera_move(stored, moves)
+    new_motion = " ".join(compose_serial_motion({**stored, "camera_move": move}, look).split())
+    if not new_still or (new_still == old_still and new_motion == old_motion):
+        return None
+    compiled = {"still_prompt": new_still, "motion_prompt": new_motion, "camera_move": move}
+    return {
+        "scene_index": scene_index,
+        "old_still_prompt": old_still,
+        "still_prompt": new_still,
+        "old_motion_prompt": old_motion,
+        "motion_prompt": new_motion,
+        "package": {**stored, **compiled},
+        "visual_prompt": new_still,
+        "stored_package": stored,
+        "stored_visual": target.visual_prompt,
+    }
+
+
+def recompose_serial_scene(
+    engine: Engine, storyboard_id: str, scene_index: int, correlation_id: str
 ) -> dict[str, Any]:
-    """One rung of the ladder for one scene: her brief, his rewrite, their letters and the
-    record. Returns {"scene_index", "rewritten", "layer", "reason", "summary_ro"}; never raises
-    for the agents' faults (the scene then waits, as it did)."""
+    """The serial rung of the ladder: the scene's words said again with today's composer and
+    written as the Director's decision on the scene (`SCENE_PROMPTS_REWRITTEN_EVENT`, layer
+    ``still``: the scene's hold lifts and the stills step buys again on the new words). Returns
+    the rung's outcome; a scene whose words are already today's is not rewritten, and says so."""
+    from app.media.assembler import (  # noqa: PLC0415 - a large module
+        DIRECTOR_REWRITE,
+        SCENE_PROMPTS_REWRITTEN_EVENT,
+    )
+    from app.media.shooting_sheet import film_is_closed  # noqa: PLC0415 - it imports us
+
     outcome: dict[str, Any] = {
         "scene_index": scene_index,
         "rewritten": False,
@@ -909,6 +1007,79 @@ def rewrite_failed_scene(
         "reason": "",
         "summary_ro": "",
     }
+    with Session(engine) as session, session.begin():
+        lock_for_write(session)
+        if film_is_closed(session, storyboard_id):
+            outcome["reason"] = "Filmul este închis; nimic nu se mai rescrie."
+            return outcome
+        rewrite = serial_recomposition(session, storyboard_id, scene_index)
+        if rewrite is None:
+            outcome["reason"] = (
+                f"Scena {scene_index} a serialului are deja cuvintele de azi; se refac doar "
+                "imaginile, nu cuvintele."
+            )
+            return outcome
+        target = session.scalar(
+            select(StoryboardScene).where(
+                StoryboardScene.storyboard_id == storyboard_id,
+                StoryboardScene.scene_index == scene_index,
+            )
+        )
+        if target is None:
+            outcome["reason"] = "Scena nu există."
+            return outcome
+        target.prompt_json = dict(rewrite["package"])
+        target.visual_prompt = str(rewrite["visual_prompt"])
+        append_event(
+            session,
+            SCENE_PROMPTS_REWRITTEN_EVENT,
+            "storyboard",
+            storyboard_id,
+            1,
+            {
+                "scene_index": scene_index,
+                "old_still_prompt": rewrite["old_still_prompt"],
+                "still_prompt": rewrite["still_prompt"],
+                "old_motion_prompt": rewrite["old_motion_prompt"],
+                "motion_prompt": rewrite["motion_prompt"],
+                "reason": SERIAL_RECOMPOSE_REASON,
+                "decided_by": DIRECTOR_REWRITE,
+                "layer": "still",
+                "camera_move": rewrite["package"].get("camera_move"),
+            },
+            correlation_id,
+        )
+    outcome.update(
+        rewritten=True,
+        layer="still",
+        reason=SERIAL_RECOMPOSE_REASON,
+        summary_ro=(
+            f"Scena {scene_index} a serialului a fost compusă din nou cu cuvintele de azi "
+            "(un singur moment, încadrare fixă); imaginea se reface."
+        ),
+    )
+    return outcome
+
+
+def rewrite_failed_scene(
+    engine: Engine, registry: Any, storyboard_id: str, scene_index: int, correlation_id: str
+) -> dict[str, Any]:
+    """One rung of the ladder for one scene: her brief, his rewrite, their letters and the
+    record. Returns {"scene_index", "rewritten", "layer", "reason", "summary_ro"}; never raises
+    for the agents' faults (the scene then waits, as it did).
+
+    A serial scene is not rewritten by the Video Editor from her brief: its words are the
+    composer's (`compose_serial_prompt`), said again with today's composer when they changed
+    (`recompose_serial_scene`, 2026-10-12)."""
+    outcome: dict[str, Any] = {
+        "scene_index": scene_index,
+        "rewritten": False,
+        "layer": None,
+        "reason": "",
+        "summary_ro": "",
+    }
+    if _serial_scene(engine, storyboard_id):
+        return recompose_serial_scene(engine, storyboard_id, scene_index, correlation_id)
     context = scene_context(engine, storyboard_id, scene_index)
     if context is None:
         outcome["reason"] = (

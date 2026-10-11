@@ -13627,7 +13627,12 @@ def _scene_prompt_rewrite(
         return None
     script = session.get(ScriptDraft, board.script_draft_id) if board.script_draft_id else None
     if is_serial_film(board, script):
-        return None
+        # A serial scene's words are the composer's: said again with today's composer when
+        # they changed (2026-10-12, f06808c9: stills bought on stored words from before the
+        # composer's fix came back as panels, and a redo would have bought them again).
+        from app.media.scene_rewrite import serial_recomposition  # noqa: PLC0415
+
+        return serial_recomposition(session, storyboard_id, scene_index)
     moves: list[str] = []
     target: StoryboardScene | None = None
     for row in session.scalars(
