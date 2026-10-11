@@ -77,9 +77,10 @@
 .pixel-studio .scene-viewport .live-dot { box-shadow: none; animation: none; }
 .pixel-studio .scene-toolbar { background: #292938; backdrop-filter: none; }
 .pixel-studio .topbar { background: #222538; border-bottom-color: #585266; }
-@media (min-width: 1360px) {
-  .pixel-studio .topbar-rooms .room-label { display: inline; position: static; opacity: 1; transform: none; font-size: 10px; background: transparent; border: 0; padding: 0; }
-  .pixel-studio .topbar-rooms .cam-btn { gap: 5px; padding: 6px 8px; }
+/* Words need their intrinsic width; narrow icon buttons keep floating, inert labels. */
+@media (min-width: 1720px) {
+  .pixel-studio .topbar-rooms .room-label { display: inline; position: static; opacity: 1; transform: none; translate: none; clip-path: none; font-size: 10px; background: transparent; border: 0; padding: 0; }
+  .pixel-studio .topbar-rooms .cam-btn { width: auto; flex: 0 0 auto; gap: 5px; padding: 6px 8px; }
 }
 @media (min-width: 1051px) and (min-height: 600px) {
   .pixel-studio #office-scene-container .scene-viewport { aspect-ratio: auto; min-height: 0; }
@@ -112,3 +113,11 @@
 @media (prefers-reduced-motion: reduce) {
   .pixel-studio #title-stage, .pixel-studio .pixel-roster button { animation: none; transition: none; }
 }
+.studio-living-controls { position:absolute; left:14px; top:64px; display:flex; align-items:center; gap:6px; z-index:4; background:#202333e8; padding:4px 6px; border:1px solid #777084; border-radius:4px; }
+.studio-living-controls button { font:11px monospace; color:#efdfb6; background:transparent; padding:5px 6px; min-height:28px; }
+.studio-living-controls button[aria-pressed=true] { color:#78bbaf; }
+.studio-living-controls input { width:58px; accent-color:#d6aa6a; }
+.studio-player { width:min(680px,90vw); color:#efdfb6; background:#222538; border:1px solid #d6aa6a; border-radius:8px; padding:20px; }
+.studio-player::backdrop { background:#111522b8; }
+.studio-player iframe,.studio-player video { display:block; width:100%; min-height:240px; aspect-ratio:16/9; border:0; margin:14px 0; }
+.studio-player button { float:right; }

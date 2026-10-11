@@ -1,5 +1,62 @@
 # Roadmap / TODO v3
 
+## Director token allowance x2 — 2026-10-11
+
+- [x] Inspect the cyclotron QC failure: first answer fails existing reason-length
+  validation; second consumes its 6,000-token limit and returns `EMPTY_OUTPUT`.
+- [x] Configurable Director-only multiplier, default 2 (1..4), applied once to every
+  explicit run limit; generation limits recorded; other roles and Owner gates preserved.
+- [x] QC v5 communicates existing schema bounds; latest focused 9 regressions pass,
+  including Director `None`; related suite 123 pass / 1 live-provider skip. Ruff,
+  mypy and independent review pass.
+- [x] Runtime activated after a clean restart at 19:24 Bucharest; fresh server/worker
+  healthy, effective multiplier 2 verified. Active claim released.
+
+Proof and rollback: [DIRECTOR_TOKEN_BUDGET_2026-10-11.md](DIRECTOR_TOKEN_BUDGET_2026-10-11.md).
+A successful new paid-model QC decision is unproven; this task did not request one.
+
+## Front profiles and backend animation acceptance — 2026-10-09
+
+- [x] Owner follow-up: clean portrait images, actual work/lifecycle facts outside the image;
+  zero overlays across eight inspectors/cards, units/types and live mobile/delivery check pass.
+- [x] Eight frontal identity-bound original portraits, individual role environments and own
+  fallback; inspector/roster/requester surfaces, all eight visual headers, actual mobile check.
+- [x] Live outbox aggregate_version, state-triggered serialized bounded presentation reads,
+  safe legacy layout repair; mismatch/Owner/expiry/stale guards retained.
+- [x] 48 real disposable-DB state changes with outbox/WebSocket/Owner HTTP, all painted staff,
+  pause/resume, rapid/delayed/legacy/reconnect/stale cases. Heavy game guard unchanged.
+- [x] 909 units/types, 72 scoped backend/docs, eight sequential scene and one backend/page
+  acceptance. Production read-only eight profiles/roster/phone, correct occupied desks,
+  rebuild/source freshness/served bytes, health 200. No production backend restart.
+
+Proof/rollback/provenance: PIXEL_BACKEND_ANIMATION_ACCEPTANCE.md.
+
+## Living studio and desk ergonomics — 2026-10-09
+
+- [x] PIXEL_LIVING_STUDIO — eight individual office chairs, raised seat/pelvis with fixed
+  wheels, Nadia rear-left toward her desk and physical upright monitor.
+- [x] Backend state/version-authorized varied gestures, bounded 2D floor/furniture contacts,
+  damped upper joints, wind paper/plants, rare lamp dips, nine screen planes and original sound.
+- [x] 898 frontend/types, eight browser and 81 scoped backend/docs/scan cases; six runtime
+  fixtures, seating/codec/audio/owner/expiry guards, nine real dialogs and 32 s actual clip.
+- [x] Temporary socket-loss rehearsal with authenticated fresh HTTP policies; expiry and
+  stale/changed employee guards retained. Source/build/served bytes and original art checked.
+- [ ] Actual channel-film playback: library currently has zero eligible local/public films.
+  The isolated codec fixture passes; a real film remains a separate production dependency.
+
+Proof/rollback/provenance: PIXEL_LIVING_STUDIO.md; art-source/pixel/living-studio-v8/.
+
+## Front/back and contact audit — 2026-10-09
+
+- [x] PIXEL_DEPTH_PHYSICS — ground-depth ordering, native near-garden/fence silhouettes,
+  transparent road gaps, clock/pets/traffic, indoor ensemble/dialogue/pointer layers.
+- [x] Reproduce and fix adjacent menu interception; press every room at seven widths;
+  nine actual modal/backdrop/focus/Escape checks, clickable toolbar and roster.
+- [x] 883 frontend/types, seven bounded browser and 66 scoped backend/docs/secret cases;
+  64 s depth fixtures and actual 32 s live video, no page errors.
+
+Proof and rollback: PIXEL_DEPTH_PHYSICS.md. Existing art/seats/scale/backend truth retained.
+
 ## Street refinement — 2026-10-09
 
 - [x] PIXEL_STREET_REFINEMENT — exact 10% human/chair scale reduction, full-width street,

@@ -51,7 +51,8 @@ test('eight integrated chairs remain grounded through 60 seconds, state transiti
      const choice=Art.staffAtlasChoice(profile,{}),f=Art.ACTORS.atlases[choice.key].rows[choice.row].frames[0],p=Art.seatedGeometry(f,s.x,s.y,60,s.seating);
      const x=i%4*400+16+(p.left-(s.x-44))*4,y=Math.floor(i/4)*440+68+(p.top-(s.y-82))*4;
      rows[index].feet.add(hash(x,y+p.height*.57*4,p.width*4,p.height*.4*4));
-     rows[index].chair.add(hash(x+p.width*.53*4,y+p.height*.4*4,p.width*.35*4,p.height*.38*4));
+     // Rear-facing chairs occupy the centre; the old side-view rectangle included moving sleeves.
+     rows[index].chair.add(hash(x+p.width*.40*4,y+p.height*.56*4,p.width*.22*4,p.height*.22*4));
      rows[index].head.add(hash(x,y,p.width*4,p.height*.32*4));
     });steps++;
    }

@@ -1,5 +1,49 @@
 # Original pixel studio assets — 2026-10-08
 
+## Current front profile portraits v10 — 2026-10-09
+
+One original built-in imagegen sheet, native 1774x887 RGB, copied unchanged to
+staff-front-portraits-v10.png. All eight faces look toward the viewer, each with a role-specific
+room. Four-by-two reading order: Sarah/Aris/Elena/Marcus, Lyra/Kael/Vera/Nadia. Manifest:
+config/pixel_portraits.json. Source, exact prompt, SHA, references and provider-output terms:
+art-source/pixel/front-portraits-v10/README.md. No third-party game artwork.
+
+Front art is shared by inspector/roster/requester profile surfaces. Identity, appearance and
+role guards reject accidental face reuse; own frontal fallback covers changed/unknown profiles.
+Uniform containment preserves face proportions. Status/lifecycle stay backend-driven. All eight
+actual inspector headers were captured and inspected; seated office art remains at v8.
+
+## Current upright accounting monitor v9 — 2026-10-09
+
+A precise built-in imagegen edit replaces the rejected drafting-board monitor overlay.
+Native original 1536x1024 is copied unchanged as studio-accounting-monitor-v9.png; the
+renderer uses only a configured small repair polygon. Drawn upright bezel/pedestal/keyboard,
+registered glass content, original desk/base contacts and Nadia's v8 chair/body remain.
+Zero pixel changes outside the repair area in the isolated Canvas proof. Exact source ID,
+prompt, SHA and provider-output terms: art-source/pixel/accounting-monitor-v9/README.md.
+One generation here, seven in the whole living-studio phase. New source does not replace
+the approved background file or other rooms. Actual Nadia close-up and monitor regression
+are in PIXEL_LIVING_STUDIO.md. Earlier slanted-monitor screenshots are rejected history.
+
+## Current individual office-chair ensembles v8 — 2026-10-09
+
+Active staff: staff-a-chair-v8.png and staff-b-chair-v8.png, original native 1254×1254 RGBA
+sheets copied unchanged from built-in OpenAI imagegen. All eight employees have individual
+office chairs on casters, higher seats over longer stems, four registered upper poses and
+fixed lower-body/chair masks. Nadia has a rear-left body/chair oriented toward her own desk.
+Six built-in generations in this phase: four v7 draft/final outputs, then two final v8 outputs.
+Exact prompts, source IDs/PNGs, SHA hashes, provider-output terms and numerical registration:
+art-source/pixel/living-studio-v8/README.md and config/pixel_actors.json. The superseded v7
+originals/drafts remain in art-source/pixel/living-studio-v7/ for provenance/rollback.
+
+Existing v5 chair clean plate still clears only traced original empty-chair silhouettes.
+Approved studio-detailed.png, town walk/pet/cycle sheets and detailed v6 cars remain unchanged.
+New foliage animation reuses original scene pixels in cached green masks; monitor hardware,
+paper and light are Canvas geometry. Sounds are original local WebAudio synthesis, without
+downloaded samples. Official game footage is reference only; no copied game sprites/music.
+Visual proof includes all eight close-ups, actual Nadia chair/monitor and actual live clip.
+Report and limits: PIXEL_LIVING_STUDIO.md.
+
 ## Current original town vehicles v6 — 2026-10-09
 
 town-cars-v6.png: original 1536×1024 RGBA sheet, four independent detailed vehicle profiles.
@@ -11,11 +55,11 @@ remain fixed while hubs rotate. Cars change only beyond the scene edge. Current 
 chair ensembles use a central 0.9 world scale; town walk/pet PNG bytes remain unchanged.
 Proof: PIXEL_STREET_REFINEMENT.md; hashes/registration: config/pixel_actors.json.
 
-## Current integrated person-and-chair v5 — 2026-10-09
+## Historical person-and-chair v5; clean plate retained — 2026-10-09
 
-Active employee assets: staff-a-chair-v5.png and staff-b-chair-v5.png. Each employee has their
+Historical employee assets: staff-a-chair-v5.png and staff-b-chair-v5.png. Each employee has their
 chair or wooden stool included, coherent anatomy, one uniform scale and floor anchor.
-Production uses stable first ensemble + small continuous joint motion. Other authored
+That checkpoint used stable first ensemble + small continuous joint motion. Other authored
 state poses are source variations, not animation frames. The older seated-v3 description
 below is historical and superseded. Town walk/pedal/pet sheets remain unchanged.
 
@@ -26,9 +70,9 @@ Source IDs, provider-output terms and all seven prompts:
 [chair-ensembles-v5/README.md](../../art-source/pixel/chair-ensembles-v5/README.md).
 Registration, tests and actual proof: PIXEL_CHAIR_ENSEMBLES.md; hashes: config/pixel_actors.json.
 
-## Current seated-v3 correction — 2026-10-09
+## Historical seated-v3 correction — 2026-10-09
 
-Active staff art: staff-a-seated-v3.png, staff-b-seated-v3.png, staff-idle-seated-v3.png.
+Historical staff art: staff-a-seated-v3.png, staff-b-seated-v3.png, staff-idle-seated-v3.png.
 Three original built-in imagegen edits of the earlier own sheets, referencing the existing
 chair board for seated anatomy only. Source IDs/hashes/prompts and generation terms are
 recorded in PIXEL_ACTOR_REFINEMENT.md. The v2 staff sheets below are historical/recovery.
@@ -133,3 +177,11 @@ Actual Chromium screenshots and test logs are in `data/pixel-details-backup`. Br
 compare protected library, lounge and editing-monitor pixels against the same illustration
 under the real viewport transform. They also exercise committed backend state updates,
 selection, animation, annex pages and phone layout on a disposable TEST database.
+## Runtime foreground layers — 2026-10-09
+
+PIXEL_DEPTH_PHYSICS adds no artwork file. Eight numeric contours in pixel_office.json and
+the Canvas compositor in pixel_depth.js reuse the original studio-detailed.png RGB pixels
+for near flowers/leaves/fence, with transparent road gaps and the same outdoor lighting.
+Background/actor PNGs are unchanged; existing provenance and service terms still apply.
+No external image, game sprite or additional imagegen output was added. Report and live
+visual proof: docs/project/PIXEL_DEPTH_PHYSICS.md.

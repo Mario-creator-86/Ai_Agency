@@ -11,7 +11,7 @@ const EVIDENCE = process.env.E2E_EVIDENCE;
 
 test('all seated staff/street visibly animate and every lifecycle guard holds', async () => {
  const result = await build({ root: FRONTEND, configFile: false, publicDir: false, logLevel: 'warn',
-  build: { write: false, minify: false, lib: { entry: path.join(FRONTEND, 'src/pixel_office.js'), name: 'PixelScene', formats: ['iife'] } } });
+  build: { write: false, minify: false, lib: { entry: path.join(FRONTEND, 'tests/fixtures/pixel_life_entry.js'), name: 'PixelScene', formats: ['iife'] } } });
  const code = (Array.isArray(result) ? result[0] : result).output.find(o => o.type === 'chunk').code;
  const image = readFileSync(path.join(FRONTEND, 'public/assets/pixel/studio-detailed.png'));
  const characters = JSON.parse(readFileSync(path.join(FRONTEND, 'tests/fixtures/pixel_actors_bible.json'), 'utf8'));
@@ -36,7 +36,11 @@ test('all seated staff/street visibly animate and every lifecycle guard holds', 
    window.live = true; window.reduced = false;
    window.engine = new PixelScene.OfficeEngine(document.getElementById('office-canvas'), { parked: true,
     infoElement: document.getElementById('scene-info'), dataLive: () => window.live, reducedMotion: () => window.reduced,
-    fetchWeather: async () => ({ available: true, condition: 'clear', observed_at_utc: '2026-10-08T17:10:00Z' }) });
+    fetchWeather: async () => ({ available: true, condition: 'clear', observed_at_utc: '2026-10-08T17:10:00Z' }),
+    // Labelled fixture intent, matching each synthetic employee's state and version.
+    fetchPresentation: async () => ({schema:1,media:{local:[],youtube:[]},agents:window.engine.agents.map((a,i)=>({
+     agent_id:a.id,version:0,lifecycle:a.lifecycle,runtime_state:a.runtime_state,
+     cycle:PixelScene.PRESENTATION.cycles[a.runtime_state],phase_ms:i*7301}))}) });
    await window.engine.ready;
    if (PixelScene.actorAtlasStatus().loaded !== Object.keys(manifest.atlases).length+1) throw new Error("All scene art must be loaded");
    window.engine.characters = new Map(characters.map(c=>[c.employee_id,c]));
@@ -48,10 +52,10 @@ test('all seated staff/street visibly animate and every lifecycle guard holds', 
    const roles = ['Director', 'LeadResearcher', 'FactChecker', 'Writer', 'VoiceArtist', 'VideoEditor', 'Publisher', 'Accountant'];
    window.engine.setAgents(roles.map((role_name, pixel_slot) => ({ id: manifest.staff[pixel_slot].employee_id, display_name: `Test ${role_name}`, role_name,
     pixel_slot, lifecycle: 'ACTIVE', runtime_state: ['IDLE', 'WORKING', 'THINKING', 'REVIEWING'][pixel_slot % 4] })));
-   window.engine.unpark(); await window.engine.refreshWeather();
+   window.engine.unpark(); await window.engine.refreshWeather(); await window.engine.refreshPresentation(true);
   }, {characters,manifest});
-  await page.waitForFunction(() => window.engine.lifeElapsed > 100);
-  const raster = await page.evaluate(() => {
+  await page.waitForFunction(() => window.engine.lifeElapsed > 100 && window.engine.agents.every(a=>window.engine.motionFor(a).authorized));
+  const raster = await page.evaluate(async () => {
    const e = window.engine, hash = r => {
     const a = e.viewport.worldToScreen(r.x, r.y);
     const bytes = e.ctx.getImageData(Math.round(a.x), Math.round(a.y), Math.round(r.w * e.viewport.zoom), Math.round(r.h * e.viewport.zoom)).data;
@@ -64,6 +68,7 @@ test('all seated staff/street visibly animate and every lifecycle guard holds', 
    if(e.lifeElapsed!==1000)throw Error('Parking must freeze travel time');
    e.parked=false;e.lifeFrameAt=null;e.draw(10000);
    if(e.lifeElapsed!==1000)throw Error('Resuming must not catch up hidden/parked time');
+   await e.refreshPresentation(true);
    const rows = [];
    for (const elapsed of [1000, 2400, 3700, 4600, 12000, 18000, 22000, 26000, 32000]) {
     e.lifeElapsed = elapsed; e.lifeFrameAt = null; e.draw();

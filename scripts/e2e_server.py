@@ -100,7 +100,7 @@ def build_settings(folder: Path, token: str) -> Any:
     return demo_settings(settings)
 
 
-def prepare_studio(settings: Any, folder: Path) -> str:
+def prepare_studio(settings: Any, folder: Path, *, scene_identities: bool = False) -> str:
     """The database, a released stop in TEST, the channels and one planned film."""
     from app.agents.services import seed_initial_workforce
     from app.db import create_db_engine, migrate
@@ -114,6 +114,8 @@ def prepare_studio(settings: Any, folder: Path) -> str:
     migrate(engine)
     bootstrap_studio(engine, settings, autonomy_mode="AUTONOMOUS_CEO")
     seed_initial_workforce(engine)
+    if scene_identities:
+        bind_scene_identities(engine, folder)
     seed_extra_desks(engine)
     with Session(engine) as session, session.begin():
         policy = session.get(OwnerPolicy, 1)
@@ -126,6 +128,55 @@ def prepare_studio(settings: Any, folder: Path) -> str:
     storyboard_id = planned_film(engine, films)
     engine.dispose()
     return storyboard_id
+
+
+def bind_scene_identities(engine: Any, folder: Path) -> None:
+    """Bind fresh test hires to the original art IDs, only in this disposable database.
+
+    The production atlas refuses a similar name with a different employee ID. Preserve that
+    guard rather than injecting a fake profile into the browser. All FK references are rekeyed
+    in one deferred transaction before the test server can answer any request.
+    """
+    from app.agents.models import Agent
+    from app.models import Base
+    from app.services import append_event
+    from sqlalchemy import select, update
+    from sqlalchemy.orm import Session
+
+    if not engine.url.database or not _inside(Path(engine.url.database), folder):
+        raise E2ERefused("Scene identities require the disposable test database")
+    bible = json.loads(
+        (ROOT / "frontend/tests/fixtures/pixel_actors_bible.json").read_text(encoding="utf-8")
+    )
+    with Session(engine) as session, session.begin():
+        agents = list(session.scalars(select(Agent)))
+        if len(agents) != len(bible) or any(a.version != 1 for a in agents):
+            raise E2ERefused("Scene identities require fresh seeded hires")
+        session.connection().exec_driver_sql("PRAGMA defer_foreign_keys = ON")
+        for character in bible:
+            first = character["canonical_name"].split()[0].casefold()
+            agent = next(a for a in agents if first in a.display_name.casefold().split())
+            previous, current = agent.id, character["employee_id"]
+            for table in Base.metadata.sorted_tables:
+                for column in table.columns:
+                    if any(fk.target_fullname == "agent.id" for fk in column.foreign_keys):
+                        session.execute(
+                            update(table).where(column == previous).values({column.name: current})
+                        )
+            event = append_event(
+                session,
+                "agent.hired",
+                "agent",
+                current,
+                1,
+                {"display_name": agent.display_name, "test_identity_binding": True},
+                str(uuid4()),
+            )
+            session.execute(
+                update(Agent)
+                .where(Agent.id == previous)
+                .values(id=current, event_id=event.event_id)
+            )
 
 
 def seed_extra_desks(engine: Any) -> None:
@@ -175,15 +226,26 @@ def wire_agent_state_probe(inner: Any) -> None:
     from sqlalchemy.orm import Session
 
     @inner.post("/api/v1/e2e/agent-state", dependencies=[Depends(require_owner)])
-    def agent_state_probe(request: Request, command: dict[str, str]) -> dict:
+    def agent_state_probe(request: Request, command: dict[str, Any]) -> dict:
         settings = request.app.state.settings
         folder = getattr(request.app.state, "e2e_folder", None)
         database = Path(request.app.state.engine.url.database).resolve()
         if folder is None or not _inside(database, folder) or settings.worker_enabled:
             raise HTTPException(403, "Agent probe requires the isolated test server")
         mode = command.get("runtime_state")
-        if mode not in {"IDLE", "WORKING", "THINKING", "REVIEWING", "BLOCKED", "ERROR"}:
+        if not isinstance(mode, str) or mode not in {
+            "IDLE",
+            "WORKING",
+            "THINKING",
+            "REVIEWING",
+            "BLOCKED",
+            "ERROR",
+        }:
             raise HTTPException(422, "Invalid runtime state")
+        if not isinstance(command.get("agent_id"), str) or not isinstance(
+            command.get("legacy_event", False), bool
+        ):
+            raise HTTPException(422, "Invalid test probe command")
         with Session(request.app.state.engine) as session, session.begin():
             lock_for_write(session)
             agent = session.get(Agent, command.get("agent_id"))
@@ -191,7 +253,7 @@ def wire_agent_state_probe(inner: Any) -> None:
                 raise HTTPException(404, "No such test employee")
             agent.runtime_state = mode
             agent.version += 1
-            append_event_with_outbox(
+            _, outbox = append_event_with_outbox(
                 session,
                 "agent.state_changed",
                 "agent",
@@ -200,6 +262,12 @@ def wire_agent_state_probe(inner: Any) -> None:
                 {"runtime_state": mode, "task_type": "browser_state_probe"},
                 str(uuid4()),
             )
+            if command.get("legacy_event") is True:
+                outbox.payload = {
+                    key: value
+                    for key, value in outbox.payload.items()
+                    if key != "aggregate_version"
+                }
             return {"agent_id": agent.id, "runtime_state": mode, "version": agent.version}
 
 
@@ -236,6 +304,11 @@ def main(argv: list[str] | None = None) -> int:
         "--folder", type=Path, default=None, help="throwaway folder (default: new temp)"
     )
     parser.add_argument("--port", type=int, default=0, help="0 = a free port")
+    parser.add_argument(
+        "--scene-identities",
+        action="store_true",
+        help="original employee/art IDs in the fresh test database only",
+    )
     args = parser.parse_args(argv)
 
     folder = args.folder or Path(tempfile.mkdtemp(prefix="amn_e2e_"))
@@ -250,7 +323,7 @@ def main(argv: list[str] | None = None) -> int:
     token = secrets.token_urlsafe(48)
     settings = build_settings(folder, token)
     with no_outbound_network(), demo_vendors():
-        storyboard_id = prepare_studio(settings, folder)
+        storyboard_id = prepare_studio(settings, folder, scene_identities=args.scene_identities)
         app = create_app(settings)
         inner = app.app  # create_app wraps the FastAPI app in TrustedHostMiddleware
         inner.state.e2e_folder = folder.resolve()

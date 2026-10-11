@@ -1,0 +1,474 @@
+{
+  "refresh_ms": 10000,
+  "state_refresh_debounce_ms": 120,
+  "state_retry_ms": 1000,
+  "valid_ms": 35000,
+  "blend_ms": 900,
+  "spring_hz": 1.4,
+  "damping": 0.92,
+  "fixed_step_ms": 16.6666666667,
+  "max_catchup_ms": 250,
+  "cycles": {
+    "IDLE": [
+      [
+        "look",
+        11000
+      ],
+      [
+        "think",
+        6500
+      ],
+      [
+        "coffee",
+        5500
+      ],
+      [
+        "look",
+        9500
+      ],
+      [
+        "hair",
+        4000
+      ],
+      [
+        "relax",
+        7000
+      ],
+      [
+        "screen_off",
+        6000
+      ],
+      [
+        "screen_on",
+        3000
+      ]
+    ],
+    "WORKING": [
+      [
+        "type",
+        14000
+      ],
+      [
+        "mouse",
+        5000
+      ],
+      [
+        "read",
+        6500
+      ],
+      [
+        "coffee",
+        4500
+      ],
+      [
+        "type",
+        13000
+      ]
+    ],
+    "THINKING": [
+      [
+        "think",
+        11000
+      ],
+      [
+        "look",
+        7000
+      ],
+      [
+        "think",
+        9000
+      ],
+      [
+        "hair",
+        4000
+      ]
+    ],
+    "REVIEWING": [
+      [
+        "read",
+        12000
+      ],
+      [
+        "write",
+        8000
+      ],
+      [
+        "look",
+        6000
+      ],
+      [
+        "think",
+        5000
+      ]
+    ],
+    "ERROR": [
+      [
+        "frustrated",
+        6000
+      ],
+      [
+        "think",
+        14000
+      ],
+      [
+        "look",
+        20000
+      ]
+    ],
+    "BLOCKED": [
+      [
+        "think",
+        14000
+      ],
+      [
+        "frustrated",
+        5000
+      ],
+      [
+        "look",
+        17000
+      ]
+    ]
+  },
+  "physics": {
+    "gravity": 88,
+    "paper_drag": 1.9,
+    "bounce": 0.14,
+    "paper_cycle_ms": 91000,
+    "paper_air_threshold_kph": 8,
+    "paper_launch_ms": 900,
+    "head_limit_radians": 0.08,
+    "reach_limit": 18
+  },
+  "sound": {
+    "default_volume": 0.24,
+    "max_sources": 16,
+    "keyboard_interval_ms": 310,
+    "rain_gain": 0.09,
+    "air_gain": 0.05,
+    "key_gain": 0.12,
+    "foley_gain": 0.22
+  },
+  "plants": [
+    {
+      "x": 191,
+      "y": 164,
+      "w": 31,
+      "h": 46,
+      "pivot": [
+        208,
+        208
+      ]
+    },
+    {
+      "x": 548,
+      "y": 161,
+      "w": 30,
+      "h": 43,
+      "pivot": [
+        562,
+        204
+      ]
+    },
+    {
+      "x": 769,
+      "y": 149,
+      "w": 33,
+      "h": 54,
+      "pivot": [
+        780,
+        204
+      ]
+    },
+    {
+      "x": 156,
+      "y": 285,
+      "w": 31,
+      "h": 63,
+      "pivot": [
+        173,
+        348
+      ]
+    },
+    {
+      "x": 528,
+      "y": 287,
+      "w": 28,
+      "h": 54,
+      "pivot": [
+        541,
+        341
+      ]
+    },
+    {
+      "x": 174,
+      "y": 433,
+      "w": 29,
+      "h": 64,
+      "pivot": [
+        191,
+        497
+      ]
+    },
+    {
+      "x": 450,
+      "y": 445,
+      "w": 30,
+      "h": 62,
+      "pivot": [
+        462,
+        506
+      ]
+    },
+    {
+      "x": 625,
+      "y": 455,
+      "w": 28,
+      "h": 51,
+      "pivot": [
+        637,
+        506
+      ]
+    }
+  ],
+  "lights": [
+    {
+      "x": 280,
+      "y": 139,
+      "period_ms": 227000
+    },
+    {
+      "x": 331,
+      "y": 292,
+      "period_ms": 307000
+    },
+    {
+      "x": 740,
+      "y": 432,
+      "period_ms": 389000
+    }
+  ],
+  "monitors": [
+    {
+      "desk_id": "desk_research_1",
+      "polygon": [
+        [
+          274,
+          180
+        ],
+        [
+          295,
+          180
+        ],
+        [
+          295,
+          193
+        ],
+        [
+          274,
+          193
+        ]
+      ]
+    },
+    {
+      "desk_id": "desk_research_2",
+      "polygon": [
+        [
+          445,
+          180
+        ],
+        [
+          484,
+          180
+        ],
+        [
+          484,
+          193
+        ],
+        [
+          445,
+          193
+        ]
+      ]
+    },
+    {
+      "desk_id": "desk_script",
+      "polygon": [
+        [
+          650,
+          180
+        ],
+        [
+          674,
+          180
+        ],
+        [
+          674,
+          193
+        ],
+        [
+          650,
+          193
+        ]
+      ]
+    },
+    {
+      "desk_id": "desk_director",
+      "polygon": [
+        [
+          695,
+          316
+        ],
+        [
+          717,
+          316
+        ],
+        [
+          717,
+          333
+        ],
+        [
+          695,
+          333
+        ]
+      ],
+      "housing": {
+        "desktop_y": 340
+      }
+    },
+    {
+      "desk_id": "desk_audio",
+      "polygon": [
+        [
+          337,
+          325
+        ],
+        [
+          352,
+          325
+        ],
+        [
+          352,
+          337
+        ],
+        [
+          337,
+          337
+        ]
+      ]
+    },
+    {
+      "desk_id": "desk_video",
+      "polygon": [
+        [
+          308,
+          445
+        ],
+        [
+          350,
+          445
+        ],
+        [
+          350,
+          468
+        ],
+        [
+          308,
+          468
+        ]
+      ]
+    },
+    {
+      "desk_id": "desk_publish",
+      "polygon": [
+        [
+          444,
+          325
+        ],
+        [
+          463,
+          325
+        ],
+        [
+          463,
+          336
+        ],
+        [
+          444,
+          336
+        ]
+      ]
+    },
+    {
+      "desk_id": "desk_accounting",
+      "polygon": [
+        [
+          458.125,
+          461.25
+        ],
+        [
+          481.25,
+          461.25
+        ],
+        [
+          481.25,
+          475.0
+        ],
+        [
+          458.125,
+          475.0
+        ]
+      ],
+      "housing": {
+        "desktop_y": 484
+      },
+      "artwork": {
+        "asset": "/assets/pixel/studio-accounting-monitor-v9.png",
+        "source_size": [
+          1536,
+          1024
+        ],
+        "mask": [
+          [
+            435,
+            449
+          ],
+          [
+            501,
+            449
+          ],
+          [
+            503,
+            485
+          ],
+          [
+            435,
+            485
+          ]
+        ]
+      }
+    },
+    {
+      "desk_id": "desk_video",
+      "polygon": [
+        [
+          259,
+          444
+        ],
+        [
+          301,
+          444
+        ],
+        [
+          301,
+          467
+        ],
+        [
+          259,
+          467
+        ]
+      ]
+    }
+  ],
+  "media_max_bytes": 67108864
+}

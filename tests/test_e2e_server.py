@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 
 import pytest
@@ -59,3 +60,46 @@ def test_the_settings_reach_nothing_beyond_the_machine(tmp_path):
         str(tmp_path) in settings.database_url.replace("/", "\\")
         or str(tmp_path.as_posix()) in settings.database_url
     )
+
+
+def test_original_art_identity_binding_is_refused_outside_the_test_folder(engine, tmp_path):
+    with pytest.raises(SystemExit, match="disposable"):
+        e2e_server.bind_scene_identities(engine, tmp_path / "different")
+
+
+def test_fresh_fixture_hires_bind_original_art_and_preserve_immutable_history(engine):
+    from app.agents.models import Agent
+    from app.agents.services import seed_initial_workforce
+    from app.models import DomainEvent
+    from sqlalchemy import select, text
+    from sqlalchemy.orm import Session
+
+    seed_initial_workforce(engine)
+    with Session(engine) as session:
+        previous = [(e.event_id, e.aggregate_id) for e in session.scalars(select(DomainEvent))]
+    folder = Path(engine.url.database).parent
+    e2e_server.bind_scene_identities(engine, folder)
+    bible = json.loads(
+        (ROOT / "frontend/tests/fixtures/pixel_actors_bible.json").read_text(encoding="utf-8")
+    )
+    with Session(engine) as session:
+        assert set(session.scalars(select(Agent.id))) == {c["employee_id"] for c in bible}
+        assert session.execute(text("PRAGMA foreign_key_check")).all() == []
+        for event_id, aggregate_id in previous:
+            assert (
+                session.scalar(
+                    select(DomainEvent).where(DomainEvent.event_id == event_id)
+                ).aggregate_id
+                == aggregate_id
+            )
+        for agent in session.scalars(select(Agent)):
+            assert (
+                session.scalar(
+                    select(DomainEvent).where(DomainEvent.event_id == agent.event_id)
+                ).aggregate_id
+                == agent.id
+            )
+        agent.version = 2
+        session.commit()
+    with pytest.raises(SystemExit, match="fresh"):
+        e2e_server.bind_scene_identities(engine, folder)

@@ -8,7 +8,8 @@
     "test": "node --test tests/*.test.js",
     "check": "tsc -p tsconfig.json",
     "test:e2e": "node --test tests/e2e/owner_flows.spec.js",
-    "test:scene": "node --test tests/e2e/pixel_environment.spec.js tests/e2e/pixel_navigation.spec.js tests/e2e/pixel_life.spec.js tests/e2e/pixel_motion.spec.js tests/e2e/pixel_seating.spec.js tests/e2e/pixel_street.spec.js"
+    "test:agents": "node --test tests/e2e/pixel_backend.spec.js",
+    "test:scene": "node --test tests/e2e/pixel_environment.spec.js tests/e2e/pixel_navigation.spec.js tests/e2e/pixel_life.spec.js tests/e2e/pixel_motion.spec.js tests/e2e/pixel_seating.spec.js tests/e2e/pixel_street.spec.js tests/e2e/pixel_depth.spec.js tests/e2e/pixel_living.spec.js"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.0.0",

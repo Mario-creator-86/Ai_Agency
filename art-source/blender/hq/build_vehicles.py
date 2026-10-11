@@ -70,7 +70,7 @@ def setup(a):
     for name, loc, energy, color, size in (
         ("key", (-4.0, -7.0, 6.0), 1400.0, "#fff1e0", 4.0),
         ("fill", (5.0, -5.0, 2.5), 400.0, "#c9d6ff", 3.0),
-        ("rim", (2.0, 6.0, 5.0), 700.0, "#ffd9b0", 6.0),
+        ("rim", (2.0, 6.0, 5.0), 450.0, "#ffd9b0", 6.0),
     ):
         ld = bpy.data.lights.new(name, "AREA")
         ld.energy, ld.size, ld.color = energy, size, lin(color)[:3]
@@ -409,12 +409,22 @@ def build(kind, m, spin):
             L, W, H = 12.0, 2.5, 2.9
             livery = {"bus": "#e5e7eb", "bus_amn": "#101a33", "bus_curiosity": "#e5e7eb", "bus_nexus": "#e5e7eb"}[kind]
             paint = principled(f"{kind}_paint", livery, rough=0.45, metal=0.15, coat=0.2)
-            body.box(-L / 2, L / 2, -W / 2, W / 2, 0.35, 0.35 + H, paint)
-            side_quad(body, -L / 2 + 0.4, L / 2 - 0.3, 1.45, 2.85, W / 2, m["glass"])
-            for wx in [(-L / 2 + 0.4) + i * 1.28 for i in range(9)]:
-                side_box(body, wx - 0.05, wx + 0.05, 1.45, 2.85, W / 2 + 0.006, paint)
-            side_box(body, L / 2 - 1.6, L / 2 - 0.6, 0.45, 2.85, W / 2 + 0.006, m["glass"])
-            body.quad([(L / 2 + 0.005, -W / 2 + 0.1, 1.2), (L / 2 + 0.005, W / 2 - 0.1, 1.2), (L / 2 + 0.005, W / 2 - 0.1, 2.9), (L / 2 + 0.005, -W / 2 + 0.1, 2.9)], m["glass"])
+            # lofted like the cars: rounded corners, one window band from the beltline up, black pillars
+            top_z = 0.35 + H
+            knots = [(L / 2, 1.35, top_z - 0.25), (L / 2 - 0.25, 1.35, top_z), (-L / 2 + 0.2, 1.35, top_z), (-L / 2, 1.35, top_z - 0.15)]
+            pillars = [(-L / 2 + 0.4) + i * 1.28 for i in range(9)]
+            hw, zb = car_shell(body, m, paint, knots, L, W, 0.35, pillars=pillars, inset=0.05)
+            info["rounded"] = True
+            side_box(body, L / 2 - 1.6, L / 2 - 0.6, 0.45, 1.35, hw(L / 2 - 1.1), m["glass"])
+            body.quad([(L / 2 + 0.005, -W / 2 + 0.25, 1.2), (L / 2 + 0.005, W / 2 - 0.25, 1.2), (L / 2 + 0.005, W / 2 - 0.25, top_z - 0.3), (L / 2 + 0.005, -W / 2 + 0.25, top_z - 0.3)], m["glass"])
+            side_strip(body, -L / 2 + 0.3, L / 2 - 0.3, 0.36, 0.55, hw, m["black"], t=0.006)
+            body.box(-L / 2 + 2.5, -L / 2 + 5.0, -0.7, 0.7, top_z - 0.02, top_z + 0.28, principled(f"{kind}_roof_unit", "#9aa0a8", rough=0.5, metal=0.3))
+            for wx in (L / 2 - 2.2, -L / 2 + 2.6):
+                R = 0.62
+                pts = [(wx + R, 0.33)] + [(wx + R * math.cos(i / 12 * math.pi), 0.5 + R * math.sin(i / 12 * math.pi)) for i in range(13)] + [(wx - R, 0.33)]
+                y = hw(wx) + 0.007
+                body.quad([(px, -y, pz) for px, pz in pts], m["black"])
+                body.quad([(px, y, pz) for px, pz in reversed(pts)], m["black"])
             ad = {"bus": "ad_city", "bus_amn": "ad_amn_ai", "bus_curiosity": "ad_nexus_curiosity", "bus_nexus": "ad_inside_the_nexus"}[kind]
             side_quad(body, -L / 2 + 0.6, L / 2 - 2.0, 0.55, 1.35, W / 2, image_material(f"{kind}_ad", ad, 0.5), off=0.008)
             if kind == "bus_amn":

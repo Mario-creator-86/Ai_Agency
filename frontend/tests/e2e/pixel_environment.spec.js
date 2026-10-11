@@ -15,7 +15,7 @@ const EVIDENCE = process.env.E2E_EVIDENCE;
 
 test('pixel environment paints protected interiors, live clock/weather and bounded lifecycle', async () => {
   const result = await build({ root: FRONTEND, configFile: false, publicDir: false, logLevel: 'warn',
-    build: { write: false, minify: false, lib: { entry: path.join(FRONTEND, 'src/pixel_office.js'), name: 'PixelScene', formats: ['iife'] } } });
+    build: { write: false, minify: false, lib: { entry: path.join(FRONTEND, 'tests/fixtures/pixel_environment_entry.js'), name: 'PixelScene', formats: ['iife'] } } });
   const code = (Array.isArray(result) ? result[0] : result).output.find(o => o.type === 'chunk').code;
   const image = readFileSync(path.join(FRONTEND, 'public/assets/pixel/studio-detailed.png'));
   const observation = process.env.E2E_REAL_WEATHER ? JSON.parse(readFileSync(process.env.E2E_REAL_WEATHER, 'utf8')).observation : { available: false };
@@ -58,6 +58,8 @@ test('pixel environment paints protected interiors, live clock/weather and bound
       const e = window.engine, c = document.createElement('canvas'); c.width = e.canvas.width; c.height = e.canvas.height;
       const ctx = c.getContext('2d'), v = e.viewport; ctx.imageSmoothingEnabled = false;
       ctx.setTransform(v.zoom, 0, 0, v.zoom, v.panX, v.panY); ctx.drawImage(e.background, 0, 0, e.worldW, e.worldH);
+      // Match the intentional indoor life layer; compare exterior weather protection separately.
+      PixelScene.drawRoomLife(ctx,e.background,e.lifeElapsed,e.currentWeather(),e.roomFrame);
       return [{ x: 220, y: 155, w: 65, h: 65 }, { x: 212, y: 254, w: 89, h: 74 }, { x: 630, y: 427, w: 173, h: 89 }].every(r => {
         const x = Math.ceil(r.x * v.zoom + v.panX), y = Math.ceil(r.y * v.zoom + v.panY), w = Math.floor(r.w * v.zoom), h = Math.floor(r.h * v.zoom);
         const a = ctx.getImageData(x, y, w, h).data, b = e.ctx.getImageData(x, y, w, h).data;

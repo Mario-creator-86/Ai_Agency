@@ -1,8 +1,8 @@
 /**
  * THE EMPLOYEES AS PEOPLE (W30). The employees' door («SEDIUL · ANGAJAȚI») was eight rows of
  * «78 de rulări · 3% eșecuri» with a monospace chip; nothing in it said «people in a building».
- * It is now a roster: one card per employee, with a portrait cut from the scene's own figure at
- * the employee's own desk (the page's canvas sprites and plates, never a generated image), the
+ * It is now a roster: one card per employee, with identity-bound frontal portrait art and the
+ * employee's role background (the Owner's 2026-10-09 request), the
  * name and the role as the data gives them, the place in the building, the state now, the last
  * real task, and the runs the backend measured. Every value is the page's record; «—» where the
  * page holds none (glossary W30).
@@ -199,11 +199,12 @@ export function rosterHtml(cards, escape) {
         : `<span class="person-meter" aria-hidden="true"><span class="person-meter-fail" data-fail="${(c.failureShare * 100).toFixed(1)}"></span></span>`;
       return `
       <button type="button" class="person-card" data-agent="${escape(c.id)}" data-state="${escape(c.stateKey)}" data-standing="${escape(c.standingKey)}" aria-label="${escape(c.label)}">
-        <span class="person-portrait${c.hasDesk ? '' : ' is-empty'}" data-portrait="${escape(c.id)}"><canvas class="person-canvas" width="0" height="0" aria-hidden="true"></canvas><span class="person-portrait-none" aria-hidden="true">—</span><span class="person-state"><span class="person-dot" aria-hidden="true"></span><span class="person-state-word" title="${escape(c.stateKey)}">${escape(c.state)}</span></span></span>
+        <span class="person-portrait${c.hasDesk ? '' : ' is-empty'}" data-portrait="${escape(c.id)}"><canvas class="person-canvas" width="0" height="0" aria-hidden="true"></canvas><span class="person-portrait-none" aria-hidden="true">—</span></span>
         <span class="person-head">
           <span class="person-place">${escape(c.place)}</span>
           <span class="person-name" title="${escape(c.roleCode)}">${escape(c.name)}</span>
           <span class="person-role">${escape(c.role)}</span>
+          <span class="person-state"><span class="person-dot" aria-hidden="true"></span><span class="person-state-word" title="${escape(c.stateKey)}">${escape(c.state)}</span></span>
           <span class="person-standing" title="${escape(c.standingKey)}">${escape(c.standing)}</span>
         </span>
         <span class="person-row person-task">

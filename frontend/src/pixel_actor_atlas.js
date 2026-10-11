@@ -1,9 +1,13 @@
 import ACTORS from '../../config/pixel_actors.json' with { type: 'json' };
 import { seatedGeometry, StaffPoseTrack } from './pixel_staff_pose.js';
 import { PIXEL_LAYOUT } from './pixel_desks.js';
+import { SeatedPhysics } from './pixel_presentation.js';
 export { ACTORS };
 const images=new Map();
 const poses = new StaffPoseTrack();
+const bodies = new SeatedPhysics();
+const physicalFrames = new Map();
+export function seatedPhysicsStatus() { return [...physicalFrames].map(([id,frame])=>({id,...frame})); }
 let loading;
 
 /** Own-origin static art only. A failed sheet preserves the code-drawn fallback. */
@@ -52,6 +56,7 @@ export function drawTownAtlas(ctx,kind,actor){
 }
 
 function paintVehicle(ctx,r,actor) {
+  ctx.save();ctx.filter=actor.ambientFilter||'none';
   ctx.imageSmoothingEnabled=false; whole(ctx,r);
   const speed=(PIXEL_LAYOUT.world.width+2*PIXEL_LAYOUT.life.street_margin)/PIXEL_LAYOUT.life.car_cycle_ms;
   for (const wheel of r.frame.wheels) {
@@ -60,6 +65,7 @@ function paintVehicle(ctx,r,actor) {
     ctx.save();ctx.beginPath();ctx.arc(x,y,radius,0,2*Math.PI);ctx.clip();
     ctx.translate(x,y);ctx.rotate(angle);ctx.translate(-x,-y);whole(ctx,r);ctx.restore();
   }
+  ctx.restore();
   if(actor.wet){ctx.fillStyle='#b9af8635';ctx.fillRect(r.left,2,r.width,1);}
   if(actor.lights){
     const x=r.left+r.width*.97,y=r.top+r.height*.57;
@@ -107,6 +113,50 @@ function joint(ctx,r,region,angle,breath=1) {
   ctx.beginPath(); regionPath(ctx,r,region); ctx.clip(); whole(ctx,r); ctx.restore();
 }
 
+function humanRegion(ctx,r,asset) {
+  ctx.rect(r.left,r.top,r.width,r.height*asset.pose_region_bottom);
+  const [x0,y0,x1,y1]=r.frame.chair_region || asset.chair_region;
+  ctx.rect(r.left+x0*r.width,r.top+y0*r.height,(x1-x0)*r.width,(Math.min(y1,asset.pose_region_bottom)-y0)*r.height);
+}
+
+function livingEnsemble(ctx,r,choice,profile,motion,seating) {
+  const asset=ACTORS.atlases[choice.key], body=bodies.frame(profile.employeeId,motion,seating);
+  const micro=poses.frame(profile.employeeId,motion);
+  if (physicalFrames.size>=64 && !physicalFrames.has(profile.employeeId)) physicalFrames.delete(physicalFrames.keys().next().value);
+  physicalFrames.set(profile.employeeId,body);
+  // Floor shadows belong to the shoe's projected depth, not the foremost caster's depth.
+  ctx.fillStyle='#35221b65';
+  for(const [x,y] of body.feet){ctx.beginPath();ctx.ellipse(x,y,3.5,.7,0,0,Math.PI*2);ctx.fill();}
+  ctx.save();ctx.beginPath();ctx.rect(r.left-2,r.top-2,r.width+4,r.height+4);
+  humanRegion(ctx,r,asset);ctx.clip('evenodd');whole(ctx,r);ctx.restore();
+  for(let col=0;col<4;col++){
+    const weight=body.weights[col];if(weight<.001)continue;
+    const frame=asset.rows[choice.row].frames[col];
+    const upper={...r,frame,left:(r.left+r.frame.anchor_x*r.scale)-frame.anchor_x*r.scale,
+      top:r.feetY-frame.height*r.scale,width:frame.width*r.scale,height:frame.height*r.scale};
+    ctx.save();ctx.globalAlpha=weight;
+    ctx.beginPath();humanRegion(ctx,r,asset);
+    // Base work pose has separate wrist/head joints; remove their untransformed pixels first.
+    if(weight>.98){regionPath(ctx,r,r.frame.rig.head);if(col===0)regionPath(ctx,r,r.frame.rig.hand);}
+    ctx.clip('evenodd');
+    const pivot=[r.left+r.frame.anchor_x*r.scale,r.top+r.height*.42];
+    ctx.translate(...pivot);ctx.rotate(body.head*.28);ctx.translate(-pivot[0],-pivot[1]);
+    ctx.translate(0,body.lean*.7);
+    whole(ctx,upper);ctx.restore();
+  }
+  // A separate tiny breathing/head joint remains continuous between artwork key poses.
+  const dominant=body.weights.findIndex(w=>w>.98);
+  if(dominant>=0){
+    const frame=asset.rows[choice.row].frames[dominant];
+    const upper={...r,frame,left:(r.left+r.frame.anchor_x*r.scale)-frame.anchor_x*r.scale,
+      top:r.feetY-frame.height*r.scale,width:frame.width*r.scale,height:frame.height*r.scale};
+    joint(ctx,upper,frame.rig.head,body.head,micro.breath);
+  }
+  if(body.weights[0]>.98){
+    joint(ctx,r,r.frame.rig.hand,['type','write','mouse'].includes(body.action)?micro.hand:micro.hand*.25);
+  }
+}
+
 /** Asset identity is employee-bound; the chair and person share a single uniform scale. */
 export function drawStaffAtlas(ctx,profile,motion,center,floor,scale,portrait=false,foreground=false,seating=null){
   const choice=staffAtlasChoice(profile,motion);
@@ -122,10 +172,14 @@ export function drawStaffAtlas(ctx,profile,motion,center,floor,scale,portrait=fa
     ctx.imageSmoothingEnabled=false;
     ctx.drawImage(r.image,f.x,f.y,f.width,f.height*0.5,r.left,r.top,r.width,r.height*0.5);
   }else {
+    if (ACTORS.atlases[choice.key].registered_gestures) {
+      livingEnsemble(ctx,r,choice,profile,motion,seating);
+    } else {
     const rig=r.frame.rig,pose=poses.frame(profile.employeeId,motion);
     ctx.save(); ctx.beginPath(); ctx.rect(r.left-2,r.top-2,r.width+4,r.height+4);
     regionPath(ctx,r,rig.head); regionPath(ctx,r,rig.hand); ctx.clip('evenodd'); whole(ctx,r); ctx.restore();
     joint(ctx,r,rig.hand,pose.hand); joint(ctx,r,rig.head,pose.head,pose.breath);
+    }
   }
   ctx.restore();return true;
 }

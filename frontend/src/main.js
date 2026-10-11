@@ -23,11 +23,11 @@ import { acceptSnapshot } from './projection.js';
 import { OfficeEngine, PixelTitle, BUILDING, WORLD_W, WORLD_H } from './pixel_office.js';
 import './pixel_studio.css';
 import { bindSceneMotion } from './pixel_motion.js';
+import { PRESENTATION, presentationLive } from './pixel_presentation.js';
 import { autonomyOverview } from './autonomy_overview.js';
 import { Drawers } from './drawers.js';
 import { OfficeState } from './office_state.js';
 import { Ledger, entryCountLabel, mailIntentLabel, productionStatus, runtimeLabel, taskLabel } from './ledger.js';
-import { streetMoves } from './hq_events.js';
 import { budgetRing, budgetRingSvg, channelFilmsHtml, dayTrack, dayTrackFromRun, dayTrackGeometry, dayTrackWords, newerTrack, pipelineSvg } from './hud_charts.js';
 import { Moments } from './moments.js';
 import { copyCanvas, filmPoster, PosterCache, POSTER_SAMPLES } from './film_poster.js';
@@ -187,7 +187,11 @@ const eventsLink = new EventsLink({
   // the register has already read past it.
   afterSequence: () => Math.max(state ? Number(state.cursor) || 0 : 0, ledger.cursor || 0),
   onEvent: (eventData, live) => {
-    officeState.handleDomainEvent(eventData, live);
+    // Older servers/pending outbox rows omitted the version. Read the committed record;
+    // never pair an unversioned event with a guessed version or a previous pose policy.
+    if (['agent.state_changed','agent.paused','agent.resumed'].includes(eventData.event_type)
+      && !Number.isSafeInteger(eventData.aggregate_version)) requestOfficeRepair();
+    else officeState.handleDomainEvent(eventData, live);
     updateOfficeCanvas();
     if (['agent.hired', 'agent.terminated', 'agent.suspended', 'agent.reactivated'].includes(eventData.event_type)) void loadOfficeLayout();
     // A live arrival says itself from across the room for a few seconds (hq_arrivals.js): the
@@ -1010,12 +1014,24 @@ function buildOfficeEngine() {
     // The page may only call its own origin; the backend reads the live weather for the scene.
     infoElement: element('scene-info'),
     fetchWeather: () => api('/office/weather', { timeoutMs: 12000 }),
+    fetchPresentation: () => api('/office/presentation', { timeoutMs: 10000 }),
+    fetchMedia: async (path) => {
+      if(!/^\/media\/assets\/[0-9a-f-]{36}\/stream$/.test(path))throw Error('Invalid studio media');
+      const response=await fetch(`/api/v1${path}`,{headers:{Authorization:`Bearer ${ownerToken}`},cache:'no-store',signal:AbortSignal.timeout(20000)});
+      if(!response.ok)throw Error('Media unavailable');
+      const reader=response.body.getReader(),chunks=[];let size=0;
+      while(true){const {value,done}=await reader.read();if(done)break;size+=value.byteLength;
+        if(size>PRESENTATION.media_max_bytes){await reader.cancel();throw Error('Media too large');}chunks.push(value);}
+      return new Blob(chunks,{type:'video/mp4'});
+    },
     // Explicit scene preference: the Owner wants a living studio even when Windows limits
     // interface motion. Menus/transitions still follow reducedMotion() above.
     reducedMotion: () => !sceneMotion.enabled(),
-    // So does a page that has lost the studio's data: nothing outside lives on while the corner
-    // of the render says it is reconnecting.
-    dataLive: () => streetMoves(liveSignals),
+    // Fresh authenticated presentation policies bridge short socket reconnects;
+    // a failed authoritative read or expired policy still freezes the scene.
+    dataLive: () => presentationLive(liveSignals,officeEngine?.presentationReceived||0),
+    presentationReadable: () => Boolean(ownerToken && !workspace.hidden && liveSignals.data==='fresh'),
+    connectionStatus: () => ({data:liveSignals.data,socket:liveSignals.socket}),
     // The page's own renderer: shown under its own name, and only while it is what is seen.
     onFrameRate: (fps) => {
       liveSignals.pageFps = fps;
@@ -1255,6 +1271,27 @@ function initOffice() {
 }
 
 let officeLastRead = 0;
+let officeRepair = null;
+function requestOfficeRepair() {
+  if (!ownerToken) return;
+  if (!officeRepair || officeRepair.epoch !== epoch) {
+    clearTimeout(officeRepair?.timer);
+    officeRepair = { epoch, timer: 0, pending: false, again: false };
+  }
+  const repair = officeRepair;
+  repair.again = true;
+  if (repair.timer || repair.pending) return;
+  repair.timer = window.setTimeout(async () => {
+    repair.timer = 0;
+    if (repair.epoch !== epoch || !ownerToken) return;
+    repair.pending = true; repair.again = false;
+    try { await loadOfficeLayout({ characters: false }); }
+    finally {
+      repair.pending = false;
+      if (repair.again && repair.epoch === epoch && ownerToken) requestOfficeRepair();
+    }
+  }, PRESENTATION.state_refresh_debounce_ms);
+}
 async function loadOfficeLayout({ characters = true } = {}) {
   const session = epoch;
   try {
@@ -1300,6 +1337,7 @@ function publishSceneHandle() {
     state: officeState,
     replay,
   };
+  /** @type {any} */ (window).render_game_to_text = () => JSON.stringify(officeEngine?.diagnostics() || {});
 }
 
 function updateOfficeCanvas() {
@@ -1522,11 +1560,10 @@ function showInspectorStates(work, standing) {
   };
   set('inspector-state', work, work === null ? '' : workWord(work));
   set('inspector-lifecycle', standing, standing === null ? '' : lifecycleWord(standing));
-  // W32: and worn on the header's portrait, as the roster's card wears it
+  // Keep header state metadata; visible facts are separate from the clean portrait.
   const head = element('inspector-head');
   if (work !== null) {
     head.dataset.state = String(work).toUpperCase();
-    element('inspector-state-chip').textContent = workWord(work);
   }
   if (standing !== null) head.dataset.standing = String(standing).toUpperCase();
   if (standing !== null) {
@@ -4731,7 +4768,7 @@ function renderApprovals() {
   replaceActivityHtml(approvalsList, approvalsShown.length
     ? `${newestFirst(approvalsShown).map((request) => approvalCard(request, Date.now())).join('')}<p class="approval-footnote">${escapeHtml(APPROVAL_FOOTNOTE)}</p>`
     : '<div class="topics-loading">Nicio cerere nu așteaptă decizia Proprietarului.</div>');
-  // who asked, at their desk: the scene's own portrait (roster.js)
+  // Who asked: the employee's identity-bound front portrait (roster.js).
   if (approvalsShown.length) drawPortraits(approvalsList);
 }
 
@@ -4873,9 +4910,13 @@ function renderRoster(force) {
   const box = element('workforce-agents');
   const cards = rosterCards({
     measurements: rosterMeasured,
-    office: officeState.agents,
+    office: officeState.agents.map(a => {
+      const seat = officeEngine?.positions.find(p => p.id === String(a.id || a.agent_id));
+      return seat ? {...a, desk_id: seat.deskId} : a;
+    }),
     tasks: worldFacts.tasks.tasks,
-    manifest: officeEngine && officeEngine.assets ? officeEngine.assets.manifest : null,
+    manifest: officeEngine ? {seats: Object.fromEntries(officeEngine.positions.map(p =>
+      [p.deskId, {x: p.x, level: -p.row}]))} : null,
     now: Date.now(),
   });
   const key = rosterKey(cards);
@@ -4887,7 +4928,7 @@ function renderRoster(force) {
   drawPortraits(box);
 }
 
-/** Each portrait, from the scene's own plates and figure (hq_world.js drawPortrait); dark when none. @param {ParentNode} root */
+/** Identity-bound front portraits, shared by profile surfaces; dark when no employee exists. @param {ParentNode} root */
 function drawPortraits(root) {
   for (const slot of /** @type {HTMLElement[]} */ (Array.from(root.querySelectorAll('[data-portrait]')))) {
     const id = slot.dataset.portrait;
@@ -4914,6 +4955,10 @@ function paintPortrait(slot, agent) {
   }
   slot.classList.toggle('is-empty', !drawn);
   slot.dataset.source = drawn ? 'pixel' : '';
+  const portrait = drawn && agent ? renderer?.portraitInfo?.(agent) : null;
+  slot.dataset.orientation = portrait?.orientation || '';
+  slot.dataset.backgroundRole = portrait?.background_role || '';
+  slot.dataset.portraitSource = portrait?.source || '';
 }
 
 /** The roster follows the office's record while its door is open. */

@@ -37,6 +37,10 @@ test('Windows reduced motion cannot silently freeze the requested scene; pause/r
         window.engine = new OfficeEngine(document.getElementById('office-canvas'), {
           parked: true, reducedMotion: () => !motion.enabled(), dataLive: () => window.live,
           fetchWeather: async () => ({ available: false }),
+          // Explicit labelled fixture policy; production gestures require a matching backend read.
+          fetchPresentation: async () => ({ schema: 1, media: { local: [], youtube: [] },
+            agents: window.engine.agents.map((a,i) => ({ agent_id: a.id, version: 0, lifecycle: a.lifecycle,
+              runtime_state: a.runtime_state, cycle: PixelMotionReview.PRESENTATION.cycles.IDLE, phase_ms: i*7301 })) }),
         });
         await window.engine.ready;
         window.engine.setCharacterBible(characters);

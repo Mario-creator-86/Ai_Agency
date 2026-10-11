@@ -231,10 +231,10 @@ test('personal desks: committed backend states, seated gestures, annex selection
   for (const runtime_state of ['WORKING', 'THINKING', 'REVIEWING', 'BLOCKED', 'ERROR', 'IDLE']) {
     const changed = await owner(page, '/e2e/agent-state', { method: 'POST', body: JSON.stringify({ agent_id: researcher.id, runtime_state }) });
     assert.equal(changed.status, 200, JSON.stringify(changed.body));
-    await page.waitForFunction(([id, mode]) => window.__studio.engine.agents.find(a => a.id === id)?.runtime_state === mode, [researcher.id, runtime_state]);
+    await page.waitForFunction(([id, mode]) => { const e = window.__studio.engine, a = e.agents.find(a => a.id === id); return a?.runtime_state === mode && e.motionFor(a).authorized; }, [researcher.id, runtime_state]);
     const pose = await page.evaluate(id => { const e = window.__studio.engine; return e.motionFor(e.agents.find(a => a.id === id)); }, researcher.id);
     assert.equal(pose.mode, runtime_state);
-    assert.equal(pose.animate, ['WORKING', 'THINKING', 'REVIEWING', 'IDLE'].includes(runtime_state));
+    assert.equal(pose.animate, true, 'a matching backend policy authorizes each known active state, including frustration');
     assert.equal(await page.locator(`#pixel-roster [data-agent="${researcher.id}"]`).getAttribute('data-state'), runtime_state);
   }
   const paused = await owner(page, `/agents/${researcher.id}/pause`, { method: 'POST' });
@@ -263,7 +263,7 @@ test('personal desks: committed backend states, seated gestures, annex selection
   assert.deepEqual(same, seats);
   assert.equal(await page.evaluate(() => window.__studio.engine.pixelLayout.floor_count), 3);
   assert.equal(await page.evaluate(() => window.__studio.engine.visiblePositions().every(p => p.orientation === 'back')), true);
-  // The library, lounge and original editing screens keep their actual illustrated pixels.
+  // The approved library and lounge retain their illustrated furniture. Editing screens are live.
   const retained = await page.evaluate(() => {
     const e = window.__studio.engine;
     const expected = document.createElement('canvas');
@@ -271,7 +271,7 @@ test('personal desks: committed backend states, seated gestures, annex selection
     const c = expected.getContext('2d'); c.imageSmoothingEnabled = false;
     const v = e.viewport; c.setTransform(v.zoom, 0, 0, v.zoom, v.panX, v.panY);
     c.drawImage(e.background, 0, 0, e.worldW, e.worldH);
-    return [{ x: 212, y: 254, w: 89, h: 74 }, { x: 630, y: 427, w: 173, h: 89 }, { x: 260, y: 442, w: 87, h: 18 }].map(r => {
+    return [{ x: 212, y: 254, w: 89, h: 74 }, { x: 630, y: 427, w: 173, h: 89 }].map(r => {
       const x = Math.ceil(r.x * v.zoom + v.panX), y = Math.ceil(r.y * v.zoom + v.panY);
       const w = Math.floor(r.w * v.zoom), h = Math.floor(r.h * v.zoom);
       const before = c.getImageData(x, y, w, h).data;
@@ -279,7 +279,7 @@ test('personal desks: committed backend states, seated gestures, annex selection
       return before.every((value, index) => value === after[index]);
     });
   });
-  assert.deepEqual(retained, [true, true, true], 'approved furniture is visible, without generic desk overlays');
+  assert.deepEqual(retained, [true, true], 'approved furniture is visible, without generic desk overlays');
   assert.equal(await page.evaluate(async () => {
     const canvas = document.getElementById('office-canvas');
     const first = canvas.toDataURL();
@@ -591,5 +591,46 @@ test('a card accepted in the window: «Decizii» opens his window, the card move
   await page.keyboard.press('Escape');
   await page.waitForSelector('#decisions-window:not([open])', { state: 'attached' });
   assert.equal(await page.evaluate(() => document.activeElement?.id), 'decisions-button');
+  await context.close();
+});
+
+// GPU_STOP_REACHABLE (WP4, 2026-10-09): the sheet is a modal and stays open while it buys, so the
+// toolbar's «Oprește GPU acum» could not be reached exactly while the GPU billed. While a RunPod
+// session is live the sheet's header carries its own stop, and a press there sends the off once.
+// RunPod's state and the off are answered by the page's own route fakes: no RunPod is called.
+test('a GPU stop pressed inside the sheet sends the off command', { skip }, async () => {
+  const live = {
+    configured: true, mock: false, rate_usd_per_hour: '4.00',
+    endpoints: [{ purpose: 'image', endpoint_id: 'ep-e2e', state: 'ON', workers_max: 1, running: 1, in_progress: 1, in_queue: 0 }],
+    sessions: [{ id: 'gs-e2e', purpose: 'image', step: 'stills', storyboard_id: server.storyboard_id }],
+    last_off: null, words_ro: 'GPU pornit — pas: stills.', model_wait_ro: null,
+  };
+  const stopped = { ...live, sessions: [], words_ro: 'GPU oprit.',
+    endpoints: [{ ...live.endpoints[0], state: 'OFF', workers_max: 0, running: 0, in_progress: 0 }] };
+  let gpu = live;
+  /** @type {any[]} */
+  const offs = [];
+  const { context, page } = await signedIn(async (p) => {
+    await p.route(/\/api\/v1\/runpod\/gpu(\/off)?(\?.*)?$/, async (route) => {
+      const request = route.request();
+      if (request.url().includes('/runpod/gpu/off')) {
+        offs.push(request.postDataJSON());
+        gpu = stopped;
+        await route.fulfill({ json: { command_id: offs[0].command_id, verified: true, readings: [], words_ro: 'GPU-ul RunPod este oprit și verificat.' } });
+        return;
+      }
+      await route.fulfill({ json: gpu });
+    });
+  });
+  await openSheet(page);
+  const stop = page.locator('#shooting-sheet-drawer .dialog-header .gpu-switch-off');
+  await stop.waitFor({ state: 'visible', timeout: 30_000 });
+  assert.match(await page.textContent('#shooting-sheet-drawer .gpu-switch-state') || '', /worker activ/);
+  await stop.click();
+  await page.waitForFunction(() => /oprit și verificat/.test(document.querySelector('#shooting-sheet-drawer .gpu-switch-said')?.textContent || ''), null, { timeout: 30_000 });
+  assert.equal(offs.length, 1, 'one press, one off command');
+  assert.equal(offs[0].schema_version, 1);
+  assert.match(String(offs[0].command_id), /^[0-9a-f-]{36}$/);
+  assert.ok(await page.isVisible('#shooting-sheet-drawer[open]'), 'the sheet stays open around his answer');
   await context.close();
 });

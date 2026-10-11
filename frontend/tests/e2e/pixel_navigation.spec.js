@@ -67,6 +67,22 @@ test('production scene fits its frame and supports wheel/drag navigation without
       return a.x >= -1 && a.y >= -1 && b.x <= e.canvas.width + 1 && b.y <= e.canvas.height + 1;
     });
     assert.equal(await worldFits(), true);
+    // No icon/label overflow may steal a neighbouring menu's pointer target.
+    await page.evaluate(()=>document.querySelectorAll('.topbar-rooms button').forEach(button=>
+      button.addEventListener('click',()=>{window.menuPressed=button.id;})));
+    for(const width of [1051,1280,1366,1700,1720,1920,2560]){
+      await page.setViewportSize({width,height:1100});
+      const menus=await page.evaluate(()=>[...document.querySelectorAll('.topbar-rooms button')].map(button=>{
+        const r=button.getBoundingClientRect(),hit=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);
+        return {id:button.id,hit:hit?.closest('button')?.id};
+      }));
+      for(const menu of menus){
+        assert.equal(menu.hit,menu.id,`${width}px: menu contents must stay within their own button`);
+        await page.locator('#'+menu.id).click();
+        assert.equal(await page.evaluate(()=>window.menuPressed),menu.id);
+      }
+    }
+    await page.setViewportSize({width:1700,height:1100});
     await page.evaluate(() => window.engine.zoomTo(2));
     const before = await page.evaluate(() => window.engine.viewport.panY);
     await page.mouse.move(850, 450); await page.mouse.wheel(0, 180);

@@ -43,7 +43,8 @@ test('the camera moving asks the invitation to be placed again once it rests, no
 test('the pixel scene uses its own motion control and preserves current-data guards', () => {
   const engine = MAIN.slice(MAIN.indexOf('function buildOfficeEngine()'), MAIN.indexOf('function stagedSceneBox()'));
   assert.match(engine, /reducedMotion: \(\) => !sceneMotion\.enabled\(\)/);
-  assert.match(engine, /dataLive: \(\) => streetMoves/);
+  assert.match(engine, /dataLive: \(\) => presentationLive\(liveSignals/);
+  assert.match(engine, /presentationReadable:.*liveSignals.data==='fresh'/);
 });
 
 

@@ -12,11 +12,25 @@ PARENT = "/Game/HQ/Materials/M_HQ_Flat"
 FOLDER = "/Game/HQ/Materials"
 
 
+def ensure_skeletal_usage(mat):
+    """The same parent serves static props and the passers-by's skeletal garments."""
+    mel = unreal.MaterialEditingLibrary
+    usage = unreal.MaterialUsage.MATUSAGE_SKELETAL_MESH
+    if not mel.has_material_usage(mat, usage):
+        mel.set_base_material_usage(mat, usage, True)
+        mel.recompile_material(mat)
+        if not unreal.EditorAssetLibrary.save_loaded_asset(mat):
+            raise RuntimeError(f"Could not persist skeletal usage on {mat.get_path_name()}")
+    if not mel.has_material_usage(mat, usage):
+        raise RuntimeError(f"Skeletal usage is still disabled on {mat.get_path_name()}")
+    return mat
+
+
 def parent_material(roughness=0.7):
-    """The flat material, created the first time it is asked for."""
+    """Create the parent or repair the usage flag on an existing asset."""
     mel = unreal.MaterialEditingLibrary
     if unreal.EditorAssetLibrary.does_asset_exist(PARENT):
-        return unreal.load_asset(PARENT)
+        return ensure_skeletal_usage(unreal.load_asset(PARENT))
     folder, name = PARENT.rsplit("/", 1)
     mat = unreal.AssetToolsHelpers.get_asset_tools().create_asset(name, folder, unreal.Material, unreal.MaterialFactoryNew())
     colour = mel.create_material_expression(mat, unreal.MaterialExpressionVectorParameter, -400, 0)
@@ -27,8 +41,10 @@ def parent_material(roughness=0.7):
     rough.set_editor_property("parameter_name", "Roughness")
     rough.set_editor_property("default_value", roughness)
     mel.connect_material_property(rough, "", unreal.MaterialProperty.MP_ROUGHNESS)
+    ensure_skeletal_usage(mat)
     mel.recompile_material(mat)
-    unreal.EditorAssetLibrary.save_loaded_asset(mat)
+    if not unreal.EditorAssetLibrary.save_loaded_asset(mat):
+        raise RuntimeError(f"Could not save new material {PARENT}")
     return mat
 
 

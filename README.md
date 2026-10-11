@@ -206,6 +206,12 @@ reviewed in `.secrets.baseline`; mark a fake key in a test with `# pragma: allow
 folder (`npx vite build --outDir <tmp>` in `frontend/`) when a studio is serving `frontend/dist`.
 `STUDIO_REQUIRE_FFMPEG=1` turns an FFmpeg skip into a failure; `STUDIO_REAL_ENCODE=1` keeps the
 production encode in every test. Every test fakes every vendor and refuses non-loopback sockets.
+For the bounded agent state/animation acceptance, run `npm run test:agents --prefix frontend`.
+It builds the actual page into a temporary folder and uses one browser with a disposable
+backend/database, real outbox/WebSocket/Owner HTTP, faked paid providers and no outbound sockets.
+It tests all eight employees through six states and front profile portraits. It never changes
+production employees. The separate heavy `test:e2e` owner-flow game guard remains unchanged.
+
 The GitHub Actions workflow (Windows and Linux) exists but has not run: the repository has no
 remote yet.
 

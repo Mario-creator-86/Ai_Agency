@@ -3,6 +3,7 @@ import { weatherEffects } from './hq_weather.js';
 import { drawPedestrian, drawBicycle, drawCat, drawDog } from './pixel_town_people.js';
 import { pixelPen } from './pixel_art.js';
 import { drawCar } from './pixel_vehicle.js';
+import { depthOrder, drawSceneForeground, streetLighting } from './pixel_depth.js';
 const LIFE = PIXEL_LAYOUT.life;
 const W = PIXEL_LAYOUT.world.width;
 
@@ -44,24 +45,29 @@ function catFrame(t, position, id) {
 }
 
 /** Original detailed pixel sprites, clipped to their own street/sky layers. */
-export function drawOutdoorLife(ctx, weather, elapsed, moment) {
+export function drawOutdoorLife(ctx, weather, elapsed, moment, scene = {}) {
   const night = moment.daylight < 0.4;
   const frame = streetFrame(elapsed, weather, night);
   ctx.save(); ctx.beginPath(); ctx.rect(0, 0, W, PIXEL_LAYOUT.world.height); ctx.clip();
   const sidewalk = LIFE.sidewalk_clip, road = LIFE.road_clip;
-  ctx.save(); ctx.beginPath(); ctx.rect(sidewalk.x, sidewalk.y, sidewalk.width, sidewalk.height); ctx.clip();
-  if (frame.dog) {
+  const lighting=streetLighting(moment);frame.car.ambientFilter=lighting;
+  const onSidewalk=draw=>()=>{ctx.save();ctx.filter=lighting;ctx.beginPath();ctx.rect(sidewalk.x,sidewalk.y,sidewalk.width,sidewalk.height);ctx.clip();draw();ctx.restore();};
+  const objects=frame.people.map(p=>({id:`person-${p.id}`,depth:p.y,draw:onSidewalk(()=>drawPedestrian(ctx,p))}));
+  objects.push({id:'bicycle',depth:frame.bicycle.y,draw:onSidewalk(()=>drawBicycle(ctx,frame.bicycle))});
+  for(const cat of frame.cats)objects.push({id:`cat-${cat.id}`,depth:cat.y,draw:onSidewalk(()=>drawCat(ctx,cat))});
+  if(frame.dog)objects.push({id:'dog',depth:frame.dog.y,draw:onSidewalk(()=>{
     const owner = frame.people[2], d = frame.dog;
     pixelPen(ctx).line(owner.x + 4 * owner.direction, owner.y - 17, d.x - 5 * d.direction, d.y - 8, '#b39e88');
     drawDog(ctx, d);
-  }
-  const walkers = frame.people.map(p => ({ y: p.y, draw: () => drawPedestrian(ctx, p) }));
-  walkers.push({ y: frame.bicycle.y, draw: () => drawBicycle(ctx, frame.bicycle) });
-  for (const cat of frame.cats) walkers.push({ y: cat.y, draw: () => drawCat(ctx, cat) });
-  for (const actor of walkers.sort((a,b) => a.y - b.y)) actor.draw();
-  ctx.restore();
-  ctx.save(); ctx.beginPath(); ctx.rect(road.x, road.y, road.width, road.height); ctx.clip();
-  drawCar(ctx, frame.car, weatherEffects(weather).rain > 0); ctx.restore();
+  })});
+  if(scene.clock)objects.push({id:'street-clock',depth:PIXEL_LAYOUT.outdoors.clock.base_y+6,draw:scene.clock});
+  objects.push({id:'car',depth:frame.car.y,draw:()=>{
+    ctx.save();ctx.beginPath();ctx.rect(road.x,road.y,road.width,road.height);ctx.clip();
+    drawCar(ctx,frame.car,weatherEffects(weather).rain>0);ctx.restore();
+  }});
+  const ordered=depthOrder(objects);for(const object of ordered)object.draw();
+  frame.depthOrder=ordered.map(({id,depth})=>({id,depth}));
+  drawSceneForeground(ctx,scene.background,moment,weather);
   if (!night) {
     ctx.save(); ctx.beginPath(); ctx.rect(0, 0, W, 48); ctx.clip(); ctx.fillStyle = '#3a405d';
     for (let i = 0; i < 3; i++) {

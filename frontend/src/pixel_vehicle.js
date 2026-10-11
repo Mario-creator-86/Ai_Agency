@@ -6,6 +6,7 @@ import { PIXEL_LAYOUT } from './pixel_desks.js';
 export function drawCar(ctx, vehicle, wet) {
   if (drawTownAtlas(ctx, 'car', { ...vehicle, wet })) return;
   ctx.save(); ctx.translate(vehicle.x, vehicle.y); ctx.scale(vehicle.direction, 1);
+  ctx.filter=vehicle.ambientFilter||'none';
   const { polygon: poly, line, ellipse, rect: r } = pixelPen(ctx);
   const body = PIXEL_LAYOUT.life.vehicle_colours[vehicle.variant % 4], ink = '#292b3b';
   ellipse(0, 1, 39, 2, '#22263755');
@@ -30,6 +31,6 @@ export function drawCar(ctx, vehicle, wet) {
   r(-42,-16,2,4,'#b56349'); r(41,-16,3,3,vehicle.lights?'#ffe7b5':'#c6c8b9');
   r(-44,-8,4,2,'#9d9a8c'); r(40,-8,5,2,'#a4a292');
   if(wet)r(-37,4,76,1,'#b9af8635');
-  if(vehicle.lights)poly([[44,-14],[83,-19],[83,-2]],'#ffe5ac24');
+  if(vehicle.lights){ctx.filter='none';poly([[44,-14],[83,-19],[83,-2]],'#ffe5ac24');r(41,-16,3,3,'#ffe7b5');}
   ctx.restore();
 }

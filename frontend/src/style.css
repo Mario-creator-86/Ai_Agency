@@ -4841,11 +4841,9 @@ body.is-arming #workspace { opacity: 0; }
   overflow-wrap: anywhere;
 }
 .person-role { font-size: var(--fs-body); color: var(--ink-2); }
-/* the state now, on the portrait, as a game's character card wears it: a chip of the drawers' glass */
+/* Current work state sits with the card facts, leaving the portrait unobstructed. */
 .person-state {
-  position: absolute;
-  left: var(--s1);
-  bottom: var(--s1);
+  justify-self: start;
   display: inline-flex;
   align-items: center;
   gap: var(--s1);
@@ -5186,7 +5184,6 @@ details[open].pf-ok .pf-ok-line .pf-message { white-space: normal; overflow: vis
   width: var(--inspector-portrait-w);
   height: var(--inspector-portrait-h);
 }
-.inspector-portrait .person-state { font-size: var(--fs-micro); }
 .btn-copy-id { margin-left: auto; }
 /* the id left the facts: three of them, three columns */
 @media (min-width: 761px) { #agent-inspector .agent-stats-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
@@ -5204,8 +5201,6 @@ details[open].pf-ok .pf-ok-line .pf-message { white-space: normal; overflow: vis
 @media (max-width: 600px) {
   .dialog-rail { margin: var(--s4) var(--s4) var(--s2); padding: var(--s2); }
   .inspector-head { gap: var(--s3); }
-  /* an 88 px portrait has no room for the chip; the state is the first fact under the header */
-  .inspector-portrait .person-state { display: none; }
   :root { --inspector-portrait-w: 88px; --inspector-portrait-h: 66px; }
   .btn-copy-id { margin-left: 0; }
 }
@@ -6126,3 +6121,65 @@ details[open].pf-ok .pf-ok-line .pf-message { white-space: normal; overflow: vis
 .consequence-body { display: grid; gap: var(--s3); }
 .consequence-question { margin: 0; }
 .consequence-words { margin: 0; font-size: var(--fs-body); color: var(--ink-2); }
+
+/* GPU_STOP_REACHABLE (WP4, 2026-10-09). A modal dialog makes the camera toolbar inert, and the
+   shooting sheet, where every paid RunPod step is approved, stays open while it buys: his press
+   on «Oprește GPU acum» landed on the backdrop while the GPU billed. While a RunPod session is
+   live, the open modal carries its own stop (gpu_switch.js): the state in words, the key, and
+   the answer to his press, which the page's message line behind the modal cannot show. */
+.gpu-switch-dialog {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--s1) var(--s3);
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: min(68ch, 55%);
+  margin-left: auto;
+  align-self: center;
+  padding: var(--s2) var(--s3);
+  border: 1px solid var(--alert-line);
+  border-radius: var(--radius-sm);
+  background: var(--alert-bg);
+}
+/* the colour says whether it bills: a worker running (alert), allowed but idle (warn), unread,
+   or stopped after his press (his answer stays a minute) */
+.gpu-switch-dialog[data-tone="on"] { border-color: var(--alert-ink); }
+.gpu-switch-dialog[data-tone="off"] { border-color: var(--ok-line); background: var(--ok-bg); }
+.gpu-switch-dialog[data-tone="armed"] { border-color: var(--warn-line); background: var(--warn-bg); }
+.gpu-switch-dialog[data-tone="unknown"] { border-color: var(--line-strong); background: var(--surface-quiet); }
+.gpu-switch-dialog .gpu-switch-state {
+  font-size: var(--fs-meta);
+  font-weight: var(--w-semi);
+  line-height: var(--lh-snug);
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.gpu-switch-dialog .gpu-switch-off {
+  min-height: var(--hit);
+  padding: 0 var(--s3);
+  border: 1px solid var(--alert-ink);
+  border-radius: var(--radius-sm);
+  background: var(--alert-bg);
+  color: var(--alert-ink);
+  font-size: var(--fs-meta);
+  font-weight: var(--w-bold);
+  white-space: nowrap;
+}
+.gpu-switch-dialog .gpu-switch-off:hover:not(:disabled) { background: var(--alert-bg-hi); }
+.gpu-switch-said { flex: 1 0 100%; font-size: var(--fs-micro); line-height: var(--lh-snug); color: var(--ok-ink); text-align: right; }
+.gpu-switch-said[data-tone="alert"] { color: var(--warn-ink); }
+/* among the inspector's header keys it is one key more; a question box without a header
+   carries it above its words */
+.dialog-header-actions > .gpu-switch-dialog { margin-left: 0; max-width: 40ch; }
+.studio-dialog > .gpu-switch-dialog { max-width: none; margin: var(--s4) var(--s5) 0; }
+@media (max-width: 600px) {
+  /* the phone header has no room beside the title: the stop takes its own row under it */
+  .dialog-header:has(> .gpu-switch-dialog:not([hidden])) { flex-wrap: wrap; }
+  /* the title keeps its row beside the close key; only the stop moves under them */
+  .dialog-header:has(> .gpu-switch-dialog:not([hidden])) > div:not(.gpu-switch-dialog) { flex: 1 1 0; }
+  .dialog-header > .gpu-switch-dialog { order: 3; flex: 1 0 100%; max-width: none; justify-content: space-between; }
+  .gpu-switch-said { text-align: left; }
+}

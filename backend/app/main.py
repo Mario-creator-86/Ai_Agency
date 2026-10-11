@@ -751,6 +751,7 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
             # The Media dialog plays a film from the bytes it fetched with the Owner's key, as a
             # blob: URL; without media-src the default 'self' refused it on the real server.
             "media-src 'self' blob:; "
+            "frame-src https://www.youtube-nocookie.com; "
             "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
         )
         logger.info(
