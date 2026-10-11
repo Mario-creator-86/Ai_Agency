@@ -2447,33 +2447,51 @@ def need_from_scene(scene: Mapping[str, Any], total_scenes: int) -> SceneNeed:
 # ------------------------------------------------------------------ what a model can cover
 
 
+#: A filmed scene no clip of its model carries, even slowed down locally: the shooting sheet
+#: blocks the film on it before anything is bought, and the Director's repair rewrites the
+#: story with the scene split (`sheet_story_repair`), never a question to the Owner.
+SCENE_TOO_LONG = "SCENE_TOO_LONG"
+
+
 def _price(
     capability: ModelCapability,
     need: SceneNeed,
     resolution: str,
     table: cost_plan.PriceTable,
-) -> tuple[int | None, int | None, str | None, cost_plan.PriceRow | None]:
-    """Credits and billed seconds for this model on this scene, or why it cannot be bought."""
+) -> tuple[int | None, int | None, str | None, cost_plan.PriceRow | None, int | None]:
+    """Credits and billed seconds for this model on this scene, or why it cannot be bought;
+    last, the model's longest clip when it cannot because no clip of it carries the scene even
+    slowed down locally (else None).
+
+    A scene longer than the model's longest clip is billed at that clip when slowing it down
+    by at most SLOWDOWN_ALLOWANCE fills the scene (`cost_plan.slowed_clip_seconds`): the
+    assembly slows it at 0 USD (film 6fe6a577, 2026-10-10)."""
+    model, contract = capability.model_id, capability.seconds
     try:
-        row = table.row(capability.model_id, resolution)
+        row = table.row(model, resolution)
     except cost_plan.UnpricedError:
-        return None, None, f"nu are preț publicat la {resolution}", None
+        return None, None, f"nu are preț publicat la {resolution}", None, None
     if row.kind != "video":
-        return None, None, "nu face mișcare", None
+        return None, None, "nu face mișcare", None, None
     try:
-        billed = cost_plan.billable_seconds(
-            capability.model_id, need.seconds, table=table, contract=capability.seconds
-        )
-        credits = cost_plan.price_shot(
-            capability.model_id,
-            resolution,
-            need.seconds,
-            table=table,
-            contract=capability.seconds,
-        )
+        billed = cost_plan.billable_seconds(model, need.seconds, table=table, contract=contract)
     except cost_plan.UnpricedError:
-        return None, None, f"nu ține {_ro_seconds(need.seconds)} într-un singur cadru", row
-    return credits, billed, None, row
+        slowed = cost_plan.slowed_clip_seconds(model, need.seconds, table=table, contract=contract)
+        if slowed is None:
+            longest = cost_plan.longest_seconds(model, table=table, contract=contract)
+            reason = f"nu ține {_ro_seconds(need.seconds)} într-un singur cadru"
+            if longest is not None:
+                reason += (
+                    ", nici încetinit local (cel mult "
+                    f"{_ro_seconds(longest * (1 + cost_plan.SLOWDOWN_ALLOWANCE))})"
+                )
+            return None, None, reason, row, longest
+        billed = slowed
+    try:
+        credits = cost_plan.price_shot(model, resolution, billed, table=table, contract=contract)
+    except cost_plan.UnpricedError:
+        return None, None, f"nu ține {_ro_seconds(need.seconds)} într-un singur cadru", row, None
+    return credits, billed, None, row, None
 
 
 def _shortfalls(
@@ -2641,7 +2659,7 @@ def _choose_scene(
 
     candidates: list[dict[str, Any]] = []
     for capability in capabilities.values():
-        credits, billed, unpriced, row = _price(capability, need, resolution, table)
+        credits, billed, unpriced, row, longest = _price(capability, need, resolution, table)
         why, quality, only_quality = _shortfalls(
             capability, need, resolution, allowed=allowed, refused_here=refused_here
         )
@@ -2657,12 +2675,23 @@ def _choose_scene(
                 "priced": credits is not None,
                 # Buyable in every way but its quality for this scene's tier.
                 "near": only_quality and credits is not None,
+                # Its longest clip, when no clip of it carries the scene even slowed down and
+                # nothing but the length (and its quality) keeps it from filming the scene.
+                "longest": longest if not why or only_quality else None,
             }
         )
     by_id = {c["model_id"]: c for c in candidates}
+    # A clip bought shorter than the scene and slowed at assembly is the fallback for a scene
+    # no capable model films whole, never a saving over one that does: slowing costs picture
+    # (a 12 s scene stays on seedance2's 12 s clip, not on wan3's 10 s slowed by 20 %).
     capable = sorted(
         (c for c in candidates if not c["why"]),
-        key=lambda c: (c["credits"], -c["quality"], c["model_id"]),
+        key=lambda c: (
+            float(c["billed_seconds"]) < float(need.seconds) - 1e-9,
+            c["credits"],
+            -c["quality"],
+            c["model_id"],
+        ),
     )
     entry["excluded"] = [
         {"model_id": c["model_id"], "why_ro": "; ".join(c["why"]), "credits": c["credits"]}
@@ -2705,6 +2734,44 @@ def _choose_scene(
         ]
         if better:
             entry["better"] = _option(better[0], table)
+        clip = int(chosen["billed_seconds"])
+        if clip < need.seconds - 1e-9 and not bought:
+            # Billed at the model's longest clip (`_price`): the assembly slows it into the
+            # scene, at 0 USD, by at most SLOWDOWN_ALLOWANCE. Said where the price is said.
+            percent = math.ceil((float(need.seconds) / clip - 1.0) * 100 - 1e-6)
+            entry["slowed"] = {
+                "clip_seconds": clip,
+                "needed_seconds": round(float(need.seconds), 3),
+                "percent": percent,
+            }
+            entry["reason_ro"] = (
+                f"{reason} Scena cere {_ro_seconds(need.seconds)}, peste cele {clip} s pe care "
+                f"{chosen['model_id']} le filmează într-un cadru: clipul de {clip} s se "
+                f"încetinește local la asamblare (cu până la {percent}%), 0 USD."
+            )
+
+    def too_long(chosen: dict[str, Any] | None) -> None:
+        # No clip of the model that would film this scene carries it, even slowed down: the
+        # sheet blocks the film before anything is bought (SCENE_TOO_LONG) and the Director's
+        # repair splits the scene in the story. A bought scene is past that.
+        if chosen is None or chosen.get("longest") is None or bought:
+            return
+        longest = int(chosen["longest"])
+        limit = longest * (1 + cost_plan.SLOWDOWN_ALLOWANCE)
+        entry["too_long"] = {
+            "model_id": chosen["model_id"],
+            "seconds": round(float(need.seconds), 3),
+            "longest_seconds": longest,
+            "limit_seconds": round(limit, 3),
+            "reason_ro": (
+                f"Scena {need.scene_index} cere un cadru de {_ro_seconds(need.seconds)}; "
+                f"{chosen['model_id']} filmează cel mult "
+                f"{longest} s într-un cadru, iar studioul îl încetinește local cu cel mult "
+                f"{round(cost_plan.SLOWDOWN_ALLOWANCE * 100)}% ({_ro_seconds(limit)}). Nu se "
+                "cumpără nimic pentru film: Directorul rescrie povestea cu scena împărțită în "
+                "scene mai scurte."
+            ),
+        }
 
     def hold(status: str, reason: str) -> None:
         # A scene that waits has no model and no price; what it would have been is kept
@@ -2783,6 +2850,7 @@ def _choose_scene(
                 "Profilul RunPod selectat nu poate filma această scenă: "
                 + "; ".join(chosen["why"] if chosen else ["indisponibil"]),
             )
+            too_long(chosen)
             return entry
         take(
             chosen,
@@ -2800,6 +2868,7 @@ def _choose_scene(
                 "Profilul local selectat nu poate filma această scenă: "
                 + "; ".join(chosen["why"] if chosen else ["indisponibil"]),
             )
+            too_long(chosen)
             return entry
         take(
             chosen,
@@ -2862,6 +2931,14 @@ def _choose_scene(
             "Niciun model din setul aprobat nu poate filma această scenă: "
             + " | ".join(f"{e['model_id']}: {e['why_ro']}" for e in entry["excluded"])
             + ". Decide Proprietarul (alt model sau mișcare locală).",
+        )
+        # Only its length keeps a model from the scene: the one with the longest clip.
+        too_long(
+            max(
+                (c for c in candidates if c["longest"] is not None),
+                key=lambda c: (c["longest"], c["model_id"]),
+                default=None,
+            )
         )
         return entry
 

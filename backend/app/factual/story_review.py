@@ -41,7 +41,7 @@ from app.factual.grounding import grounding_check, script_grounding
 from app.factual.models import ScriptDraft, StoryReview
 from app.factual.sanitizer import wrap_in_inert_boundary
 from app.services import append_event, utc_now
-from app.wording import review_verdict
+from app.wording import count, decimal, review_verdict
 
 logger = logging.getLogger("studio.story_review")
 
@@ -239,6 +239,55 @@ def _script_facts(session: Session, script: ScriptDraft) -> dict[str, Any]:
     }
 
 
+def scene_clip_check(engine: Engine, scenes: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Whether every filmed scene fits one clip of the studio's motion model, slowed down
+    locally by at most SLOWDOWN_ALLOWANCE; None when no motion model is selected.
+
+    2026-10-10 (film «How NASA Keeps a Space Telescope Alive With Frozen Fuel»): two scenes
+    carried words for 11.1 s and 12.5 s of clip under a model whose clips end at 10 s, and
+    nothing said so until the shooting sheet, after the story had passed. The length is
+    estimated as the motion step will buy it (`assembler.script_clip_seconds`), and the
+    refusal names each scene's seconds, so the writer splits it in the next draft."""
+    from app.media.assembler import script_clip_seconds, spoken_words  # noqa: PLC0415
+    from app.media.cost_plan import SLOWDOWN_ALLOWANCE  # noqa: PLC0415
+    from app.media.shooting_sheet import motion_clip_limit  # noqa: PLC0415 - media reads us
+
+    limit = motion_clip_limit(engine)
+    if limit is None:
+        return None
+    model_id, longest = limit
+    most = longest * (1 + SLOWDOWN_ALLOWANCE)
+    over = [
+        (position, seconds)
+        for position, seconds in script_clip_seconds(scenes).items()
+        if seconds > most + 1e-9
+    ]
+    if not over:
+        return {
+            "passed": True,
+            "reason": (
+                f"Fiecare scenă filmată încape într-un cadru de {model_id} (cel mult "
+                f"{decimal(most)} s, încetinit local)."
+            ),
+        }
+
+    def refusal(position: int, seconds: float) -> str:
+        scene = scenes[position - 1]
+        said = spoken_words(str(scene.get("narration") or scene.get("voiceover_segment") or ""))
+        return (
+            f"Scena {position} cere un cadru de {decimal(seconds)} s "
+            f"({count(said, 'cuvânt rostit', 'cuvinte rostite')}); {model_id} filmează cel mult "
+            f"{longest} s într-un cadru, iar studioul îl încetinește local cu cel mult "
+            f"{round(SLOWDOWN_ALLOWANCE * 100)}% ({decimal(most)} s). Împarte scena în două "
+            "scene, fiecare cu imaginea ei, sau scurtează-i narațiunea."
+        )
+
+    return {
+        "passed": False,
+        "reason": " ".join(refusal(position, seconds) for position, seconds in over),
+    }
+
+
 def review_story(
     engine: Engine,
     registry: Any,
@@ -274,6 +323,9 @@ def review_story(
         # write the film its claims allow, and the notes say which claim went unsaid.
         if facts["grounding"] is not None:
             checks["narration_is_grounded"] = grounding_check(facts["grounding"])
+        fits = scene_clip_check(engine, list(script.scenes_json or []))
+        if fits is not None:
+            checks["every_scene_fits_one_clip"] = fits
         earlier = session.scalar(
             select(StoryReview).where(StoryReview.script_id == script_id).limit(1)
         )

@@ -95,7 +95,10 @@ def repair_story(
         passed, why = story_gate(session, script_id)
         review = latest_review(session, script_id)
         notes = list((review.notes_json or {}).get("notes") or []) if review else []
-    visual_rewrite = [i for i in issues if i["code"] in ("KIND_MISMATCH", "CARD_INVALID")]
+    # SCENE_TOO_LONG (2026-10-10): a scene no clip of the motion model carries, even slowed
+    # down locally. No prompt makes it shorter; the story is rewritten with the scene split.
+    split = [i for i in issues if i["code"] == "SCENE_TOO_LONG"]
+    visual_rewrite = split + [i for i in issues if i["code"] in ("KIND_MISMATCH", "CARD_INVALID")]
     if passed and not visual_rewrite and script_id == original_script_id:
         return None
     if not passed and review is None:
@@ -112,6 +115,15 @@ def repair_story(
             "Repair this existing film, preserving its topic, supported facts and language. "
             "Describe chart scenes as DATA_CARD with a valid card specification and cited "
             "values; reserve LIVE for actual pictures. Do not invent new facts.",
+            *(
+                [
+                    "A scene named below is longer than one clip of the video model can carry: "
+                    "split it into two scenes, each with its own picture and part of its "
+                    "narration, without adding facts."
+                ]
+                if split
+                else []
+            ),
             *notes[:5],
             *[i["detail"] for i in visual_rewrite[:2]],
         ]

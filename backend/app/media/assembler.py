@@ -56,6 +56,7 @@ from app.media.cards import (
     film_finish,
 )
 from app.media.cost_plan import (
+    SLOWDOWN_ALLOWANCE,
     STILL_CANDIDATES,
     STILLS_MODEL,
     STILLS_RESOLUTION,
@@ -1767,9 +1768,11 @@ def _dither_chain(dither: bool) -> str:
 # (framerate) left none but ghosted the edges of the walking figure; motion-compensated
 # interpolation (minterpolate, mci) left none, kept the edges, and took 13 s for the shot.
 
-#: How much longer than its clip a shot may be and still be filled by slowing the clip down:
-#: a 5.0 s clip covers a span of up to 6.25 s.
-SLOWDOWN_ALLOWANCE = 0.25
+# How much longer than its clip a shot may be and still be filled by slowing the clip down
+# (a 5.0 s clip covers a span of up to 6.25 s) is SLOWDOWN_ALLOWANCE, imported from
+# `cost_plan`: the planner prices a scene longer than its model's longest clip at that clip
+# when this slow-down fills it (2026-10-10), so both read one number.
+
 #: Frames asked of the interpolation beyond the span: at the exact factor it delivered 140 and
 #: 141 of the 142 frames needed (2026-10-10); the trim then cuts the span exactly.
 SLOWDOWN_EXTRA_FRAMES = 2
@@ -4466,13 +4469,8 @@ def clip_plan(
         found = lengths.get(index)
         if found is not None:
             said, source = found
-            margin = (
-                said * NARRATION_ESTIMATE_MARGIN
-                if source == NARRATION_ESTIMATED
-                else MEASURED_NARRATION_MARGIN_SECONDS
-            )
             dissolve = joins[position + 1] if position + 1 < len(joins) else 0.0
-            voiced = round(whole_frames(said + SPOKEN_TAIL_SECONDS + dissolve + margin, up=True), 3)
+            voiced = _voiced_clip_seconds(said, source, dissolve)
             entry["spoken_seconds"] = round(said, 3)
             if voiced > planned:
                 entry.update(seconds=voiced, source=source)
@@ -4482,6 +4480,38 @@ def clip_plan(
             if refused > float(entry["seconds"]):
                 entry.update(seconds=refused, source=NARRATION_REFUSED)
         sizes[index] = entry
+    return sizes
+
+
+def _voiced_clip_seconds(said: float, source: str, dissolve: float) -> float:
+    """The clip ``said`` seconds of words need: the words, the breath, the dissolve into the
+    next scene and the margin of where the length comes from (``source``), on whole frames."""
+    margin = (
+        said * NARRATION_ESTIMATE_MARGIN
+        if source == NARRATION_ESTIMATED
+        else MEASURED_NARRATION_MARGIN_SECONDS
+    )
+    return round(whole_frames(said + SPOKEN_TAIL_SECONDS + dissolve + margin, up=True), 3)
+
+
+def script_clip_seconds(scenes: Sequence[dict[str, Any]]) -> dict[int, float]:
+    """Per filmed scene of a script (by position, from 1, as its storyboard numbers them), the
+    clip `clip_plan` will buy for it before a word is voiced: its words estimated, plus the
+    breath, the dissolve into the next scene and the estimate's margin; never shorter than a
+    plan the scene states. What the story review reads a scene's length against its motion
+    model's longest clip by (2026-10-10, film 6fe6a577)."""
+    joins = scene_joins(list(scenes))
+    sizes: dict[int, float] = {}
+    for position, scene in enumerate(scenes):
+        if is_composed(scene):
+            continue
+        said = estimated_narration_seconds(
+            str(scene.get("narration") or scene.get("voiceover_segment") or "")
+        )
+        dissolve = joins[position + 1] if position + 1 < len(joins) else 0.0
+        voiced = _voiced_clip_seconds(said, NARRATION_ESTIMATED, dissolve) if said > 0 else 0.0
+        planned = motion_seconds(scene) if scene.get("duration_seconds") else 0.0
+        sizes[position + 1] = max(voiced, planned)
     return sizes
 
 

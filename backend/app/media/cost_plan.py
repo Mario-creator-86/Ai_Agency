@@ -66,6 +66,13 @@ ALTERNATIVES: tuple[tuple[str | None, str], ...] = (
 #: Scene kinds composed locally: no still, no motion, no credit.
 LIVE = "LIVE"
 
+#: How much longer than its clip a shot may be and still be filled by slowing the clip down
+#: locally at assembly (the Owner's «Încetinește local», 2026-10-09: a 5.0 s clip covers a
+#: span of up to 6.25 s). Here because the planner prices a scene longer than its model's
+#: longest clip at that clip when the slow-down fills it (`slowed_clip_seconds`); the
+#: assembler, which does the slowing, reads the same number.
+SLOWDOWN_ALLOWANCE = 0.25
+
 _EPSILON = 1e-9
 
 
@@ -206,6 +213,46 @@ def billable_seconds(
     if high is not None and whole > int(high):
         raise UnpricedError(f"{model_id} nu acceptă {whole} s într-un singur cadru (max {high})")
     return whole
+
+
+def longest_seconds(
+    model_id: str,
+    *,
+    table: PriceTable | None = None,
+    contract: Mapping[str, Any] | None = None,
+) -> int | None:
+    """The longest single clip the model accepts (its contract's ``max``, or its longest
+    ``values``), read like `billable_seconds` reads it; None when the rule sets no maximum."""
+    rule = contract if contract is not None else _table(table).seconds.get(model_id)
+    if not rule:
+        return None
+    values = rule.get("values")
+    if values:
+        return max(int(v) for v in values)
+    high = rule.get("max")
+    return int(high) if high is not None else None
+
+
+def slowed_clip_seconds(
+    model_id: str,
+    seconds: float,
+    *,
+    table: PriceTable | None = None,
+    contract: Mapping[str, Any] | None = None,
+) -> int | None:
+    """The clip to buy for a shot of ``seconds`` longer than the model's longest clip: that
+    longest clip, when slowed down locally by at most SLOWDOWN_ALLOWANCE it fills the shot;
+    None when even that is too short (or the model has no maximum).
+
+    2026-10-10 (film «How NASA Keeps a Space Telescope Alive With Frozen Fuel»): scenes 3 and
+    4 needed 11.1 s and 12.5 s of LTX-2.5, whose clips end at 10 s. The sheet held them for the
+    Owner while the steps bought the other scenes' stills, test shot and clips, and the film
+    could never be assembled. A 10 s clip slowed by 25% fills 12.5 s at 0 USD, so that is the
+    clip the planner prices and the step buys."""
+    longest = longest_seconds(model_id, table=table, contract=contract)
+    if longest is None or float(seconds) > longest * (1.0 + SLOWDOWN_ALLOWANCE) + _EPSILON:
+        return None
+    return longest
 
 
 def _credits(amount: float) -> int:

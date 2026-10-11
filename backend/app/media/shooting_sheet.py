@@ -115,6 +115,7 @@ from app.media.cost_plan import (
     UnpricedError,
     credits_to_micros,
     load_price_table,
+    longest_seconds,
     plan_film,
     price_still,
     source_label,
@@ -123,6 +124,7 @@ from app.media.models import FilmPurchaseLease, SceneTake, Storyboard, Storyboar
 from app.media.production_policy import (
     COMPOSED_LABELS_RO,
     LOCAL_MOVE,
+    SCENE_TOO_LONG,
     ModelCapability,
     load_film_models,
     need_from_scene,
@@ -130,6 +132,7 @@ from app.media.production_policy import (
 )
 from app.media.prompt_lint import (
     BLOCK,
+    Finding,
     LintScene,
     bible_face_rule,
     has_block,
@@ -1270,6 +1273,10 @@ def _sheet(
                 "suggested",
                 "warnings_ro",
                 "excluded",
+                # A clip bought at the model's longest and slowed at assembly, or a scene no
+                # clip carries even slowed (`production_policy._choose_scene`).
+                "slowed",
+                "too_long",
             )
         }
         motion["seed"] = seed if kind == "LIVE" else None
@@ -1382,6 +1389,23 @@ def _sheet(
         )
 
     findings = lint_film(lint_scenes, bible=bible)
+    # 2026-10-10 (film 6fe6a577): a scene no clip of its model carries, even slowed down
+    # locally, held only itself for the Owner while the steps would buy the film's stills,
+    # test shot and other clips, and the assembly could never cut it. It now blocks the whole
+    # sheet before anything is bought, like a prompt BLOCK: the staircase refuses LINT_BLOCKED
+    # (HELD, not his question), and the sheet's issue scan hands it to the Director, whose
+    # repair rewrites the story with the scene split (`sheet_story_repair`).
+    findings += [
+        Finding(
+            code=SCENE_TOO_LONG,
+            severity=BLOCK,
+            scene=index,
+            evidence=f"{entry['too_long']['seconds']} s",
+            message_ro=str(entry["too_long"]["reason_ro"]),
+        )
+        for index, entry in sorted(chosen.items())
+        if entry.get("too_long")
+    ]
     per_scene: dict[int, list[dict[str, Any]]] = {}
     for finding in findings:
         if finding.scene is not None:
@@ -4159,6 +4183,31 @@ def connection_capabilities(engine: Engine, integration_id: str | None) -> list[
 
     with Session(engine) as session:
         return scene_model_capabilities(session, integration_id)
+
+
+def motion_clip_limit(engine: Engine) -> tuple[str, int] | None:
+    """The motion model the studio films with and its longest single clip: the cloud profile
+    the Owner selected, else the local one (the order the per-scene choice takes them in),
+    else the longest clip among the models he allows. None when no connection is selected or
+    no model states a maximum: there is nothing to measure a scene against. Reads only."""
+    integration_id = runway_connection_id(engine)
+    capabilities = connection_capabilities(engine, integration_id)
+    if not capabilities:
+        return None
+    table = price_table_for(engine, integration_id)
+    selected = [c for c in capabilities if c.selected_default and not c.local_generation] or [
+        c for c in capabilities if c.selected_default and c.local_generation
+    ]
+    candidates = selected[:1] or [c for c in capabilities if c.owner_allowed and c.admitted]
+    limits: list[tuple[int, str]] = []
+    for capability in candidates:
+        longest = longest_seconds(capability.model_id, table=table, contract=capability.seconds)
+        if longest is not None:
+            limits.append((longest, capability.model_id))
+    if not limits:
+        return None
+    most, model_id = max(limits)
+    return model_id, most
 
 
 def connection_account(engine: Engine, vault: Any, integration_id: str | None) -> Any:
