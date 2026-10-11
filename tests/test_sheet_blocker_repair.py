@@ -206,6 +206,67 @@ def test_a_changed_sheet_is_not_rewritten_from_stale_instructions(engine, film, 
     assert repair.process_sheet_repair(engine, object(), queued.payload)["status"] == "STALE"
 
 
+def continuations(engine) -> list[TaskQueueItem]:
+    from app.services import FILM_CONTINUE_TASK
+
+    with Session(engine) as session:
+        rows = list(
+            session.scalars(
+                select(TaskQueueItem).where(TaskQueueItem.task_type == FILM_CONTINUE_TASK)
+            )
+        )
+        session.expunge_all()
+        return rows
+
+
+def test_a_resolved_repair_queues_the_films_continuation_once_in_production(engine, film):
+    """2026-10-11 (the serial's board f06808c9): its repair ended RESOLVED and nothing walked
+    the film until the next start or the next morning. The sheet's own work done, the film is
+    walked on: one continuation per repair, PRODUCTION only (TEST has nothing to buy)."""
+    reading = sheet(engine, film)
+    repair.submit_sheet_issues(engine, reading)
+    queued = task(engine)
+
+    # TEST: nothing to continue there.
+    done = repair._finish(engine, queued.payload, "RESOLVED", [], "Foaia e curată.", "c-1")
+    assert done["continue_task_id"] is None and continuations(engine) == []
+
+    with Session(engine) as session, session.begin():
+        session.get(OwnerPolicy, 1).environment = "PRODUCTION"
+        # The first attempt ran to its end; a changed sheet gets a new report and task.
+        session.get(TaskQueueItem, queued.id).status = "COMPLETED"
+    again = repair.submit_sheet_issues(engine, {**reading, "sheet_hash": str(uuid4())})
+    with Session(engine) as session:
+        payload = dict(session.get(TaskQueueItem, again["task_id"]).payload)
+    done = repair._finish(engine, payload, "RESOLVED", [], "Foaia e curată.", "c-2")
+    (one,) = continuations(engine)
+    assert done["continue_task_id"] == one.id
+    assert one.payload["storyboard_id"] == film
+    assert one.payload["cause"] == repair.REPAIRED_CAUSE
+    assert one.payload["message_id"] == payload["message_id"]
+
+    # Asked again for the same repair (the scan's own re-check): the standing one, not two.
+    with Session(engine) as session, session.begin():
+        assert repair._continue_repaired_film(session, payload, "c-3") == one.id
+    assert len(continuations(engine)) == 1
+
+
+def test_a_rendered_or_unresolved_sheet_queues_no_continuation(engine, film):
+    reading = sheet(engine, film)
+    repair.submit_sheet_issues(engine, reading)
+    queued = task(engine)
+    with Session(engine) as session, session.begin():
+        session.get(OwnerPolicy, 1).environment = "PRODUCTION"
+
+    done = repair._finish(engine, queued.payload, "UNRESOLVED", [], "Rămân blocaje.", "c-1")
+    assert "continue_task_id" not in done and continuations(engine) == []
+
+    with Session(engine) as session, session.begin():
+        session.get(Storyboard, film).status = "RENDERED"
+    done = repair._finish(engine, queued.payload, "RESOLVED", [], "Foaia e curată.", "c-2")
+    assert done["continue_task_id"] is None and continuations(engine) == []
+
+
 def test_repairs_continue_beyond_two_attempts_without_asking_the_owner(engine, film):
     """Up to the day's ceiling on the same blockers (`MAX_SAME_ISSUES_PER_DAY`, each attempt
     after its back-off), the repair goes on by itself; nothing asks the Owner."""

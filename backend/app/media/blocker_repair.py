@@ -606,6 +606,39 @@ def _film_title(session: Session, storyboard_id: str) -> str:
     return title or storyboard_id[:8]
 
 
+#: The cause on the continuation a RESOLVED repair queues (`runbook.film_continued`).
+REPAIRED_CAUSE = "sheet_repaired"
+
+
+def _continue_repaired_film(
+    session: Session, payload: dict[str, Any], correlation: str
+) -> str | None:
+    """The film walked on once its sheet's own work is done, inside the repair's transaction.
+
+    2026-10-11 (the serial's board f06808c9): its repair ended RESOLVED and nothing walked the
+    film — the pass that walks a film stopped by its sheet does so once after each start, and
+    the day's run would be the next morning's. The Owner: the agency does not stand idle, and
+    finishing a film the studio already began is unfinished work, not new work. One
+    continuation per repair (its report's id in the key), PRODUCTION only
+    (`queue_film_continue`), never a film closed or already rendered: the walk asks for
+    anything paid under his rule, behind his stop, safe mode and his mode."""
+    from app.services import queue_film_continue  # noqa: PLC0415 - services imports media
+
+    storyboard_id = str(payload["storyboard_id"])
+    if film_is_closed(session, storyboard_id):
+        return None
+    board = session.get(Storyboard, storyboard_id)
+    if board is None or board.status in ("RENDERED", "REJECTED"):
+        return None
+    key = f"film-continue-{storyboard_id}-sheet-repaired-{payload.get('message_id') or correlation}"
+    return queue_film_continue(
+        session,
+        storyboard_id,
+        key=key,
+        payload={"cause": REPAIRED_CAUSE, "message_id": payload.get("message_id")},
+    )
+
+
 def _finish(
     engine: Engine,
     payload: dict[str, Any],
@@ -683,6 +716,8 @@ def _finish(
                         resolved_by="verificarea foii",
                         correlation_id=correlation,
                     )
+            # The sheet's own work done: the film goes on tonight (2026-10-11, f06808c9).
+            result["continue_task_id"] = _continue_repaired_film(session, payload, correlation)
         append_event(
             session, FINISHED_EVENT, "storyboard", payload["storyboard_id"], 1, result, correlation
         )
