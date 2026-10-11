@@ -1503,8 +1503,16 @@ def _identity(character: dict[str, Any], limit: int) -> str:
             break
         kept.add(extra)
         size += len(extra) + 2
-    # Said in the bible's order: the whole face, then the clothes.
-    return _fit(name + ", ".join(part for part in face + outfit if part in kept), limit)
+    # Said in the bible's order: the whole face, then the clothes. A clause that does not
+    # fit whole is left out, never cut in the middle: «Tousled wavy dark hair, wearing;» and
+    # «Brunette professional bob with.» were what the first episode's stills said of their
+    # people (2026-10-11, f06808c9).
+    parts = [part for part in face + outfit if part in kept]
+    text = name + ", ".join(parts)
+    while len(text) > limit and len(parts) > 1:
+        parts.pop()
+        text = name + ", ".join(parts)
+    return _clean_cut(_fit(text, limit))
 
 
 def _serial_package(
@@ -1590,16 +1598,81 @@ def _serial_package(
     return package
 
 
+#: How a serial still fills the tall frame: one picture, the people high in it. The first
+#: episode's stills of scenes 3, 4 and 7 (2026-10-11, f06808c9) came back as the same picture
+#: three times, stacked, on both candidates: their prompts described a camera path over time
+#: and a chain of moments, and said nothing of the frame; scenes 1 and 2, one moment each,
+#: were fine. The factual compile says the same of its frame (COMPOSITION_SENTENCE).
+SERIAL_FRAME_SENTENCE = (
+    "One continuous picture fills the whole tall frame, the people in its upper two thirds."
+)
+#: A function word left hanging at the end of a cut phrase ("wearing", "with", "in a").
+_DANGLING_TAIL = re.compile(
+    r"(?:\s+\b(?:wearing|with|in|a|an|the|and|or|but|over|of|on|at|to|for|under|as|his|her"
+    r"|their|its)\b)+$",
+    re.IGNORECASE,
+)
+
+
+def _clean_cut(text: str) -> str:
+    """A cut phrase without a function word hanging at its end."""
+    return _DANGLING_TAIL.sub("", text.rstrip(" ,;:-")).rstrip(" ,;:-")
+
+
+def _still_moment(action: str) -> str:
+    """The first moment of a serial beat's action, for its still: each person's clause up to
+    its first later moment («then», «finally», «eventually», «next,»), a clause that opens
+    with a later moment left out. An image model draws a chain of moments as stacked panels
+    (2026-10-11, f06808c9); the whole chain is the motion prompt's (`compose_serial_motion`)."""
+    kept: list[str] = []
+    for clause in re.split(r";\s*", " ".join(str(action or "").split()).rstrip(". ")):
+        part = clause.strip()
+        if not part or lint.SEQUENCE_OPENER.match(part):
+            continue
+        marks = [
+            found.start()
+            for found in (lint.STILL_THEN.search(part), lint.LATER_MOMENT.search(part))
+            if found
+        ]
+        if marks:
+            part = _then_head(part, min(marks))
+        part = _clean_cut(part)
+        if part:
+            kept.append(part)
+    return "; ".join(kept)
+
+
+def _serial_framing(package: dict[str, Any], look: dict[str, Any], focus: str) -> str:
+    """The still's camera: the look's fixed framing for the shot's size, the focus named;
+    without a look, the first clause of the plan's camera (its framing, before its path)."""
+    sizes = look.get("shot_sizes") or {}
+    framing = str(sizes.get(str(package.get("shot_size") or "")) or "").replace("{name}", focus)
+    framing = " ".join(framing.split()).rstrip(". ")
+    if framing:
+        return framing
+    camera = " ".join(str(package.get("camera") or "").split())
+    return _clean_cut(re.split(r"[,;:]", camera, maxsplit=1)[0]) if camera else ""
+
+
 def compose_serial_prompt(package: dict[str, Any], look: dict[str, Any]) -> str:
     """The text the model receives for a serial shot, the series' look first, word for word.
 
-    Then the room, the camera, the people in frame (each as their bible describes them) and
-    the action; then, while there is room, the expression, the background, the continuity and
-    the exclusions. The people are given less of their description, and then the action less
-    of its words, until the prompt fits the look's cap: the look and the room never shrink.
+    Then the room, the fixed framing for the shot's size, how one picture fills the tall
+    frame, the people in frame (each as their bible describes them) and the first moment of
+    the action; then, while there is room, the expression, the background and the continuity.
+    The people are given less of their description, and then the action less of its words,
+    until the prompt fits the look's cap: the look, the room and the frame never shrink.
+
+    2026-10-11 (f06808c9): the stills of scenes 3, 4 and 7 came back as the same picture
+    three times, stacked, on both candidates. Their prompts carried the plan's camera as a
+    path over time («a slow tilt down from her face to the ledger and back up») and the
+    action as a chain («taps …, pauses …, then lays the pen flat»): an image model draws a
+    chain as panels. The path's move and the whole chain are the motion prompt's.
     """
     cap = int(look.get("max_prompt_chars") or 900)
-    camera = " ".join(str(package.get("camera") or "").split()).rstrip(". ")
+    people = [c for c in package.get("in_frame") or [] if isinstance(c, dict)]
+    focus = _short_name(people[0].get("name")) if people else "the speaker"
+    framing = _serial_framing(package, look, focus)
     # Said in sentences, never under a template label: «Camera:» and «Action:» were the
     # rubrics the first episode's stills carried (2026-10-11, f06808c9), the prompt check
     # refused them (TEMPLATE_LABEL) on every rewrite, and the Director and the Video Editor
@@ -1607,10 +1680,10 @@ def compose_serial_prompt(package: dict[str, Any], look: dict[str, Any]) -> str:
     head = [
         str(look.get("block") or "").strip(),
         f"Location: {package['location']}." if package.get("location") else "",
-        _sentence(camera) if camera else "",
+        _sentence(framing) if framing else "",
+        SERIAL_FRAME_SENTENCE,
     ]
-    people = [c for c in package.get("in_frame") or [] if isinstance(c, dict)]
-    action = " ".join(str(package.get("action") or "").split())
+    action = _still_moment(str(package.get("action") or ""))
     if action and not action.endswith("."):
         action += "."
 
@@ -1630,8 +1703,8 @@ def compose_serial_prompt(package: dict[str, Any], look: dict[str, Any]) -> str:
         text = build(per, action)
     if len(text) > cap and action:
         room = len(action) - (len(text) - cap)
-        text = build(per, _fit(action, room - 1) + "." if room > 20 else "")
-    text = _fit(text, cap)
+        text = build(per, _clean_cut(_fit(action, room - 1)) + "." if room > 20 else "")
+    text = _clean_cut(_fit(text, cap))
     # The exclusions are the look's own words already ("No written words ..."); a list of
     # them under «Avoid:» is read literally by an image model and is never said here.
     for prefix, value in (

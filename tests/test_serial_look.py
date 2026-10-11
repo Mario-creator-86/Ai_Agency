@@ -15,6 +15,7 @@ Every model here is a fake that answers from memory: nothing is sent to a vendor
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -128,6 +129,22 @@ SHOT = {
     "emotion": "Kael tense, Sarah amused",
     "background": "Elena at her desk behind the glass",
     "continuity": "same seats as the previous shot",
+}
+
+
+#: The plan as the model wrote it for the first episode's scene 4 (f06808c9, 2026-10-11): the
+#: camera a path over time, the action a chain of moments; both stills came back as the same
+#: picture three times, stacked.
+SEQUENCE_SHOT = {
+    **SHOT,
+    "camera": (
+        "Medium close-up on Nadia, a slow tilt down from her face to the ledger and back up "
+        "as she speaks, ending on her eyes behind the tortoiseshell glasses"
+    ),
+    "action": (
+        "Nadia taps the brass pen once against the green ledger, pauses before the number, "
+        "then lays the pen flat; Sarah leans in a fraction as she asks her question"
+    ),
 }
 
 
@@ -354,6 +371,67 @@ def test_a_new_look_version_has_the_shots_described_again(engine, staffed, monke
     for scene in scenes_of(engine, board_id):
         assert scene.visual_prompt.startswith("Claymation, warm light. Vertical 9:16.")
         assert scene.prompt_json["series_look_version"] == 3
+
+
+def test_a_serial_still_is_one_moment_in_a_fixed_frame(engine, staffed, monkeypatch):
+    """2026-10-11 (f06808c9): scenes 3, 4 and 7 came back as the same picture three times,
+    stacked, on both candidates — their stills described a camera path and a chain of
+    moments, which an image model draws as panels; scenes 1 and 2, one moment each, were
+    fine. The still now carries the look's fixed framing for the shot's size, how one picture
+    fills the tall frame, and the first moment of each person's action; the path's move and
+    the whole chain are the motion prompt's."""
+    from app.media.prompt_agent import SERIAL_FRAME_SENTENCE
+    from app.media.prompt_lint import CAMERA_MOVES, _panels_in, _sequence_in
+    from app.media.serial_storyboard import describe_serial_shots
+
+    board_id = serial_board(engine, monkeypatch)
+    pack = {
+        "shots": [
+            {"scene_index": index, "story_purpose": "SETUP", **SEQUENCE_SHOT}
+            for index in range(1, 7)
+        ]
+    }
+    fake_editor(monkeypatch, pack)
+    describe_serial_shots(engine, models(), board_id, str(uuid4()))
+    look = load_series_look()
+    scenes = scenes_of(engine, board_id)
+    assert scenes
+    for scene in scenes:
+        package = dict(scene.prompt_json or {})
+        still = package["still_prompt"]
+        assert still == scene.visual_prompt
+        # The look's framing for the shot's size, the focus named; never the plan's path.
+        before_name = str(look["shot_sizes"][package["shot_size"]]).split("{name}")[0]
+        assert before_name.strip() in still, (before_name, still)
+        for path in ("tilt down", "back up", "ending on", "as she speaks"):
+            assert path not in still, (path, still)
+        assert SERIAL_FRAME_SENTENCE in still
+        # The first moment of each person's action, the chain left to the motion.
+        assert "taps the brass pen once against the green ledger, pauses before the number" in still
+        assert "then lays the pen flat" not in still
+        assert "Sarah leans in a fraction as she asks her question" in still
+        assert _sequence_in(still) == "" and _panels_in(still) == ""
+        # No description cut in the middle of a phrase.
+        assert not re.search(r"\b(?:wearing|with|in|and|a)[;.]", still), still
+        assert len(still) <= look["max_prompt_chars"]
+        motion = package["motion_prompt"]
+        assert "then lays the pen flat" in motion
+        assert package["camera_move"] in CAMERA_MOVES and package["camera_move"] != "static"
+    assert scenes[0].prompt_json["camera_move"] == "tilt down", "the plan's own move, first"
+
+
+def test_a_characters_description_is_whole_clauses_never_cut_mid_phrase():
+    from app.media.prompt_agent import _identity
+
+    marcus = {
+        "name": "Marcus",
+        "face_hair": "Tousled wavy dark hair; warm brown eyes",
+        "outfit": "comfortable royal purple fleece hoodie over grey crew tee, dark jeans",
+    }
+    assert _identity(marcus, 60) == "Marcus: Tousled wavy dark hair"
+    whole = _identity(marcus, 130)
+    assert "wearing comfortable royal purple fleece hoodie over grey crew tee" in whole
+    assert not whole.endswith(("wearing", "with", "over"))
 
 
 def test_without_a_model_the_describer_leaves_the_composed_shots(engine, staffed, monkeypatch):
