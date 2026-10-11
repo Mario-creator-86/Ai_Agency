@@ -38,6 +38,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from typing import Any
@@ -1177,9 +1178,14 @@ def write_shot_prompts(
                 scene.shot_type = SHOT_TYPES[package["shot_size"]]
                 package["source"] = SOURCE_MODEL if shot is not None else SOURCE_SERIES_LOOK
                 composed = compose_serial_prompt(package, look)
-                # The shot's movement, so the motion step has words of its own and the
-                # sheet's lint reads a motion prompt, not the still said twice (2026-10-11).
-                package["camera_move"] = "static"
+                # The shot's own movement, so the motion step has words of its own and the
+                # film's camera varies: the plan's move, else one that suits the shot's size
+                # and is not the scene before's, as the factual compile chooses. A serial
+                # given «static» everywhere was BLOCKed SAME_CAMERA_EVERY_SCENE on every
+                # rewrite (2026-10-11, f06808c9), whatever its writer wrote.
+                move = _serial_camera_move(package, moves)
+                moves.append(move)
+                package["camera_move"] = move
                 package["motion_prompt"] = compose_serial_motion(package, look)
                 package["still_prompt"] = composed
             else:
@@ -1290,8 +1296,14 @@ def _reask_note(parsed: ShotPlanParse, missing: list[int]) -> str:
     )
 
 
-def shot_plan_gaps(session: Session, storyboard_id: str) -> list[int]:
-    """The scenes of a storyboard whose package was not written by the model."""
+def shot_plan_gaps(
+    session: Session, storyboard_id: str, sources: Sequence[str] = (SOURCE_MODEL,)
+) -> list[int]:
+    """The scenes of a storyboard whose package came from none of ``sources``: the model's
+    alone for a factual film, the series look's too for the office serial
+    (`assembler.shot_plan_sources`; 2026-10-11, f06808c9: the sheet read every serial scene
+    the look composed as a gap and refused the walk NEEDS_SHOT_PLAN, while the stills stage
+    accepted them)."""
     return [
         scene.scene_index
         for scene in session.scalars(
@@ -1299,7 +1311,7 @@ def shot_plan_gaps(session: Session, storyboard_id: str) -> list[int]:
             .where(StoryboardScene.storyboard_id == storyboard_id)
             .order_by(StoryboardScene.scene_index)
         )
-        if (scene.prompt_json or {}).get("source") != SOURCE_MODEL
+        if (scene.prompt_json or {}).get("source") not in sources
     ]
 
 
@@ -1313,14 +1325,17 @@ def hold_for_shot_plan(engine: Engine, storyboard_id: str, correlation_id: str) 
     A closed film (`shooting_sheet.film_is_closed`) is never held, which would reopen it: the
     answer is an empty list and nothing is changed; every buyer meets it closed at its lease.
     """
+    from app.media.assembler import shot_plan_sources  # noqa: PLC0415 - it imports us
     from app.media.shooting_sheet import film_is_closed  # noqa: PLC0415 - it imports us
 
+    # The serial's scenes composed from the series look are no gap (read before the lock).
+    sources = shot_plan_sources(engine, storyboard_id)
     with Session(engine) as session, session.begin():
         # Behind the write lock the Owner's close takes, so a close is seen or comes after.
         lock_for_write(session)
         if film_is_closed(session, storyboard_id):
             return []
-        gaps = shot_plan_gaps(session, storyboard_id)
+        gaps = shot_plan_gaps(session, storyboard_id, sources)
         board = session.get(Storyboard, storyboard_id)
         if not gaps or board is None:
             return gaps
@@ -1635,9 +1650,30 @@ def compose_serial_prompt(package: dict[str, Any], look: dict[str, Any]) -> str:
     return text
 
 
+#: The move table's size for each size of the series look's shot sizes (`serial_shot_size`).
+_SERIAL_MOVE_SIZES: dict[str, str] = {
+    "establishing": "wide",
+    "two_shot": "medium",
+    "single": "medium",
+    "close": "close",
+}
+
+
+def _serial_camera_move(package: dict[str, Any], previous: list[str]) -> str:
+    """One serial shot's camera move: the plan's own (`choose_camera_move`), unless it is the
+    move of the scene before, when the shot's size chooses another, so a writer who names
+    one move for every beat does not make a film of one movement (SAME_CAMERA_EVERY_SCENE)."""
+    size = _SERIAL_MOVE_SIZES.get(str(package.get("shot_size") or ""), "medium")
+    move = choose_camera_move(package, size, previous)
+    if previous and move == previous[-1]:
+        move = choose_camera_move({**package, "camera": "", "camera_move": ""}, size, previous)
+    return move
+
+
 def compose_serial_motion(package: dict[str, Any], look: dict[str, Any]) -> str:
-    """The movement of a serial shot: a held camera, the beat's action as movement, the
-    people's faces kept, and the closing every motion prompt carries.
+    """The movement of a serial shot: the shot's own camera move (``camera_move``, a held
+    camera when none), the beat's action as movement, the people's faces kept, and the
+    closing every motion prompt carries.
 
     Until 2026-10-11 a serial scene had no motion prompt at all: the motion step sent the
     still's words again (`assembler._motion_prompt`), look block, room and rubrics included.
@@ -1645,8 +1681,9 @@ def compose_serial_motion(package: dict[str, Any], look: dict[str, Any]) -> str:
     del look  # the look is in the picture; the movement is the beat's
     action = _sentence(" ".join(str(package.get("action") or "").split()))
     feeling = " ".join(str(package.get("emotion") or "").split()).rstrip(". ")
+    move = str(package.get("camera_move") or "static")
     items = [
-        (0, 0, MOVE_SENTENCES["static"]),
+        (0, 0, MOVE_SENTENCES.get(move, MOVE_SENTENCES["static"])),
         (1, 1, action),
         (3, 2, _sentence(feeling) if feeling else ""),
         (2, 3, "Their faces stay expressive and the same people throughout."),

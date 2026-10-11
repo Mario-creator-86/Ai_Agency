@@ -91,6 +91,7 @@ from app.media.assembler import (
     run_motion_step,
     scene_kind_of,
     scene_view,
+    shot_plan_sources,
     still_options,
     usable_take,
     voiced_scenes,
@@ -1067,6 +1068,10 @@ def _sheet(
     )
 
     environment = environment or studio_environment(engine)
+    # The sources a scene's package may come from: the model's for a factual film, the
+    # series look's too for the office serial (2026-10-11, f06808c9: the sheet counted the
+    # serial's composed scenes as gaps and refused its walk NEEDS_SHOT_PLAN).
+    sources = shot_plan_sources(engine, storyboard_id)
 
     with Session(engine) as session:
         board = session.get(Storyboard, storyboard_id)
@@ -1085,7 +1090,7 @@ def _sheet(
         if not rows:
             raise SheetNotFound("Storyboard-ul nu are scene.")
         scenes = [scene_view(row) for row in rows]
-        gaps = shot_plan_gaps(session, storyboard_id)
+        gaps = shot_plan_gaps(session, storyboard_id, sources)
         takes = _scene_takes(session, storyboard_id)
         # The takes his newest look approved as final (2026-10-11): shown on the sheet, and
         # the only ones the Director's confirmed repair leaves alone.

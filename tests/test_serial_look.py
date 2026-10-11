@@ -401,16 +401,19 @@ def test_the_composed_serial_shots_pass_the_prompt_check_and_carry_their_own_mov
     """2026-10-11, the first episode ever approved (f06808c9): every composed still carried
     «Camera:» and «Action:», the sheet's prompt check refused them (TEMPLATE_LABEL) on every
     rewrite, and the Director and the Video Editor went round in circles. The still is now
-    said in sentences, and the shot has a motion prompt of its own (a held camera, the beat's
-    action), so the motion step no longer sends the still's words again."""
+    said in sentences, and the shot has a motion prompt of its own (the shot's own camera
+    move, the beat's action), so the motion step no longer sends the still's words again. The
+    same evening a serial given «static» everywhere was BLOCKed SAME_CAMERA_EVERY_SCENE on
+    every rewrite: the moves vary from shot to shot, as a factual film's do."""
     from app.media.prompt_agent import motion_prompt_for
-    from app.media.prompt_lint import BLOCK, LintScene, camera_moves, lint_scene
+    from app.media.prompt_lint import BLOCK, CAMERA_MOVES, LintScene, camera_moves, lint_scene
     from app.media.series_look import series_bible
 
     board_id = serial_board(engine, monkeypatch)
     bible = series_bible(load_series_look(), "9:16")
     scenes = scenes_of(engine, board_id)
     assert scenes
+    moves_seen: list[str] = []
     for scene in scenes:
         package = dict(scene.prompt_json or {})
         still = scene.visual_prompt
@@ -418,8 +421,10 @@ def test_the_composed_serial_shots_pass_the_prompt_check_and_carry_their_own_mov
             assert label not in still, (label, still)
         assert package["still_prompt"] == still
         motion, _negative = motion_prompt_for(package, "LTX-2.5")
-        assert motion and package["camera_move"] == "static"
-        assert [move for move, _ in camera_moves(motion)] == ["static"]
+        move = package["camera_move"]
+        assert motion and move in CAMERA_MOVES and move != "static"
+        assert [found for found, _ in camera_moves(motion)] == [move]
+        moves_seen.append(move)
         assert motion.endswith("No subtitles, no on-screen text.")
         findings = lint_scene(
             LintScene(
