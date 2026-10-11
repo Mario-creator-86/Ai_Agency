@@ -1613,6 +1613,40 @@ def _newest_publications(session: Session, rendered: dict[str, str]) -> dict[str
     return newest
 
 
+def films_now(session: Session, storyboard_ids: list[str]) -> dict[str, dict[str, Any]]:
+    """Where each film stands now: its board's status and its newest upload, if any.
+
+    A day's run records where its film stood when the day ended, and a film finished after it
+    (a FILM_CONTINUE, his own press) never changes that record: on 2026-10-11 the NASA film was
+    published at 13:31 and «Filmul zilei» still read «așteaptă decizia ta pe foaia de filmare»
+    from the 05:00 run. The Owner: «Dacă este finalizat și urcat filmul, de ce îmi apare aici?»."""
+    wanted = [identifier for identifier in dict.fromkeys(storyboard_ids) if identifier]
+    if not wanted:
+        return {}
+    status: dict[str, str] = {
+        str(board_id): str(state)
+        for board_id, state in session.execute(
+            select(Storyboard.id, Storyboard.status).where(Storyboard.id.in_(wanted))
+        ).all()
+    }
+    rendered = {
+        asset_id: board_id
+        for board_id, asset_id in session.execute(
+            select(VideoRenderJob.storyboard_id, VideoRenderJob.output_asset_id).where(
+                VideoRenderJob.storyboard_id.in_(wanted),
+                VideoRenderJob.status == "COMPLETED",
+                VideoRenderJob.output_asset_id.is_not(None),
+            )
+        ).all()
+    }
+    published = _newest_publications(session, rendered)
+    return {
+        identifier: {"status": status.get(identifier), "publication": published.get(identifier)}
+        for identifier in wanted
+        if identifier in status
+    }
+
+
 def list_storyboards(
     engine: Engine,
     *,

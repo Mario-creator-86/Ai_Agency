@@ -1900,6 +1900,8 @@ def stored_summary(stages: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def list_runs(engine: Engine, limit: int = 20) -> list[dict[str, Any]]:
+    from app.media.services import films_now  # noqa: PLC0415 - media imports runbook
+
     with Session(engine) as session:
         runs = []
         # A day still RUNNING is not a day yet: the page reads this list as the days that
@@ -1913,6 +1915,15 @@ def list_runs(engine: Engine, limit: int = 20) -> list[dict[str, Any]]:
         ):
             stages = list(run.stages_json or [])
             told = stored_summary(stages)
+            # Its films as they stand now, not as the day left them: a film finished after
+            # the run (2026-10-11, NASA published at 13:31 by a FILM_CONTINUE) is said so.
+            films = [
+                str(film.get("storyboard_id") or "")
+                for stage in stages
+                if isinstance(stage, dict) and stage.get("stage") == "media"
+                for film in ((stage.get("artefacts") or {}).get("films") or [])
+                if isinstance(film, dict)
+            ]
             runs.append(
                 {
                     "id": run.id,
@@ -1930,6 +1941,7 @@ def list_runs(engine: Engine, limit: int = 20) -> list[dict[str, Any]]:
                     "started_at": run.started_at,
                     "finished_at": run.finished_at,
                     "stages": stages,
+                    "films_now": films_now(session, films),
                 }
             )
         return runs

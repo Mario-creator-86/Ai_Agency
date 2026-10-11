@@ -39,14 +39,42 @@ function creditsWords(n) {
   return `${n.toLocaleString('ro-RO')}${Math.abs(n) >= 20 && (rest === 0 || rest >= 20) ? ' de' : ''} credite`;
 }
 
+/** An upload that is on the channel, as the line says it. */
+const ON_THE_CHANNEL = { PUBLISHED: 'publicat', REMOTE_CONFIRMED: 'publicat', SCHEDULED: 'programat' };
+
 /**
- * The film of the day, from the newest run (GET /runbook/runs, its stages' artefacts).
+ * A film of the run as it stands now (`films_now`, read with the run), when it went up after the
+ * day ended: the run's own stages say where the film stood at its hour, and on 2026-10-11 the
+ * NASA film, published at 13:31 by the studio's own continuation, still read «așteaptă decizia ta
+ * pe foaia de filmare» from the 05:00 run.
+ * @param {any} run
+ * @param {string} label
+ * @returns {ReadoutRow|null}
+ */
+function filmSinceTheRun(run, label) {
+  const now = run && run.films_now && typeof run.films_now === 'object' ? run.films_now : null;
+  if (!now) return null;
+  for (const film of Object.values(now)) {
+    const upload = film && film.publication;
+    const state = upload ? ON_THE_CHANNEL[/** @type {keyof typeof ON_THE_CHANNEL} */ (upload.status)] : undefined;
+    if (state) {
+      const privacy = PRIVACY_WORDS[/** @type {keyof typeof PRIVACY_WORDS} */ (upload.privacy)] || String(upload.privacy || '');
+      return { label, value: `${state} ${privacy}`.trim(), note: upload.channel ? String(upload.channel) : undefined, tone: 'ok' };
+    }
+  }
+  return null;
+}
+
+/**
+ * The film of the day, from the newest run (GET /runbook/runs, its stages' artefacts, and its
+ * films as they stand now).
  * @param {any} run
  * @returns {ReadoutRow}
  */
 export function filmOfTheDay(run) {
   const label = 'Filmul zilei';
   if (!run || !Array.isArray(run.stages)) return { label, value: '—', tone: 'quiet' };
+  const since = filmSinceTheRun(run, label);
   /** @param {string} name */
   const stage = (name) => {
     const found = run.stages.find((/** @type {any} */ s) => s && s.stage === name);
@@ -60,6 +88,7 @@ export function filmOfTheDay(run) {
     const privacy = PRIVACY_WORDS[/** @type {keyof typeof PRIVACY_WORDS} */ (published.release_privacy)] || String(published.release_privacy || '');
     return { label, value: `publicat ${privacy}`.trim(), note: published.channel_name ? String(published.channel_name) : undefined, tone: 'ok' };
   }
+  if (since) return since;
   if (!media) return { label, value: 'niciun film azi', tone: 'quiet' };
   const films = Array.isArray(media.films) ? media.films : [];
   const sheet = sheetKeyFor(media) || (films[0] && sheetKeyFor({ awaiting_owner: [films[0]] })) || null;

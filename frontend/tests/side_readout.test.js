@@ -86,6 +86,23 @@ test('in production, assembled with QC passed, QC failed and published private',
   assert.equal(published.tone, 'ok');
 });
 
+// 2026-10-11: the 05:00 run left the NASA film waiting; the studio finished it and put it up at
+// 13:31. The Owner: «Dacă este finalizat și urcat filmul, de ce îmi apare aici?».
+test('a film put up after the run says so, not where the run left it', async () => {
+  const { filmOfTheDay } = await import('../src/side_readout.js');
+  const run = {
+    ...runOf({ media: { films: [{ storyboard_id: FILM, status: 'WAITING' }], bought_steps: [{ storyboard_id: FILM, step: 'motion', credits: 118 }] } }),
+    films_now: { [FILM]: { status: 'RENDERED', publication: { status: 'PUBLISHED', privacy: 'private', channel: 'Main Channel A - Factual Shorts' } } },
+  };
+  const row = filmOfTheDay(run);
+  assert.equal(row.value, 'publicat privat');
+  assert.equal(row.note, 'Main Channel A - Factual Shorts');
+  assert.equal(row.tone, 'ok');
+  // Not up yet: where the run left it.
+  const waiting = filmOfTheDay({ ...run, films_now: { [FILM]: { status: 'APPROVED', publication: null } } });
+  assert.equal(waiting.value, 'așteaptă decizia ta pe foaia de filmare');
+});
+
 test('a day with no film says so, and nothing read is a dash', async () => {
   const { filmOfTheDay } = await import('../src/side_readout.js');
   assert.equal(filmOfTheDay(runOf({ selection: {} })).value, 'niciun film azi');
