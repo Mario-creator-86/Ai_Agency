@@ -345,9 +345,10 @@ def test_a_price_a_link_or_a_key_in_a_safe_field_never_reaches_the_showrunner(
     names = roster_names(engine, log["id"])
     fake_showrunner(monkeypatch, episode_answer(beats_for([safe], names)), seen)
     write_episode(engine, registry(), log["id"], str(uuid4()))
-    (prompt,) = seen
-    assert planted not in prompt
-    assert safe in prompt
+    # The writer may be asked twice (brief v7: an answer the review's checks refuse is asked
+    # for once more, with the answer as data): no ask may carry what was redacted.
+    assert seen and all(planted not in prompt for prompt in seen)
+    assert safe in seen[0]
 
 
 def test_a_leak_in_the_summary_or_a_thread_never_reaches_canon_or_the_next_prompt(

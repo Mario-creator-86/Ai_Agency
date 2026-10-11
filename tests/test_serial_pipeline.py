@@ -364,10 +364,13 @@ def test_the_showrunner_prompt_contains_nothing_private(engine, staffed, monkeyp
     fake_showrunner(monkeypatch, episode_answer(beats_for([safe], names)), seen)
     write_episode(engine, registry(), log["id"], str(uuid4()))
 
-    (prompt,) = seen
-    for forbidden in (FAKE_KEY, MODEL_ID, PRICE, URL):
-        assert forbidden not in prompt
-    assert safe in prompt
+    # One event in every beat fails the measured checks, so the writer is asked once more
+    # (brief v7): the second brief, with the refused answer in it, is as clean as the first.
+    assert len(seen) == 2
+    for prompt in seen:
+        for forbidden in (FAKE_KEY, MODEL_ID, PRICE, URL):
+            assert forbidden not in prompt
+        assert safe in prompt
 
 
 def test_a_beat_citing_a_private_event_is_not_grounded(engine, staffed, monkeypatch):
@@ -985,8 +988,9 @@ def test_a_review_that_could_not_be_read_is_asked_again_next_run(
 def test_a_resumed_draft_that_fails_gets_the_rewrite_the_day_had_left(
     engine, staffed, settings, monkeypatch
 ):
-    """The day's budget is two drafts, counted over every run: a first draft read on the
-    second run and failed is rewritten once, and a failed rewrite is the end of the day."""
+    """The day's budget is three drafts, counted over every run, and one run writes two at
+    most: a first draft read on the second run and failed is rewritten twice, and the
+    third refused draft is the end of the day (2026-10-10; it was two drafts a day)."""
     log, ids = a_day(engine, YESTERDAY_NOON())
     names = roster_names(engine, log["id"])
     written: list[str] = []
@@ -998,16 +1002,17 @@ def test_a_resumed_draft_that_fails_gets_the_rewrite_the_day_had_left(
     counting_director(monkeypatch, "FAIL", reviewed)
     outcome = run_serial_stage(engine, registry(), settings)
 
-    assert outcome["artefacts"]["written"] == 1 and outcome["artefacts"]["rewritten"] == 1
-    assert len(written) == 2 and len(reviewed) == 2
+    assert outcome["artefacts"]["written"] == 2 and outcome["artefacts"]["rewritten"] == 2
+    assert len(written) == 3 and len(reviewed) == 3
     assert "Primul beat nu se ține singur." in written[1]
     rows = episode_rows(engine)
-    assert sorted(row.status for row in rows) == ["REJECTED", "REJECTED"]
-    assert rows[1].rewrite_of_id == rows[0].id
+    assert [row.status for row in rows] == ["REJECTED"] * 3
+    assert rows[1].rewrite_of_id == rows[0].id and rows[2].rewrite_of_id == rows[1].id
+    assert "serialul trece la altă zi" in outcome["reason"]
 
     # The day is finished with: a third run writes and reads nothing more.
     run_serial_stage(engine, registry(), settings)
-    assert len(written) == 2 and len(reviewed) == 2 and len(episode_rows(engine)) == 2
+    assert len(written) == 3 and len(reviewed) == 3 and len(episode_rows(engine)) == 3
 
 
 def test_a_draft_waiting_for_the_owner_is_named_and_no_new_episode_is_written(
@@ -1235,7 +1240,10 @@ def test_a_quiet_yesterday_hands_the_serial_the_newest_day_that_happened(
 
 def test_an_older_day_is_never_told_after_a_newer_one(engine, staffed, settings, monkeypatch):
     """Canon runs forward: once D-2 has had its episode, an untold D-3 is not told after it,
-    even when D-1 is quiet. The serial would otherwise show Tuesday after Wednesday."""
+    even when D-1 is quiet. The serial would otherwise show Tuesday after Wednesday.
+
+    Canon is what was approved (2026-10-10): a D-2 whose drafts were all refused is told
+    again, and an older untold day may be told after it (`day_to_retell`)."""
     older = events_on(engine, NOON_DAYS_AGO(3))
     newer = events_on(engine, NOON_DAYS_AGO(2))
     for days in (3, 2, 1):
@@ -1247,7 +1255,8 @@ def test_an_older_day_is_never_told_after_a_newer_one(engine, staffed, settings,
         told_id = told_log.id
     fake_showrunner(monkeypatch, episode_answer(beats_for(newer, cast_names(engine))))
     written = write_episode(engine, registry(), told_id, str(uuid4()))
-    decide_episode(engine, written["episode"]["id"], False, "Not this one.")
+    decide_episode(engine, written["episode"]["id"], True, "")
+    storyboard_from_episode(engine, written["episode"]["id"], str(uuid4()))
     seen: list[str] = []
     fake_showrunner(monkeypatch, episode_answer(beats_for(older, cast_names(engine))), seen)
 

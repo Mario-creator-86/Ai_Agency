@@ -87,13 +87,20 @@ MAX_BEATS = 8
 #: 2026-09-24): the show's tone stated, full bibles only for those who act in the day's
 #: events (one line for the rest), and a "logline" the Publisher opens the description with.
 #: The answer schema is v3's plus that one optional field, so a v3 episode reads as before.
-EPISODE_TEMPLATE_VERSION = "episode-v6"
+#: v7 (2026-10-10): the brief names the SPEAKERS (`speakers_to_offer`), and an answer is
+#: measured by the review's own checks before it is stored, with one more ask on a refusal.
+EPISODE_TEMPLATE_VERSION = "episode-v7"
 #: The structure a writers' room asks of a short: in this order, the hook first and the
 #: button last; situation, turn and payoff may take more than one beat each.
 EPISODE_PARTS = ("hook", "situation", "turn", "payoff", "button")
 #: How many people speak in one episode (the Owner's cast rule, 2026-09-24): two to four,
 #: chosen from those who act in the cited events. Everyone else is background.
 SPEAKING_CAST = (2, 4)
+#: How many people the brief names as the episode's SPEAKERS (v7), inside that rule. Measured
+#: on a copy of his database (2026-10-10): the cast check refused 14 of 16 drafts, five to
+#: seven speakers each, because the writer gave a line to everyone who acts in an event it
+#: cites; it gives one to everyone it is offered, so it is offered three.
+OFFERED_SPEAKERS = 3
 #: Spoken words in one beat. A scene is at most 9 seconds on the storyboard, and 22 words
 #: are 8.8 seconds at the studio's 2.5 words a second.
 WORDS_PER_BEAT = (8, 22)
@@ -761,6 +768,34 @@ def acting_cast(projection: list[dict], names: NameBook) -> list[str]:
     return acting
 
 
+def speakers_to_offer(projection: list[dict], names: NameBook, roster: list[dict]) -> list[str]:
+    """Who the day's episode may give lines to (brief v7): the `OFFERED_SPEAKERS` with the
+    strongest part in the day's events, by the story weight of the events they act in, the
+    first to act first on a tie. Everyone else may be seen or mentioned and says nothing.
+
+    A day where fewer than two people act is filled from the active roster, in its order:
+    the review then lets anyone on the day's roster speak beside those the events name.
+    """
+    weights: dict[str, int] = {}
+    for item in projection:
+        weight = 1 if item.get("routine") else story_weight(item["event_type"], item.get("verdict"))
+        for name in participants(item, names.names):
+            member = names.canonical(name)
+            if member:
+                weights[member] = weights.get(member, 0) + weight
+    acting = acting_cast(projection, names)
+    ranked = sorted(acting, key=lambda member: (-weights.get(member, 0), acting.index(member)))
+    offered = ranked[:OFFERED_SPEAKERS]
+    if len(offered) < SPEAKING_CAST[0]:
+        for row in roster:
+            member = names.canonical(row.get("display_name"))
+            if len(offered) >= OFFERED_SPEAKERS:
+                break
+            if member and member not in offered and row.get("lifecycle") == "ACTIVE":
+                offered.append(member)
+    return offered
+
+
 def voice_of(bible: CharacterBible | None) -> dict[str, Any]:
     """How one cast member talks, as data: the bible's voice fields, verbatim.
 
@@ -869,10 +904,11 @@ nothing is said after it; the best button calls back to the hook or to something
 earlier). Situation, turn and payoff may take more than one beat each. Every beat changes \
 something: it escalates, reverses or reveals; a beat that only restates the one before it \
 is cut.
-2. Speaking cast. {min_speakers} to {max_speakers} people speak in the whole episode, chosen \
-from those who act in the events you cite (each event's "who"). When the events you cite \
-name fewer than two people, those they name speak and the rest of the speaking cast comes \
-from ALLOWED_NAMES. Everyone else in a room is "background" and says nothing.
+2. Speaking cast. Only the people in SPEAKERS speak: {min_speakers} to {max_speakers} of \
+them in the whole episode, and each one who speaks acts in at least one event you cite \
+(each event's "who"), so tell the day through the events they act in. When the events you \
+cite name fewer than two people, those they name speak. Everyone else, even someone who acts \
+in an event you cite, is "background" in a room or is mentioned in a line, and says nothing.
 3. Lines. Dialogue is a list of lines, each {{"speaker": a name from ALLOWED_NAMES, "text": \
 the words said aloud and nothing else, "direction": an optional acting note}}. A voice \
 reads "text" exactly as written, so it never holds a name, a colon, a bracket or a stage \
@@ -918,7 +954,8 @@ it, and never bend an event to fit it. Say what you did: "plan_kept" true or fal
 "plan_note" in one sentence. With no plan, "plan_kept" is null.
 
 ALLOWED_NAMES: {allowed_names}
-Write every name exactly as it stands in that list.
+SPEAKERS: {speakers}
+Write every name exactly as it stands in those lists.
 
 Answer ONLY with one JSON object in this format, nothing before or after it:
 {{"title": "<an English title, at most 60 characters>",
@@ -1308,124 +1345,17 @@ def _judge_the_plan(session: Session, judged: dict[str, Any], by_episode_id: str
     earlier.continuity_json = continuity
 
 
-def write_episode(
-    engine: Engine,
-    registry: ProviderRegistry,
-    log_id: str,
-    correlation_id: str = "",
-    agent_id: str | None = None,
-    language: str = "en",
-    notes: str | None = None,
-    rewrite_of: str | None = None,
-    refused_answer: str | None = None,
-) -> dict:
-    """Draft the Office Serial episode for one closed day, and check it against that day.
-
-    ``notes`` are the Director's notes on a draft that failed review; the rewrite is asked
-    for with them, shown the draft ``rewrite_of`` as data, and recorded as its rewrite.
-    ``refused_answer`` is an answer that was refused before it was stored (`DraftRefused`),
-    shown to the next attempt with the reason in ``notes``.
-    """
-    correlation = correlation_id or str(uuid4())
-    with Session(engine) as session, session.begin():
-        log = session.get(DailyStudioLog, log_id)
-        if log is None:
-            raise StoryError(f"Jurnalul {log_id} nu există")
-        projection = ensure_projection(session, log)
-        if not projection:
-            raise NothingHappened(
-                f"În {log.business_date} nu s-a întâmplat nimic de povestit. "
-                "O zi liniștită este un fapt despre studio, nu un motiv de a inventa un episod."
-            )
-        roster = list(log.roster_json or [])
-        allowed_events = {item["event_id"]: item for item in projection}
-        state = session.get(ContinuityState, 1)
-        episode_number = (state.canon_episode_number if state else 0) + 1
-        previously = _previously(state, episode_number)
-        plan = _plan_for(session, state)
-        previous_title = (state.summaries_json or [{}])[-1].get("title") if state else None
-        open_ids = [str(t.get("id")) for t in (state.threads_json or [])] if state else []
-        bibles = bibles_for_roster(session, roster)
-        names = NameBook(roster, bibles)
-        locations = studio_locations(session, roster)
-        # Full bibles for the people who act in the day's events, one line for the rest
-        # (v4): measured on his eight bibles, the v3 brief carried about 16.5k characters of
-        # them although two to four speak. A day where fewer than two people act lets the
-        # writer cast from anyone, so everyone is described in full.
-        acting = acting_cast(projection, names)
-        in_full = len(acting) < SPEAKING_CAST[0]
-        cast_lines = []
-        for member in roster:
-            name = member["display_name"]
-            state_note = "" if member.get("lifecycle") == "ACTIVE" else f", {member['lifecycle']}"
-            member_name = names.canonical(name) or name
-            who = (
-                _who_they_are(name, bibles.get(name))
-                if in_full or member_name in acting
-                else _in_one_line(bibles.get(name))
-            )
-            cast_lines.append(
-                f"- {name} — {member['role_name']}{state_note}." + (f" {who}" if who else "")
-            )
-        rejected = _rejected_draft(session, rewrite_of) if rewrite_of else None
-        showrunner = _resolve_showrunner(session, agent_id)
-        showrunner_id = showrunner.id
-        date_iso = log.business_date
-        # A log closed on its own date is today's, closed at the run's hour: tomorrow's
-        # script is written from it, and the writer is told where the record stops.
-        closed = _local_moment(log.closed_at, log.timezone)
-        recorded_until = (
-            closed.strftime("%H:%M")
-            if closed is not None and closed.date().isoformat() == date_iso
-            else ""
-        )
-        events = _events_block(
-            projection,
-            names.names,
-            log.timezone,
-            date_iso,
-            left_out(dict(log.event_counts_json or {}), projection),
-            recorded_until,
-        )
-
-    prompt = audience_language_line(language) + _INSTRUCTIONS.format(
-        episode_number=episode_number,
-        tone=SHOW_TONE,
-        date=date_iso,
-        min_beats=MIN_BEATS,
-        min_episode_words=EPISODE_WORDS[0],
-        max_episode_words=EPISODE_WORDS[1],
-        max_beats=MAX_BEATS,
-        min_speakers=SPEAKING_CAST[0],
-        max_speakers=SPEAKING_CAST[1],
-        min_words=WORDS_PER_BEAT[0],
-        max_words=WORDS_PER_BEAT[1],
-        allowed_names=json.dumps(names.names, ensure_ascii=False),
-        roster="\n".join(cast_lines),
-        locations=_locations_block(locations),
-        events=events,
-        previously=previously,
-        plan=_plan_block(plan, episode_number),
-        rewrite=_rewrite_section(notes, rejected, refused_answer),
-    )
-    result = run_agent_task(
-        engine,
-        registry,
-        showrunner_id,
-        "write_episode",
-        prompt,
-        EPISODE_TEMPLATE_VERSION,
-        correlation,
-        summary=f"Scriu episodul {episode_number} al serialului pentru ziua {date_iso}.",
-        max_tokens=7200,
-        temperature=0.7,
-        emit_message=False,
-    )
-    if result["status"] != "SUCCEEDED" or not (result.get("output_text") or "").strip():
-        detail = result.get("error_detail") or "fără text vizibil"
-        raise StoryError(f"Showrunner-ul nu a produs un episod ({result['status']}: {detail})")
-
-    raw = result["output_text"]
+def _episode_from_answer(
+    raw: str,
+    names: NameBook,
+    allowed_events: dict[str, dict],
+    locations: list[dict],
+    open_ids: list[str],
+    date_iso: str,
+) -> dict[str, Any]:
+    """One answer read into the episode it would store, or the `DraftRefused` that names
+    what is wrong with it: not the schema, a citation or a person the day does not hold, a
+    label inside a line, the format's own placeholders, a thread that is not open."""
     draft = _parse_episode(raw)
     allowed = json.dumps(names.names, ensure_ascii=False)
 
@@ -1516,8 +1446,268 @@ def write_episode(
         _given(draft.threads_continued), open_ids, "threads_continued", raw
     )
     threads_closed = _open_thread_ids(_given(draft.threads_closed), open_ids, "threads_closed", raw)
-    next_episode = _next_episode_plan(draft.next_episode, open_ids, threads_closed, raw)
+    return {
+        "title": draft.title.strip(),
+        "beats": beats,
+        "grounded": grounded,
+        "summary": draft.summary.strip(),
+        # The sentence a stranger reads under the title (v4); the Publisher opens the
+        # description with it.
+        "logline": " ".join(draft.logline.split()),
+        "threads_continued": threads_continued,
+        "threads_closed": threads_closed,
+        "threads_opened": threads_opened,
+        "recurring": recurring,
+        "next_episode": _next_episode_plan(draft.next_episode, open_ids, threads_closed, raw),
+        "plan_kept": draft.plan_kept,
+        "plan_note": draft.plan_note.strip(),
+    }
 
+
+def _measured_refusals(
+    engine: Engine,
+    log_id: str,
+    draft: dict[str, Any],
+    continuity: dict[str, Any],
+    offered: list[str],
+    language: str,
+) -> list[tuple[str, str]]:
+    """(check, reason) for every check the review would fail this draft on, measured on the
+    episode as it would be stored and never stored by measuring it (`review.draft_checks`).
+
+    Only the review's own checks ask the writer again. ``offered_speakers`` is the brief's
+    steering, not the Owner's rule: a draft whose two to four speakers act in the cited
+    events reaches the Director whoever speaks, so asking again for it would spend a model
+    call on a draft she passes (the one-click day, 2026-10-11: three asks where two do)."""
+    from app.story.review import draft_checks  # noqa: PLC0415 - the review imports this module
+
+    unsaved = StoryEpisode(
+        id=str(uuid4()),
+        log_id=log_id,
+        title=draft["title"],
+        beats_json=draft["beats"],
+        grounded_event_ids_json=draft["grounded"],
+        continuity_json=continuity,
+        status="DRAFT",
+    )
+    with Session(engine) as session:
+        checks = draft_checks(session, unsaved, offered, language)
+    return [
+        (name, str(check.get("reason") or name))
+        for name, check in checks.items()
+        if not check["passed"] and name != "offered_speakers"
+    ]
+
+
+def write_episode(
+    engine: Engine,
+    registry: ProviderRegistry,
+    log_id: str,
+    correlation_id: str = "",
+    agent_id: str | None = None,
+    language: str = "en",
+    notes: str | None = None,
+    rewrite_of: str | None = None,
+    refused_answer: str | None = None,
+) -> dict:
+    """Draft the Office Serial episode for one closed day, and check it against that day.
+
+    ``notes`` are the Director's notes on a draft that failed review; the rewrite is asked
+    for with them, shown the draft ``rewrite_of`` as data, and recorded as its rewrite.
+    ``refused_answer`` is an answer that was refused before it was stored (`DraftRefused`),
+    shown to the next attempt with the reason in ``notes``.
+
+    Before an answer is stored it is measured by the review's own checks (brief v7): a cast,
+    a length, a beat the camera cannot film or a private word found here is asked for once
+    more, with the reasons and the answer, as a refused answer is; the better of the two is
+    stored (fewer checks failed; the second on a tie), and a draft that still fails is
+    stored as a DRAFT the review then rejects with those same reasons. Measured on a copy of
+    his database (2026-10-10): 16 of 16 drafts were rejected by these checks alone, after
+    the writer had finished; each refusal now reaches the writer while it can still change.
+    """
+    correlation = correlation_id or str(uuid4())
+    with Session(engine) as session, session.begin():
+        log = session.get(DailyStudioLog, log_id)
+        if log is None:
+            raise StoryError(f"Jurnalul {log_id} nu există")
+        projection = ensure_projection(session, log)
+        if not projection:
+            raise NothingHappened(
+                f"În {log.business_date} nu s-a întâmplat nimic de povestit. "
+                "O zi liniștită este un fapt despre studio, nu un motiv de a inventa un episod."
+            )
+        roster = list(log.roster_json or [])
+        allowed_events = {item["event_id"]: item for item in projection}
+        state = session.get(ContinuityState, 1)
+        episode_number = (state.canon_episode_number if state else 0) + 1
+        previously = _previously(state, episode_number)
+        plan = _plan_for(session, state)
+        previous_title = (state.summaries_json or [{}])[-1].get("title") if state else None
+        open_ids = [str(t.get("id")) for t in (state.threads_json or [])] if state else []
+        bibles = bibles_for_roster(session, roster)
+        names = NameBook(roster, bibles)
+        locations = studio_locations(session, roster)
+        # Full bibles for the people who act in the day's events, one line for the rest
+        # (v4): measured on his eight bibles, the v3 brief carried about 16.5k characters of
+        # them although two to four speak. A day where fewer than two people act lets the
+        # writer cast from anyone, so everyone is described in full.
+        acting = acting_cast(projection, names)
+        in_full = len(acting) < SPEAKING_CAST[0]
+        offered = speakers_to_offer(projection, names, roster)
+        cast_lines = []
+        for member in roster:
+            name = member["display_name"]
+            state_note = "" if member.get("lifecycle") == "ACTIVE" else f", {member['lifecycle']}"
+            member_name = names.canonical(name) or name
+            who = (
+                _who_they_are(name, bibles.get(name))
+                if in_full or member_name in acting
+                else _in_one_line(bibles.get(name))
+            )
+            cast_lines.append(
+                f"- {name} — {member['role_name']}{state_note}." + (f" {who}" if who else "")
+            )
+        rejected = _rejected_draft(session, rewrite_of) if rewrite_of else None
+        showrunner = _resolve_showrunner(session, agent_id)
+        showrunner_id = showrunner.id
+        date_iso = log.business_date
+        # A log closed on its own date is today's, closed at the run's hour: tomorrow's
+        # script is written from it, and the writer is told where the record stops.
+        closed = _local_moment(log.closed_at, log.timezone)
+        recorded_until = (
+            closed.strftime("%H:%M")
+            if closed is not None and closed.date().isoformat() == date_iso
+            else ""
+        )
+        events = _events_block(
+            projection,
+            names.names,
+            log.timezone,
+            date_iso,
+            left_out(dict(log.event_counts_json or {}), projection),
+            recorded_until,
+        )
+
+    def brief(rewrite: str) -> str:
+        return audience_language_line(language) + _INSTRUCTIONS.format(
+            episode_number=episode_number,
+            tone=SHOW_TONE,
+            date=date_iso,
+            min_beats=MIN_BEATS,
+            min_episode_words=EPISODE_WORDS[0],
+            max_episode_words=EPISODE_WORDS[1],
+            max_beats=MAX_BEATS,
+            min_speakers=SPEAKING_CAST[0],
+            max_speakers=SPEAKING_CAST[1],
+            min_words=WORDS_PER_BEAT[0],
+            max_words=WORDS_PER_BEAT[1],
+            allowed_names=json.dumps(names.names, ensure_ascii=False),
+            speakers=json.dumps(offered, ensure_ascii=False),
+            roster="\n".join(cast_lines),
+            locations=_locations_block(locations),
+            events=events,
+            previously=previously,
+            plan=_plan_block(plan, episode_number),
+            rewrite=rewrite,
+        )
+
+    def ask(prompt: str) -> dict[str, Any]:
+        result = run_agent_task(
+            engine,
+            registry,
+            showrunner_id,
+            "write_episode",
+            prompt,
+            EPISODE_TEMPLATE_VERSION,
+            correlation,
+            summary=f"Scriu episodul {episode_number} al serialului pentru ziua {date_iso}.",
+            max_tokens=7200,
+            temperature=0.7,
+            emit_message=False,
+        )
+        if result["status"] != "SUCCEEDED" or not (result.get("output_text") or "").strip():
+            detail = result.get("error_detail") or "fără text vizibil"
+            raise StoryError(f"Showrunner-ul nu a produs un episod ({result['status']}: {detail})")
+        return result
+
+    def read(raw: str) -> dict[str, Any]:
+        return _episode_from_answer(raw, names, allowed_events, locations, open_ids, date_iso)
+
+    def continuity_of(draft: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "previous_episode_title": previous_title,
+            "roster_size": len(roster),
+            "business_date": date_iso,
+            "episode_number": episode_number,
+            "template_version": EPISODE_TEMPLATE_VERSION,
+            "summary": draft["summary"],
+            "logline": draft["logline"],
+            "threads_continued": draft["threads_continued"],
+            "threads_closed": draft["threads_closed"],
+            "threads_opened": draft["threads_opened"],
+            "recurring": draft["recurring"],
+            # Where this episode leaves the story for the next writer (S6).
+            "next_episode": {
+                **draft["next_episode"],
+                "status": PLAN_PLANNED,
+                "planned_on": date_iso,
+            },
+            # What this episode did with the plan it was handed, in the writer's words.
+            "plan": (
+                {
+                    "from_episode_id": plan["from_episode_id"],
+                    "from_episode_number": plan["from_episode_number"],
+                    "premise": plan.get("premise"),
+                    "kept": draft["plan_kept"],
+                    "note": draft["plan_note"],
+                }
+                if plan is not None
+                else None
+            ),
+            # Who the brief let speak (v7): the writer is held to it before the draft is kept.
+            "speakers_offered": offered,
+        }
+
+    def measured(draft: dict[str, Any]) -> list[tuple[str, str]]:
+        return _measured_refusals(engine, log_id, draft, continuity_of(draft), offered, language)
+
+    result = ask(brief(_rewrite_section(notes, rejected, refused_answer)))
+    raw = result["output_text"]
+    draft = read(raw)
+    refusals = measured(draft)
+    first_refusal: str | None = None
+    attempts = 1
+    if refusals:
+        # Asked once more, the way a refused answer is asked again (`DraftRefused`): the
+        # reasons, and the answer as data. A rewrite keeps the Director's notes beside them.
+        first_refusal = "; ".join(reason for _name, reason in refusals)
+        told = first_refusal + (
+            f". Notele Directorului pentru ciorna dinainte rămân valabile: {notes}"
+            if rejected and notes
+            else ""
+        )
+        attempts = 2
+        try:
+            again = ask(brief(_rewrite_section(told, None, raw)))
+            second = read(again["output_text"])
+        except StoryError:
+            # An answer that is not an episode, or no answer at all, is worse than one the
+            # review can read and name: the first is kept, and the review says why it fails.
+            second = None
+        if second is not None:
+            remeasured = measured(second)
+            if len(remeasured) <= len(refusals):
+                result, draft, refusals = again, second, remeasured
+
+    continuity = continuity_of(draft)
+    # What the measuring before the review found: how many answers were read, the reasons
+    # the first was asked again for, and what the kept one still fails (the review's verdict
+    # will say the same, being the same checks).
+    continuity["write_checks"] = {
+        "attempts": attempts,
+        "first_refusal": first_refusal,
+        "failed": [name for name, _reason in refusals],
+    }
     identifier = str(uuid4())
     with Session(engine) as session, session.begin():
         event = append_event(
@@ -1528,51 +1718,20 @@ def write_episode(
             1,
             {
                 "log_id": log_id,
-                "grounded_events": len(grounded),
+                "grounded_events": len(draft["grounded"]),
                 "episode_number": episode_number,
                 "rewrite_of": rewrite_of,
+                "attempts": attempts,
             },
             correlation,
         )
         episode = StoryEpisode(
             id=identifier,
             log_id=log_id,
-            title=draft.title.strip(),
-            beats_json=beats,
-            grounded_event_ids_json=grounded,
-            continuity_json={
-                "previous_episode_title": previous_title,
-                "roster_size": len(roster),
-                "business_date": date_iso,
-                "episode_number": episode_number,
-                "template_version": EPISODE_TEMPLATE_VERSION,
-                "summary": draft.summary.strip(),
-                # The sentence a stranger reads under the title (v4); the Publisher opens the
-                # description with it.
-                "logline": " ".join(draft.logline.split()),
-                "threads_continued": threads_continued,
-                "threads_closed": threads_closed,
-                "threads_opened": threads_opened,
-                "recurring": recurring,
-                # Where this episode leaves the story for the next writer (S6).
-                "next_episode": {
-                    **next_episode,
-                    "status": PLAN_PLANNED,
-                    "planned_on": date_iso,
-                },
-                # What this episode did with the plan it was handed, in the writer's words.
-                "plan": (
-                    {
-                        "from_episode_id": plan["from_episode_id"],
-                        "from_episode_number": plan["from_episode_number"],
-                        "premise": plan.get("premise"),
-                        "kept": draft.plan_kept,
-                        "note": draft.plan_note.strip(),
-                    }
-                    if plan is not None
-                    else None
-                ),
-            },
+            title=draft["title"],
+            beats_json=draft["beats"],
+            grounded_event_ids_json=draft["grounded"],
+            continuity_json=continuity,
             status="DRAFT",
             written_by_agent_id=showrunner_id,
             created_at=utc_now(),
@@ -1585,6 +1744,7 @@ def write_episode(
         return {
             "agent_id": showrunner_id,
             "run_id": result["id"],
+            "attempts": attempts,
             "episode": _public_episode(episode),
         }
 

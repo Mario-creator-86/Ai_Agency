@@ -45,8 +45,15 @@ logger = logging.getLogger("studio.story.stage")
 
 COMPLETED = "COMPLETED"
 SKIPPED = "SKIPPED"
-#: How many drafts one day gets: the first, and one rewrite with the Director's notes.
+#: How many drafts one run writes for a day: a draft, and one rewrite with the Director's
+#: notes (an answer refused before it was stored counts as one).
 MAX_DRAFTS = 2
+#: How many drafts a day gets over every run. Until 2026-10-10 it was `MAX_DRAFTS`, and a day
+#: whose two drafts were refused was finished with: measured on a copy of his database, every
+#: day from 2026-09-19 to 2026-10-10 ended so, nothing was approved and the serial made nothing.
+#: A refused day is now told again by a later run, with the reasons, up to this many drafts;
+#: then the serial moves to another day (`day_to_retell`).
+MAX_DRAFTS_PER_DAY = 3
 #: How far back the stage takes up an episode an earlier run left unfinished. A week: the
 #: serial tells recent days, and an episode older than that is left for the Owner's hand.
 RESUME_WINDOW_DAYS = 7
@@ -74,7 +81,7 @@ def day_to_tell(session: Session, before: str) -> tuple[DailyStudioLog | None, l
     Three limits. ``before`` is today's business date: the day's own log is closed at the end
     of every attempt, and a same-day re-attempt once filmed a day not yet over (2026-09-19).
     Only days after the newest day that already has an episode, whatever became of it: canon
-    runs forward, and a rejected day is finished with (its rewrite budget was spent). And only
+    runs forward, and a refused day is told again by `day_to_retell`, not here. And only
     within `RESUME_WINDOW_DAYS`, the window the run closes missing days in.
     """
     since = (date.fromisoformat(before) - timedelta(days=RESUME_WINDOW_DAYS)).isoformat()
@@ -96,6 +103,80 @@ def day_to_tell(session: Session, before: str) -> tuple[DailyStudioLog | None, l
             return log, quiet
         quiet.append(log.business_date)
     return None, quiet
+
+
+def day_to_retell(session: Session, before: str) -> dict[str, Any] | None:
+    """A closed day to tell again, with the reasons its last draft was refused, or None.
+
+    Measured on 2026-10-10 on a copy of his database: sixteen drafts of eight days, every one
+    REJECTED by the computed checks, none approved. `day_to_tell` takes only a day after the
+    newest told day and the script for tomorrow writes nothing for a day already told, so
+    once a day's drafts were refused the serial made nothing more. The candidates are the
+    closed days of the window before ``before`` that tell something and come after the newest
+    APPROVED day (canon runs forward), whose every draft was REJECTED (nothing waits), with
+    fewer than `MAX_DRAFTS_PER_DAY` drafts. In this order:
+
+    1. the newest day told, while its budget lasts: it is the day the serial was on;
+    2. the oldest day of the window no episode tells: it falls out of the window first;
+    3. the other refused days, newest first.
+
+    Returns ``{"log_id", "date", "drafts", "rewrite_of", "notes"}``: the newest refused draft
+    of the day and its notes, for the next draft to be written as its rewrite.
+    """
+    since = (date.fromisoformat(before) - timedelta(days=RESUME_WINDOW_DAYS)).isoformat()
+    approved = session.scalar(
+        select(func.max(DailyStudioLog.business_date))
+        .join(StoryEpisode, StoryEpisode.log_id == DailyStudioLog.id)
+        .where(StoryEpisode.status == "APPROVED")
+    )
+    told = session.scalar(
+        select(func.max(DailyStudioLog.business_date)).join(
+            StoryEpisode, StoryEpisode.log_id == DailyStudioLog.id
+        )
+    )
+    query = select(DailyStudioLog).where(
+        DailyStudioLog.status == "CLOSED",
+        DailyStudioLog.business_date < before,
+        DailyStudioLog.business_date >= since,
+    )
+    if approved is not None:
+        query = query.where(DailyStudioLog.business_date > approved)
+    refused: list[tuple[DailyStudioLog, list[StoryEpisode]]] = []
+    untold: list[DailyStudioLog] = []
+    for log in session.scalars(query.order_by(DailyStudioLog.business_date)):
+        drafts = list(
+            session.scalars(
+                select(StoryEpisode)
+                .where(StoryEpisode.log_id == log.id)
+                .order_by(StoryEpisode.created_at)
+            )
+        )
+        if any(draft.status != "REJECTED" for draft in drafts):
+            continue
+        if len(drafts) >= MAX_DRAFTS_PER_DAY or not ensure_projection(session, log):
+            continue
+        if drafts:
+            refused.append((log, drafts))
+        else:
+            untold.append(log)
+
+    def chosen(log: DailyStudioLog, drafts: list[StoryEpisode]) -> dict[str, Any]:
+        last = drafts[-1] if drafts else None
+        return {
+            "log_id": log.id,
+            "date": log.business_date,
+            "drafts": len(drafts),
+            "rewrite_of": last.id if last is not None else None,
+            "notes": (last.notes or None) if last is not None else None,
+        }
+
+    if refused and refused[-1][0].business_date == told:
+        return chosen(*refused[-1])
+    if untold:
+        return chosen(untold[0], [])
+    if refused:
+        return chosen(*refused[-1])
+    return None
 
 
 def _last_told(session: Session) -> tuple[str, str, str] | None:
@@ -202,23 +283,28 @@ def _tell_the_day(
     language: str,
     correlation: str,
     draft_id: str | None = None,
-    drafts_spent: int = 0,
+    day_drafts: int = 0,
     film: bool = True,
+    notes: str | None = None,
+    rewrite_of: str | None = None,
 ) -> dict[str, Any]:
     """Write (or take up ``draft_id``), review, rewrite once on a FAIL, approve, storyboard.
 
-    ``drafts_spent`` is how many drafts the day already had: the budget is `MAX_DRAFTS` per
-    day over every run, so a first draft read on the second run and failed still gets its
-    one rewrite, and a failed rewrite is the end of the day whenever it was read.
+    ``day_drafts`` is how many drafts the day already had. One run writes at most
+    `MAX_DRAFTS` (a draft and one rewrite), and a day gets at most `MAX_DRAFTS_PER_DAY` over
+    every run: a first draft read on a later run and failed still gets its rewrite, and a
+    day refused with budget left is told again by a later run (`day_to_retell`).
+
+    ``notes`` and ``rewrite_of`` start a retelling: the first draft is written as the
+    rewrite of the day's last refused draft, with the reasons it was refused.
 
     ``film=False`` is tomorrow's script (`run_serial_next_stage`): everything up to the
     approval, and no storyboard, so nothing of a day not yet over can be filmed.
     """
-    notes: str | None = None
-    rewrite_of: str | None = None
     refused_answer: str | None = None
     episode_id = draft_id
-    drafts = drafts_spent
+    stored = day_drafts
+    drafts = 0
     while True:
         if episode_id is None:
             try:
@@ -256,6 +342,7 @@ def _tell_the_day(
             refused_answer = None
             episode_id = written["episode"]["id"]
             drafts += 1
+            stored += 1
             counts["written"] += 1
             counts["episodes"] += 1
             if rewrite_of is not None:
@@ -271,11 +358,17 @@ def _tell_the_day(
         if review["verdict"] == "PASS":
             break
         notes = review.get("notes") or "; ".join(review.get("reasons") or [])
-        if drafts >= MAX_DRAFTS:
+        if drafts >= MAX_DRAFTS or stored >= MAX_DRAFTS_PER_DAY:
             counts["refusal"] = f"FAIL: {notes}"[:300]
+            then = (
+                "o rulare următoare o scrie din nou, cu motivele"
+                if stored < MAX_DRAFTS_PER_DAY
+                else f"ziua și-a folosit cele {MAX_DRAFTS_PER_DAY} ciorne; serialul trece la "
+                "altă zi"
+            )
             return _outcome(
                 COMPLETED,
-                f"Episodul pentru {date_iso} a fost respins de Director după o rescriere: {notes}",
+                f"Episodul pentru {date_iso} a fost respins de Director ({then}): {notes}",
                 **counts,
             )
         rewrite_of, episode_id = episode_id, None
@@ -363,9 +456,10 @@ def run_serial_stage(
     The order (see `unfinished_episodes`): an approved episode with no storyboard is readied
     for filming; a draft nobody read is read; a draft waiting for the Owner is named, and no
     new episode is written beside it (the canon number is fixed on his approval, so a second
-    draft would claim the same number); only then is a new closed day told. One of these per
-    run, as the media stage films one episode a day. Readying and naming need no model, so
-    they run before the stage asks for one.
+    draft would claim the same number); only then is a new closed day told, and with none, a
+    refused day is told again with its reasons (`day_to_retell`). One of these per run, as
+    the media stage films one episode a day. Readying and naming need no model, so they run
+    before the stage asks for one.
     """
     counts = _new_counts()
     language = getattr(settings, "content_language", "en")
@@ -411,7 +505,7 @@ def run_serial_stage(
                     language,
                     correlation,
                     draft_id=item["episode_id"],
-                    drafts_spent=item["drafts"],
+                    day_drafts=item["drafts"],
                 )
             return _outcome(
                 COMPLETED,
@@ -426,6 +520,10 @@ def run_serial_stage(
             return _outcome(SKIPPED, no_model, **counts)
         with Session(engine) as session, session.begin():
             log, quiet = day_to_tell(session, today)
+            again = day_to_retell(session, today) if log is None else None
+            if again is not None:
+                log = session.get(DailyStudioLog, again["log_id"])
+                counts["resumed"] = "retell"
             if log is None:
                 days = f" ({', '.join(sorted(quiet))})" if quiet else ""
                 last = _last_told(session)
@@ -463,6 +561,28 @@ def run_serial_stage(
             log_id, date_iso = log.id, log.business_date
             counts["projected"] = len(ensure_projection(session, log))
         counts["told_date"] = date_iso
+        if again is not None:
+            # A refused day told again, or a day the serial passed over untold: the first
+            # draft is the rewrite of the day's last refused one, with its reasons.
+            outcome = _tell_the_day(
+                engine,
+                registry,
+                log_id,
+                date_iso,
+                counts,
+                language,
+                correlation,
+                day_drafts=again["drafts"],
+                notes=again["notes"],
+                rewrite_of=again["rewrite_of"],
+            )
+            lead = (
+                f"Ziua {date_iso} se scrie din nou: ciornele ei au fost respinse "
+                f"({again['drafts']} din cel mult {MAX_DRAFTS_PER_DAY}). "
+                if again["drafts"]
+                else f"Ziua {date_iso}, sărită până acum, se povestește. "
+            )
+            return {**outcome, "reason": (lead + outcome["reason"])[:300]}
         outcome = _tell_the_day(engine, registry, log_id, date_iso, counts, language, correlation)
         return _naming_the_day(outcome, date_iso, quiet)
     except Exception as exc:
@@ -487,9 +607,11 @@ def run_serial_next_stage(
     of today.
 
     It writes nothing when today's log is not closed, when today already has an episode (a
-    re-run; a draft nobody read is read again), or when an earlier episode waits for the
-    Owner or for a reading (the canon number is fixed on approval, and a script written
-    beside a waiting episode would claim its number and continue a story it never read).
+    re-run; a draft nobody read is read again, and a day whose every draft was refused is
+    written again with the reasons while `MAX_DRAFTS_PER_DAY` lasts), or when an earlier
+    episode waits for the Owner or for a reading (the canon number is fixed on approval, and
+    a script written beside a waiting episode would claim its number and continue a story it
+    never read).
     """
     counts = _new_counts()
     language = getattr(settings, "content_language", "en")
@@ -519,14 +641,19 @@ def run_serial_next_stage(
                 .order_by(StoryEpisode.created_at)
             ).all()
             told = [(e.id, e.title, e.status, bool(e.review_json)) for e in existing]
+            last_notes = existing[-1].notes if existing else None
             waiting = [
                 (kind, episode.title, episode.id)
                 for kind, episode in unfinished_episodes(session, today)
                 if kind in ("review", "owner")
             ]
         counts["told_date"] = today
+        # Today told and every draft refused, with budget left: written again with the
+        # reasons, instead of "already written (rejected)" until the day was out of the window.
+        refused = bool(told) and all(status == "REJECTED" for _i, _t, status, _r in told)
+        retell = refused and len(told) < MAX_DRAFTS_PER_DAY
 
-        if told:
+        if told and not retell:
             episode_id, title, status, reviewed = told[-1]
             counts["episode_id"] = episode_id
             if status == "DRAFT" and not reviewed:
@@ -542,14 +669,15 @@ def run_serial_next_stage(
                     language,
                     correlation,
                     draft_id=episode_id,
-                    drafts_spent=len(told),
+                    day_drafts=len(told),
                     film=False,
                 )
             state = {"APPROVED": "aprobat", "DRAFT": "ciornă", "REJECTED": "respins"}
+            spent = f"; ziua și-a folosit cele {MAX_DRAFTS_PER_DAY} ciorne" if refused else ""
             return _outcome(
                 COMPLETED,
                 f"Scenariul de mâine pentru {today} este deja scris: „{title[:80]}” "
-                f"({state.get(status, status.lower())}); nu se scrie din nou.",
+                f"({state.get(status, status.lower())}{spent}); nu se scrie din nou.",
                 **counts,
             )
         if waiting:
@@ -570,6 +698,21 @@ def run_serial_next_stage(
             log = session.get(DailyStudioLog, log_id)
             assert log is not None  # read above, and a closed log is never deleted
             counts["projected"] = len(ensure_projection(session, log))
+        if retell:
+            counts["resumed"] = "retell"
+            return _tell_the_day(
+                engine,
+                registry,
+                log_id,
+                today,
+                counts,
+                language,
+                correlation,
+                day_drafts=len(told),
+                film=False,
+                notes=last_notes,
+                rewrite_of=told[-1][0],
+            )
         return _tell_the_day(
             engine, registry, log_id, today, counts, language, correlation, film=False
         )

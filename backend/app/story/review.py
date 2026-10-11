@@ -18,8 +18,11 @@ already has for films:
   rooms); words per beat (a v3 beat holds 8-22 spoken words, a scene's nine seconds);
   concentration (no event carries more than half the beats unless it is the day's only
   one — the episode on his data cites one event in all eight); language (the title and every
-  line in the publishing language, before any paid render); and new-viewer accessibility
-  (the first beat names who is in the room and does not begin mid-thought).
+  line in the publishing language, before any paid render); new-viewer accessibility
+  (the first beat names who is in the room and does not begin mid-thought); and, when the
+  serial's motion model states its longest clip, filmable (each beat's lines said within one
+  clip of it, slowed down locally by at most a quarter — 2026-10-10).
+  The writer is measured by these same checks before a draft is stored (`draft_checks`).
   A check certifies only what it measured: an episode with nothing to measure (no citation,
   no line, no title) fails it rather than passing by absence.
   Any failure is the verdict, with its reasons, and the Director is not asked.
@@ -67,6 +70,7 @@ from app.story.services import (
     EPISODE_PARTS,
     MAX_BEATS,
     PREFERRED_SHOWRUNNER_ROLE,
+    SERIES_KEY,
     SPEAKING_CAST,
     WORDS_PER_BEAT,
     advance_continuity,
@@ -74,7 +78,7 @@ from app.story.services import (
     ensure_projection,
     voice_of,
 )
-from app.wording import work_status
+from app.wording import decimal, work_status
 
 logger = logging.getLogger("studio.story.review")
 
@@ -313,6 +317,109 @@ def _words_per_beat(
     }
 
 
+def motion_clip_limit(session: Session) -> dict[str, Any] | None:
+    """The motion model the serial is filmed with, and the longest beat one of its clips can
+    carry: its longest clip, slowed down locally by at most `SLOWDOWN_ALLOWANCE` (the Owner's
+    «Încetinește local»). The model is the one the production policy resolves for the serial's
+    channel and series; its longest clip is read from its own contract, else from the price
+    table. None when no model is selected or nothing sets its maximum: no filming check is
+    then claimed, as no language check is claimed for a language the guard cannot read.
+    """
+    from app.integrations.models import ProviderResource  # noqa: PLC0415
+    from app.media.cost_plan import SLOWDOWN_ALLOWANCE, longest_seconds  # noqa: PLC0415
+    from app.media.production_policy import resolve_purpose  # noqa: PLC0415
+
+    channel = session.scalar(
+        select(ChannelRecord).where(ChannelRecord.channel_type == "OFFICE_SERIAL")
+    )
+    chosen = resolve_purpose(session, "video", channel=channel, series_key=SERIES_KEY)
+    model_id = str(chosen.get("model_id") or "")
+    if not model_id:
+        return None
+    resource = session.scalar(
+        select(ProviderResource).where(
+            ProviderResource.integration_id == chosen.get("integration_id"),
+            ProviderResource.remote_id == model_id,
+        )
+    )
+    meta = resource.api_metadata if resource is not None else None
+    meta = meta if isinstance(meta, dict) else {}
+    durations = meta.get("durations")
+    contract = durations.get("image_to_video") if isinstance(durations, dict) else None
+    rule: dict[str, Any] | None = None
+    if isinstance(contract, list) and contract:
+        rule = {"values": contract}
+    elif isinstance(contract, dict) and contract:
+        rule = contract
+    longest = longest_seconds(model_id, contract=rule) if rule else longest_seconds(model_id)
+    stated = meta.get("max_seconds")
+    if longest is None and isinstance(stated, int | float) and not isinstance(stated, bool):
+        longest = int(stated)
+    if not longest:
+        return None
+    return {
+        "model_id": model_id,
+        "longest_seconds": longest,
+        "limit_seconds": round(longest * (1 + SLOWDOWN_ALLOWANCE), 3),
+    }
+
+
+def beat_clip_seconds(lines: list[dict[str, Any]]) -> float:
+    """The clip one beat's lines need, sized as the motion plan sizes a clip for words not
+    yet voiced (`assembler.clip_plan`, an ESTIMATED narration): the words as the voice says
+    them (`spoken_words`: a number is said in words) at SECONDS_PER_SPOKEN_WORD, a
+    SPEAKER_GAP_SECONDS breath between two speakers' takes (`speaker_segments`), the
+    estimate's margin and the scene's closing breath. A serial scene cuts to the next one
+    (`storyboard_from_episode`), so no dissolve is added.
+    """
+    from app.media.assembler import (  # noqa: PLC0415 - the assembler is heavy; read when measured
+        NARRATION_ESTIMATE_MARGIN,
+        SECONDS_PER_SPOKEN_WORD,
+        SPOKEN_TAIL_SECONDS,
+        spoken_words,
+    )
+    from app.media.speaker_voices import SPEAKER_GAP_SECONDS, speaker_segments  # noqa: PLC0415
+
+    takes = speaker_segments(lines)
+    said = sum(spoken_words(take["text"]) for take in takes) * SECONDS_PER_SPOKEN_WORD
+    said += SPEAKER_GAP_SECONDS * max(0, len(takes) - 1)
+    return round(said * (1 + NARRATION_ESTIMATE_MARGIN) + SPOKEN_TAIL_SECONDS, 2)
+
+
+def _filmable(
+    beats: list[dict], lines_by_beat: list[list[dict[str, Any]]], limit: dict[str, Any]
+) -> dict[str, Any]:
+    """Every beat said within one clip of the serial's motion model (`motion_clip_limit`).
+
+    One beat is one scene and one clip. The words-per-beat rule counts words; this counts
+    seconds, numbers said in words and the breaths between speakers included, against what
+    the camera can film: a beat longer than its clip slowed by a quarter is refused at
+    assembly after its stills, clip and voice were bought (2026-10-10, LTX-2.5 at 10 s).
+    """
+    needed = [beat_clip_seconds(lines) for lines in lines_by_beat]
+    ceiling = float(limit["limit_seconds"])
+    numbers = _beat_numbers(beats)
+    outside = [n for n, s in zip(numbers, needed, strict=True) if s > ceiling + 1e-6]
+    counted = [needed[numbers.index(number)] for number in outside]
+    problems = []
+    if not beats:
+        problems.append("episodul nu are niciun beat de măsurat")
+    if outside:
+        problems.append(
+            f"beat-urile {', '.join(map(str, outside))} nu încap într-un singur cadru: "
+            f"{limit['model_id']} filmează cel mult {limit['longest_seconds']} s "
+            f"({decimal(ceiling, 1)} s încetinit local), iar replicile lor cer "
+            + ", ".join(f"{decimal(seconds, 1)} s" for seconds in counted)
+        )
+    return {
+        **limit,
+        "passed": not problems,
+        "needed_seconds": needed,
+        "outside": outside,
+        "reason": "; ".join(problems),
+    }
+
+
 def _concentration(beats: list[dict], day_events: int) -> dict[str, Any]:
     """No event is cited by more than half the beats, unless it is the day's only event.
 
@@ -532,6 +639,40 @@ def episode_checks(
         # asked only when the studio publishes in English (STUDIO_CONTENT_LANGUAGE); for any
         # other language no check is claimed rather than one that measured nothing.
         checks["language"] = _language(str(episode.title or ""), lines_by_beat)
+    # A v2 episode is filmed whole by one voice and was never told the rule; a studio with
+    # no motion model, or one whose longest clip nothing states, has nothing to measure.
+    if v3 and (limit := motion_clip_limit(session)) is not None:
+        checks["filmable"] = _filmable(beats, lines_by_beat, limit)
+    return checks
+
+
+def draft_checks(
+    session: Session, episode: StoryEpisode, offered: list[str], language: str = "en"
+) -> dict[str, dict[str, Any]]:
+    """What a written answer is measured by before it is stored for the review (brief v7).
+
+    The review's own `episode_checks`, run on the episode as it would be stored, so the
+    writer's measure and the Director's can never disagree; and one rule of the brief only:
+    nobody speaks but the speakers it offered (``offered``). That rule steers the writer and
+    is not the review's: the Owner's rule is the cast check's, two to four who act in the
+    cited events, and a draft that keeps it reaches the Director whoever speaks.
+    """
+    checks = episode_checks(session, episode, language)
+    if offered:
+        lines = [line for beat in episode.beats_json or [] for line in beat_lines(beat)]
+        speaking = speakers_of(lines)
+        extra = [name for name in speaking if name not in offered]
+        checks["offered_speakers"] = {
+            "passed": not extra,
+            "offered": list(offered),
+            "speakers": speaking,
+            "reason": (
+                f"vorbesc fără să fie printre vorbitorii aleși ({', '.join(offered)}): "
+                + ", ".join(extra)
+                if extra
+                else ""
+            ),
+        }
     return checks
 
 
