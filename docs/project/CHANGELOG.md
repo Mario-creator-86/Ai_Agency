@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-11 — A serial still is one moment in a fixed frame
+
+- 48bbcd1 — prompt_agent.compose_serial_prompt: fixed framing per shot size, SERIAL_FRAME_SENTENCE, first moment only (_still_moment), whole-clause identities (_identity, _clean_cut); the camera path and the chain of moments stay in the motion prompt.
+
 ## 2026-10-11 — A RESOLVED sheet repair walks the film on
 
 - 942edfc — blocker_repair._finish(RESOLVED) → _continue_repaired_film: FILM_CONTINUE queued in the repair's transaction (cause sheet_repaired), once per repair, PRODUCTION only.
