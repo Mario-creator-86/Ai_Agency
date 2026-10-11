@@ -351,10 +351,18 @@ export function describeEvent(event, names = {}) {
   const payload = event.payload && typeof event.payload === 'object' ? event.payload : {};
   const family = type.split('.')[0];
   const agentId = payload.agent_id || (family === 'agent' ? event.aggregate_id : null);
-  const who = (agentId && names[agentId]) || payload.from_name || '';
+  let who = (agentId && names[agentId]) || payload.from_name || '';
   let label = '';
   let text = '';
   let kind = FAMILY_KIND[family] || 'system';
+  // 2026-10-11, the Owner («mai pentru oameni, mai puțin cod … imaginea celui care lucrează»):
+  // what the backend says of an event in words (backend/app/events_feed.py: the film by its
+  // title, the take by its kind, who did what) is the row, with the employee it names in the
+  // head and their portrait beside it. The page's own words stay for the kinds it already
+  // told well, and for every event the backend has no words for.
+  const said = typeof event.words_ro === 'string' ? event.words_ro.trim() : '';
+  const actor = event.actor && typeof event.actor === 'object' ? event.actor : null;
+  if (said && actor) who = names[actor.agent_id] || actor.name || who;
   /** W34: a job the studio's clock starts on its own (ROUTINE_JOB), folded by the hour */
   let routine = '';
 
@@ -395,6 +403,10 @@ export function describeEvent(event, names = {}) {
       kind = 'speech';
       break;
     case 'agent.state_changed':
+      if (said) {
+        text = withoutName(said, who, actor);
+        break;
+      }
       // WORKING is production without a model — a voice being recorded, a shot generated. It
       // used to read "a terminat" (finished) while the work was only starting.
       // An error or a block is not a finish (W9): it says the state in the name tag's words.
@@ -402,6 +414,12 @@ export function describeEvent(event, names = {}) {
       text = payload.detail || (payload.task_type ? `sarcina: ${taskLabel(payload.task_type)}` : '');
       break;
     case 'agent.run_completed':
+      if (said) {
+        // «sarcină reușită · still qc · kimi-k3» read as code to the Owner; the backend's
+        // sentence says the task in words and the model it ran on.
+        text = withoutName(said, who, actor);
+        break;
+      }
       label = `sarcină ${statusLabel(payload.status)}`;
       text = [payload.task_type ? taskLabel(payload.task_type) : '', payload.model_name].filter(Boolean).join(' · ');
       break;
@@ -729,6 +747,11 @@ export function describeEvent(event, names = {}) {
       label = 'birou creat';
       break;
     default: {
+      if (said) {
+        // The backend's sentence, never the event's name and its ids.
+        text = withoutName(said, who, actor);
+        break;
+      }
       label = type.split('.').slice(1).join(' ').replace(/_/g, ' ') || type;
       const bits = Object.entries(payload)
         .filter(([, v]) => typeof v === 'string' || typeof v === 'number')
@@ -737,7 +760,22 @@ export function describeEvent(event, names = {}) {
       text = bits.join(' · ');
     }
   }
-  return routine ? { who, label, text: short(text), kind, routine } : { who, label, text: short(text), kind };
+  const item = routine ? { who, label, text: short(text), kind, routine } : { who, label, text: short(text), kind };
+  // The employee the backend named, for the portrait beside the row.
+  if (actor && actor.agent_id) return { ...item, portrait: String(actor.agent_id) };
+  return item;
+}
+
+/**
+ * The backend's sentence without the name the row's head already says: «Kael (Video Editor)
+ * a terminat …» under a head that says «Kael (Video Editor)» reads «a terminat …».
+ * @param {string} said @param {string} who @param {any} actor
+ */
+export function withoutName(said, who, actor) {
+  for (const name of [who, actor && actor.name].filter(Boolean)) {
+    if (said.startsWith(`${name} `)) return said.slice(name.length + 1);
+  }
+  return said;
 }
 
 /** W34: the routine row's tooltip (glossary W34). */
@@ -941,6 +979,8 @@ export class Ledger {
     /** @type {Map<string, any>} */
     this.events = new Map();
     this.names = {};
+    /** @type {((agentId: string) => string|null)|null} an employee's portrait as a data URL */
+    this.portraitFor = null;
     this.cursor = 0;
     this.backfilled = false;
     this.kind = 'all';
@@ -1051,6 +1091,12 @@ export class Ledger {
     return Boolean(this.renderedDay) && this.renderedDay !== studioDay(Date.now(), this.timezone);
   }
 
+  /** The employees' portraits, as the office draws them; the rows are drawn again with them. */
+  setPortraits(portraitFor) {
+    this.portraitFor = typeof portraitFor === 'function' ? portraitFor : null;
+    this.render();
+  }
+
   render() {
     const events = this.sorted();
     this.renderNow(events);
@@ -1092,9 +1138,12 @@ export class Ledger {
       const mail = item.thread
         ? `${item.forOwner ? ` ledger-owner-mail${answered.has(event.aggregate_id) ? ' is-answered' : ''}` : ''} ledger-mail" data-thread="${this.escape(item.thread)}" title="Deschide firul de corespondență`
         : '';
+      // The employee's portrait beside their name (2026-10-11), drawn by the office itself.
+      const face = item.portrait && this.portraitFor ? this.portraitFor(item.portrait) : null;
+      const portrait = face ? `<img class="ledger-portrait" src="${this.escape(face)}" alt="">` : '';
       const route = item.thread
         ? `<strong>${this.escape(item.who)}</strong> <span class="ledger-arrow">→</span> <strong>${this.escape(item.to)}</strong> · ${this.escape(item.label)}`
-        : `${item.who ? `<strong>${this.escape(item.who)}</strong> ` : ''}${this.escape(item.label)}`;
+        : `${portrait}${item.who ? `<strong>${this.escape(item.who)}</strong> ` : ''}${this.escape(item.label)}`;
       const letters = item.thread ? threadLength.get(item.thread) || 1 : 0;
       const body = item.thread
         ? `<div class="ledger-subject">${this.escape(item.subject || item.text)}</div>` +

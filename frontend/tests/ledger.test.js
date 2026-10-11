@@ -4,6 +4,43 @@ import { describeEvent, productionStatus, arrivingIds, LEDGER_SETTLE_MS } from '
 
 const names = { 'a-1': 'Dr. Aris (Researcher)', 'a-2': 'Sarah (Director)' };
 
+test("the backend's sentence is the row: the employee named by the page, the sentence without the name, the portrait", () => {
+  const actor = { agent_id: 'a-9', name: 'Kael (Video Editor)', role: 'VideoEditor', role_ro: 'Video Editor' };
+  const arrived = describeEvent(
+    {
+      event_type: 'media.scene_take_recorded',
+      aggregate_id: 't-1',
+      payload: { storyboard_id: 'b-1', scene_number: 3, kind: 'still', status: 'PAID' },
+      words_ro: 'A sosit imaginea scenei 3 din «The Zero Script Club»; Kael (Video Editor) o verifică.',
+      actor,
+    },
+    { 'a-9': 'Kael (Video Editor)' },
+  );
+  assert.equal(arrived.who, 'Kael (Video Editor)');
+  assert.equal(arrived.label, '');
+  assert.equal(arrived.text, 'A sosit imaginea scenei 3 din «The Zero Script Club»; Kael (Video Editor) o verifică.');
+  assert.equal(arrived.kind, 'production');
+  assert.equal(arrived.portrait, 'a-9');
+  const run = describeEvent(
+    {
+      event_type: 'agent.run_completed',
+      payload: { agent_id: 'a-9', task_type: 'still_qc', status: 'SUCCEEDED', model_name: 'kimi-k3' },
+      words_ro: 'Kael (Video Editor) a terminat verificarea unei imagini: reușită (cu kimi-k3).',
+      actor,
+    },
+    { 'a-9': 'Kael (Video Editor)' },
+  );
+  assert.equal(run.who, 'Kael (Video Editor)');
+  assert.equal(run.text, 'a terminat verificarea unei imagini: reușită (cu kimi-k3).');
+  // Without words from the backend the page keeps its own, and no portrait is claimed.
+  const bare = describeEvent(
+    { event_type: 'agent.run_completed', payload: { agent_id: 'a-9', task_type: 'still_qc', status: 'SUCCEEDED', model_name: 'kimi-k3' } },
+    { 'a-9': 'Kael (Video Editor)' },
+  );
+  assert.equal(bare.label, 'sarcină reușită');
+  assert.equal(bare.portrait, undefined);
+});
+
 test('what an employee said is shown with its name and text, as speech', () => {
   const item = describeEvent(
     { event_type: 'agent.message_sent', aggregate_id: 'a-1', payload: { text: 'Am citit patru pagini.' } },

@@ -389,9 +389,11 @@ test('a plaque never covers an employee, stays in the room, and gives up rather 
 test('the active pixel page has no legacy plaque overlay', () => {
   assert.doesNotMatch(MAIN, /streamPlaques|layoutPlaques|dataset\.stream/);
   const pixel = fs.readFileSync(new URL('../src/pixel_office.js', import.meta.url), 'utf8');
-  assert.match(pixel, /selected = p\.id === this\.selected/);
+  // 2026-10-11, the Owner: every employee with a word from the backend says it, not only the
+  // one selected or hovered (one bubble per employee, short-lived).
   assert.match(pixel, /this\.bubbles\.find/);
-  assert.match(pixel, /bubble && selected/);
+  assert.match(pixel, /if \(bubble\) this\.speech/);
+  assert.doesNotMatch(pixel, /bubble && selected/);
 });
 
 /* ------------------------------------------------------------------ what is live -- */

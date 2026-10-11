@@ -21,6 +21,7 @@ import { initSettings } from './settings.js';
 import { mountGpuSwitch } from './gpu_switch.js';
 import { acceptSnapshot } from './projection.js';
 import { OfficeEngine, PixelTitle, BUILDING, WORLD_W, WORLD_H } from './pixel_office.js';
+import { loadPortraitAtlas } from './pixel_portraits.js';
 import './pixel_studio.css';
 import { bindSceneMotion } from './pixel_motion.js';
 import { PRESENTATION, presentationLive } from './pixel_presentation.js';
@@ -343,6 +344,12 @@ const ledger = new Ledger({
   escape: escapeHtml,
   onEvents: (events) => {
     for (const event of events) noteAgentEvent(event);
+    // A fresh event with a word for the office: the employee it belongs to says it in a
+    // bubble (2026-10-11, the Owner: «agenții să răspundă cu o bulă când fac ceva și
+    // comportamentul lor să fie ghidat de backend»). The word and the employee come from the
+    // backend (events_feed.py); nothing is invented here, and nothing older than a minute or
+    // so is said as if it had just happened.
+    for (const event of events) sayInOffice(event);
     noteWorldEvents(events);
     if (events.some((event) => String(event.event_type || '').startsWith('runbook.'))) scheduleDayTrack();
     // A day that closes is re-read from the runbook's own record.
@@ -350,6 +357,51 @@ const ledger = new Ledger({
   },
   onThread: (threadId) => mailThread.open(threadId),
 });
+/** How fresh an event must be for the office to say its word now. */
+const BUBBLE_FRESH_MS = 90 * 1000;
+/** How long the office holds an event's word over the employee's head. */
+const BUBBLE_HOLD_MS = 7000;
+
+/** @param {any} event one of the record's events, as the backend served it */
+function sayInOffice(event) {
+  const actor = event && event.actor && typeof event.actor === 'object' ? event.actor : null;
+  const said = event && typeof event.bubble_ro === 'string' ? event.bubble_ro.trim() : '';
+  if (!actor || !actor.agent_id || !said || replaying()) return;
+  const at = Date.parse(String(event.timestamp || ''));
+  if (!Number.isFinite(at) || Date.now() - at > BUBBLE_FRESH_MS) return;
+  officeState.addSpeechBubble(String(actor.agent_id), said, BUBBLE_HOLD_MS);
+  updateOfficeCanvas();
+}
+
+/**
+ * The employees' portraits for the register (2026-10-11, the Owner: «poate punem și imaginea
+ * celui care lucrează»): drawn once per employee by the office's own renderer, the same face
+ * the office shows, kept as data URLs; drawn again once the portrait atlas has arrived.
+ * @type {Map<string, string|null>}
+ */
+const registerPortraits = new Map();
+let portraitAtlasAsked = false;
+
+/** @param {string} agentId */
+function registerPortrait(agentId) {
+  if (!officeEngine) return null;
+  if (registerPortraits.has(agentId)) return registerPortraits.get(agentId) || null;
+  const agent = officeState.agents.find((a) => (a.id || a.agent_id) === agentId);
+  if (!agent) return null;
+  let url = null;
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = 32;
+    canvas.height = 24;
+    const ctx = canvas.getContext('2d');
+    if (ctx && officeEngine.renderer.drawPortrait(ctx, agent)) url = canvas.toDataURL();
+  } catch {
+    url = null;
+  }
+  registerPortraits.set(agentId, url);
+  return url;
+}
+
 // «Acum» must go quiet when the register has been silent past RUN_QUIET_MS even if no event
 // arrives to trigger a render, so the head line is read again once a minute. It touches one
 // paragraph; the list is not redrawn. The day tracker's words follow the same clock.
@@ -4298,6 +4350,16 @@ function render(data) {
   ledger.timezone = data.studio.timezone;
   const agentNames = Object.fromEntries(officeState.agents.map((a) => [a.id || a.agent_id, a.display_name]));
   ledger.setNames(agentNames);
+  registerPortraits.clear();
+  ledger.setPortraits(registerPortrait);
+  if (!portraitAtlasAsked) {
+    portraitAtlasAsked = true;
+    loadPortraitAtlas().then((loaded) => {
+      if (!loaded) return;
+      registerPortraits.clear();
+      ledger.render();
+    }, () => {});
+  }
   liveWindows.timezone = data.studio.timezone;
   mailThread.timezone = data.studio.timezone;
   liveWindows.setNames(agentNames);

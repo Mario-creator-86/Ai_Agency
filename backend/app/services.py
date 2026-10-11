@@ -2078,9 +2078,13 @@ def read_events(engine: Engine, after: int, limit: int, since: str | None = None
             query = query.where(DomainEvent.sequence >= first)
         events = session.scalars(query.order_by(DomainEvent.sequence).limit(limit + 1)).all()
         selected = events[:limit]
+        # Each event with its words for a person — the sentence, who did it, which film, the
+        # office's bubble — where the studio has them (2026-10-11, the Owner's register).
+        from app.events_feed import enrich  # noqa: PLC0415 - the feed reads models only
+
         page = {
             "schema_version": 1,
-            "events": [EventView.model_validate(e).model_dump() for e in selected],
+            "events": enrich(session, [EventView.model_validate(e).model_dump() for e in selected]),
             "next_cursor": selected[-1].sequence if selected else after,
             "has_more": len(events) > limit,
         }

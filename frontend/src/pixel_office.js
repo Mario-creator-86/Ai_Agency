@@ -410,10 +410,12 @@ export class OfficeEngine {
       ctx.fillStyle = motion.color; ctx.fillRect(p.x + 18, p.y - 60, 3, 3);
     }
     // Dialogue/state UI is above the complete scene, independent of employee array order.
+    // Every employee with a word says it (2026-10-11, the Owner: the office alive from the
+    // backend's events), not only the one selected or hovered: a bubble is one per employee
+    // and short-lived (office_state.addSpeechBubble), so the room never fills with them.
     for(const p of positions){
       const bubble=this.bubbles.find(b=>b.agentId===p.id&&b.expiresAt>Date.now());
-      const selected = p.id === this.selected || p.id === this.hover;
-      if (bubble && selected) this.speech(ctx,bubble,p);
+      if (bubble) this.speech(ctx,bubble,p);
     }
     this.bubbles = this.bubbles.filter(b => b.expiresAt > Date.now());
     this.depth={outdoors:this.street.depthOrder,indoors:positions.map(({id,depth})=>({id,depth})),foreground:foregroundStatus(this.background)};
