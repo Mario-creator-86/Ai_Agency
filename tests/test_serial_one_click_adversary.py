@@ -281,7 +281,9 @@ def test_a_same_day_rerun_films_and_writes_nothing_new(engine, staffed, settings
     assert queue["artefacts"]["written"] == again["artefacts"]["written"] == 0
     assert queue["artefacts"]["storyboard_id"] is None
     assert len(written) == 2 and len(reviewed) == 2
-    assert storyboard_count(engine) == 1
+    # Yesterday's storyboard from the first click's serial stage, today's from its serial_next
+    # (readied the same evening since 2026-10-11); the second click built neither again.
+    assert storyboard_count(engine) == 2
 
 
 def test_without_the_directors_leave_a_click_names_what_waits_for_the_owner(

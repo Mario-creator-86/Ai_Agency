@@ -986,11 +986,14 @@ def test_the_clock_starts_a_day_that_ends_in_a_published_film_and_an_episode(
     tomorrows = dated[business_date(TZ)]
     assert by_name["serial_next"]["status"] == "COMPLETED", by_name["serial_next"]["reason"]
     assert tomorrows.status == "APPROVED", (tomorrows.status, tomorrows.review_json)
-    assert tomorrows.storyboard_id is None
+    # Readied the same evening (2026-10-11) and not filmed today: its day is not over, and in
+    # TEST nothing continues tonight (the two uploads above are yesterday's films).
+    assert tomorrows.storyboard_id and tomorrows.storyboard_id != episode.storyboard_id
     assert tomorrows.continuity_json["next_episode"]["status"] == "PLANNED"
-    # Two storyboards: the factual film's and the serial's, both filmed in the same day.
-    assert len(boards) == 2, [board.title for board in boards]
-    assert any(board.series_key == "office_serial" for board in boards)
+    # Three storyboards: the factual film's and the serial's, both filmed in the same day,
+    # and tomorrow's film's, readied tonight.
+    assert len(boards) == 3, [board.title for board in boards]
+    assert sum(board.series_key == "office_serial" for board in boards) == 2
 
     # 6. And the day is done: a second tick on the same date starts nothing.
     assert scheduler_tick(engine) == []
@@ -1383,19 +1386,21 @@ def test_one_click_films_one_episode_and_writes_the_next(engine, settings, studi
         return {stage["stage"]: stage for stage in result["stages"]}
 
     # Day D: yesterday's episode is written, approved, storyboarded and filmed; today's is
-    # written, read and approved under the Owner's policy, and nothing more.
+    # written, read, approved under the Owner's policy and readied (2026-10-11: the storyboard
+    # the same evening; in TEST nothing continues tonight), and not filmed before D is over.
     first = click()
     serial = _the_serial(engine)
     assert sorted(serial) == [day_before, day_d], (first["serial_queue"], first["serial_next"])
     assert serial[day_before]["status"] == "APPROVED"
     assert serial[day_before]["filmed"], first["media"]["reason"]
     assert serial[day_d]["status"] == "APPROVED", first["serial_next"]["reason"]
-    assert serial[day_d]["storyboard_id"] is None
+    board_d = serial[day_d]["storyboard_id"]
+    assert board_d and not serial[day_d]["filmed"]
     assert first["serial_queue"]["artefacts"]["told_date"] == day_before
     assert first["serial_queue"]["artefacts"]["storyboard_id"]
     tomorrow = first["serial_next"]["artefacts"]
     assert tomorrow["told_date"] == day_d
-    assert tomorrow["storyboard_id"] is None
+    assert tomorrow["storyboard_id"] == board_d and tomorrow["film_continue_task_id"] is None
     # Tomorrow's script was written once and read by the Director through the whole rubric,
     # on the same run that filmed yesterday's: the Owner's two halves in one click.
     assert tomorrow["written"] == tomorrow["reviewed"] == tomorrow["approved"] == 1, tomorrow
@@ -1407,24 +1412,24 @@ def test_one_click_films_one_episode_and_writes_the_next(engine, settings, studi
     written_on_d = _episode_prompts(studio)
     assert written_on_d == 2
 
-    # A second click the same day: nothing of D is storyboarded, filmed or written again.
+    # A second click the same day: nothing of D is storyboarded again, filmed or written again.
     again = click()
     serial = _the_serial(engine)
     assert sorted(serial) == [day_before, day_d]
-    assert serial[day_d]["storyboard_id"] is None and not serial[day_d]["filmed"]
+    assert serial[day_d]["storyboard_id"] == board_d and not serial[day_d]["filmed"]
     assert again["serial_next"]["artefacts"]["written"] == 0, again["serial_next"]["reason"]
     assert _episode_prompts(studio) == written_on_d
 
-    # Day D+1: the episode written on D is readied from its rows and filmed; no model is
-    # asked to write it again, and D+1 itself (quiet: nothing is timestamped on it) gets none.
+    # Day D+1: the storyboard built on D is filmed; nothing is readied or written again, and
+    # D+1 itself (quiet: nothing is timestamped on it) gets none.
     monkeypatch.setattr("app.story.services.datetime", _Tomorrow)
     assert business_date(TZ) != day_d
     next_day = click()
     serial = _the_serial(engine)
     assert sorted(serial) == [day_before, day_d], next_day["serial_next"]["reason"]
-    assert next_day["serial_queue"]["artefacts"]["resumed"] == "storyboard"
-    assert next_day["serial_queue"]["artefacts"]["episode_id"] == serial[day_d]["id"]
-    assert serial[day_d]["storyboard_id"]
+    assert next_day["serial_queue"]["artefacts"]["resumed"] is None
+    assert next_day["serial_queue"]["artefacts"]["storyboard_id"] is None
+    assert serial[day_d]["storyboard_id"] == board_d
     assert serial[day_d]["filmed"], next_day["media"]["reason"]
     assert _episode_prompts(studio) == written_on_d
     # D+1's own script is not written from a day with nothing on it, and the stage says so.

@@ -572,8 +572,9 @@ def test_tomorrows_script_refused_is_written_again_until_the_days_budget(
 def test_the_serial_makes_its_first_episode_alone(engine, staffed, settings, monkeypatch):
     """The Owner's «Toate trebuie să le facă studioul singur», on fakes: today's script is
     written by a writer that first casts six people, measured, asked again with the reasons,
-    kept, passed and approved by the Director as episode 1; the next morning readies it and
-    it is the serial's film of that day, not of today."""
+    kept, passed and approved by the Director as episode 1 and readied the same evening
+    (2026-10-11; until then the next morning readied it); it is the serial's film of the day
+    after, not of today, and the morning writes nothing again."""
     allow_director_approval(engine)
     log, _ids = a_crowded_day(engine)  # today, closed as daily_log closes it
     writer = hire(monkeypatch, Writer(unruly=1))
@@ -589,29 +590,34 @@ def test_the_serial_makes_its_first_episode_alone(engine, staffed, settings, mon
     assert episode.status == "APPROVED" and episode.reviewed_by == "director"
     assert episode.review_json["verdict"] == "PASS" and episode.review_json["model_used"]
     assert episode.continuity_json["write_checks"]["attempts"] == 2
-    assert episode.storyboard_id is None and storyboard_count(engine) == 0
+    assert episode.storyboard_id == tonight["artefacts"]["storyboard_id"]
+    assert storyboard_count(engine) == 1
     assert get_continuity(engine)["canon_episode_number"] == 1
     today = business_date(TZ)
-
-    tomorrow = tomorrow_is(monkeypatch)
-    morning = run_serial_stage(engine, registry(), settings)
-
-    assert morning["artefacts"]["resumed"] == "storyboard", morning
-    assert morning["artefacts"]["told_date"] == log["business_date"] == today
-    (episode,) = episode_rows(engine)
-    assert episode.storyboard_id == morning["artefacts"]["storyboard_id"]
+    assert tonight["artefacts"]["told_date"] == log["business_date"] == today
     with Session(engine) as session:
         boards = list(session.scalars(select(Storyboard)))
         assert [board.series_key for board in boards] == ["office_serial"]
         assert serial_films_due(session, boards, today) == []
-        assert serial_films_due(session, boards, tomorrow) == [episode.storyboard_id]
         assert session.get(DailyStudioLog, episode.log_id).business_date == today
+
+    tomorrow = tomorrow_is(monkeypatch)
+    morning = run_serial_stage(engine, registry(), settings)
+
+    assert morning["artefacts"]["resumed"] is None, morning
+    assert morning["artefacts"]["written"] == 0 and storyboard_count(engine) == 1
+    with Session(engine) as session:
+        boards = list(session.scalars(select(Storyboard)))
+        assert serial_films_due(session, boards, tomorrow) == [episode.storyboard_id]
     assert len(writer.prompts) == 2  # the morning wrote nothing
 
 
-def test_a_retold_day_is_never_filmed_before_it_is_over(engine, staffed, settings, monkeypatch):
-    """Today's script, refused and written again by a same-day re-run, is still only
-    approved: nothing of a day not yet over is storyboarded."""
+def test_a_retold_day_is_readied_but_its_days_media_stage_waits_for_it_to_be_over(
+    engine, staffed, settings, monkeypatch
+):
+    """Today's script, refused and written again by a same-day re-run, is approved and
+    readied (2026-10-11); the day's own media stage still films nothing of a day not yet over,
+    and in TEST nothing continues tonight."""
     allow_director_approval(engine)
     a_crowded_day(engine)
     hire(monkeypatch, Writer(unruly=99))
@@ -621,5 +627,9 @@ def test_a_retold_day_is_never_filmed_before_it_is_over(engine, staffed, setting
 
     again = run_serial_next_stage(engine, registry(), settings)
 
-    assert again["artefacts"]["approved"] == 1 and again["artefacts"]["storyboard_id"] is None
-    assert storyboard_count(engine) == 0
+    assert again["artefacts"]["approved"] == 1 and again["artefacts"]["storyboard_id"]
+    assert again["artefacts"]["film_continue_task_id"] is None
+    assert storyboard_count(engine) == 1
+    with Session(engine) as session:
+        boards = list(session.scalars(select(Storyboard)))
+        assert serial_films_due(session, boards, business_date(TZ)) == []

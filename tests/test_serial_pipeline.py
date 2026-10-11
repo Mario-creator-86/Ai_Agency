@@ -2487,9 +2487,14 @@ def test_the_directors_contract_carries_the_episode_review():
 # Measured before this (2026-09-24): nothing wrote tomorrow's episode. The run's last act was
 # closing today's log, and the serial stage tells only a day that is over, so the Owner's one
 # click filmed an episode and left the next one unwritten. The new stage runs after today's
-# log is closed: it writes, reviews and (under his policy) approves the episode of today,
-# and builds no storyboard, so nothing is filmed or bought before the day is over. The next
-# morning's serial stage readies it (S1's "storyboard" case) and the media stage films it.
+# log is closed: it writes, reviews and (under his policy) approves the episode of today.
+# Until 2026-10-11 it built no storyboard, so nothing was filmed or bought before the day was
+# over, and the next morning's serial stage readied it (S1's "storyboard" case). Measured that
+# day on a copy of his data: the first episode ever approved under his policy stood with no
+# storyboard until the next morning, and the serial had never made a public episode. The stage
+# now readies the episode it approves and, in PRODUCTION, queues its filming for tonight
+# (tests/test_serial_continuation.py); the day's own media stage still films a serial episode
+# only once its day is over (`serial_films_due`), so a same-day re-run buys nothing twice.
 # The schema carries a plan for the next episode, which the next writer keeps only if the
 # events support it (07_STORY_ENGINE, marketing teaser linkage), and says whether it did.
 
@@ -2521,7 +2526,7 @@ def todays_episode(engine, monkeypatch, settings, **extra) -> tuple[dict, dict, 
     return log, outcome, written_, reviewed
 
 
-def test_tomorrows_script_is_written_reviewed_and_approved_but_never_storyboarded(
+def test_the_evenings_script_is_written_reviewed_approved_and_readied_for_filming(
     engine, staffed, settings, monkeypatch
 ):
     allow_director_approval(engine)
@@ -2531,41 +2536,47 @@ def test_tomorrows_script_is_written_reviewed_and_approved_but_never_storyboarde
     assert outcome["status"] == "COMPLETED", outcome
     artefacts = outcome["artefacts"]
     assert artefacts["written"] == artefacts["reviewed"] == artefacts["approved"] == 1
-    assert artefacts["storyboard_id"] is None
     assert artefacts["told_date"] == log["business_date"] == business_date(TZ)
-    assert "mâine" in outcome["reason"]
+    # Readied in the same stage (2026-10-11): the storyboard the media stage films, built
+    # from the approved rows. In TEST nothing continues tonight; the next run films it.
+    assert artefacts["storyboard_id"] and artefacts["film_continue_task_id"] is None
+    assert "pregătit de filmare" in outcome["reason"] and "mâine" in outcome["reason"]
     (row,) = episode_rows(engine)
     assert row.log_id == log["id"]
-    assert row.status == "APPROVED" and row.storyboard_id is None
-    # Nothing a media stage could film: no storyboard at all.
-    assert storyboard_count(engine) == 0
+    assert row.status == "APPROVED" and row.storyboard_id == artefacts["storyboard_id"]
+    assert storyboard_count(engine) == 1
     assert get_continuity(engine)["canon_episode_number"] == 1
     assert len(written_) == 1 and len(reviewed) == 1
 
 
-def test_the_next_morning_readies_it_for_filming_without_writing_it_again(
+def test_the_next_morning_takes_up_nothing_and_names_the_day_already_told(
     engine, staffed, settings, monkeypatch
 ):
     allow_director_approval(engine)
     _, first, written_, reviewed = todays_episode(engine, monkeypatch, settings)
-    tomorrow_is(monkeypatch)
+    tomorrow = tomorrow_is(monkeypatch)
 
     outcome = run_serial_stage(engine, registry(), settings)
 
     artefacts = outcome["artefacts"]
     assert outcome["status"] == "COMPLETED", outcome
-    assert artefacts["resumed"] == "storyboard"
-    assert artefacts["episode_id"] == first["artefacts"]["episode_id"]
-    # The day it films is named on the run card, as on the day it was written (rehearsal on
-    # a copy of his data, 2026-09-24: the resumed stage said told_date None every morning).
-    assert artefacts["told_date"] == first["artefacts"]["told_date"]
-    assert artefacts["storyboard_id"]
+    # Readied the evening before (2026-10-11): nothing is left for the morning to take up;
+    # the day already told is named, and its film is the media stage's that morning.
+    assert artefacts["resumed"] is None and artefacts["storyboard_id"] is None
     assert artefacts["written"] == artefacts["reviewed"] == 0
+    assert "Ultima zi povestită" in outcome["reason"]
     assert len(written_) == 1 and len(reviewed) == 1
     assert len(episode_rows(engine)) == 1 and storyboard_count(engine) == 1
+    from app.runbook import stages
+
+    with Session(engine) as session:
+        boards = list(session.scalars(select(Storyboard)))
+        assert stages.serial_films_due(session, boards, tomorrow) == [
+            first["artefacts"]["storyboard_id"]
+        ]
 
 
-def test_a_same_day_rerun_writes_nothing_twice_and_readies_nothing(
+def test_a_same_day_rerun_writes_nothing_twice_and_readies_nothing_twice(
     engine, staffed, settings, monkeypatch
 ):
     allow_director_approval(engine)
@@ -2580,7 +2591,7 @@ def test_a_same_day_rerun_writes_nothing_twice_and_readies_nothing(
     assert again["artefacts"]["episode_id"] == first["artefacts"]["episode_id"]
     assert "O zi la studio" in again["reason"]
     assert len(written_) == 1 and len(reviewed) == 1
-    assert len(episode_rows(engine)) == 1 and storyboard_count(engine) == 0
+    assert len(episode_rows(engine)) == 1 and storyboard_count(engine) == 1
 
 
 def test_without_the_directors_leave_tomorrows_script_waits_for_the_owner(

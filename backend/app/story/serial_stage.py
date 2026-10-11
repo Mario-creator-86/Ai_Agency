@@ -23,13 +23,16 @@ from typing import Any
 from uuid import uuid4
 
 from sqlalchemy import Engine, func, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from app.db import lock_for_write
 from app.media.serial_storyboard import (
     SerialStoryboardError,
     describe_serial_shots,
     storyboard_from_episode,
 )
+from app.services import queue_film_continue
 from app.story.models import DailyStudioLog, StoryEpisode
 from app.story.review import ReviewError, review_episode
 from app.story.services import (
@@ -57,6 +60,26 @@ MAX_DRAFTS_PER_DAY = 3
 #: How far back the stage takes up an episode an earlier run left unfinished. A week: the
 #: serial tells recent days, and an episode older than that is left for the Owner's hand.
 RESUME_WINDOW_DAYS = 7
+#: The cause on the continuation queued for an episode approved at the end of the day
+#: (`queue_film_continue`): the worker walks its storyboard tonight, under the Owner's money
+#: rules, instead of the next morning's run.
+SERIAL_APPROVED_CAUSE = "serial_approved"
+#: What the stage says of the filming, after the storyboard: queued (PRODUCTION), or left to
+#: the next run (TEST buys nothing, so nothing continues there; a queue fault is logged).
+FILMING_QUEUED = (
+    "filmarea lui a fost pusă la coadă și continuă în seara aceasta, sub regulile tale pentru bani."
+)
+FILMING_TOMORROW = "rularea de mâine îl filmează."
+
+
+def serial_continuation_key(storyboard_id: str) -> str:
+    """The idempotency key of the one continuation an approved episode's storyboard gets.
+
+    The stage that approves the episode and the watchdog pass that finishes one left behind
+    (`app.workflows.passes.serial_unfilmed`) both queue under this key, so the two never
+    queue twice for one storyboard.
+    """
+    return f"film-continue-{storyboard_id}-{SERIAL_APPROVED_CAUSE}"
 
 
 def _outcome(status: str, reason: str, **artefacts: Any) -> dict[str, Any]:
@@ -274,6 +297,51 @@ def _ready_for_filming(
     return True
 
 
+def ready_for_filming(
+    engine: Engine, episode_id: str, correlation: str, registry: Any = None
+) -> tuple[str | None, str | None]:
+    """`_ready_for_filming` for a caller with no run card: (storyboard id, refusal)."""
+    counts: dict[str, Any] = {}
+    if _ready_for_filming(engine, episode_id, counts, correlation, registry):
+        return str(counts["storyboard_id"]), None
+    return None, counts.get("refusal")
+
+
+def _queue_filming(engine: Engine, counts: dict[str, Any], episode_id: str) -> str | None:
+    """Queue the one FILM_CONTINUE that walks the storyboard just built, and say so on the card.
+
+    Measured on a copy of his database, 2026-10-11: episode 043317d3 «The Zero Script Club»
+    was approved at 12:46 UTC by the stage that runs last in the day, built no storyboard by
+    design, and would have been filmed by the next morning's run at the earliest; the serial
+    had never made one public episode. Finishing an episode his run approved is unfinished
+    work, not new work (his rule: new work starts at the 05:00 run or on his «Pornește
+    rularea de azi»), so the walk is queued now; what it buys stays behind his money rules,
+    his stop, safe mode and his mode (`runbook.stages.continue_film`). PRODUCTION only
+    (`queue_film_continue`); a queue fault is logged and the watchdog's `serial_unfilmed`
+    pass queues the same key later.
+    """
+    storyboard_id = str(counts["storyboard_id"])
+    try:
+        with Session(engine) as session, session.begin():
+            # Read-then-write in the queue: the write lock first (the 2026-10-09 14:17 loss).
+            lock_for_write(session)
+            task_id = queue_film_continue(
+                session,
+                storyboard_id,
+                key=serial_continuation_key(storyboard_id),
+                payload={"cause": SERIAL_APPROVED_CAUSE, "episode_id": episode_id},
+            )
+    except SQLAlchemyError:
+        logger.warning("serial_continue_not_queued", extra={"storyboard_id": storyboard_id})
+        task_id = None
+    counts["film_continue_task_id"] = task_id
+    return task_id
+
+
+def _filming_words(task_id: str | None) -> str:
+    return FILMING_QUEUED if task_id else FILMING_TOMORROW
+
+
 def _tell_the_day(
     engine: Engine,
     registry: Any,
@@ -284,7 +352,7 @@ def _tell_the_day(
     correlation: str,
     draft_id: str | None = None,
     day_drafts: int = 0,
-    film: bool = True,
+    media_stage_follows: bool = True,
     notes: str | None = None,
     rewrite_of: str | None = None,
 ) -> dict[str, Any]:
@@ -298,8 +366,10 @@ def _tell_the_day(
     ``notes`` and ``rewrite_of`` start a retelling: the first draft is written as the
     rewrite of the day's last refused draft, with the reasons it was refused.
 
-    ``film=False`` is tomorrow's script (`run_serial_next_stage`): everything up to the
-    approval, and no storyboard, so nothing of a day not yet over can be filmed.
+    ``media_stage_follows=False`` is the evening's script (`run_serial_next_stage`, the run's
+    last stage): no media stage of this run films the storyboard, so its filming is queued
+    (`_queue_filming`). Until 2026-10-11 that script built no storyboard at all and waited
+    for the next morning's run; see `run_serial_next_stage`.
     """
     refused_answer: str | None = None
     episode_id = draft_id
@@ -385,20 +455,20 @@ def _tell_the_day(
             **counts,
         )
     counts["approved"] += 1
-    if not film:
-        return _outcome(
-            COMPLETED,
-            f"Scenariul de mâine (ziua {date_iso}) a fost scris, citit și aprobat; rularea de "
-            "mâine îl pregătește de filmare și îl filmează.",
-            **counts,
-        )
     if not _ready_for_filming(engine, episode_id, counts, correlation, registry):
         return _outcome(
             COMPLETED, f"Episodul aprobat nu a devenit storyboard: {counts['refusal']}", **counts
         )
+    if media_stage_follows:
+        return _outcome(
+            COMPLETED,
+            f"Episodul pentru {date_iso} a fost scris, citit, aprobat și pregătit de filmare.",
+            **counts,
+        )
     return _outcome(
         COMPLETED,
-        f"Episodul pentru {date_iso} a fost scris, citit, aprobat și pregătit de filmare.",
+        f"Episodul zilei {date_iso} a fost scris, citit, aprobat și pregătit de filmare; "
+        + _filming_words(_queue_filming(engine, counts, episode_id)),
         **counts,
     )
 
@@ -442,6 +512,8 @@ def _new_counts() -> dict[str, Any]:
         "shots_described": 0,
         "episode_id": None,
         "refusal": None,
+        #: The FILM_CONTINUE the evening's stage queued for the storyboard it built (PRODUCTION).
+        "film_continue_task_id": None,
         "resumed": None,
         #: The business date whose events this run told, when it told a new day.
         "told_date": None,
@@ -596,15 +668,27 @@ def run_serial_stage(
 def run_serial_next_stage(
     engine: Engine, registry: Any, settings: Any, vault: Any = None
 ) -> dict[str, Any]:
-    """Tomorrow's script: today's episode written, read and approved under policy, not filmed.
+    """The evening's script: today's episode written, read, approved under policy, readied.
 
     Measured on 2026-09-24: nothing wrote the next episode, so the Owner's one click filmed
     an episode and left the next day with nothing written. This runs after the day's log is
     closed (runbook stage ``serial_next``) and tells TODAY, from its log closed at the run's
-    hour. It builds no storyboard: the next morning's serial stage readies an APPROVED
-    episode with none (`unfinished_episodes`, "storyboard") and that run's media stage films
-    it, so no money is spent on a day before it is over, and a same-day re-run films nothing
-    of today.
+    hour.
+
+    Until 2026-10-11 it built no storyboard, so that no money was spent on a day before it
+    was over: the next morning's serial stage readied the APPROVED episode
+    (`unfinished_episodes`, "storyboard") and that run's media stage filmed it. Measured on a
+    copy of his database that day: the first episode the Director ever approved under his
+    policy (043317d3, canon episode 1, 12:46 UTC) stood with no storyboard until the next
+    morning at the earliest, and the serial had never made one public episode. The log it
+    tells is CLOSED and frozen, so the day it tells cannot change; and finishing an episode
+    his run approved is unfinished work, not new work (his rule: new work starts at the 05:00
+    run or on his «Pornește rularea de azi»). So the approved episode is readied here, as the
+    morning would (`_ready_for_filming`), and its walk is queued (`_queue_filming`,
+    PRODUCTION): the worker films it tonight under his money rules. The day's own media
+    stage still films a serial episode only once its day is over (`serial_films_due`), so a
+    same-day re-run buys nothing twice; an approved episode an older run left with no
+    storyboard is readied and queued by the re-run too.
 
     It writes nothing when today's log is not closed, when today already has an episode (a
     re-run; a draft nobody read is read again, and a day whose every draft was refused is
@@ -640,7 +724,9 @@ def run_serial_next_stage(
                 .where(StoryEpisode.log_id == log_id)
                 .order_by(StoryEpisode.created_at)
             ).all()
-            told = [(e.id, e.title, e.status, bool(e.review_json)) for e in existing]
+            told = [
+                (e.id, e.title, e.status, bool(e.review_json), e.storyboard_id) for e in existing
+            ]
             last_notes = existing[-1].notes if existing else None
             waiting = [
                 (kind, episode.title, episode.id)
@@ -650,11 +736,11 @@ def run_serial_next_stage(
         counts["told_date"] = today
         # Today told and every draft refused, with budget left: written again with the
         # reasons, instead of "already written (rejected)" until the day was out of the window.
-        refused = bool(told) and all(status == "REJECTED" for _i, _t, status, _r in told)
+        refused = bool(told) and all(status == "REJECTED" for _i, _t, status, _r, _s in told)
         retell = refused and len(told) < MAX_DRAFTS_PER_DAY
 
         if told and not retell:
-            episode_id, title, status, reviewed = told[-1]
+            episode_id, title, status, reviewed, storyboard_id = told[-1]
             counts["episode_id"] = episode_id
             if status == "DRAFT" and not reviewed:
                 if not has_model:
@@ -670,14 +756,31 @@ def run_serial_next_stage(
                     correlation,
                     draft_id=episode_id,
                     day_drafts=len(told),
-                    film=False,
+                    media_stage_follows=False,
                 )
+            if status == "APPROVED" and not storyboard_id:
+                # Approved by a run that built no storyboard (every run before 2026-10-11, or
+                # a build that failed): his re-run finishes the day's own work, as the morning
+                # would, and queues the filming. Built from rows, so a refusal repeats until
+                # the episode changes; it is on the card below.
+                counts["resumed"] = "storyboard"
+                if _ready_for_filming(engine, episode_id, counts, correlation, registry):
+                    return _outcome(
+                        COMPLETED,
+                        f"Scenariul de mâine pentru {today} era deja scris și aprobat: "
+                        f"„{title[:80]}”; a fost pregătit de filmare acum, iar "
+                        + _filming_words(_queue_filming(engine, counts, episode_id)),
+                        **counts,
+                    )
             state = {"APPROVED": "aprobat", "DRAFT": "ciornă", "REJECTED": "respins"}
             spent = f"; ziua și-a folosit cele {MAX_DRAFTS_PER_DAY} ciorne" if refused else ""
+            not_readied = (
+                f" Nu a devenit storyboard: {counts['refusal']}" if counts.get("refusal") else ""
+            )
             return _outcome(
                 COMPLETED,
                 f"Scenariul de mâine pentru {today} este deja scris: „{title[:80]}” "
-                f"({state.get(status, status.lower())}{spent}); nu se scrie din nou.",
+                f"({state.get(status, status.lower())}{spent}); nu se scrie din nou." + not_readied,
                 **counts,
             )
         if waiting:
@@ -709,12 +812,19 @@ def run_serial_next_stage(
                 language,
                 correlation,
                 day_drafts=len(told),
-                film=False,
+                media_stage_follows=False,
                 notes=last_notes,
                 rewrite_of=told[-1][0],
             )
         return _tell_the_day(
-            engine, registry, log_id, today, counts, language, correlation, film=False
+            engine,
+            registry,
+            log_id,
+            today,
+            counts,
+            language,
+            correlation,
+            media_stage_follows=False,
         )
     except Exception as exc:
         if _transient(exc):
