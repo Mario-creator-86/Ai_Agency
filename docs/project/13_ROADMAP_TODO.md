@@ -1897,7 +1897,8 @@ No provider was called, no run was queued, no credit was spent, and
   LTX LoRA when the training set has ~100 serial clips (his card then).
 - Next: `POST /episodes/{id}/review` through the judgement too; a rewrite after a deformed clip
   sets `motion_amplitude = "measured"` on the package; the judgement's rounds written as they
-  happen (a crash mid-loop loses them today); `tests/test_autonomous_day.py` two tests failing
-  since an earlier 2026-10-11 commit (two model posts / two pending approvals where one is
-  expected) — find the commit and the cause; `END_BEAT` yields to the 95-word budget on long
+  happen (a crash mid-loop loses them today); `END_BEAT` yields to the 95-word budget on long
   actions.
+- Found and closed the same night: the two `tests/test_autonomous_day.py` failures since
+  3c30bc6 were the serial's two episodes (today's and tomorrow's) reaching the paid steps
+  beside the factual film, not a double purchase; the tests tell the films apart now.

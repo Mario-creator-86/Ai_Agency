@@ -340,13 +340,54 @@ def _pending(engine) -> list[Any]:
     return [a for a in _approvals(engine) if a.result == "PENDING"]
 
 
-def _hero_take(engine):
+def _of_film(approvals: list[Any], storyboard_id: str) -> list[Any]:
+    """The approvals asked for one film (the storyboard is the question's subject)."""
+    return [a for a in approvals if a.subject == storyboard_id]
+
+
+def _split_films(engine, films: list[dict[str, Any]]) -> tuple[list[dict], list[dict]]:
+    """The day's films by kind: (factual, serial). Since 3c30bc6 the serial's approved episode
+    is walked the same day beside the factual film (its scenes composed from the series look
+    are no shot-plan gap), so it asks its own questions and buys its own hero under his rule;
+    the tests below follow the factual film and tell the serial's film apart by its storyboard."""
+    from app.agents.editorial import is_serial_film
+    from app.factual.models import ScriptDraft
+    from app.media.models import Storyboard
+
+    factual: list[dict] = []
+    serial: list[dict] = []
+    with Session(engine) as session:
+        for film in films:
+            board = session.get(Storyboard, film["storyboard_id"])
+            script = (
+                session.get(ScriptDraft, board.script_draft_id)
+                if board is not None and board.script_draft_id
+                else None
+            )
+            (serial if is_serial_film(board, script) else factual).append(film)
+    return factual, serial
+
+
+def _boards_bought(engine, kind: str | None = None) -> set[str]:
+    """The storyboards with a take of ``kind`` (any kind when None): who bought something."""
+    from app.media.models import SceneTake
+
+    return {
+        str(take.storyboard_id)
+        for take in _rows(engine, SceneTake)
+        if kind is None or take.kind == kind
+    }
+
+
+def _hero_take(engine, storyboard_id: str | None = None):
     from app.media.models import SceneTake
 
     return next(
         take
         for take in _rows(engine, SceneTake)
-        if take.kind == "test_shot" and take.status == "PAID"
+        if take.kind == "test_shot"
+        and take.status == "PAID"
+        and (storyboard_id is None or take.storyboard_id == storyboard_id)
     )
 
 
@@ -366,7 +407,12 @@ def test_under_over_usd_below_the_motion_cap_the_owner_is_asked_once_at_the_moti
     """(b) His amount (20 USD) is above the stills' and the hero's caps and below the
     motion's (27,20 USD): the day buys the stills and the hero unasked and waits for his look
     at the hero; his look continues the film at once and asks exactly one question, at the
-    motion; his yes continues it again, to a private upload the same day."""
+    motion; his yes continues it again, to a private upload the same day. The serial's
+    episodes walk beside it since 3c30bc6 (its composed scenes are no shot-plan gap): today's,
+    walked by the day's media stage, and tomorrow's, written by `serial_next` after the close
+    and queued for filming the same evening (e565a6b), walked by the worker — each buys its
+    own stills and hero unasked under his amount and waits for his look at its hero, with no
+    question of its own."""
     the_studio = request.getfixturevalue("studio")
     _production(engine, settings, rule="OVER_USD", over_usd=20.0)
     world = _runway(monkeypatch, tmp_path)
@@ -376,25 +422,33 @@ def test_under_over_usd_below_the_motion_cap_the_owner_is_asked_once_at_the_moti
 
     _result, stages_ = _run_day(engine, settings, the_studio)
 
-    films = stages_["media"]["artefacts"]["films"]
-    assert films[0]["refusal"] == "HERO_NOT_APPROVED", _reasons(stages_)
-    assert world["models"].posts() == 1
+    factual, serial = _split_films(engine, stages_["media"]["artefacts"]["films"])
+    (film,) = factual
+    board = film["storyboard_id"]
+    assert film["refusal"] == "HERO_NOT_APPROVED", _reasons(stages_)
+    assert [f["refusal"] for f in serial] == ["HERO_NOT_APPROVED"], _reasons(stages_)
+    assert world["models"].posts() == 2  # the factual film's hero and today's episode's
     assert _approvals(engine) == []
 
     from app.media.assembler import decide_take
 
-    decide_take(engine, _hero_take(engine).id, "APPROVED", decided_by="owner")
-    _run_queue(engine, handlers)
+    decide_take(engine, _hero_take(engine, board).id, "APPROVED", decided_by="owner")
+    ran = _run_queue(engine, handlers)
 
+    # The worker walked his continuation and tomorrow's episode (queued by serial_next): the
+    # episode bought its stills and hero unasked and waits for his look, asking nothing.
+    assert sorted(r["status"] for r in ran) == ["COMPLETED", "COMPLETED"], ran
     (question,) = _approvals(engine)
+    assert question.subject == board
     assert question.action == "media.motion_purchase" and question.result == "PENDING"
-    assert world["models"].posts() == 1
+    assert world["models"].posts() == 3
+    assert len(_boards_bought(engine, "test_shot")) == 3
 
     _answer(engine, question.id)
     ran = _run_queue(engine, handlers)
 
     assert [r["status"] for r in ran] == ["COMPLETED"], ran
-    assert world["models"].posts() == 4
+    assert world["models"].posts() == 6  # the factual film's three clips bought
     (published,) = _factual_publications(engine)
     assert published.privacy_status == "private", ran
     assert len(_approvals(engine)) == 1
@@ -410,7 +464,9 @@ def test_under_every_paid_step_each_yes_continues_the_film_the_same_day_to_a_pri
 ):
     """(c) The day asks at the stills and buys nothing unasked; each of his yeses queues
     FILM_CONTINUE and the worker climbs exactly one more stair; his look at the hero and his
-    yes on the motion take the film to a private upload, all on the same date."""
+    yes on the motion take the film to a private upload, all on the same date. The serial's
+    two episodes (today's, walked by the day; tomorrow's, queued by serial_next and walked by
+    the worker) each ask their own stills question and, unanswered here, buy nothing."""
     from app.runbook.models import DailyRun
 
     the_studio = request.getfixturevalue("studio")
@@ -420,28 +476,43 @@ def test_under_every_paid_step_each_yes_continues_the_film_the_same_day_to_a_pri
     _varied_shot_plan(the_studio, monkeypatch)
     handlers = _worker(engine, settings, the_studio)
 
-    _run_day(engine, settings, the_studio)
+    _result, stages_ = _run_day(engine, settings, the_studio)
 
-    (stills,) = _pending(engine)
+    factual, serial = _split_films(engine, stages_["media"]["artefacts"]["films"])
+    (film,) = factual
+    board = film["storyboard_id"]
+
+    def serial_questions() -> list[Any]:
+        """The serial's own stills questions, pending: today's episode's after the day,
+        tomorrow's too once the worker walked its queued continuation."""
+        asked = [a for a in _pending(engine) if a.subject != board]
+        assert {a.action for a in asked} <= {"media.stills_purchase"}, asked
+        return asked
+
+    (serial_stills,) = serial_questions()
+    assert serial_stills.subject == serial[0]["storyboard_id"]
+    (stills,) = _of_film(_pending(engine), board)
     assert stills.action == "media.stills_purchase"
     assert world["images"].asked == [] and world["models"].posts() == 0
 
     _answer(engine, stills.id)
     _run_queue(engine, handlers)
     assert len(world["images"].asked) > 0 and world["models"].posts() == 0
-    (hero,) = _pending(engine)
+    (hero,) = _of_film(_pending(engine), board)
     assert hero.action == "media.test_shot"
+    assert len(serial_questions()) == 2
 
     _answer(engine, hero.id)
     _run_queue(engine, handlers)
     assert world["models"].posts() == 1
-    assert _pending(engine) == []  # the hero waits for his look, not for a question
+    # The hero waits for his look, not for a question; the serial's questions still stand.
+    assert _of_film(_pending(engine), board) == [] and len(serial_questions()) == 2
 
     from app.media.assembler import decide_take
 
-    decide_take(engine, _hero_take(engine).id, "APPROVED", decided_by="owner")
+    decide_take(engine, _hero_take(engine, board).id, "APPROVED", decided_by="owner")
     _run_queue(engine, handlers)
-    (motion,) = _pending(engine)
+    (motion,) = _of_film(_pending(engine), board)
     assert motion.action == "media.motion_purchase"
     assert world["models"].posts() == 1
 
@@ -451,12 +522,14 @@ def test_under_every_paid_step_each_yes_continues_the_film_the_same_day_to_a_pri
     assert world["models"].posts() == 4, ran
     (published,) = _factual_publications(engine)
     assert published.privacy_status == "private"
-    assert sorted(a.action for a in _approvals(engine)) == [
+    asked = _of_film(_approvals(engine), board)
+    assert sorted(a.action for a in asked) == [
         "media.motion_purchase",
         "media.stills_purchase",
         "media.test_shot",
     ]
-    assert all(a.consumed_at is not None for a in _approvals(engine))
+    assert all(a.consumed_at is not None for a in asked)
+    assert len(serial_questions()) == 2 and _boards_bought(engine) == {board}
     assert _booked_credits(engine) == pytest.approx(_bought_credits(world))
     # One scheduled day, whatever the continuations did.
     assert len(_rows(engine, DailyRun)) == 1
