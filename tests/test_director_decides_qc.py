@@ -1063,26 +1063,29 @@ def test_the_days_qc_puts_a_failed_film_before_her_and_never_repairs_it_by_itsel
 # ------------------------------------------------------------------------------- CLOSE
 
 
-def test_close_closes_the_film_through_her_retirement_path(engine, settings, studio, monkeypatch):
+def test_she_never_closes_a_film_for_its_quality_it_waits_to_be_redone(
+    engine, settings, studio, monkeypatch
+):
+    """The Owner, 2026-10-11: «Nu trebuie să respingă un film, trebuie să îl refacă până trece
+    QC». CLOSE is no longer hers to answer: it is not offered, an answer of CLOSE does not
+    validate, and the film is neither closed nor retired; the report waits for her."""
     from app.runbook import stages
 
     film = failed_film(engine)
-    registry, _model = director_says(studio, answer(verdicts_for(film), "CLOSE"))
+    registry, model = director_says(studio, answer(verdicts_for(film), "CLOSE"))
     no_redo(monkeypatch)
 
     outcome = stages.director_decides_failed_film(
         engine, settings, None, registry, film["report"], film["asset"]
     )
 
-    assert outcome["outcome"] == "CLOSED" and outcome["passed_asset"] is None
+    assert outcome["outcome"] == "WAITING" and outcome["passed_asset"] is None
+    assert '"ACCEPT" | "REPAIR",' in model.asked[0] and "CLOSE" not in model.asked[0]
     with Session(engine) as session:
-        assert session.get(Storyboard, film["board"]).status == "REJECTED"
-    (retired,) = events(engine, stages.FILM_RETIRED_EVENT)
-    assert retired.payload["retired_by"] == "Director"
-    assert retired.payload["report_id"] == film["report"]
+        assert session.get(Storyboard, film["board"]).status != "REJECTED"
+    assert events(engine, stages.FILM_RETIRED_EVENT) == []
+    assert events(engine, DECISION_EVENT) == []
     nothing_bought(engine)
-    (letter,) = letters(engine, LETTER_KIND)
-    assert "închis" in letter.body_text
 
 
 # --------------------------------------------------------------- the watchdog and the walk
@@ -1766,11 +1769,16 @@ def test_an_expired_question_lapses_her_repair_too(engine, settings, studio):
     assert state["lapsed"] and not state["final"]
 
 
-def _incident_limits(engine, film) -> None:
+def _incident_limits(engine, film, settings) -> None:
     """The film's two paid redos spent on rounds that delivered (scenes 1 and 2: each left a
     candidate with its file, which the gate turned down) and its free fix made. (babcf272's
-    own morning rounds delivered nothing and spend nothing, `_morning`.)"""
+    own morning rounds delivered nothing and spend nothing, `_morning`.) The limits are the
+    ones the studio had then (one a scene, two a film); since 2026-10-11 they default to the
+    most the settings allow, and money decides the rest."""
     from app.runbook import stages
+
+    settings.film_max_paid_redos_per_scene = 1
+    settings.film_max_paid_redos = 2
 
     began = utc_now()  # after the film's own takes
     with Session(engine) as session, session.begin():
@@ -1807,7 +1815,7 @@ def test_with_his_limits_spent_she_is_told_repair_is_not_possible_and_accepts(
     from app.runbook import stages
 
     film = failed_film(engine)
-    _incident_limits(engine, film)
+    _incident_limits(engine, film, settings)
     repairs = [{"scene_index": 5, "redo": "still", "reason": "three stacked panels"}]
     registry, model = director_says(
         studio,
@@ -1839,7 +1847,7 @@ def test_a_repair_that_cannot_be_carried_out_is_refused_and_never_churns(
     from app.runbook import stages
 
     film = failed_film(engine)
-    _incident_limits(engine, film)
+    _incident_limits(engine, film, settings)
     repairs = [{"scene_index": 5, "redo": "still", "reason": "three stacked panels"}]
     registry, model = director_says(studio, answer(verdicts_for(film), "REPAIR", repairs))
     no_redo(monkeypatch)

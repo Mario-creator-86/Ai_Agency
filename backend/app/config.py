@@ -286,9 +286,10 @@ class Settings(BaseSettings):
     #: the budgets and the film's ceiling: under EVERY_PAID_STEP it is asked, never bought.
     #: The free fixes (the sound remastered, a card recomposed, the film re-encoded from the
     #: same takes) are applied without a limit of their own, once per failed film. 0 turns the
-    #: paid redos off. Defaults pending the Owner's decision.
-    film_max_paid_redos_per_scene: int = Field(default=1, ge=0, le=5)
-    film_max_paid_redos: int = Field(default=2, ge=0, le=20)
+    #: paid redos off. The Owner, 2026-10-11: a film is redone until QC passes and only money
+    #: stops it, so the defaults are the most these allow; the money gates decide the rest.
+    film_max_paid_redos_per_scene: int = Field(default=5, ge=0, le=5)
+    film_max_paid_redos: int = Field(default=20, ge=0, le=20)
 
     #: How long a short should be. The Owner's answer: about thirty seconds, and the story
     #: decides — twenty-four when that is the film, thirty-four when a premium story needs it.

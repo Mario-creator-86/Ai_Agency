@@ -8084,6 +8084,11 @@ def still_options(engine: Engine, scene: dict[str, Any]) -> list[dict[str, Any]]
 # a 503) says nothing about the scene and holds nothing. Only his own acts lift a hold: his
 # choice of a model for the scene (`set_scene_model`), his look at one of its takes
 # (`decide_sheet_take`), a redo he approved (takes retired REDO.*), or new words for it.
+#
+# 2026-10-11, the Owner: a film is redone until quality control passes, and only money stops
+# it. A scene quality control refused is read by the Director, who has its prompt rewritten
+# (`app.media.scene_rewrite`); her rewrite is a decision about the scene like his, so its hold
+# lifts and its paid attempts count again from it. The money gates stay what they are.
 
 #: The events a step writes when a scene is left for the Owner.
 STILL_HOLD_EVENT = "media.still_needs_owner"
@@ -8091,6 +8096,9 @@ MOTION_HOLD_EVENT = "media.motion_needs_owner"
 #: The Owner's acts that lift a hold (shooting_sheet.SCENE_MODEL_EVENT, decide_take's event).
 SCENE_MODEL_SET_EVENT = "media.sheet_scene_model_set"
 TAKE_DECIDED_EVENT = "media.scene_take_decided"
+#: Who decided a scene's rewrite after quality control refused it (`scene_rewrite.DECIDED_BY`):
+#: her rewrite lifts the hold too, and the scene's paid attempts count again from it.
+DIRECTOR_REWRITE = "director"
 #: How many paid attempts a scene may have since the Owner last decided about it.
 DEFAULT_MAX_PAID_ATTEMPTS = 3
 #: A failure of these kinds that cost nothing is the vendor's or the account's, not the scene's.
@@ -8338,7 +8346,9 @@ def scene_memory(
         for event in session.scalars(
             select(DomainEvent)
             .where(
-                DomainEvent.event_type.in_((hold_event, SCENE_MODEL_SET_EVENT)),
+                DomainEvent.event_type.in_(
+                    (hold_event, SCENE_MODEL_SET_EVENT, SCENE_PROMPTS_REWRITTEN_EVENT)
+                ),
                 DomainEvent.aggregate_id == storyboard_id,
             )
             .order_by(DomainEvent.sequence)
@@ -8350,6 +8360,19 @@ def scene_memory(
             if event.event_type == SCENE_MODEL_SET_EVENT:
                 index = payload.get("scene_index")
                 if kind_group == "shot" and isinstance(index, int) and stamp is not None:
+                    decided.setdefault(index, []).append(stamp)
+                continue
+            if event.event_type == SCENE_PROMPTS_REWRITTEN_EVENT:
+                # The Director's rewrite of a scene quality control refused (Owner, 2026-10-11:
+                # redone until it passes, only money stops it) decides about the scene: its
+                # motion always, its still when she rewrote the picture (`scene_rewrite`).
+                index = payload.get("scene_index")
+                if (
+                    payload.get("decided_by") == DIRECTOR_REWRITE
+                    and isinstance(index, int)
+                    and stamp is not None
+                    and (kind_group == "shot" or payload.get("layer") == "still")
+                ):
                     decided.setdefault(index, []).append(stamp)
                 continue
             index = payload.get("scene_number")

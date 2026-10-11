@@ -721,11 +721,19 @@ def decision_schema(
     2026-10-10 review: with his limits spent (babcf272: the mechanical loop had used the film's
     two paid redos) a REPAIR of only paid redos validated, did nothing, and was asked again
     every hour until the watchdog gave up, the film neither published nor closed. Refused here
-    with the reason, the second answer is ACCEPT or CLOSE, as the instructions say."""
+    with the reason, the second answer is ACCEPT, as the instructions say; CLOSE is refused
+    (the Owner, 2026-10-11: a film is redone until QC passes, never closed for quality)."""
 
     class BoundDecision(DirectorQcDecision):
         @model_validator(mode="after")
         def _this_report(self) -> BoundDecision:
+            if self.decision == "CLOSE":
+                # The Owner, 2026-10-11: «Nu trebuie să respingă un film, trebuie să îl refacă
+                # până trece QC». A film is never closed for its quality; only money stops it.
+                raise ValueError(
+                    "a film is not closed for its quality: REPAIR what is wrong (its prompt is "
+                    "corrected before anything is bought again), or ACCEPT what you accept"
+                )
             judged = {item.finding for item in self.verdicts}
             if judged != findings:
                 missing = sorted(findings - judged)
@@ -739,7 +747,7 @@ def decision_schema(
                 if why is not None:
                     raise ValueError(
                         f"no redo of this REPAIR can be carried out now ({why}); decide ACCEPT "
-                        "(a flaw you accept is ACCEPTED, not REAL) or CLOSE"
+                        "(a flaw you accept is ACCEPTED, not REAL)"
                     )
             return self
 
@@ -758,9 +766,11 @@ _DIRECTOR_QC_INSTRUCTIONS = (
     "finished film, so on-screen words that are the narration are ours, not a flaw), "
     "OWNER_CHOICE (the Owner approved that take or chose it on the sheet: it stands), or "
     "ACCEPTED (a real flaw you accept as it is). Then decide the film: ACCEPT (publishable as "
-    "it is; no finding may stay REAL), REPAIR (list only what needs work: per scene still, "
-    "motion or card, or the film's audio or encode, each with why), or CLOSE (the film cannot "
-    "be saved). Never list a scene whose take the Owner approved: it is not redone. A paid "
+    "it is; no finding may stay REAL) or REPAIR (list only what needs work: per scene still, "
+    "motion or card, or the film's audio or encode, each with why; before a still or a motion "
+    "is bought again you read its prompt and have it rewritten, so say in why exactly what was "
+    "wrong). A film is never closed for its quality: it is redone until it passes, and only "
+    "money stops it. Never list a scene whose take the Owner approved: it is not redone. A paid "
     "redo (still, motion) is possible only for a scene with paid redos left "
     "(paid_redos_left; a motion after the scene's new still when motion_after_new_still); a "
     "scene the Owner chose to animate locally (owner_choice_on_sheet LOCAL_MOVE) gets a new "
@@ -769,14 +779,15 @@ _DIRECTOR_QC_INSTRUCTIONS = (
     "approved: listing its still joins that take into the film, nothing is bought again. "
     "your_looks are your own looks at pictures bought for your earlier repairs that a gate "
     "refused: what you chose or rejected, and why. A "
-    "REPAIR must list at least one redo that can be carried out now: when none can, ACCEPT or "
-    "CLOSE. Findings marked not_yours (rights, music licences, factual claims, placeholder "
+    "REPAIR must list at least one redo that can be carried out now: when none can and you do "
+    "not accept the film, say so in the summary and it waits. Findings marked not_yours "
+    "(rights, music licences, factual claims, placeholder "
     "visuals, how the film was made, a file that does not match its record) are settled by "
     "the Owner or by sources, never accepted away. Money is not yours to decide: a paid redo "
     "is bought only under the Owner's paid-media rule, and above it he is asked.\n"
     "Return only JSON: "
     '{"verdicts": [{"finding": 1, "verdict": "REAL" | "FALSE" | "OWNER_CHOICE" | "ACCEPTED", '
-    '"reason": "..."}], "decision": "ACCEPT" | "REPAIR" | "CLOSE", '
+    '"reason": "..."}], "decision": "ACCEPT" | "REPAIR", '
     '"repairs": [{"scene_index": 5, "redo": "still" | "motion" | "card" | "audio" | "encode", '
     '"reason": "..."}], "summary": "two sentences in Romanian for the Owner"}. '
     '"repairs" is empty unless the decision is REPAIR.\n'
@@ -836,7 +847,7 @@ def review_film_qc(
     impossible = repair_refusal(every_redo, context)
     no_repair = (
         f"REPAIR is not possible for this film now ({impossible[:600]}): decide ACCEPT (a real "
-        "flaw you let through is ACCEPTED, not REAL) or CLOSE.\n"
+        "flaw you let through is ACCEPTED, not REAL), or the film waits.\n"
         if impossible is not None
         else ""
     )

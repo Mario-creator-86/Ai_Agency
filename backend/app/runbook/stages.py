@@ -168,6 +168,7 @@ from app.services import (
     append_event,
     may_act,
     pending_approvals,
+    queue_film_continue,
     studio_environment,
     utc_now,
 )
@@ -1506,6 +1507,12 @@ def _film_staircase(
     The whole walk holds the film's purchase lease (holder: the day's correlation id), so the
     Owner's press on the sheet and the day never buy for one film at the same time (MONEY-04);
     a film whose lease someone else holds WAITs (FILM_BUSY) and nothing of it is bought.
+
+    A walk that stops on scenes quality control refused does not leave them to the Owner
+    (2026-10-11, his rule: redone until QC passes, only money stops it): the Director reads each
+    one's prompt and has it rewritten (`app.media.scene_rewrite.director_ladder`), and the film
+    is walked again, at most `DIRECTOR_LADDER_ROUNDS` times; past them a continuation walks it on.
+    ``director_ladder`` lists her rounds.
     """
     from app.media.shooting_sheet import (  # noqa: PLC0415 - media imports runbook
         FILM_BUSY,
@@ -1523,9 +1530,26 @@ def _film_staircase(
             step="staircase",
             ttl_seconds=lease_seconds(settings),
         ):
-            return _walk_staircase(
-                engine, settings, registry, storyboard_id, wiring, environment, correlation
-            )
+            bought: list[dict[str, Any]] = []
+            rounds: list[dict[str, Any]] = []
+            while True:
+                film = _walk_staircase(
+                    engine, settings, registry, storyboard_id, wiring, environment, correlation
+                )
+                bought.extend(film.get("bought") or [])
+                refused = _ladder_scenes(engine, storyboard_id, film)
+                if not refused or stop_requested(engine):
+                    break
+                if len(rounds) >= DIRECTOR_LADDER_ROUNDS:
+                    film["continues"] = _ladder_continues(engine, storyboard_id, correlation)
+                    break
+                rung = _director_rung(engine, registry, storyboard_id, refused, correlation)
+                rounds.append(rung)
+                if not rung["rewritten"]:
+                    break
+            film["bought"] = bought
+            film["director_ladder"] = rounds
+            return film
     except FilmBusy as exc:
         # A closed film (`FilmClosed`: the Owner closed it, or the Director retired it, after
         # the day read it) is HELD for good; a film another buyer holds WAITs.
@@ -1537,6 +1561,72 @@ def _film_staircase(
             "bought": [],
             "refusal": exc.status if exc.status == FILM_CLOSED else FILM_BUSY,
         }
+
+
+#: The Director's rounds in one walk of a film: each is her rewrite of every scene quality
+#: control refused, then the film walked again so what she rewrote is bought. The film's money
+#: (the Policy Kernel, the budgets, its ceiling) ends them sooner; past them a continuation
+#: walks the film on, so a film is never left idle while money allows it (2026-10-11).
+DIRECTOR_LADDER_ROUNDS = 3
+#: The stops of a walk whose scenes may be quality control's to answer.
+LADDER_REFUSALS = frozenset({"NEEDS_OWNER", "TAKES_NOT_ACCEPTED"})
+LADDER_CAUSE = "director_ladder"
+
+
+def _ladder_scenes(engine: Engine, storyboard_id: str, film: dict[str, Any]) -> list[int]:
+    """The scenes of a stopped walk that quality control refused (the Director's to answer)."""
+    from app.media.scene_rewrite import quality_refused  # noqa: PLC0415 - media imports runbook
+
+    if film.get("status") != "WAITING" or film.get("refusal") not in LADDER_REFUSALS:
+        return []
+    scenes = [int(scene) for scene in film.get("scenes") or [] if isinstance(scene, int)]
+    if not scenes:
+        return []
+    try:
+        return quality_refused(engine, storyboard_id, scenes)
+    except Exception as exc:  # noqa: BLE001 - the walk's own stop stands
+        logger.warning(
+            "ladder_scenes_unread",
+            extra={"storyboard_id": storyboard_id, "error": type(exc).__name__},
+        )
+        return []
+
+
+def _director_rung(
+    engine: Engine,
+    registry: ProviderRegistry | None,
+    storyboard_id: str,
+    scenes: list[int],
+    correlation: str,
+) -> dict[str, Any]:
+    """One round of the Director's rewrites: {"scenes", "rewritten", "not_rewritten"}."""
+    from app.media.scene_rewrite import director_ladder  # noqa: PLC0415 - media imports runbook
+
+    try:
+        rung = director_ladder(engine, registry, storyboard_id, scenes, correlation)
+    except Exception as exc:  # noqa: BLE001 - a fault leaves the walk's stop as it was
+        logger.warning(
+            "director_ladder_failed",
+            extra={"storyboard_id": storyboard_id, "error": type(exc).__name__},
+        )
+        rung = {"rewritten": [], "not_rewritten": [{"reason": error_words(exc)}]}
+    return {"scenes": scenes, **rung}
+
+
+def _ladder_continues(engine: Engine, storyboard_id: str, correlation: str) -> str | None:
+    """A continuation for a film whose walk used its rounds of the Director's rewrites: the next
+    walk rewrites and buys on (`queue_film_continue`; only in PRODUCTION)."""
+    try:
+        with Session(engine) as session, session.begin():
+            return queue_film_continue(
+                session,
+                storyboard_id,
+                key=f"{LADDER_CAUSE}:{storyboard_id}:{correlation}",
+                payload={"cause": LADDER_CAUSE},
+            )
+    except SQLAlchemyError:
+        logger.warning("ladder_continue_not_queued", extra={"storyboard_id": storyboard_id})
+        return None
 
 
 def _walk_staircase(
@@ -1637,6 +1727,7 @@ def _walk_staircase(
                 "până nu decide el.",
                 refusal="NEEDS_OWNER",
                 recovered=recovered,
+                scenes=scenes,
             )
         if step is None:
             # Nothing left to buy; but a filmed scene with no accepted take and no LOCAL_MOVE
@@ -1652,6 +1743,13 @@ def _walk_staircase(
                     str(assemble.get("blocked_ro") or "")
                     or " ".join(str(item.get("reason_ro") or "") for item in blocked),
                     refusal="TAKES_NOT_ACCEPTED",
+                    scenes=sorted(
+                        {
+                            int(item["scene_index"])
+                            for item in blocked
+                            if isinstance(item, dict) and isinstance(item.get("scene_index"), int)
+                        }
+                    ),
                 )
             return stop("READY", None, "")
         if bought and SHEET_STEPS.index(step) <= SHEET_STEPS.index(bought[-1]["step"]):
@@ -1669,6 +1767,7 @@ def _walk_staircase(
                 + ", ".join(map(str, scenes))
                 + " așteaptă decizia Proprietarului pe foaia de filmare.",
                 refusal="NEEDS_OWNER",
+                scenes=[int(scene) for scene in scenes],
             )
         try:
             result = run_sheet_step(
@@ -4440,6 +4539,59 @@ def _decisions_words(decisions: list[dict[str, Any]]) -> str:
     return said
 
 
+#: A paid redo whose prompt could not be corrected first: the same words are not bought again.
+PROMPT_NOT_CORRECTED = "PROMPT_NOT_CORRECTED"
+
+
+def _correct_before_redo(
+    engine: Engine,
+    registry: ProviderRegistry | None,
+    storyboard_id: str,
+    scene: int,
+    kinds: list[str],
+    proposals: list[Any],
+    reading: dict[str, Any],
+    correlation: str,
+) -> dict[str, Any] | None:
+    """The scene's prompt corrected before its paid redo (`scene_rewrite.rewrite_for_redo`):
+    the Director reads it with her reasons and the report's words about the scene, the Video
+    Editor rewrites the picture (a still redo) or the movement (a motion redo). None when it was
+    rewritten, or is not a scene the studio rewrites (its redo goes on as before); the refusal
+    when it could not be corrected: nothing is bought, and her decision waits to be read again."""
+    from app.media.scene_rewrite import rewrite_for_redo  # noqa: PLC0415 - media imports runbook
+
+    layer = "still" if "still" in kinds else "motion"
+    reasons = [
+        str(proposal.reason)
+        for proposal in proposals
+        if proposal.scene_index == scene and not proposal.free and proposal.reason
+    ] + [
+        str(finding.get("text") or "")
+        for finding in reading.get("findings") or []
+        if isinstance(finding, dict) and finding.get("scene_index") == scene
+    ]
+    try:
+        done = rewrite_for_redo(engine, registry, storyboard_id, scene, layer, reasons, correlation)
+    except Exception as exc:  # noqa: BLE001 - nothing is bought on words nobody corrected
+        logger.warning(
+            "redo_prompt_not_corrected",
+            extra={"storyboard_id": storyboard_id, "error": type(exc).__name__},
+        )
+        done = {"rewritten": False, "rewritable": True, "reason": error_words(exc)}
+    if done.get("rewritten") or not done.get("rewritable", True):
+        return None
+    return {
+        "what": f"scena {scene}: {PAID_REDO_WORDS[layer]}",
+        "redo": layer,
+        "scene_index": scene,
+        "status": PROMPT_NOT_CORRECTED,
+        "reason": (
+            f"promptul nu a fost corectat ({done.get('reason') or 'fără motiv'}); nu se cumpără "
+            "din nou aceleași cuvinte"
+        )[:300],
+    }
+
+
 def _apply_repairs(
     engine: Engine,
     settings: Settings,
@@ -4554,6 +4706,15 @@ def _apply_repairs(
                 {"scene_index": scene, "per_scene": per_scene, "per_film": per_film}
             )
             continue
+        if continues is None:
+            # Not the same words bought again: she reads the prompt, he rewrites it (the Owner,
+            # 2026-10-11). The motion that continues a new still was rewritten with it.
+            uncorrected = _correct_before_redo(
+                engine, registry, storyboard_id, scene, paid[scene], proposals, reading, correlation
+            )
+            if uncorrected is not None:
+                result["refused"].append(uncorrected)
+                continue
         bought_here = False
         # When the round began: what it delivered is read from here (`_round_delivered`).
         began = utc_now()
