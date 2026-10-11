@@ -42,6 +42,81 @@ def save_progress(engine: Engine, board_id: str, state: dict[str, Any], correlat
         append_event(session, STATE_EVENT, "storyboard", board_id, 1, state, correlation)
 
 
+def retire_replaced(
+    engine: Engine, board_id: str, replacement_id: str, correlation: str
+) -> dict[str, Any] | None:
+    """The board a story repair replaced, closed by the Director, or None when it may not be.
+
+    2026-10-11, the Owner, looking at two «How NASA Keeps a Space Telescope Alive With Frozen
+    Fuel» in his media list: «De ce există 2 Storyboard? Trebuie doar 1!». The repair wrote
+    6fe6a577 for 223fac3a and left the old board APPROVED «in history»: it stayed in his list
+    as a second film of the topic, and a later shot-plan re-ask could have made it buyable
+    beside its replacement. It is now set REJECTED through the Director's own closing
+    (`runbook.stages.close_film_books`, one `runbook.film_retired` event with what was bought
+    for it); its takes and files stay where they are, as the old script stays.
+
+    Not closed (None, a later pass tries again) while a purchase of it may be in flight, when
+    it has a finished render or is a serial episode (`film_close._unclosable`'s rules), when
+    it is no longer open, or while the replacement is not a live board itself."""
+    from app.media.film_close import _in_flight, _unclosable  # noqa: PLC0415
+    from app.media.shooting_sheet import current_lease  # noqa: PLC0415
+    from app.runbook.stages import close_film_books, film_spent_micros  # noqa: PLC0415
+
+    if board_id == replacement_id or current_lease(engine, board_id) is not None:
+        return None
+    spent = film_spent_micros(engine, board_id)
+    with Session(engine) as session, session.begin():
+        lock_for_write(session)
+        board = session.get(Storyboard, board_id)
+        new = session.get(Storyboard, replacement_id)
+        if board is None or new is None or new.status == "REJECTED":
+            return None
+        title = str(new.title or replacement_id[:8]).removeprefix("Storyboard: ")
+        if _unclosable(session, board) is not None or _in_flight(session, board_id, title):
+            return None
+        return close_film_books(
+            session,
+            board,
+            spent=spent,
+            retired_by="Director",
+            correlation=correlation,
+            details={
+                "reason": (
+                    f"Înlocuit de storyboardul nou al aceluiași film («{title}», "
+                    f"{replacement_id[:8]}) după reparația poveștii."
+                ),
+                "replaced_by": replacement_id,
+            },
+        )
+
+
+def retire_replaced_boards(engine: Engine, correlation: str) -> list[str]:
+    """Every board a story repair replaced and left open, closed (`retire_replaced`): the
+    boards replaced before 2026-10-11, and any a closing missed (a purchase was in flight)."""
+    with Session(engine) as session:
+        pairs: dict[str, str] = {}
+        for event in session.scalars(
+            select(DomainEvent)
+            .where(DomainEvent.event_type == STATE_EVENT)
+            .order_by(DomainEvent.sequence)
+        ):
+            replacement = (event.payload or {}).get("replacement_storyboard_id")
+            if replacement:
+                pairs[str(event.aggregate_id)] = str(replacement)
+        open_ids = set(
+            session.scalars(
+                select(Storyboard.id).where(
+                    Storyboard.id.in_(list(pairs)), Storyboard.status != "REJECTED"
+                )
+            )
+        )
+    closed = []
+    for board_id in sorted(open_ids):
+        if retire_replaced(engine, board_id, pairs[board_id], correlation) is not None:
+            closed.append(board_id)
+    return closed
+
+
 def _handoff(
     engine: Engine, board_id: str, parent: str, role: str, reason: str, correlation: str
 ) -> None:
@@ -80,6 +155,7 @@ def repair_story(
     """One durable revision per task; later scans continue without an attempt ceiling."""
     state = progress(engine, board_id)
     if state.get("replacement_storyboard_id"):
+        retire_replaced(engine, board_id, str(state["replacement_storyboard_id"]), correlation)
         return {"status": "REVISED", **state}
     with Session(engine) as session:
         board = session.get(Storyboard, board_id)
@@ -193,8 +269,9 @@ def repair_story(
         "candidate_script_id": script_id,
         "replacement_storyboard_id": replacement,
         "reason": "Directorul a aprobat scenariul revizuit. Editorul continuă pe foaia nouă; "
-        "filmul și fișierele anterioare rămân în istoric.",
+        "storyboardul vechi se închide, iar fișierele lui rămân în istoric.",
         "responsible_role": "VideoEditor",
     }
     save_progress(engine, board_id, state, correlation)
+    retire_replaced(engine, board_id, replacement, correlation)
     return {"status": "REVISED", **state}
