@@ -13,6 +13,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from app.media.models import FilmPurchaseLease, Storyboard, VideoRenderJob
+from app.media.services import list_storyboards
 from app.media.sheet_story_repair import (
     retire_replaced,
     retire_replaced_boards,
@@ -69,6 +70,9 @@ def test_the_board_a_repair_replaced_is_closed_once_and_the_new_one_kept(
     # Once closed, never again: the pass finds nothing more.
     assert retire_replaced_boards(engine, str(uuid4())) == []
     assert len(retirements(engine, old)) == 1
+    # His media list shows the film once: the replaced board is its history, not a row.
+    listed = [row["id"] for row in list_storyboards(engine, limit=50)["storyboards"]]
+    assert new in listed and old not in listed
 
 
 def test_a_board_with_a_purchase_in_flight_or_a_finished_render_stays(

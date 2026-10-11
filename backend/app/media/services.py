@@ -37,7 +37,7 @@ from app.media.schemas import (
     StoryboardSceneView,
     StoryboardView,
 )
-from app.models import OwnerPolicy
+from app.models import DomainEvent, OwnerPolicy
 from app.providers.media_http import MediaProviderError
 from app.services import append_event, utc_now
 from app.wording import AUTONOMY_STOPPED, settings_place
@@ -1500,7 +1500,6 @@ def storyboard_cast_record(session: Session, storyboard_id: str) -> dict:
     "nobody said" — not "nobody is in it". The two must not read the same, because a check
     that reports the second on the evidence of the first certifies something nobody measured.
     """
-    from app.models import DomainEvent  # noqa: PLC0415 - read projection only
 
     payload = session.scalar(
         select(DomainEvent.payload)
@@ -1670,8 +1669,22 @@ def list_storyboards(
                 .order_by(QualityControlReport.verified_at)
             ).all():
                 verdicts[asset_id] = verdict  # the newest verdict wins
+        # A board a story repair replaced is the same film's history, not a second film in his
+        # list (2026-10-11, the Owner: «De ce există 2 Storyboard? Trebuie doar 1!»): its
+        # closing names the replacement (`sheet_story_repair.retire_replaced`).
+        replaced = {
+            str(aggregate_id)
+            for aggregate_id, payload in session.execute(
+                select(DomainEvent.aggregate_id, DomainEvent.payload).where(
+                    DomainEvent.event_type == "runbook.film_retired"
+                )
+            ).all()
+            if (payload or {}).get("replaced_by")
+        }
         rows = []
         for board in boards:
+            if board.id in replaced:
+                continue
             asset_id = films.get(board.id)
             verdict = verdicts.get(asset_id) if asset_id else None
             if qc_status is not None and verdict != qc_status:
