@@ -1,5 +1,9 @@
 # Architectural / Product Decision Log v5
 
+## A GPU session shared per model across films, tomorrow; the cold flow stays; 4-6 posts a day (2026-10-11)
+
+- The Owner (2026-10-11, 22:55, card): build «a GPU session shared per model across films» — a film whose next step is ready to buy on the same model (sheet gates passed, his money rule lets the step buy, its lease free) joins the session already loaded, before it closes; tomorrow, after today's production, tests on fakes, in at the first idle restart. Why: measured today, every paid step of every film opens its own RunPod session and loads its model again (~10–16 min each: stills sessions 11:43→11:54, 13:50→13:59, 22:29→22:45 first delivery; motion 6.5–12.5 min); tonight the serial and the cyclotron's redo would load Qwen-Image twice and LTX-2.5 twice. The money rule stays per step and per film, the purchase lease per film; only the loaded GPU is shared. He keeps the cold serverless flow otherwise (1 worker, GPU off right after the step): «Nu vreau să pierd calitatea! … Nu vreau nici să plătesc în plus» — no fp8 weights, no warm worker. Target he named: 4–6 posts a day.
+
 ## The same blockers; the serial's look; music under the voice; the Owner's final approval (2026-10-11)
 
 - «The same blockers» for the sheet repair's ceiling and back-off are the blockers' kind, code and scene, never their wording or the sheet's hash (528ec93). Why: the Owner's safety of 2026-10-03 did not engage on 2026-10-11 because every rewrite changed the fingerprint; a loop without progress ran every five minutes. Consequence: fewer or other blockers start again from zero; the same ones under rewritten prompts do not.
