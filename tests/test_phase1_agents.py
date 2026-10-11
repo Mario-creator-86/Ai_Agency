@@ -584,8 +584,14 @@ def test_director_token_budget_is_doubled_by_role_and_recorded(
     registry = ProviderRegistry()
     registry.register(seeded["provider_id"], BudgetAdapter("A concise decision."))
     result = run_agent_task(
-        seeded["engine"], registry, seeded["agent_active_id"], "plan", "Plan", "v1",
-        str(uuid4()), max_tokens=requested,
+        seeded["engine"],
+        registry,
+        seeded["agent_active_id"],
+        "plan",
+        "Plan",
+        "v1",
+        str(uuid4()),
+        max_tokens=requested,
     )
     assert result["status"] == "SUCCEEDED"
     assert seen == [expected]
@@ -601,7 +607,8 @@ def test_director_token_multiplier_uses_configuration(seeded, monkeypatch, multi
     from app.config import Settings
 
     config = Settings(
-        _env_file=None, owner_token="test-owner-token-for-budget-check",
+        _env_file=None,
+        owner_token="test-owner-token-for-budget-check",
         director_token_multiplier=multiplier,
     )
     monkeypatch.setattr(services, "_studio_settings", lambda: config)
@@ -616,8 +623,14 @@ def test_director_token_multiplier_uses_configuration(seeded, monkeypatch, multi
     registry = ProviderRegistry()
     registry.register(seeded["provider_id"], BudgetAdapter("A concise decision."))
     result = run_agent_task(
-        seeded["engine"], registry, seeded["agent_active_id"], "plan", "Plan", "v1",
-        str(uuid4()), max_tokens=6000,
+        seeded["engine"],
+        registry,
+        seeded["agent_active_id"],
+        "plan",
+        "Plan",
+        "v1",
+        str(uuid4()),
+        max_tokens=6000,
     )
     assert result["status"] == "SUCCEEDED"
     assert seen == [6000 * multiplier]
@@ -630,7 +643,8 @@ def test_director_token_multiplier_rejects_out_of_range_configuration(invalid):
 
     with pytest.raises(ValidationError):
         Settings(
-            _env_file=None, owner_token="test-owner-token-for-budget-check",
+            _env_file=None,
+            owner_token="test-owner-token-for-budget-check",
             director_token_multiplier=invalid,
         )
 
@@ -674,7 +688,8 @@ def test_director_qc_both_attempts_send_doubled_limit_to_ollama(seeded, monkeypa
     registry = ProviderRegistry()
     registry.register(seeded["provider_id"], adapter)
     result = review_film_qc(
-        seeded["engine"], registry,
+        seeded["engine"],
+        registry,
         {
             "film": {"title": "A film", "report_id": "test-report"},
             "findings": [{"id": 1, "text": "Wrong image"}],

@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-12 — Office presentation files formatted and typed
+
+Housekeeping after the pixel session's takeover (2be35a6): `backend/app/office/presentation.py`, `backend/app/office/router.py` and `tests/test_office_presentation.py` were committed unformatted and with ruff findings (import order, long lines, several statements on one line) and two mypy `no-untyped-def` errors (`monitor_media`, `presentation_snapshot` took an untyped engine); `tests/test_phase_ef_closure_adversary.py` and `tests/test_phase1_agents.py` each had one unformatted line. Formatted, typed, and the tree's `ruff check`, `ruff format --check` and `mypy backend/app` are clean again. No behaviour changed; `tests/test_office_presentation.py` (13) and `tests/test_phase_ef_closure_adversary.py` (7) green.
+
 ## 2026-10-12 — The Director's ladder has a serial rung
 
 The Director's ladder has a serial rung. Live (f06808c9, «The Zero Script Club», 2026-10-11 evening): the stills of scenes 3 and 4 came back as stacked panels on every candidate and re-roll because their stored words carried the plan's camera path and chain of moments; the composer was fixed (48bbcd1) but nothing said the stored words again, and the walk after the restart stopped on «Directoarea nu a putut încă rescrie scenele 3, 4 … (Scena nu este una pe care studioul o rescrie (card, serial, film închis))» — the Director's rewrite (`scene_rewrite.scene_context`) reads no serial scene, a redo would have bought the stored words again, and the film waited for the Owner, which his rule forbids.

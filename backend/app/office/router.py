@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Request
 
+from app.media.storage import media_roots
+from app.office.presentation import presentation_snapshot
 from app.office.services import get_office_layout_with_assignments
 from app.office.stream import stream_status
 from app.office.weather import current_weather
-from app.office.presentation import presentation_snapshot
-from app.media.storage import media_roots
 from app.security import require_owner
 
 
