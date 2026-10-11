@@ -34,7 +34,7 @@ from app.media.serial_storyboard import (
 )
 from app.services import queue_film_continue
 from app.story.models import DailyStudioLog, StoryEpisode
-from app.story.review import ReviewError, review_episode
+from app.story.review import ReviewError, approve_reviewed_episode, judged_review
 from app.story.services import (
     DraftRefused,
     NothingHappened,
@@ -355,6 +355,7 @@ def _tell_the_day(
     media_stage_follows: bool = True,
     notes: str | None = None,
     rewrite_of: str | None = None,
+    rounds: int | None = None,
 ) -> dict[str, Any]:
     """Write (or take up ``draft_id``), review, rewrite once on a FAIL, approve, storyboard.
 
@@ -362,6 +363,12 @@ def _tell_the_day(
     `MAX_DRAFTS` (a draft and one rewrite), and a day gets at most `MAX_DRAFTS_PER_DAY` over
     every run: a first draft read on a later run and failed still gets its rewrite, and a
     day refused with budget left is told again by a later run (`day_to_retell`).
+
+    A PASS goes through the Director's editorial judgement before it is approved
+    (`judged_review`, 2026-10-11): below her bar the showrunner rewrites on her brief, up to
+    ``rounds`` versions (`Settings.editorial_rounds`), and the best-scored version ships — so
+    the episode approved and storyboarded is not always the draft read first. Those rewrites
+    are hers, outside `MAX_DRAFTS`: the Owner asked for ten of them.
 
     ``notes`` and ``rewrite_of`` start a retelling: the first draft is written as the
     rewrite of the day's last refused draft, with the reasons it was refused.
@@ -419,13 +426,19 @@ def _tell_the_day(
                 counts["rewritten"] += 1
         counts["episode_id"] = episode_id
         try:
-            review = review_episode(engine, registry, episode_id, str(uuid4()), language=language)
+            review = judged_review(
+                engine, registry, episode_id, str(uuid4()), language=language, rounds=rounds
+            )
         except ReviewError as exc:
             # The draft stays a DRAFT with no review, and the next run reads it again.
             counts["refusal"] = str(exc)[:300]
             return _outcome(COMPLETED, f"Episodul nu a putut fi citit: {exc}", **counts)
         counts["reviewed"] += 1
         if review["verdict"] == "PASS":
+            # The version that ships is the judgement's best-scored one, not always this draft.
+            episode_id = review["episode_id"]
+            counts["episode_id"] = episode_id
+            counts["editorial"] = review.get("editorial")
             break
         notes = review.get("notes") or "; ".join(review.get("reasons") or [])
         if drafts >= MAX_DRAFTS or stored >= MAX_DRAFTS_PER_DAY:
@@ -491,6 +504,9 @@ def _left_by_earlier_runs(engine: Engine, today: str) -> list[dict[str, Any]]:
                     "reviewed_by": episode.reviewed_by,
                     "date": log.business_date if log is not None else "?",
                     "drafts": len(drafts),
+                    #: A PASS held for the editorial judgement by a run that stopped before
+                    #: approving it (`review_episode`, ``approve=False``).
+                    "held": bool((episode.review_json or {}).get("held_for_judgement")),
                 }
             )
         return left
@@ -517,6 +533,9 @@ def _new_counts() -> dict[str, Any]:
         "resumed": None,
         #: The business date whose events this run told, when it told a new day.
         "told_date": None,
+        #: The Director's editorial judgement of the episode that shipped (2026-10-11): its
+        #: rounds, the chosen version's scores, whether it met her bar.
+        "editorial": None,
     }
 
 
@@ -535,6 +554,7 @@ def run_serial_stage(
     """
     counts = _new_counts()
     language = getattr(settings, "content_language", "en")
+    rounds = getattr(settings, "editorial_rounds", None)
     correlation = str(uuid4())
     today = business_date(getattr(settings, "timezone", None) or "UTC")
     has_model = bool(registry.registered_ids())
@@ -578,7 +598,30 @@ def run_serial_stage(
                     correlation,
                     draft_id=item["episode_id"],
                     day_drafts=item["drafts"],
+                    rounds=rounds,
                 )
+            if item["held"]:
+                # A PASS the judgement held and a stopped run never approved (2026-10-11):
+                # approved under the policy here, as that run would have, and readied — a
+                # script is never left stuck. Without the policy it waits for him, below.
+                approval = approve_reviewed_episode(engine, item["episode_id"], correlation)
+                if approval["status"] == "APPROVED":
+                    counts["approved"] += 1
+                    if not _ready_for_filming(
+                        engine, item["episode_id"], counts, correlation, registry
+                    ):
+                        return _outcome(
+                            COMPLETED,
+                            f"Episodul aprobat nu a devenit storyboard: {counts['refusal']}",
+                            **counts,
+                        )
+                    return _outcome(
+                        COMPLETED,
+                        f"Episodul „{title}” pentru {date_iso}, citit de Director și lăsat "
+                        "neaprobat de o rulare oprită, a fost aprobat sub politica ta și "
+                        "pregătit de filmare.",
+                        **counts,
+                    )
             return _outcome(
                 COMPLETED,
                 f"Episodul „{title}” pentru {date_iso} a trecut citirea Directorului și "
@@ -647,6 +690,7 @@ def run_serial_stage(
                 day_drafts=again["drafts"],
                 notes=again["notes"],
                 rewrite_of=again["rewrite_of"],
+                rounds=rounds,
             )
             lead = (
                 f"Ziua {date_iso} se scrie din nou: ciornele ei au fost respinse "
@@ -655,7 +699,9 @@ def run_serial_stage(
                 else f"Ziua {date_iso}, sărită până acum, se povestește. "
             )
             return {**outcome, "reason": (lead + outcome["reason"])[:300]}
-        outcome = _tell_the_day(engine, registry, log_id, date_iso, counts, language, correlation)
+        outcome = _tell_the_day(
+            engine, registry, log_id, date_iso, counts, language, correlation, rounds=rounds
+        )
         return _naming_the_day(outcome, date_iso, quiet)
     except Exception as exc:
         if _transient(exc):
@@ -699,6 +745,7 @@ def run_serial_next_stage(
     """
     counts = _new_counts()
     language = getattr(settings, "content_language", "en")
+    rounds = getattr(settings, "editorial_rounds", None)
     correlation = str(uuid4())
     today = business_date(getattr(settings, "timezone", None) or "UTC")
     has_model = bool(registry.registered_ids())
@@ -727,6 +774,7 @@ def run_serial_next_stage(
             told = [
                 (e.id, e.title, e.status, bool(e.review_json), e.storyboard_id) for e in existing
             ]
+            held = {e.id for e in existing if (e.review_json or {}).get("held_for_judgement")}
             last_notes = existing[-1].notes if existing else None
             waiting = [
                 (kind, episode.title, episode.id)
@@ -757,7 +805,15 @@ def run_serial_next_stage(
                     draft_id=episode_id,
                     day_drafts=len(told),
                     media_stage_follows=False,
+                    rounds=rounds,
                 )
+            if status == "DRAFT" and episode_id in held:
+                # A PASS the judgement held and a stopped run never approved (2026-10-11):
+                # approved under the policy, as that run would have; readied and queued below.
+                approval = approve_reviewed_episode(engine, episode_id, correlation)
+                if approval["status"] == "APPROVED":
+                    counts["approved"] += 1
+                    status = "APPROVED"
             if status == "APPROVED" and not storyboard_id:
                 # Approved by a run that built no storyboard (every run before 2026-10-11, or
                 # a build that failed): his re-run finishes the day's own work, as the morning
@@ -815,6 +871,7 @@ def run_serial_next_stage(
                 media_stage_follows=False,
                 notes=last_notes,
                 rewrite_of=told[-1][0],
+                rounds=rounds,
             )
         return _tell_the_day(
             engine,
@@ -825,6 +882,7 @@ def run_serial_next_stage(
             language,
             correlation,
             media_stage_follows=False,
+            rounds=rounds,
         )
     except Exception as exc:
         if _transient(exc):

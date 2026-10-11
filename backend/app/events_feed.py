@@ -62,6 +62,7 @@ _ROLE_BY_PREFIX: tuple[tuple[str, str], ...] = (
     ("media.narration", "VoiceArtist"),
     ("story.episode_reviewed", "Director"),
     ("story.episode_approved", "Director"),
+    ("editorial.judged", "Director"),
     ("story.episode_rejected", "Director"),
     ("story.", "ScriptWriter"),
     ("factual.script", "ScriptWriter"),
@@ -259,6 +260,61 @@ def _feminine(take: str) -> str:
     return "ă" if take.endswith("a") else ""
 
 
+#: The editorial judgement's five criteria, short, for the register (the letter has the long
+#: names, `editorial_judgement.CRITERIA_RO`).
+_CRITERIA_RO: dict[str, str] = {
+    "hook": "cârligul",
+    "clarity": "claritatea",
+    "moment": "momentul memorabil",
+    "punchline": "poanta",
+    "follow": "motivul de a reveni",
+}
+#: What she judged, in the nominative and the genitive.
+_JUDGED_KIND_RO: dict[str, tuple[str, str]] = {
+    "factual_short": ("scenariul short-ului", "scenariului short-ului"),
+    "serial_episode": ("episodul serialului", "episodului serialului"),
+}
+_JUDGED_STOP_RO: dict[str, str] = {
+    "rounds_spent": "după toate rundele",
+    "writer_silent": "scenaristul n-a mai răspuns",
+    "judge_silent": "nota n-a mai venit",
+}
+
+
+def _judged_words(
+    payload: Mapping[str, Any], name: str, title: str | None
+) -> tuple[str | None, str | None]:
+    """The Director's editorial note on one version of a script or episode (`editorial.judged`,
+    2026-10-12): the score out of 50, what was weakest, whether it ships or goes back with a
+    brief. The version's own title is on the event; the film's, when known, wins."""
+    what, what_of = _JUDGED_KIND_RO.get(
+        str(payload.get("kind") or ""), ("scenariul", "scenariului")
+    )
+    shown = title or str(payload.get("title") or "")
+    if shown:
+        what += f" «{shown}»"
+        what_of += f" «{shown}»"
+    if payload.get("judged") is False or payload.get("total") is None:
+        return f"{name} n-a putut nota versiunea {payload.get('round')} a {what_of}.", None
+    total = f"{payload.get('total')}/50"
+    version = payload.get("round")
+    weak = " și ".join(
+        _CRITERIA_RO.get(str(key), str(key)) for key in list(payload.get("weakest") or [])[:2]
+    )
+    if payload.get("shipped"):
+        if payload.get("passed"):
+            said = f"{name} a notat {what}: {total} la versiunea {version}; trece la filmare."
+            return said, f"Trece: {total}."
+        how = _JUDGED_STOP_RO.get(str(payload.get("stopped") or ""), "")
+        said = f"{name} a notat {what}: {total} la versiunea {version}; pleacă cea mai bună"
+        said += f" ({how})" if how else ""
+        said += f", cu {weak} încă slabe" if weak else ""
+        return said + ".", f"Pleacă cea mai bună: {total}."
+    said = f"{name} a notat versiunea {version} a {what_of}: {total}"
+    said += f"; cele mai slabe: {weak}" if weak else ""
+    return said + "; brief la scenarist.", f"Versiunea {version}: {total}, brief la scenarist."
+
+
 def _words(
     event: Mapping[str, Any], actor: Mapping[str, Any] | None, title: str | None
 ) -> tuple[str | None, str | None]:
@@ -367,6 +423,8 @@ def _words(
         return said + (f" — {outcome}" if outcome else "") + ".", f"Am decis: {verdict}."
     if kind == "media.director_qc_waiting":
         return f"{name} n-a putut decide încă filmul {named}: {_reason(payload, 150)}.", None
+    if kind == "editorial.judged":
+        return _judged_words(payload, name, title)
     if kind == "media.director_scene_brief":
         landed = payload.get("rewritten")
         said = f"{name} a dat brief de rescriere pentru scena {scene}{film}"

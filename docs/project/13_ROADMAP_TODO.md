@@ -1884,3 +1884,20 @@ No provider was called, no run was queued, no credit was spent, and
   film keeps its first duplicate reading; a second render of a storyboard must not overwrite the
   first film's final_short_9_16.mp4 (provenance); a repo home for the drawer fixture generator;
   base_asset_id on the redo view; Romanian frame names in clip-QC messages.
+
+## The night of 2026-10-11 → 12: the serial rung, «Mișcare v2», the editorial judgement
+
+- Done (see CHANGELOG 2026-10-12): the Director's ladder recomposes a serial scene with today's
+  composer (scenes 3–4 of f06808c9); ample cinematic motion with eighteen camera-move families;
+  the Director's editorial judgement for both channels, ten rounds, the best version ships; the
+  register words the judgement; a stop during a restart is worded as the studio's closing, not
+  as the Owner's switch; office presentation files formatted and typed.
+- Owner: one restart when the studio is idle (the process of 00:44:43 predates all of it); the
+  GPU session shared per model across films (his card: tomorrow, after today's production); the
+  LTX LoRA when the training set has ~100 serial clips (his card then).
+- Next: `POST /episodes/{id}/review` through the judgement too; a rewrite after a deformed clip
+  sets `motion_amplitude = "measured"` on the package; the judgement's rounds written as they
+  happen (a crash mid-loop loses them today); `tests/test_autonomous_day.py` two tests failing
+  since an earlier 2026-10-11 commit (two model posts / two pending approvals where one is
+  expected) — find the commit and the cause; `END_BEAT` yields to the 95-word budget on long
+  actions.

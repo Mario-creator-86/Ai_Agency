@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-10-12 — The Director's editorial judgement for both channels: five criteria, a brief to the writer, up to ten versions, the best one ships
+
+The Director's editorial judgement, for both channels (decision e5e7004, the Owner's card: «vreau să încerce de 10 ori, ne trebuie un serial bun și un short bun, nu doar 3 runde!»). Built by a subagent, verified and committed by the lead.
+
+- New `backend/app/agents/editorial_judgement.py`: five criteria scored 0–10 with one sentence of reason each (hook with stakes in the first two seconds, clarity for a stranger, the memorable moment, the punchline or turn, the reason to come back); the bar is a total ≥ 35/50 with no criterion under 5; below it her brief to the writer names the two weakest with her reasons and says what to keep / change / avoid (≤ 600 chars); `editorial_loop` judges, briefs, has the kind's own writer rewrite, judges again, up to `Settings.editorial_rounds` versions (default 10, `STUDIO_EDITORIAL_ROUNDS`); the best-scored eligible version ships; one `editorial.judged` event per version read; one STATUS letter to the Owner only when a version ships below the bar. She judges through `structured_run` as the Director (task `editorial_judgement`, template `editorial-judgement-v1`); a silent model never raises.
+- Serial wiring (`story/review.py`, `story/services.py`, `story/serial_stage.py`): a reviewed episode is held (`held_for_judgement`), judged, rewritten via `write_episode(judged=True)` and re-reviewed; the shipped version is approved under policy and the others retired (REJECTED, `superseded_by`); a held PASS left by a stopped run is approved on the next morning or evening run under policy.
+- Factual wiring (`factual/story_review.py`, `runbook/stages.py`): after `review_story` passes and before the Director's approval, `judged_story` rewrites through `agent_write_script(notes=[brief])` and reviews again; the shipped draft carries the loop in `story_json["editorial"]`, the others `superseded_by`; a superseded draft owes the room nothing (`script_work`, `_script_awaiting_owner`).
+- `analytics/services.py`: the weekly review reads each film's shipped editorial total (`editorial_total`, and its mean), to be compared with views.
+- The Director's seeded task types gain `editorial_judgement` (`seed_role_task_types` extends a live studio on start) and her contract names the judgement; the register (`events_feed.py`) words `editorial.judged` («a notat … 41/50 la versiunea 2; trece la filmare», «… brief la scenarist») with her portrait and bubble.
+
+Tests: `tests/test_editorial_judgement.py` (24), `tests/test_autonomous_day_end_to_end.py` teaches the fake model the judgement prompt; green with them: `tests/test_serial_pipeline.py`, `tests/test_serial_continuation.py`, `tests/test_daily_run_stages.py`, `tests/test_editorial_quality.py`, `tests/test_script_grounding.py`, the role and contract suites. Open: `POST /episodes/{id}/review` (the manual route) still approves without the judgement; a crash mid-loop loses that loop's rounds (its events are written at the end) and the held PASS is recovered unjudged.
+
 ## 2026-10-12 — «Mișcare v2»: ample cinematic motion, eighteen camera-move families, calmer or firmer QC retries
 
 «Mișcare v2»: ample, cinematic motion in every motion prompt, the model unchanged (LTX-2.5). The Owner, 2026-10-11: «imaginile sunt bune, dar mișcările de ce sunt așa slabe? Pe video pare doar un zoom, și mișcări mici … trebuie doar să lucrăm la prompturi». Built by a subagent, verified and committed by the lead.

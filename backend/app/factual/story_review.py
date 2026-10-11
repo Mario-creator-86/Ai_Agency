@@ -19,6 +19,18 @@ This is that question. It runs on the script, in two parts that stay separate on
 
 A REVISE is not a failure of the pipeline: it is the pipeline doing the one thing that saves
 money, because rewriting text costs nothing and re-filming a shot costs dollars.
+
+- **Then her editorial judgement** (2026-10-11, the Owner's card of 23:30; `judged_story`):
+  the review above passed the ATLAS/Higgs Short — attributed, in length, a hook that was not
+  «did you know» — and it was jargon for experts, with a call to action for experts. So a
+  PASS is read once more as a stranger hears it (`script_as_text`) and scored on five
+  criteria by `app.agents.editorial_judgement`; below the bar the Scriptwriter rewrites on her
+  brief (`agent_write_script` with the brief as its notes: a new draft, its claims checked, its
+  story reviewed again), up to `Settings.editorial_rounds` versions, and the best-scored
+  version whose story review passed ships — the runbook approves and storyboards that one.
+  Every version read is an `editorial.judged` event; the chosen version's scores stay on its
+  story_json (`editorial`) for the weekly review, and a version it supersedes is marked so,
+  owing the room nothing more (`runbook.stages.script_work`).
 """
 
 from __future__ import annotations
@@ -32,14 +44,23 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
+from app.agents.editorial_judgement import (
+    FACTUAL_SHORT,
+    Version,
+    editorial_loop,
+    letter_to_owner,
+    record_rounds,
+)
 from app.agents.identity import parse_structured
 from app.agents.memory import agent_for_role
 from app.agents.messages import post_message
 from app.agents.services import run_agent_task
+from app.factual.agent_pipeline import NoVerifiedClaims, ScriptRejected, agent_write_script
 from app.factual.editorial import expected_seconds, failed, revision_notes, story_checks
 from app.factual.grounding import grounding_check, script_grounding
 from app.factual.models import ScriptDraft, StoryReview
 from app.factual.sanitizer import wrap_in_inert_boundary
+from app.factual.services import FactualGateError
 from app.services import append_event, utc_now
 from app.wording import count, decimal, review_verdict
 
@@ -656,3 +677,183 @@ def story_gate(session: Session, script_id: str) -> tuple[bool, str]:
             + " ".join(grounding["reasons"][:3])
         )
     return True, ""
+
+
+# ----------------------------------------------------------------- the editorial judgement
+#
+# 2026-10-11, the Owner's card of 23:30. The review above asks whether the script is attributed,
+# shaped and the right length, and where a viewer would stop; nothing asked whether a stranger
+# would start. The judgement below does, after a PASS and before the approval, through
+# `app.agents.editorial_judgement`.
+
+
+def script_as_text(script: ScriptDraft) -> tuple[str, dict[str, Any]]:
+    """The script as the viewer meets it, for the editorial judgement: the title, then each
+    scene's narration under its purpose and kind, with what is seen in a bracket; beside it the
+    small context she may use (the hook, the ending, the call to action, the seconds). The
+    claims are not here: they are verified and may not change, and she judges how they are told."""
+    story = dict(script.story_json or {})
+    scenes = list(script.scenes_json or [])
+    rows = [str(script.title or "").strip()]
+    purposes: list[str] = []
+    for index, scene in enumerate(scenes, start=1):
+        purpose = str(scene.get("purpose") or scene.get("story_purpose") or "").upper()
+        kind = str(scene.get("scene_kind") or "").upper()
+        narration = " ".join(
+            str(scene.get("narration") or scene.get("voiceover_segment") or "").split()
+        )
+        visual = " ".join(
+            str(scene.get("visual_description") or scene.get("visual_prompt") or "").split()
+        )
+        head = f"[{scene.get('scene_number') or index}. {purpose}" + (f", {kind}]" if kind else "]")
+        rows.append(f"\n{head} {narration}".rstrip())
+        if visual:
+            rows.append(f"(seen: {visual[:200]})")
+        purposes.append(purpose)
+    context = {
+        "title": script.title,
+        "core_message": story.get("core_message"),
+        "hook": story.get("hook"),
+        "ending": story.get("ending"),
+        "cta": story.get("cta"),
+        "cta_kind": story.get("cta_kind"),
+        "scenes": len(scenes),
+        "purposes": purposes,
+        "estimated_seconds": expected_seconds(scenes),
+        "target_seconds": script.target_duration_seconds,
+    }
+    return "\n".join(rows), context
+
+
+def _version_of_script(
+    script: ScriptDraft, review: dict[str, Any] | None, note: str = ""
+) -> Version:
+    """One stored draft as the loop reads it: eligible when its story review passed."""
+    text, context = script_as_text(script)
+    passed = review is not None and review.get("verdict") == "PASS"
+    reasons = " ".join(str(n) for n in (review or {}).get("notes") or [])
+    return Version(
+        id=script.id,
+        text=text,
+        context=context,
+        eligible=passed,
+        note=note or ("" if passed else reasons),
+        title=str(script.title or ""),
+    )
+
+
+def judged_story(
+    engine: Engine,
+    registry: Any,
+    script_id: str,
+    *,
+    target_seconds: int,
+    language: str = "en",
+    correlation_id: str = "",
+    rounds: int | None = None,
+    review: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """The Director's editorial judgement of a script whose story review passed (2026-10-11).
+
+    ``review`` is that PASS (`review_story`'s answer). The script is read as a stranger hears
+    it and scored; below the bar the Scriptwriter rewrites on her brief (`agent_write_script`,
+    the brief as its notes: a new draft, its claims checked, read by `review_story` again, so a
+    rewrite the review sends back is scored only for the record and never ships), up to
+    ``rounds`` versions (`Settings.editorial_rounds`), and the best-scored version whose review
+    passed ships. Every version is an `editorial.judged` event; each draft's story_json keeps
+    its own record (``editorial``), the shipped one the whole loop, the others which version
+    superseded them; one letter to the Owner only when it ships below the bar. A judgement
+    she could not give ships the reviewed draft as it is, unjudged.
+
+    Returns ``{"script_id", "review", "editorial", "rewrites", "versions"}``: the version that
+    ships (not always ``script_id``), its review for the approval, the loop's record, how many
+    rewrites were written, and each version's verdict and total for the day's card.
+    """
+    correlation = correlation_id or str(uuid4())
+    passed = dict(review or {"verdict": "PASS", "failed": [], "notes": []})
+    with Session(engine) as session:
+        script = session.get(ScriptDraft, script_id)
+        if script is None:
+            raise StoryReviewError(f"Script {script_id} not found")
+        topic_id = script.topic_id
+        director = agent_for_role(session, REVIEWER_ROLE)
+        director_id = director.id if director is not None else None
+        first = _version_of_script(script, passed)
+    reviews: dict[str, dict[str, Any]] = {script_id: passed}
+
+    def rewrite(brief: str, number: int) -> Version | None:
+        try:
+            written = agent_write_script(
+                engine,
+                registry,
+                topic_id,
+                str(uuid4()),
+                target_duration_seconds=target_seconds,
+                language=language,
+                notes=[brief],
+            )
+        except (ScriptRejected, NoVerifiedClaims, FactualGateError, ValueError) as exc:
+            # Unattributable narration, no claims, a claim refuted meanwhile, or no answer:
+            # nothing was stored, and the loop ships the best it has.
+            logger.info(
+                "editorial_rewrite_not_stored",
+                extra={"topic_id": topic_id, "version": number, "reason": str(exc)[:200]},
+            )
+            return None
+        new_id = str(written["script"]["id"])
+        try:
+            verdict = review_story(
+                engine, registry, new_id, str(uuid4()), target_seconds=target_seconds
+            )
+        except StoryReviewError as exc:
+            with Session(engine) as session:
+                row = session.get(ScriptDraft, new_id)
+                assert row is not None  # stored above, in this same process
+                return _version_of_script(row, None, note=str(exc))
+        reviews[new_id] = verdict
+        with Session(engine) as session:
+            row = session.get(ScriptDraft, new_id)
+            assert row is not None
+            return _version_of_script(row, verdict)
+
+    outcome = editorial_loop(
+        engine,
+        registry,
+        kind=FACTUAL_SHORT,
+        first=first,
+        rewrite=rewrite,
+        correlation_id=correlation,
+        rounds=rounds,
+    )
+    shipped = outcome.shipped
+    shipped_id = shipped.version.id
+    with Session(engine) as session, session.begin():
+        record_rounds(session, outcome, "script_draft", correlation)
+        for item in outcome.rounds:
+            row = session.get(ScriptDraft, item.version.id)
+            if row is None:
+                continue
+            own = outcome.record() if row.id == shipped_id else outcome.record_for(row.id)
+            row.story_json = {**dict(row.story_json or {}), "editorial": own}
+        letter_to_owner(
+            session,
+            outcome,
+            title=shipped.version.title,
+            director_id=director_id,
+            correlation_id=correlation,
+        )
+    return {
+        "script_id": shipped_id,
+        "review": reviews.get(shipped_id, passed),
+        "editorial": outcome.record(),
+        "rewrites": outcome.rewrites,
+        "versions": [
+            {
+                "script_id": item.version.id,
+                "verdict": reviews.get(item.version.id, {}).get("verdict"),
+                "editorial_total": item.judgement.total if item.judgement else None,
+                "shipped": item.version.id == shipped_id,
+            }
+            for item in outcome.rounds
+        ],
+    }

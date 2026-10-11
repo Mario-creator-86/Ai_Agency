@@ -111,6 +111,7 @@ from app.factual.services import (
 from app.factual.story_review import (
     MAX_EXCHANGES,
     StoryReviewError,
+    judged_story,
     latest_review,
     review_story,
     story_gate,
@@ -883,6 +884,10 @@ def script_work(session: Session, selected: list[str]) -> list[tuple[str, list[s
             continue
         if latest.id in storyboarded:
             continue  # the film is past the page
+        if ((latest.story_json or {}).get("editorial") or {}).get("superseded_by"):
+            # The Director's editorial judgement shipped an earlier version of this topic
+            # (2026-10-11): this later, lower-scored draft owes the room nothing.
+            continue
         review = latest_review(session, latest.id)
         if review is None:
             # A draft nobody read is not progress. This is what a crashed run leaves behind —
@@ -913,6 +918,8 @@ def _script_awaiting_owner(session: Session) -> str | None:
     for draft in newest.values():
         if draft.status != "VERIFIED_PASS" or draft.id in storyboarded:
             continue
+        if ((draft.story_json or {}).get("editorial") or {}).get("superseded_by"):
+            continue  # the judgement shipped an earlier version; this one waits for nobody
         review = latest_review(session, draft.id)
         if review is not None and review.verdict == "PASS":
             return draft.id
@@ -1018,9 +1025,8 @@ def _script_and_storyboard(
                 drafted += 1
                 # The story is read before anything is generated: a shot regenerated because
                 # the story was weak costs dollars, and reading costs a few seconds.
-                review = review_story(
-                    engine, registry, written["script"]["id"], target_seconds=target_seconds
-                )
+                script_id = str(written["script"]["id"])
+                review = review_story(engine, registry, script_id, target_seconds=target_seconds)
                 reviews.append(
                     {
                         "verdict": review["verdict"],
@@ -1028,7 +1034,24 @@ def _script_and_storyboard(
                         "exchange": attempt,
                     }
                 )
-                decided = _director_approves(engine, written["script"]["id"], review)
+                if review["verdict"] == "PASS":
+                    # Her editorial judgement (2026-10-11): would a stranger watch it to the
+                    # end? Below her bar the writer rewrites on her brief, up to
+                    # `editorial_rounds` versions, and the best-scored one is what she
+                    # approves below — this draft or a later one.
+                    judged = judged_story(
+                        engine,
+                        registry,
+                        script_id,
+                        target_seconds=target_seconds,
+                        language=language,
+                        rounds=getattr(settings, "editorial_rounds", None),
+                        review=review,
+                    )
+                    script_id, review = judged["script_id"], judged["review"]
+                    drafted += judged["rewrites"]
+                    reviews[-1]["editorial"] = judged["editorial"]["shipped"]
+                decided = _director_approves(engine, script_id, review)
                 if decided:
                     approvals.append(decided)
                     break  # she approved it; the camera is next

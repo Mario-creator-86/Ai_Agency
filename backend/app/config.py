@@ -9,6 +9,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DIRECTOR_TOKEN_MULTIPLIER = 2
+#: How many versions of one script the Director's editorial judgement scores before the
+#: best-scored one ships (the Owner, 2026-10-11, 23:30: «vreau să încerce de 10 ori»). The
+#: module that runs the rounds imports it (`app.agents.editorial_judgement.EDITORIAL_ROUNDS`).
+DEFAULT_EDITORIAL_ROUNDS = 10
 
 
 def validate_public_host(host: str, where: str = "the allowlist") -> str:
@@ -419,6 +423,15 @@ class Settings(BaseSettings):
     #: after the cyclotron QC retry exhausted 6,000 tokens without a visible answer. Other
     #: employees and the independent daily token/USD gates keep their own limits.
     director_token_multiplier: int = Field(default=DEFAULT_DIRECTOR_TOKEN_MULTIPLIER, ge=1, le=4)
+
+    #: How many versions of one script the Director's editorial judgement reads before the
+    #: best-scored one ships (STUDIO_EDITORIAL_ROUNDS): the draft the structural review passed,
+    #: then, for every version below her bar, the Scriptwriter's rewrite on her brief. Owner,
+    #: 2026-10-11, 23:30: «vreau să încerce de 10 ori, ne trebuie un serial bun și un short bun,
+    #: nu doar 3 runde!». The bar itself (35/50, no criterion under 5) is the module's
+    #: (`app.agents.editorial_judgement`), not a setting: it is her judgement, not his dial. Text
+    #: only: a round is model calls, never credits, so no money gate reads it.
+    editorial_rounds: int = Field(default=DEFAULT_EDITORIAL_ROUNDS, ge=1, le=20)
 
     #: How much reading the day does: candidates the research stage gathers pages for, and
     #: pages read per candidate. Measured on the live copy: two candidates of three pages

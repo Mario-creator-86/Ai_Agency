@@ -1194,14 +1194,32 @@ def _rejected_draft(session: Session, episode_id: str) -> str:
     return body[:_REJECTED_CHARS]
 
 
-def _rewrite_section(notes: str | None, rejected: str | None, refused_answer: str | None) -> str:
-    """What the next draft is told about the last one: the reason, and the draft, as data."""
+def _rewrite_section(
+    notes: str | None, rejected: str | None, refused_answer: str | None, judged: bool = False
+) -> str:
+    """What the next draft is told about the last one: the reason, and the draft, as data.
+
+    ``judged`` (2026-10-11): the draft below was not refused — it passed every check and the
+    Director's reading — but her editorial judgement scored it below the bar for a stranger's
+    attention, and ``notes`` is her brief (`app.agents.editorial_judgement.brief_for_writer`).
+    Told as a refusal, the writer threw away what the brief said to keep.
+    """
     if refused_answer is not None:
         return (
             "\nYOUR PREVIOUS ANSWER WAS REFUSED before anyone read it, and nothing was kept. "
             f"The reason: {notes or 'it was not an episode in the format'}\n"
             "Write the episode again, correcting exactly that. The refused answer:\n"
             + _inert(refused_answer[:_REJECTED_CHARS], "refused-answer")
+        )
+    if rejected and judged:
+        return (
+            "\nTHIS IS A REWRITE. The draft below passed every check and the Director's reading, "
+            "and her editorial judgement scored it below the studio's bar: a stranger who knows "
+            "nothing of the studio would not watch it to the end. Her brief:\n"
+            f"{notes or '(none)'}\n"
+            "Keep what the brief says to keep, change what it says to change, nothing else; the "
+            "same events, the same rooms, the same rules. The scored draft:\n"
+            + _inert(rejected, "scored-draft")
         )
     if rejected:
         return (
@@ -1509,13 +1527,17 @@ def write_episode(
     notes: str | None = None,
     rewrite_of: str | None = None,
     refused_answer: str | None = None,
+    judged: bool = False,
 ) -> dict:
     """Draft the Office Serial episode for one closed day, and check it against that day.
 
     ``notes`` are the Director's notes on a draft that failed review; the rewrite is asked
     for with them, shown the draft ``rewrite_of`` as data, and recorded as its rewrite.
     ``refused_answer`` is an answer that was refused before it was stored (`DraftRefused`),
-    shown to the next attempt with the reason in ``notes``.
+    shown to the next attempt with the reason in ``notes``. ``judged`` (2026-10-11) says the
+    draft ``rewrite_of`` was not refused but scored below the bar by her editorial judgement,
+    and ``notes`` is her brief (`review.judged_review`): the rewrite is told so, and told to
+    keep what the brief keeps.
 
     Before an answer is stored it is measured by the review's own checks (brief v7): a cast,
     a length, a beat the camera cannot film or a private word found here is asked for once
@@ -1671,7 +1693,7 @@ def write_episode(
     def measured(draft: dict[str, Any]) -> list[tuple[str, str]]:
         return _measured_refusals(engine, log_id, draft, continuity_of(draft), offered, language)
 
-    result = ask(brief(_rewrite_section(notes, rejected, refused_answer)))
+    result = ask(brief(_rewrite_section(notes, rejected, refused_answer, judged=judged)))
     raw = result["output_text"]
     draft = read(raw)
     refusals = measured(draft)

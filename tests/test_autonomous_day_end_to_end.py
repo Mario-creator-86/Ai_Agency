@@ -128,6 +128,22 @@ class StudioModel:
         # NEEDS_SHOT_PLAN (SHOT_PLAN_PARSE, 2026-09-27).
         if '"shots": [' in prompt:
             return self._shots(prompt)
+        if '"punchline": {' in prompt:
+            # The Director's editorial judgement (2026-10-11) of the script or the episode as a
+            # stranger meets it: five 0-10 scores, the two weakest, a brief. Told apart before
+            # the episode and the script, whose shapes its payload may carry as data. The
+            # stand-in finds every version good enough to ship, so the day keeps one episode
+            # a day and one script a topic; the judgement's own loop has its own tests.
+            return json.dumps(
+                {
+                    **{
+                        key: {"score": 8, "reason": "The first line already asks a question."}
+                        for key in ("hook", "clarity", "moment", "punchline", "follow")
+                    },
+                    "weakest": ["moment", "follow"],
+                    "brief": {"keep": "the opening", "change": "", "avoid": ""},
+                }
+            )
         if "evidence_quote" in prompt:
             return json.dumps(
                 {

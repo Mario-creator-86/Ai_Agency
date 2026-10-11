@@ -276,3 +276,57 @@ def test_money_spent_names_the_film_from_its_reference_and_an_unknown_event_keep
     assert spent["film_title"] == TITLE and spent["actor"]["role"] == "Accountant"
     unknown = got["office.room_created"]
     assert "words_ro" not in unknown and "actor" not in unknown and "film_title" not in unknown
+
+
+def test_the_directors_editorial_note_is_hers_and_says_the_score_and_the_outcome(engine):
+    """`editorial.judged` (2026-10-12): a version that passed ships to filming; a version below
+    the bar goes back to the writer with the two weakest criteria named. The event sits on the
+    script draft, not on a storyboard, so the version's own title is what the register says."""
+    ids = studio(engine)
+    sarah = ids["agents"]["Director"]
+    record(
+        engine,
+        "editorial.judged",
+        ("script_draft", str(uuid4())),
+        {
+            "kind": "factual_short",
+            "round": 2,
+            "title": TITLE,
+            "judged": True,
+            "total": 41,
+            "weakest": ["hook", "punchline"],
+            "passed": True,
+            "shipped": True,
+            "stopped": "passed",
+        },
+    )
+    shipped = page(engine)["editorial.judged"]
+    assert shipped["actor"]["role"] == "Director"
+    assert shipped["words_ro"] == (
+        f"{sarah['name']} a notat scenariul short-ului «{TITLE}»: 41/50 la versiunea 2; "
+        "trece la filmare."
+    )
+    assert shipped["bubble_ro"] == "Trece: 41/50."
+
+    record(
+        engine,
+        "editorial.judged",
+        ("story_episode", str(uuid4())),
+        {
+            "kind": "serial_episode",
+            "round": 1,
+            "title": "Episodul 2",
+            "judged": True,
+            "total": 25,
+            "weakest": ["hook", "punchline"],
+            "passed": False,
+            "shipped": False,
+            "stopped": "rounds_spent",
+        },
+    )
+    sent_back = page(engine)["editorial.judged"]
+    assert sent_back["words_ro"] == (
+        f"{sarah['name']} a notat versiunea 1 a episodului serialului «Episodul 2»: 25/50; "
+        "cele mai slabe: cârligul și poanta; brief la scenarist."
+    )
+    assert sent_back["bubble_ro"] == "Versiunea 1: 25/50, brief la scenarist."

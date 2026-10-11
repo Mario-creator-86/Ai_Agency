@@ -33,6 +33,7 @@ from app.providers.youtube_analytics import MetricsUnavailable, YouTubeAnalytics
 from app.publishing.models import ChannelRecord, PublicationRecord
 from app.publishing.services import bound_connection_id
 from app.services import append_event, utc_now
+from app.story.models import StoryEpisode
 from app.wording import settings_place
 from app.youtube.models import YouTubeConnection
 
@@ -503,6 +504,20 @@ def _resolve_publication_metadata(session: Session, pub: PublicationRecord) -> t
     return topic, hook
 
 
+def _editorial_total(session: Session, script: ScriptDraft) -> int | None:
+    """The Director's editorial total (0-50) of the version that shipped (2026-10-11), to lay
+    beside the views: a factual script carries it in its story_json; the serial's script stands
+    for an episode (`storyboard_from_episode`), whose review holds it. None when never judged."""
+    story = script.story_json if isinstance(script.story_json, dict) else {}
+    editorial = story.get("editorial")
+    if not isinstance(editorial, dict) and story.get("episode_id"):
+        episode = session.get(StoryEpisode, str(story["episode_id"]))
+        editorial = (episode.review_json or {}).get("editorial") if episode is not None else None
+    shipped = editorial.get("shipped") if isinstance(editorial, dict) else None
+    total = shipped.get("total") if isinstance(shipped, dict) else None
+    return int(total) if isinstance(total, int | float) and not isinstance(total, bool) else None
+
+
 def story_performance(engine: Engine, channel_id: str | None = None) -> dict[str, Any]:
     """What the studio expected of each film, beside what the audience actually did.
 
@@ -562,6 +577,8 @@ def story_performance(engine: Engine, channel_id: str | None = None) -> dict[str
                     ),
                     "views": snapshot.views,
                     "story_review": review.verdict if review else "NONE",
+                    # Her editorial score of what shipped (2026-10-11), beside what it earned.
+                    "editorial_total": _editorial_total(session, script),
                 }
             )
 
@@ -587,6 +604,7 @@ def story_performance(engine: Engine, channel_id: str | None = None) -> dict[str
         "director_at_3_seconds": mean("director_at_3_seconds"),
         "predicted_cta": mean("predicted_cta"),
         "measured_engagement_percentage": mean("measured_engagement_percentage"),
+        "editorial_total": mean("editorial_total"),
         "note": (
             "nothing published and measured yet"
             if not rows

@@ -39,6 +39,18 @@ A PASS approves the episode only under the channel's policy: the OFFICE_SERIAL c
 `director_may_approve_episodes` column (migration 0038), False unless the Owner's
 publish-policy command set it. Without it the episode stays DRAFT with the review on it, for
 the Owner's `decide_episode`. A FAIL is REJECTED at once; the rewrite is a new draft.
+
+- **Then her editorial judgement** (2026-10-11, the Owner's card of 23:30; `judged_review`):
+  the reading above let «The Zero Script Club» through — grounded, private in nothing, right
+  in length, and a status meeting with no stake and no punchline. So a PASS is held
+  (``approve=False``) and the episode is read once more as a stranger would meet it
+  (`episode_as_text`), scored on five criteria by `app.agents.editorial_judgement`; below the
+  bar the showrunner rewrites on her brief (`write_episode`, ``judged=True``, every check
+  above run again on the rewrite), up to `Settings.editorial_rounds` versions, and the
+  best-scored version that passed this review ships: approved under the policy
+  (`approve_reviewed_episode`), the other versions retired (`retire_episode`) so nothing waits
+  for the Owner beside it. Every version read is an `editorial.judged` event; the chosen
+  version's scores stay on its review_json for the weekly review.
 """
 
 from __future__ import annotations
@@ -53,6 +65,13 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
+from app.agents.editorial_judgement import (
+    SERIAL_EPISODE,
+    Version,
+    editorial_loop,
+    letter_to_owner,
+    record_rounds,
+)
 from app.agents.identity import clipped, parse_structured
 from app.agents.language import audience_language_line, looks_like_english
 from app.agents.memory import agent_for_role, remember
@@ -73,10 +92,13 @@ from app.story.services import (
     SERIES_KEY,
     SPEAKING_CAST,
     WORDS_PER_BEAT,
+    DraftRefused,
+    StoryError,
     advance_continuity,
     bibles_for_roster,
     ensure_projection,
     voice_of,
+    write_episode,
 )
 from app.wording import decimal, work_status
 
@@ -613,9 +635,7 @@ def episode_checks(
                         "conțin ceva ce nu poate fi public (o cheie, un link, un preț, un model "
                         "sau un număr de cont): "
                         + ", ".join(
-                            "titlul"
-                            if number == "0"
-                            else f"beat-ul {number} ({', '.join(fields)})"
+                            "titlul" if number == "0" else f"beat-ul {number} ({', '.join(fields)})"
                             for number, fields in leaking_fields.items()
                         )
                         + "; scrie-le fără"
@@ -905,14 +925,39 @@ def _held_to_her_rubric(verdict: EpisodeVerdict, director_name: str) -> EpisodeV
     )
 
 
+def _approve(session: Session, episode: StoryEpisode, story: str, correlation: str) -> None:
+    """The approval a PASS gets under the channel's policy: APPROVED as the Director's, her
+    one-sentence story as the note, the event, and the serial's canon advanced."""
+    episode.status = "APPROVED"
+    episode.reviewed_by = "director"
+    episode.notes = (story or None) and story[:2000]
+    episode.event_id = append_event(
+        session,
+        "story.episode_approved",
+        "story_episode",
+        episode.id,
+        3,
+        {"log_id": episode.log_id, "reviewed_by": "director"},
+        correlation,
+    ).event_id
+    advance_continuity(session, episode, correlation)
+
+
 def review_episode(
     engine: Engine,
     registry: ProviderRegistry | None,
     episode_id: str,
     correlation_id: str = "",
     language: str = "en",
+    approve: bool = True,
 ) -> dict[str, Any]:
-    """The Director's verdict on one drafted episode; recorded, and acted on under policy."""
+    """The Director's verdict on one drafted episode; recorded, and acted on under policy.
+
+    ``approve=False`` (2026-10-11) records a PASS and leaves the episode a DRAFT with the
+    review on it, for the editorial judgement to run before the approval (`judged_review`;
+    `approve_reviewed_episode` then approves under the same policy). A FAIL is REJECTED either
+    way: the judgement reads only what the checks and her reading passed.
+    """
     correlation = correlation_id or str(uuid4())
     with Session(engine) as session:
         episode = session.get(StoryEpisode, episode_id)
@@ -983,7 +1028,9 @@ def review_episode(
     with Session(engine) as session, session.begin():
         episode = session.get(StoryEpisode, episode_id)
         assert episode is not None  # read above, in this same process
-        may_approve = verdict.verdict == "PASS" and director_may_approve_episodes(session)
+        may_approve = (
+            verdict.verdict == "PASS" and approve and director_may_approve_episodes(session)
+        )
         reviewed_at = utc_now()
         episode.review_json = {
             "verdict": verdict.verdict,
@@ -998,6 +1045,8 @@ def review_episode(
             "reviewer_agent_id": director_id,
             "reviewed_at": reviewed_at,
             "approved_by_policy": may_approve,
+            # A PASS waiting for the editorial judgement before the policy is asked.
+            "held_for_judgement": verdict.verdict == "PASS" and not approve,
         }
         episode.event_id = append_event(
             session,
@@ -1041,19 +1090,7 @@ def review_episode(
                     correlation_id=correlation,
                 )
         elif may_approve:
-            episode.status = "APPROVED"
-            episode.reviewed_by = "director"
-            episode.notes = (verdict.story or None) and verdict.story[:2000]
-            episode.event_id = append_event(
-                session,
-                "story.episode_approved",
-                "story_episode",
-                episode.id,
-                3,
-                {"log_id": episode.log_id, "reviewed_by": "director"},
-                correlation,
-            ).event_id
-            advance_continuity(session, episode, correlation)
+            _approve(session, episode, verdict.story, correlation)
         remember(
             session,
             memory_class="AGENT_OPINION",
@@ -1078,4 +1115,273 @@ def review_episode(
         "run_id": run_id,
         "model_used": run_id is not None,
         "approved_by_policy": status == "APPROVED",
+    }
+
+
+# ----------------------------------------------------------------- the editorial judgement
+#
+# 2026-10-11, the Owner's card of 23:30. Everything above measures the episode and asks her
+# whether it tells the truth; nothing asked whether a stranger would watch it. The judgement
+# below does, after her PASS and before the approval, through `app.agents.editorial_judgement`.
+
+
+def _retire(
+    session: Session,
+    episode: StoryEpisode,
+    note: str,
+    correlation: str,
+    *,
+    superseded_by: str | None = None,
+) -> None:
+    """A DRAFT retired as the Director's REJECTED, with the reason as its note."""
+    episode.status = "REJECTED"
+    episode.notes = note[:2000] or None
+    episode.reviewed_by = "director"
+    episode.event_id = append_event(
+        session,
+        "story.episode_rejected",
+        "story_episode",
+        episode.id,
+        3,
+        {"log_id": episode.log_id, "reviewed_by": "director", "superseded_by": superseded_by},
+        correlation,
+    ).event_id
+
+
+def retire_episode(
+    engine: Engine,
+    episode_id: str,
+    note: str,
+    correlation_id: str = "",
+    *,
+    superseded_by: str | None = None,
+) -> None:
+    """Retire a DRAFT the judgement will not ship: a version that passed her reading and scored
+    lower than the one that ships, or a rewrite she could not read. Left a DRAFT, the first
+    would wait for the Owner beside the shipped one (`unfinished_episodes`, «owner»), the
+    second would be read and approved by a later run beside it («review»): two episodes for
+    one day, and the canon number claimed twice."""
+    with Session(engine) as session, session.begin():
+        episode = session.get(StoryEpisode, episode_id)
+        if episode is None or episode.status != "DRAFT":
+            return
+        _retire(session, episode, note, correlation_id or str(uuid4()), superseded_by=superseded_by)
+
+
+def approve_reviewed_episode(engine: Engine, episode_id: str, correlation_id: str = "") -> dict:
+    """The approval a held PASS gets (`review_episode`, ``approve=False``) once the judgement
+    chose it: under the channel's policy it is APPROVED as the Director's and canon advances;
+    without the policy it stays a DRAFT with its review, for the Owner's `decide_episode`.
+    Returns ``{"episode_id", "status", "approved_by_policy"}``; an episode that is not a held
+    PASS is left as it is."""
+    correlation = correlation_id or str(uuid4())
+    with Session(engine) as session, session.begin():
+        episode = session.get(StoryEpisode, episode_id)
+        if episode is None:
+            raise ReviewError("Episodul nu există")
+        review = dict(episode.review_json or {})
+        if episode.status != "DRAFT" or review.get("verdict") != "PASS":
+            return {
+                "episode_id": episode_id,
+                "status": episode.status,
+                "approved_by_policy": bool(review.get("approved_by_policy")),
+            }
+        may_approve = director_may_approve_episodes(session)
+        episode.review_json = {
+            **review,
+            "approved_by_policy": may_approve,
+            "held_for_judgement": False,
+        }
+        if may_approve:
+            _approve(session, episode, str(review.get("story") or ""), correlation)
+        return {
+            "episode_id": episode_id,
+            "status": episode.status,
+            "approved_by_policy": may_approve,
+        }
+
+
+def episode_as_text(episode: StoryEpisode) -> tuple[str, dict[str, Any]]:
+    """The episode as a viewer meets it, for the editorial judgement: the title, then each
+    beat's part, room and scene in a bracket and its lines as «Name: words»; beside it the small
+    context she may use (the logline, who speaks, the parts, the seconds). The event ids, the
+    checks and the serial's memory are not here: a stranger has none of them, and the stranger
+    is who she judges for."""
+    beats = list(episode.beats_json or [])
+    lines_by_beat = [beat_lines(beat) for beat in beats]
+    rows = [str(episode.title or "").strip()]
+    speaking: list[str] = []
+    for index, (beat, lines) in enumerate(zip(beats, lines_by_beat, strict=True), start=1):
+        part = str(beat.get("part") or "").upper()
+        where = str(beat.get("location") or "").strip()
+        scene = " ".join(str(beat.get("scene") or "").split())
+        head = f"[{beat.get('beat_number') or index}. {part}" + (f" — {where}]" if where else "]")
+        rows.append(f"\n{head} {scene}".rstrip())
+        for line in lines:
+            speaker = str(line.get("speaker") or "Narrator")
+            direction = str(line.get("direction") or "").strip()
+            said = f" ({direction})" if direction else ""
+            rows.append(f"{speaker}{said}: {str(line.get('text') or '').strip()}")
+        speaking += [name for name in speakers_of(lines) if name not in speaking]
+    words = sum(_words(spoken_text(lines)) for lines in lines_by_beat)
+    continuity = episode.continuity_json or {}
+    context = {
+        "title": episode.title,
+        "logline": continuity.get("logline"),
+        "summary": continuity.get("summary"),
+        "episode_number": continuity.get("episode_number"),
+        "beats": len(beats),
+        "parts": [beat.get("part") for beat in beats],
+        "speakers": speaking,
+        "spoken_words": words,
+        "seconds": round(words / WORDS_PER_SECOND, 1),
+    }
+    return "\n".join(rows), context
+
+
+def _version_of(episode: StoryEpisode, review: dict[str, Any] | None, note: str = "") -> Version:
+    """One stored episode as the loop reads it: eligible when her reading passed it."""
+    text, context = episode_as_text(episode)
+    passed = review is not None and review.get("verdict") == "PASS"
+    reasons = "; ".join(str(r) for r in (review or {}).get("reasons") or [])
+    return Version(
+        id=episode.id,
+        text=text,
+        context=context,
+        eligible=passed,
+        note=note or ("" if passed else reasons),
+        title=str(episode.title or ""),
+    )
+
+
+def judged_review(
+    engine: Engine,
+    registry: ProviderRegistry | None,
+    episode_id: str,
+    correlation_id: str = "",
+    language: str = "en",
+    rounds: int | None = None,
+) -> dict[str, Any]:
+    """`review_episode`, then the Director's editorial judgement, then the approval (2026-10-11).
+
+    The reading is held (``approve=False``). A FAIL is returned as it is: REJECTED, for the
+    stage's own rewrite. A PASS is read again as a stranger would meet it and scored; below the
+    bar the showrunner rewrites on her brief (`write_episode`, ``judged=True``: a new DRAFT,
+    measured by every check above and read by her again, so a rewrite that breaks a check is
+    REJECTED and scored only for the record), up to ``rounds`` versions
+    (`Settings.editorial_rounds`), and the best-scored version that passed her reading ships:
+    approved under the policy, the other versions retired, every version an `editorial.judged`
+    event, the chosen version's scores on its review_json, and one letter to the Owner only
+    when it ships below the bar. A judgement she could not give ships the reviewed draft as it
+    is, unjudged: nothing stops for quality.
+
+    Returns the review of the version that ships, with ``episode_id`` (not always the one read
+    first), its ``status`` after the approval, and ``editorial`` (the loop's record; None when
+    the reading failed).
+    """
+    correlation = correlation_id or str(uuid4())
+    review = review_episode(engine, registry, episode_id, correlation, language, approve=False)
+    if review["verdict"] != "PASS":
+        return {**review, "editorial": None}
+    with Session(engine) as session:
+        episode = session.get(StoryEpisode, episode_id)
+        assert episode is not None  # reviewed above, in this same process
+        log_id = episode.log_id
+        director = agent_for_role(session, REVIEWER_ROLE)
+        director_id = director.id if director is not None else None
+        first = _version_of(episode, review)
+    reviews: dict[str, dict[str, Any]] = {episode_id: review}
+    latest = {"id": episode_id}
+
+    def rewrite(brief: str, number: int) -> Version | None:
+        assert registry is not None  # a PASS with a model's reading is behind every judgement
+        try:
+            written = write_episode(
+                engine,
+                registry,
+                log_id,
+                str(uuid4()),
+                language=language,
+                notes=brief,
+                rewrite_of=latest["id"],
+                judged=True,
+            )
+        except (DraftRefused, StoryError) as exc:
+            # Not an episode, a stranger cast, an event that did not happen, or no answer:
+            # nothing was stored, and the loop ships the best it has.
+            logger.info(
+                "editorial_rewrite_not_stored",
+                extra={"log_id": log_id, "version": number, "reason": str(exc)[:200]},
+            )
+            return None
+        new_id = str(written["episode"]["id"])
+        latest["id"] = new_id
+        try:
+            verdict = review_episode(
+                engine, registry, new_id, str(uuid4()), language, approve=False
+            )
+        except ReviewError as exc:
+            # Her reading gave no verdict. Left a DRAFT with no review, a later run would read
+            # and approve it beside the version that ships here (`unfinished_episodes`): it is
+            # retired with the reason, and scored only for the record.
+            retire_episode(
+                engine,
+                new_id,
+                f"Rescrierea nu a putut fi citită de Director: {exc}",
+                correlation,
+            )
+            with Session(engine) as session:
+                row = session.get(StoryEpisode, new_id)
+                assert row is not None
+                return _version_of(row, None, note=str(exc))
+        reviews[new_id] = verdict
+        with Session(engine) as session:
+            row = session.get(StoryEpisode, new_id)
+            assert row is not None
+            return _version_of(row, verdict)
+
+    outcome = editorial_loop(
+        engine,
+        registry,
+        kind=SERIAL_EPISODE,
+        first=first,
+        rewrite=rewrite,
+        correlation_id=correlation,
+        rounds=rounds,
+    )
+    shipped = outcome.shipped
+    shipped_id = shipped.version.id
+    with Session(engine) as session, session.begin():
+        record_rounds(session, outcome, "story_episode", correlation)
+        for item in outcome.rounds:
+            row = session.get(StoryEpisode, item.version.id)
+            if row is None:
+                continue
+            own = outcome.record() if item.version.id == shipped_id else outcome.record_for(row.id)
+            row.review_json = {**(row.review_json or {}), "editorial": own}
+            if item.version.id != shipped_id and row.status == "DRAFT":
+                scored = f"{item.judgement.total}/50" if item.judgement else "necitită"
+                chosen = f"{shipped.judgement.total}/50" if shipped.judgement else "necitită"
+                _retire(
+                    session,
+                    row,
+                    f"Judecata editorială a ales versiunea {shipped.number} "
+                    f"(«{shipped.version.title[:80]}», {chosen}) în locul acesteia ({scored}).",
+                    correlation,
+                    superseded_by=shipped_id,
+                )
+        letter_to_owner(
+            session,
+            outcome,
+            title=shipped.version.title,
+            director_id=director_id,
+            correlation_id=correlation,
+        )
+    approval = approve_reviewed_episode(engine, shipped_id, correlation)
+    return {
+        **reviews[shipped_id],
+        "episode_id": shipped_id,
+        "status": approval["status"],
+        "approved_by_policy": approval["approved_by_policy"],
+        "editorial": outcome.record(),
     }

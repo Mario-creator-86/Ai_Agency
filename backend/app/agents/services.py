@@ -1085,7 +1085,7 @@ _ROLE_DEFINITIONS = [
         "Grow the studio's audience: raising views and retention is her primary charge. She "
         "directs every department in writing, steers channels and topics from measured "
         "analytics, and documents every decision",
-        "plan,review,direct,decide",
+        "plan,review,direct,decide,editorial_judgement",
         "self_escalate,bypass_policy",
     ),
     (
