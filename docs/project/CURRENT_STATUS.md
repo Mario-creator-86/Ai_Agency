@@ -1,4 +1,4 @@
-# CURRENT STATUS — State on 2026-10-11
+# CURRENT STATUS — State on 2026-10-12
 
 Current proof: the 2026-10-01/02 paid film readiness audit was proven on fakes only;
 AGENT_SCENARIO_ACCEPTANCE later used actual Ollama Cloud calls, with normal serial
@@ -17,6 +17,10 @@ Preserve existing Owner STOP, budget/approval, accepted takes and rights gates. 
 the durable worker and its normal film lease; do not replace QC results or manufacture a pass.
 No new interface or unrelated feature. Live model/media actions can occur only through the
 existing authorized production workflow and are reported separately from offline tests.
+
+## Open after the session's usage limit: the serial's scenes 3-4 stuck outside the ladder, stored prompts to recompose, a wrong stop word, two subagents' work to land (2026-10-12)
+
+- OPEN at 00:05 (2026-10-12), found live and not yet fixed (the session's usage limit ended it): the serial's walk reached the motion step (test shot hero-accepted, 6 motion clips bought and QC-checked, one vendor REFUSED), then stopped: (1) the Director's ladder refuses serial scenes by design — scene_rewrite's rewrite_for_redo answers «Scena nu este una pe care studioul o rescrie (card, serial, film închis)» for scenes 3 and 4, so the film is left «așteaptă Proprietarul», which his rule forbids; the fix is a serial rung: recompose the serial scene's prompts with the current composer (write_shot_prompts / _serial_package for that scene) and redo its still, no Kael rewrite needed; (2) scenes 3–4's stored still prompts were composed under restart #3's code (the camera path and the chain of moments that tile into panels — 48bbcd1 fixed the composer but nothing recomposed the stored prompts, and the sheet repair runs only on lint blockers); a one-time recomposition of serial scenes whose stored stills carry a camera path / «then» chain is needed; (3) a walk that ends at the motion step records «Oprit de AUTONOMIE OPRITĂ» (21:03:02 UTC, autonomy_stopped = 0) — a wrong word for a staircase stop; diagnose in runbook.stages / mode_guard. Also pending: the two subagents («Mișcare v2» in prompt_agent/prompt_lint/qc; the editorial judgement in story/factual/agents) were still running — check git status for their uncommitted files, run their tests, commit, then one restart for 1cf04da + 94e2ddf + theirs.
 
 ## The training set is collected; the serial films its motion; what waits for the next restart (2026-10-11)
 
