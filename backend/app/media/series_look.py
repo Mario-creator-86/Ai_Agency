@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Collection
 from pathlib import Path
 from typing import Any
 
@@ -457,7 +458,24 @@ def _sentence(text: str) -> str:
     return said if said.endswith((".", "!", "?")) else f"{said}."
 
 
-def look_block(bible: dict[str, Any] | None, look: dict[str, Any] | None = None) -> str:
+#: The look slots a scene's own words replace (`look_block(omit=...)`): a scene that names
+#: its place leaves the look's place, season and weather unsaid; one that names its light
+#: leaves the look's daylight unsaid. 2026-10-11, cyclotron aa170155: every still opened with
+#: "A real location as it is today, Early autumn, None indoors. Soft diffuse daylight from
+#: high to one side" over a 1930s lamp-lit desk at night, and the model drew the daylight and
+#: a beige lamp; the Director's brief named those words.
+PLACE_SLOTS: frozenset[str] = frozenset({"place", "season", "weather"})
+LIGHT_SLOTS: frozenset[str] = frozenset({"light"})
+#: A bible value that says there is none ("None indoors; the only exterior is ...").
+_NONE_FIRST = re.compile(r"^\s*(?:none|no\s+weather|n/?a)\b", re.IGNORECASE)
+
+
+def look_block(
+    bible: dict[str, Any] | None,
+    look: dict[str, Any] | None = None,
+    *,
+    omit: Collection[str] = (),
+) -> str:
     """The words every still prompt of a factual film opens with, 40-60 of them.
 
     The rendering is the studio's and is never taken from the bible: a bible that asks for
@@ -465,7 +483,9 @@ def look_block(bible: dict[str, Any] | None, look: dict[str, Any] | None = None)
     and palette are the bible's when it names them in whole clauses that fit their slot, the
     file's otherwise; a bible whose season or weather is "None" has none. A bible rule that
     asks for overcast light is said as the light it wants. The same bible always gives the
-    same block, so every scene of a film opens identically.
+    same block, so every scene of a film opens identically — unless the scene names its own
+    place or light (``omit``: `PLACE_SLOTS`, `LIGHT_SLOTS`), when those slots are left to the
+    scene's words and the fills keep the block at its length.
     """
     from app.media import prompt_lint as lint  # noqa: PLC0415
 
@@ -475,6 +495,7 @@ def look_block(bible: dict[str, Any] | None, look: dict[str, Any] | None = None)
     source = bible if isinstance(bible, dict) else {}
     slots: dict[str, str] = look.get("slots") or DEFAULT_FACTUAL_SLOTS
     caps: dict[str, int] = look.get("slot_words") or DEFAULT_SLOT_WORDS
+    left_out = {str(slot) for slot in omit}
 
     def pick(
         slot: str,
@@ -484,17 +505,23 @@ def look_block(bible: dict[str, Any] | None, look: dict[str, Any] | None = None)
         whole_film: bool = True,
         by_place_is_none: bool = False,
     ) -> str:
+        if slot in left_out:
+            return ""
         for key in keys:
             value = source.get(key)
+            text = lint.without_asides(_said(value)).strip()
+            # A bible that says its film has no weather ("None. The environment is a
+            # controlled ...", babcf272: a particle accelerator tunnel; "None indoors; the
+            # only exterior is the final dusk aerial", aa170155) is not given the look file's
+            # "overcast sky", nor its own "None indoors" said as weather.
+            if none and (
+                _NONE_FIRST.match(text)
+                or lint.NONE_WORD.match(re.split(r"[;,.:]\s*", text, maxsplit=1)[0])
+            ):
+                return ""
             said = look_phrase(value, caps.get(slot, 8), whole_film=whole_film)
             if said:
                 return said
-            # A bible that says its film has no weather ("None. The environment is a
-            # controlled ...", babcf272: a particle accelerator tunnel) is not given the
-            # look file's "overcast sky" when the rest of what it says does not fit.
-            text = lint.without_asides(_said(value)).strip()
-            if none and lint.NONE_WORD.match(re.split(r"[;,.:]\s*", text, maxsplit=1)[0]):
-                return ""
             # A bible that gives its light place by place (babcf272: "In the tunnel, ...")
             # leaves the light to each scene: the look file's daylight in a void scene would
             # be as wrong as the tunnel's light.
@@ -506,7 +533,9 @@ def look_block(bible: dict[str, Any] | None, look: dict[str, Any] | None = None)
 
     overcast = any(_OVERCAST_RULE.search(rule) for rule in _bible_rules(source))
     light_default = OVERCAST_LIGHT if overcast else look_phrase(slots.get("light"), None, own=True)
-    if _names_several_places(source.get("world")):
+    if "place" in left_out:
+        place = ""
+    elif _names_several_places(source.get("world")):
         place = look_phrase(slots.get("place"), None, own=True)
     else:
         place = pick("place", "world", "place", whole_film=False)
@@ -549,7 +578,10 @@ def look_block(bible: dict[str, Any] | None, look: dict[str, Any] | None = None)
     high = int(look.get("max_words") or LOOK_MAX_WORDS)
     block = compose(True, True, 0)
     extra = 0
-    while len(block.split()) < low and extra < len(fills):
+    # A block whose place or light the scene says itself is not padded with the fills: the
+    # scene's own words take that room in the prompt (a desk at night gains nothing from
+    # "honest textures of stone, soil, water and weathered cloth").
+    while not left_out and len(block.split()) < low and extra < len(fills):
         extra += 1
         block = compose(True, True, extra)
     if len(block.split()) > high:

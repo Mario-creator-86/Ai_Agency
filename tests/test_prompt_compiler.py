@@ -75,11 +75,47 @@ def test_airless_scene_does_not_gain_invented_weather():
     assert "rotates" in compiled["motion_prompt"].lower()
 
 
-#: Colour words: the palette belongs to the still, never to the motion prompt.
+def test_a_scene_of_objects_is_not_asked_for_people_under_a_face_ban():
+    """2026-10-11, the cyclotron film's scene 4: two objects on a desk, and the still prompt
+    said «Any people appear only as small distant figures seen from behind» because the bible
+    forbids faces; the picture had people, and the clip turned their faces to the camera. The
+    Director's brief named that sentence. It is said only where the scene shows people."""
+    bible = {"continuity_rules": ["No human faces appear"], "lighting": "warm lamp light"}
+    objects = compile_prompts(
+        {
+            "subject": "A small brass vacuum chamber beside a green desk lamp",
+            "action": "The chamber rests on a walnut desk next to a pencil",
+            "environment": "A quiet 1930s laboratory desk",
+            "camera": "Detail shot, 85mm lens",
+            "motion": "Dust drifts slowly through the lamp light.",
+        },
+        bible,
+    )
+    still = objects["still_prompt"]
+    assert "seen from behind" not in still and "figures" not in still, still
+    # The bible's rule is kept by saying nobody is there, which the linter reads as kept.
+    assert "There are no people in the frame." in still
+    found = lint_film([LintScene(scene=1, still_prompt=still)], bible=bible)
+    assert not [item for item in found if item.severity == BLOCK], found
+    people = compile_prompts(
+        {
+            "subject": "Two physicists at a laboratory bench",
+            "action": "They lean over a brass chamber",
+            "environment": "A 1930s laboratory",
+            "camera": "Wide shot, 24mm lens",
+            "motion": "Steam drifts from a kettle.",
+        },
+        bible,
+    )
+    assert "seen from behind" in people["still_prompt"]
+
+
+#: Palette instructions belong to the still, never to the motion prompt. The colour of a
+#: named object ("the gold medal on the green cloth") is the subject's, not a palette: the
+#: motion prompt must name what is in the picture (2026-10-11, aa170155 scene 4: a motion
+#: prompt that named nothing had the model improvise people).
 PALETTE_WORDS = re.compile(
-    r"\b(?:blue|blues|gold|golden|grey|gray|greys|brown|browns|green|greens|red|amber|ochre"
-    r"|teal|orange|yellow|purple|violet|pink|crimson|beige|cyan|magenta|silver|palette)\b",
-    re.IGNORECASE,
+    r"\b(?:palette|hues?|tones?|colou?r\s+grad\w*|saturat\w*|desaturat\w*)\b", re.IGNORECASE
 )
 PERSON = re.compile(
     r"\b(?:person|people|man|men|woman|women|farmers?|child|children|figures?|villagers?)\b",
@@ -143,18 +179,30 @@ def test_nepal_still_prompts_are_prose_that_opens_with_one_look_and_hides_every_
         "BLACK",
     ]
     compiled = compile_film_prompts(packages, bible, contract={"model_id": "seedance2_5"})
-    block = look_block(bible)
-    assert 40 <= len(block.split()) <= 60, block
+    full = look_block(bible)
+    assert 40 <= len(full.split()) <= 60, full
+    rendering = full.split(". ")[0] + "."
     filmed = live(compiled, packages)
+    planned = [p for p in packages if p["scene_kind"] == "LIVE"]
     assert len(filmed) == 4
-    for item in filmed:
+    for item, package in zip(filmed, planned, strict=True):
         still = item["still_prompt"]
         assert "#" not in still
         assert not ENUM_CODE.search(still), ENUM_CODE.search(still)
         for banned in ("Avoid:", "locked camera", "Motion:", "Camera:"):
             assert banned not in still, banned
+        # The look opens every still. A scene that names its own place or light leaves the
+        # look's place, season, weather or daylight to its own words (2026-10-11): the
+        # rendering, the palette and the lens stay, and the fills keep the block's length.
+        block = item["look_block"]
         assert still.startswith(block)
-        assert item["look_block"] == block
+        assert block.startswith(rendering), block
+        # Shorter than the film's block when slots are left to the scene (no fills then).
+        assert 20 <= len(block.split()) <= 60, block
+        if package.get("lighting"):
+            assert "diffuse daylight" not in block.lower(), block
+        if package.get("environment"):
+            assert "as it is today" not in block.lower(), block
         assert 60 <= len(still.split()) <= 120, len(still.split())
         # Every person the prompt shows is kept from behind or in the distance, within the
         # words around it, in its own sentence.
@@ -162,6 +210,8 @@ def test_nepal_still_prompts_are_prose_that_opens_with_one_look_and_hides_every_
             words = sentence.split()
             for position, word in enumerate(words):
                 if PERSON.fullmatch(word.strip(".,;:()").lower()):
+                    if position and words[position - 1].lower() == "no":
+                        continue  # a scene of no one says so (2026-10-11)
                     window = " ".join(words[max(0, position - 3) : position + 7]).lower()
                     assert "from behind" in window or "distant" in window, (sentence, word)
     # Scene 3 and 4 have people in them; they are still there, only turned away.

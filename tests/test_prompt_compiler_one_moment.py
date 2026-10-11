@@ -233,10 +233,18 @@ def test_the_look_block_of_a_prose_bible_has_no_fragment(bible: dict[str, Any]) 
         assert broken not in block, (broken, block)
     # A film without weather is not given the look file's "overcast sky".
     assert "overcast" not in block.lower()
-    # Every scene of the film opens with the same block.
-    first = compile_prompts(SCENE_3, bible, {"model_id": "seedance2_5"})["still_prompt"]
-    fifth = compile_prompts(SCENE_5, bible, {"model_id": "seedance2_5"})["still_prompt"]
-    assert first.startswith(block) and fifth.startswith(block)
+    # Every scene of the film opens with the look: the same rendering, palette and lens. A
+    # scene that names its own place or light leaves those slots to its own words
+    # (2026-10-11, aa170155), so its block is the film's with those sentences unsaid.
+    rendering = block.split(". ")[0] + "."
+    for scene in (SCENE_3, SCENE_5):
+        compiled = compile_prompts(scene, bible, {"model_id": "seedance2_5"})
+        opening = compiled["look_block"]
+        assert compiled["still_prompt"].startswith(opening)
+        assert opening.startswith(rendering), opening
+        assert "A core palette of deep charcoal and slate" in opening
+        assert not _fragments(opening), _fragments(opening)
+        assert not NONE_WORDS.search(opening), opening
     assert look_block(dict(bible)) == block
 
 

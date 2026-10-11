@@ -55,7 +55,9 @@ from app.factual.sanitizer import wrap_in_inert_boundary
 from app.media import prompt_lint as lint
 from app.media.models import CharacterBible, Storyboard, StoryboardScene
 from app.media.series_look import (
+    LIGHT_SLOTS,
     PART_PURPOSES,
+    PLACE_SLOTS,
     SHOT_TYPES,
     load_factual_look,
     load_series_look,
@@ -1760,6 +1762,9 @@ STILL_EXCLUSIONS = "No text, no logo."
 PEOPLE_SENTENCE = (
     "Any people appear only as small distant figures seen from behind, faces turned away."
 )
+#: The bible's face rule said for a scene that shows nobody: it never asks for figures, and
+#: the linter reads it as the rule kept (`prompt_lint.NO_FACE_STATED`).
+NO_PEOPLE_SENTENCE = "There are no people in the frame."
 FACES_CONSTRAINT = "Faces stay turned away from the camera."
 MOTION_PAD = "The movement stays smooth and unhurried."
 DEFAULT_WORLD_MOTION = "Background details remain stable throughout the shot."
@@ -1902,10 +1907,7 @@ def _clauses_of(text: Any, *, motion: bool = False) -> list[str]:
         ):
             return ""
         if motion and (
-            _CAMERA_WORDS.search(part)
-            or lint.camera_moves(part)
-            or _COLOUR_WORDS.search(part)
-            or lint.THEN_CHAIN.search(part)
+            _CAMERA_WORDS.search(part) or lint.camera_moves(part) or lint.THEN_CHAIN.search(part)
         ):
             return ""
         return part
@@ -2023,11 +2025,31 @@ def hide_faces(text: str) -> str:
     return said
 
 
+#: Who else a shot may show, besides the linter's people (`prompt_lint.PERSON`): the trades a
+#: factual film names (a physicist at a bench), someone said by a pronoun, and the parts of a
+#: person a face rule leaves in frame. Read only to decide whether a scene shows anybody, so a
+#: scene of objects can be said to be empty (`NO_PEOPLE_SENTENCE`); a word missed here only
+#: keeps the older sentence, never a face.
+_ALSO_PEOPLE = re.compile(
+    r"\b(?:scientists?|physicists?|chemists?|engineers?|researchers?|technicians?|operators?"
+    r"|astronauts?|cosmonauts?|inventors?|professors?|teachers?|assistants?|pilots?|crew"
+    r"|staff|team|audience|spectators?|passengers?|drivers?|miners?|sailors?|guards?|police"
+    r"|firefighters?|athletes?|players?|dancers?|musicians?|artists?|writers?|journalists?"
+    r"|reporters?|customers?|visitors?|tourists?|scholars?|colleagues?|someone|somebody"
+    r"|anyone|everyone|he|she|him|his|her|hers|hands?|fingers?|silhouettes?|humans?"
+    r"|individuals?|adults?|youths?|teens?|teenagers?|babies|baby|guests?|patients?)\b",
+    re.IGNORECASE,
+)
+
+
 def _shows_people(text: str) -> bool:
-    for match in lint.PERSON.finditer(text):
-        before = text[max(0, match.start() - 16) : match.start()].lower()
-        if not _NOT_A_PERSON.search(before):
-            return True
+    for pattern in (lint.PERSON, _ALSO_PEOPLE):
+        for match in pattern.finditer(text):
+            if match.group(0).lower() == "hand" and text[match.end() :].startswith("-drawn"):
+                continue
+            before = text[max(0, match.start() - 16) : match.start()].lower()
+            if not _NOT_A_PERSON.search(before):
+                return True
     return False
 
 
@@ -2157,11 +2179,14 @@ def _motion_intent(
         ),
         "",
     )
-    subject = _phrase([c for c in from_motion if c != world], 12)
+    subject_clauses = [c for c in from_motion if c != world]
+    subject = ", ".join(subject_clauses)
     return {
         "camera_move": move,
         "world": _sentence(_phrase([world], 14)) if world else DEFAULT_WORLD_MOTION,
         "subject": _sentence(subject),
+        "subject_clauses": [_sentence(clause) for clause in subject_clauses],
+        "constraints": _scene_constraints(package),
         "faces_banned": faces_banned,
         "people": people,
     }
@@ -2179,18 +2204,50 @@ def render_motion(
     constraint = FACES_CONSTRAINT if faces and intent.get("people") and family != "veo" else ""
     negative = None
     if family == "veo":
-        negative = ", ".join(((VEO_FACES,) if faces else ()) + VEO_NEGATIVE)
+        negative = ", ".join(
+            [*((VEO_FACES,) if faces else ()), *VEO_NEGATIVE, *(intent.get("constraints") or [])]
+        )
+    # Every clause of the plan's motion, each its own sentence, in the plan's order: the
+    # motion prompt names the visible subject in full (2026-10-11, aa170155 scene 4: "Slow
+    # pull-back that widens the view. Dust motes drift slowly in the beam" named nothing, and
+    # the model improvised people; the Director's brief named it). The plan's exclusions are
+    # never said as "no ...": a video model reads the words, not the negation; they reach the
+    # negative channel of a model that has one.
+    clauses = intent.get("subject_clauses")
+    subjects = clauses if isinstance(clauses, list) else [str(intent.get("subject") or "")]
     items = [
         (0, 0, camera),
-        (1, 1, str(intent.get("world") or DEFAULT_WORLD_MOTION)),
-        (2, 9, closing),
-        (3, 3, constraint),
-        (4, 2, str(intent.get("subject") or "")),
+        (4, 1, str(intent.get("world") or DEFAULT_WORLD_MOTION)),
+        (0, 1000, closing),
+        (0, 900, constraint),
+        *[(2, 10 + index, str(clause)) for index, clause in enumerate(subjects)],
     ]
     prompt = _fit_sentences(items, cap, MOTION_MAX_WORDS)
     if len(prompt.split()) < MOTION_MIN_WORDS:
         prompt = _fit_sentences([*items, (5, 8, MOTION_PAD)], cap, MOTION_MAX_WORDS)
     return prompt, negative
+
+
+def _scene_constraints(package: dict[str, Any]) -> list[str]:
+    """The plan's own exclusions as plain nouns for a model's negative channel (veo's
+    negativePrompt); the generic text/face rules already have their channels.
+
+    Camera instructions are represented by the one selected move, never repeated as a
+    competing move in a constraint. No physical detail is inferred from an exclusion, and
+    none is ever said in a positive prompt as "no ...".
+    """
+    generic = {item.casefold() for item in DEFAULT_NEGATIVES}
+    result: list[str] = []
+    for item in package.get("avoid") or []:
+        text = " ".join(str(item).split()).strip(" .")
+        if not text or text.casefold() in generic or _CAMERA_WORDS.search(text):
+            continue
+        if lint.ENUM_CODE.search(text) or _HEX_COLOUR.search(text):
+            continue
+        text = re.sub(r"^(?:avoid|no|without)\s+", "", text, flags=re.IGNORECASE)
+        if text and text.casefold() not in {value.casefold() for value in result}:
+            result.append(text)
+    return result
 
 
 def compile_prompts(
@@ -2227,21 +2284,32 @@ def compile_prompts(
         }
     faces_banned = bool(lint.bible_face_rule(bible))
     still_family = _motion_family(_contract_model(contract, "still_model_id", DEFAULT_STILL_MODEL))
-    block = look_block(bible, look or load_factual_look())
+    factual_look = look or load_factual_look()
+    # A scene's own place and light are authoritative: the look's place, season, weather and
+    # daylight are left unsaid where the scene names its own (2026-10-11, aa170155: "A real
+    # location as it is today, Early autumn, None indoors. Soft diffuse daylight" over a
+    # 1930s lamp-lit desk at night drew the daylight and a beige lamp). The rendering, the
+    # palette, the lens and the grain stay: they are the one look of the film.
+    omit: set[str] = set()
+    if _clauses_of(package.get("environment")):
+        omit |= PLACE_SLOTS
+    if _clauses_of(package.get("lighting")):
+        omit |= LIGHT_SLOTS
+    block = look_block(bible, factual_look, omit=omit)
     size, frame = shot_frame(package.get("camera"), package.get("shot_type"))
 
-    def said(field: str, words: int) -> str:
-        text = _sentence(_phrase(_clauses_of(package.get(field)), words))
+    def said(field: str) -> str:
+        text = _sentence(", ".join(_clauses_of(package.get(field))))
         return hide_faces(text) if faces_banned else text
 
-    subject = said("subject", 24)
-    action = said("action", 16)
+    subject = said("subject")
+    action = said("action")
     if action and subject and action.casefold() == subject.casefold():
         action = ""
-    environment = said("environment", 16)
+    environment = said("environment")
     if environment and environment.casefold() in (subject.casefold(), action.casefold()):
         environment = ""
-    light = _phrase(_clauses_of(package.get("lighting")), 12)
+    light = ", ".join(_clauses_of(package.get("lighting")))
     if light and not re.search(r"\blight", light, re.IGNORECASE):
         # "The glow of the spheres" (babcf272) said as "Light The glow of ..." was no sentence.
         if re.match(r"(?:the|a|an|its|their|his|her|this|that|one)\b", light, re.IGNORECASE):
@@ -2252,15 +2320,23 @@ def compile_prompts(
     people = _shows_people(" ".join((subject, action, environment, cast)))
     items = [
         (0, 0, block),
-        (1, 1, frame),
-        (2, 2, subject),
-        (6, 3, cast),
-        (9, 4, action),
-        (7, 5, environment),
-        (3, 6, PEOPLE_SENTENCE if faces_banned else ""),
+        (0, 1, frame),
+        (0, 2, subject),
+        (0, 3, cast),
+        (3, 4, action),
+        (1, 5, environment),
+        # How people are kept faceless where the scene shows them; a scene of objects is said
+        # to be empty of people instead. The first, said in a scene of objects, asked the model
+        # for figures (2026-10-11, cyclotron scene 4: two objects on a desk came back with
+        # people, and the clip turned their faces to the camera; the Director's brief named it).
+        (0, 6, (PEOPLE_SENTENCE if people else NO_PEOPLE_SENTENCE) if faces_banned else ""),
         (5, 7, COMPOSITION_SENTENCE),
-        (8, 8, _sentence(light)),
-        (4, 9, STILL_EXCLUSIONS if still_family != "gen4" else ""),
+        (2, 8, _sentence(light)),
+        # The plan's own exclusions are never said here as "no ...": an image model reads the
+        # words literally (config/factual_look.json's note; the lint refuses them on veo).
+        # They stay in the package's `avoid` and reach a model's negative channel where it
+        # has one (`render_motion`).
+        (0, 9, STILL_EXCLUSIONS if still_family != "gen4" else ""),
     ]
     still = _fit_sentences(items, lint.prompt_cap(contract, "still"), STILL_MAX_WORDS)
     move = choose_camera_move(package, size, previous_moves)
