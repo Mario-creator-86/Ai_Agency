@@ -1546,6 +1546,22 @@ def _film_staircase(
                 rung = _director_rung(engine, registry, storyboard_id, refused, correlation)
                 rounds.append(rung)
                 if not rung["rewritten"]:
+                    # Nobody's decision: the Director's rewrite did not land (her brief
+                    # refused, no Director, a fault), and the studio tries again by itself
+                    # (`passes.ladder_retry`). The film's words say so, not «decide el».
+                    why = "; ".join(
+                        f"scena {item.get('scene_index')}: {item.get('reason')}"
+                        for item in rung.get("not_rewritten") or []
+                        if item.get("reason")
+                    )
+                    film["reason"] = (
+                        "Directoarea nu a putut încă rescrie "
+                        + ("scena " if len(refused) == 1 else "scenele ")
+                        + ", ".join(map(str, refused))
+                        + " refuzate de controlul calității"
+                        + (f" ({why})" if why else "")
+                        + "; studioul reia singur rescrierea."
+                    )[:1500]
                     break
             film["bought"] = bought
             film["director_ladder"] = rounds

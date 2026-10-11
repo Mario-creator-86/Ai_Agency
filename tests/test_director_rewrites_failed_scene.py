@@ -397,3 +397,35 @@ def test_a_paid_redo_after_the_film_failed_is_bought_only_on_a_corrected_prompt(
     # A scene with no plan to rewrite goes on as it would have.
     other = a_film(engine, tmp_path, scenes=1)
     assert stages._correct_before_redo(engine, None, other, 1, ["motion"], [], {}, "c") is None
+
+
+def test_a_walk_whose_rewrite_did_not_land_says_the_studio_retries_not_the_owner(
+    engine, tmp_path, studio, settings
+):
+    """Review of 2026-10-11: with no Director (or a brief refused twice) the walk still read
+    «așteaptă decizia Proprietarului», the words of a film waiting for him, while the ladder
+    retry pass was going to walk it again by itself."""
+    from app.runbook import stages
+
+    storyboard_id = a_planned_film(engine, tmp_path)
+    models, account, _spy = refused_twice(engine, storyboard_id, tmp_path)
+    wiring = {
+        "integration_id": None,
+        "capabilities": [SEEDANCE],
+        "image_adapter": None,
+        "account": account,
+        "adapter_for_model": models,
+        "resolution": "1080p",
+        "storage_root": tmp_path / "media",
+    }
+
+    film = stages._film_staircase(
+        engine, settings, None, storyboard_id, wiring, "TEST", str(uuid4())
+    )
+
+    assert film["status"] == "WAITING" and film["refusal"] == "NEEDS_OWNER"
+    (rung,) = film["director_ladder"]
+    assert rung["rewritten"] == [] and rung["not_rewritten"][0]["scene_index"] == 1
+    assert film["reason"].startswith("Directoarea nu a putut încă rescrie scena 1")
+    assert "Director" in film["reason"] and "reia singur" in film["reason"]
+    assert "decizia Proprietarului" not in film["reason"]
