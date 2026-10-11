@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-11 — A RESOLVED sheet repair walks the film on
+
+- 942edfc — blocker_repair._finish(RESOLVED) → _continue_repaired_film: FILM_CONTINUE queued in the repair's transaction (cause sheet_repaired), once per repair, PRODUCTION only.
+
 ## 2026-10-11 — The serial passes the sheet's own gates
 
 - 3c30bc6 — prompt_agent.shot_plan_gaps(…, sources) reads assembler.shot_plan_sources (the sheet, the walk's NEEDS_SHOT_PLAN, the repair's issues, the media stage's hold); prompt_agent._serial_camera_move gives each serial shot its own move and compose_serial_motion opens with it; tests/test_serial_sheet_gate.py's four strict xfails are tests now.

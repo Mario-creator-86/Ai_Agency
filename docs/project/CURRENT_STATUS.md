@@ -18,6 +18,10 @@ the durable worker and its normal film lease; do not replace QC results or manuf
 No new interface or unrelated feature. Live model/media actions can occur only through the
 existing authorized production workflow and are reported separately from offline tests.
 
+## A RESOLVED sheet repair walks the film on by itself (2026-10-11)
+
+- Live at 19:29:18 UTC, after the Owner's third restart (22:28 local): the serial board f06808c9's repair ended RESOLVED on the first round under 3c30bc6, and no walk followed (the once-per-start walk had met the old blockers). Done: 942edfc — a RESOLVED sheet repair queues the film's continuation itself (cause sheet_repaired; one per repair; PRODUCTION; never a closed or rendered film). Tested on fakes: 72 passed. Needs one more restart tonight to walk f06808c9 (the start's own walk finds the sheet clean); from then on a repaired sheet continues without one.
+
 ## The serial passes the sheet's own gates: the look's scenes are no shot-plan gap, every serial shot has a camera move of its own (2026-10-11)
 
 - Claim: Claude Fable 5.1 session 23d615c3, after the Owner's restarts of 22:01 and 22:15. Live after them (database copy): the serial board f06808c9 was still stopped by the sheet's own gates — NEEDS_SHOT_PLAN for the scene the look composed (the sheet read the factual gap rule) and SAME_CAMERA_EVERY_SCENE (every serial shot «static», 45dc313's choice); the repair rounds continued at 19:16 and 19:18 UTC, UNRESOLVED, no media bought. The workflow's fix agent for package B had written the strict-xfail tests naming both (tests/test_serial_sheet_gate.py).
