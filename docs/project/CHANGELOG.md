@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-11 — The studio's approved cadres become a training set
+
+- 94e2ddf — backend/app/workflows/passes/training_set.py (watchdog, order 170): every gate- or Owner-approved still and clip-QC/Owner-approved shot is written once to training/manifest.jsonl under the media root with its exact prompt, camera move, seconds, resolution, model, look version and approver; training.samples_added per batch; at 100 approved serial clips one training.milestone_reached and one letter to the Owner (the training is his card). Tests: 4, with the watchdog and paid-path scans (169) green.
+
 ## 2026-10-11 — The register speaks for people and the office says it in bubbles
 
 - 1cf04da — backend/app/events_feed.py (new) + services.read_events: words_ro / actor / film_title / bubble_ro on every event of the page; frontend ledger.js (describeEvent, withoutName, setPortraits), main.js (sayInOffice, registerPortrait), pixel_office.js (bubbles for every employee), style.css (.ledger-portrait).
