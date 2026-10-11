@@ -393,3 +393,43 @@ def test_the_video_editors_contract_carries_the_serial_shots():
     contracts = json.loads((ROOT / "config" / "role_contracts.json").read_text(encoding="utf-8"))
     editor = contracts["roles"]["VideoEditor"]
     assert any("series look" in line for line in editor["watch_for"])
+
+
+def test_the_composed_serial_shots_pass_the_prompt_check_and_carry_their_own_movement(
+    engine, staffed, monkeypatch
+):
+    """2026-10-11, the first episode ever approved (f06808c9): every composed still carried
+    «Camera:» and «Action:», the sheet's prompt check refused them (TEMPLATE_LABEL) on every
+    rewrite, and the Director and the Video Editor went round in circles. The still is now
+    said in sentences, and the shot has a motion prompt of its own (a held camera, the beat's
+    action), so the motion step no longer sends the still's words again."""
+    from app.media.prompt_agent import motion_prompt_for
+    from app.media.prompt_lint import BLOCK, LintScene, camera_moves, lint_scene
+    from app.media.series_look import series_bible
+
+    board_id = serial_board(engine, monkeypatch)
+    bible = series_bible(load_series_look(), "9:16")
+    scenes = scenes_of(engine, board_id)
+    assert scenes
+    for scene in scenes:
+        package = dict(scene.prompt_json or {})
+        still = scene.visual_prompt
+        for label in ("Camera:", "Action:", "Avoid:", "Expression:", "Background:"):
+            assert label not in still, (label, still)
+        assert package["still_prompt"] == still
+        motion, _negative = motion_prompt_for(package, "LTX-2.5")
+        assert motion and package["camera_move"] == "static"
+        assert [move for move, _ in camera_moves(motion)] == ["static"]
+        assert motion.endswith("No subtitles, no on-screen text.")
+        findings = lint_scene(
+            LintScene(
+                scene=scene.scene_index,
+                kind="LIVE",
+                still_prompt=still,
+                motion_prompt=motion,
+                model_id="LTX-2.5",
+            ),
+            bible=bible,
+        )
+        blocks = [f.as_dict() for f in findings if f.severity == BLOCK]
+        assert blocks == [], blocks

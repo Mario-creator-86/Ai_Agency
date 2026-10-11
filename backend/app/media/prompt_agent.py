@@ -1177,6 +1177,11 @@ def write_shot_prompts(
                 scene.shot_type = SHOT_TYPES[package["shot_size"]]
                 package["source"] = SOURCE_MODEL if shot is not None else SOURCE_SERIES_LOOK
                 composed = compose_serial_prompt(package, look)
+                # The shot's movement, so the motion step has words of its own and the
+                # sheet's lint reads a motion prompt, not the still said twice (2026-10-11).
+                package["camera_move"] = "static"
+                package["motion_prompt"] = compose_serial_motion(package, look)
+                package["still_prompt"] = composed
             else:
                 # Two prompts per filmed scene (compile_prompts); a scene composed locally
                 # carries none, and its visual_prompt stays the writer's line.
@@ -1580,10 +1585,14 @@ def compose_serial_prompt(package: dict[str, Any], look: dict[str, Any]) -> str:
     """
     cap = int(look.get("max_prompt_chars") or 900)
     camera = " ".join(str(package.get("camera") or "").split()).rstrip(". ")
+    # Said in sentences, never under a template label: «Camera:» and «Action:» were the
+    # rubrics the first episode's stills carried (2026-10-11, f06808c9), the prompt check
+    # refused them (TEMPLATE_LABEL) on every rewrite, and the Director and the Video Editor
+    # went round in circles while the storyboard waited.
     head = [
         str(look.get("block") or "").strip(),
         f"Location: {package['location']}." if package.get("location") else "",
-        f"Camera: {camera}." if camera else "",
+        _sentence(camera) if camera else "",
     ]
     people = [c for c in package.get("in_frame") or [] if isinstance(c, dict)]
     action = " ".join(str(package.get("action") or "").split())
@@ -1595,7 +1604,7 @@ def compose_serial_prompt(package: dict[str, Any], look: dict[str, Any]) -> str:
         parts = [
             *head,
             f"In frame, facing the viewer: {who}." if who else "",
-            f"Action: {action_text}" if action_text else "",
+            _sentence(action_text) if action_text else "",
         ]
         return " ".join(part for part in parts if part)
 
@@ -1608,19 +1617,47 @@ def compose_serial_prompt(package: dict[str, Any], look: dict[str, Any]) -> str:
         room = len(action) - (len(text) - cap)
         text = build(per, _fit(action, room - 1) + "." if room > 20 else "")
     text = _fit(text, cap)
-    for label, value in (
-        ("Expression", package.get("emotion")),
-        ("Background", package.get("background")),
-        ("Continuity", package.get("continuity")),
-        ("Avoid", ", ".join(str(a) for a in (package.get("avoid") or [])[:6])),
+    # The exclusions are the look's own words already ("No written words ..."); a list of
+    # them under «Avoid:» is read literally by an image model and is never said here.
+    for prefix, value in (
+        ("", package.get("emotion")),
+        ("Behind them, ", package.get("background")),
+        ("As in the shot before: ", package.get("continuity")),
     ):
         said = " ".join(str(value or "").split()).rstrip(". ")
         if not said:
             continue
-        candidate = f"{text} {label}: {said}."
+        if prefix and said[:1].isupper() and not said.startswith(("AMN", "I ")):
+            said = said[:1].lower() + said[1:]
+        candidate = f"{text} {_sentence(prefix + said)}"
         if len(candidate) <= cap:
             text = candidate
     return text
+
+
+def compose_serial_motion(package: dict[str, Any], look: dict[str, Any]) -> str:
+    """The movement of a serial shot: a held camera, the beat's action as movement, the
+    people's faces kept, and the closing every motion prompt carries.
+
+    Until 2026-10-11 a serial scene had no motion prompt at all: the motion step sent the
+    still's words again (`assembler._motion_prompt`), look block, room and rubrics included.
+    """
+    del look  # the look is in the picture; the movement is the beat's
+    action = _sentence(" ".join(str(package.get("action") or "").split()))
+    feeling = " ".join(str(package.get("emotion") or "").split()).rstrip(". ")
+    items = [
+        (0, 0, MOVE_SENTENCES["static"]),
+        (1, 1, action),
+        (3, 2, _sentence(feeling) if feeling else ""),
+        (2, 3, "Their faces stay expressive and the same people throughout."),
+        (0, 9, lint.MOTION_CLOSING),
+    ]
+    prompt = _fit_sentences(items, lint.DEFAULT_PROMPT_MAX_UTF16, MOTION_MAX_WORDS)
+    if len(prompt.split()) < MOTION_MIN_WORDS:
+        prompt = _fit_sentences(
+            [*items, (4, 4, MOTION_PAD)], lint.DEFAULT_PROMPT_MAX_UTF16, MOTION_MAX_WORDS
+        )
+    return prompt
 
 
 def compose_prompt(package: dict[str, Any], bible: dict[str, Any]) -> str:
