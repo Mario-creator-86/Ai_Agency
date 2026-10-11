@@ -117,6 +117,13 @@ def test_a_cancelled_paid_plan_an_unknown_tier_and_a_failed_read_record_nothing(
     assert licence(engine, failing)["commercial_use"] is None
 
 
+def test_a_paid_plan_is_known_by_its_name_with_a_billing_suffix_and_free_never_is():
+    from app.integrations.plan_licence import is_paid_tier
+
+    assert all(is_paid_tier(t) for t in ("starter", "Creator", "creator_annual", "pro_2024"))
+    assert not any(is_paid_tier(t) for t in ("", "free", "free_2024", "mystery", "creatorx"))
+
+
 def test_a_connection_the_owner_already_answered_or_not_verified_is_never_read(engine):
     connection(engine, config={"commercial_use": "da"})
     connection(engine, status="FAILED")

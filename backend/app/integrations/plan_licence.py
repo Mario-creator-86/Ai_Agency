@@ -44,6 +44,16 @@ LICENCE_EVENT = "integrations.licence_recorded"
 PlanReader = Callable[[str], dict[str, Any]]
 
 
+def is_paid_tier(tier: str) -> bool:
+    """A paid plan by the vendor's own name for it: one of `PAID_TIERS`, or one of them with a
+    suffix the vendor adds to a billing variant («creator_annual», «pro_2024»). A free plan,
+    whatever its suffix, is never paid, and a name that is neither is not guessed into one."""
+    name = tier.strip().lower()
+    if not name or name.startswith("free"):
+        return False
+    return name in PAID_TIERS or any(name.startswith(f"{paid}_") for paid in PAID_TIERS)
+
+
 def _read_plan(api_key: str) -> dict[str, Any]:
     from app.providers.elevenlabs import ElevenLabsTTSAdapter  # noqa: PLC0415
 
@@ -97,7 +107,7 @@ def record_plan_licences(
             continue
         tier = str(plan.get("tier") or "").strip().lower()
         status = str(plan.get("status") or "").strip().lower()
-        paid = tier in PAID_TIERS and (not status or status in ACTIVE_STATUSES)
+        paid = is_paid_tier(tier) and (not status or status in ACTIVE_STATUSES)
         day = moment.date().isoformat()
         with Session(engine) as session, session.begin():
             record = session.get(Integration, integration_id)
