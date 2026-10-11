@@ -37,30 +37,64 @@ VEO_MOTION_CLOSING = "Continuous, seamless shot."
 DEFAULT_PROMPT_MAX_UTF16 = 1000
 
 STILL_WORDS = (60, 120)
-MOTION_WORDS = (20, 70)
+# The motion prompt's band of words. 20-70 since the Nepal film (2026-09-27); 25-95 since
+# «Mișcare v2» (2026-10-11): a camera move said with its path and its tempo, a second beat
+# of camera on a clip of seven seconds or more, the subject's own action and the world in
+# motion do not fit in seventy words, and the live prompts of film aa170155 that did fit
+# («Slow push-in toward the subject. A slow drift of dust motes ... barely moving.») were
+# what the Owner saw as «doar un zoom, și mișcări mici».
+MOTION_WORDS = (25, 95)
 MAX_INLINE_EXCLUSIONS = 2
 EVIDENCE_CHARS = 120
 
-# The camera-move enum of the motion prompt, each with the spellings that mean it.
+# The camera-move enum of the motion prompt, each with the spellings that mean it. One key
+# per family of movement, and no two patterns match the same words, so a prompt that names
+# its move at the start and holds it at the end still names one move (CAMERA_COUNT). The ten
+# keys of 2026-09-27 stay, because stored prompts, written plans, config/film_models.json and
+# the Director's rewrites name them; «Mișcare v2» (2026-10-11) adds the cinema's own moves —
+# a dolly with a path, a tracking move alongside the subject, a crane that reveals, a
+# handheld drift, a rack focus — and takes "dolly" and "crane" out of the older patterns so
+# that each spelling means exactly one key.
 CAMERA_MOVES: dict[str, str] = {
     "static": (
         r"\bstatic(?:\s+(?:camera|shot|frame))?\b|\blocked[- ]?(?:off\s+)?camera\b"
         r"|\blocked[- ]off\b|\bcamera\s+(?:is\s+|stays\s+|remains\s+)?locked\b"
     ),
-    "slow push-in": r"(?:\b(?:slow|gentle|steady|fast|quick)\s+)?\b(?:push[- ]in|dolly[- ]in)\b",
+    "slow push-in": r"(?:\b(?:slow|gentle|steady|fast|quick)\s+)?\bpush(?:es|ing)?[- ]in\b",
     "slow pull-back": (
-        r"(?:\b(?:slow|gentle|steady|fast|quick)\s+)?\b(?:pull[- ]back|pull[- ]out|dolly[- ]out)\b"
+        r"(?:\b(?:slow|gentle|steady|fast|quick)\s+)?\bpull(?:s|ing)?[- ](?:back|out)\b"
     ),
+    "dolly in": r"\bdoll(?:y|ies|ying)[- ](?:in|inward|forward|closer)\b",
+    "dolly out": r"\bdoll(?:y|ies|ying)[- ](?:out|outward|back|backward|away)\b",
     "slow pan left": r"(?:\b(?:slow|gentle|steady|fast|quick)\s+)?\bpan(?:s|ning)?\s+left\b",
     "slow pan right": r"(?:\b(?:slow|gentle|steady|fast|quick)\s+)?\bpan(?:s|ning)?\s+right\b",
-    "tilt up": r"(?:\b(?:slow|gentle|steady)\s+)?\btilt(?:s|ing)?\s+up\b",
-    "tilt down": r"(?:\b(?:slow|gentle|steady)\s+)?\btilt(?:s|ing)?\s+down\b",
+    "tracking left": (
+        r"\b(?:track(?:s|ing)?|truck(?:s|ing)?|doll(?:y|ies|ying))\s+(?:shot\s+)?"
+        r"(?:to\s+the\s+)?left(?:ward)?\b"
+    ),
+    "tracking right": (
+        r"\b(?:track(?:s|ing)?|truck(?:s|ing)?|doll(?:y|ies|ying))\s+(?:shot\s+)?"
+        r"(?:to\s+the\s+)?right(?:ward)?\b"
+    ),
+    "tilt up": r"(?:\b(?:slow|gentle|steady|smooth)\s+)?\btilt(?:s|ing)?\s+up\b",
+    "tilt down": r"(?:\b(?:slow|gentle|steady|smooth)\s+)?\btilt(?:s|ing)?\s+down\b",
     "aerial drift forward": (
         r"\baerial\s+drift(?:s|ing)?(?:\s+forward)?\b|\bdrone\s+(?:drift|glide)s?\s+forward\b"
     ),
-    "pedestal up": r"\bpedestal\s+up\b|\bcrane\s+up\b",
+    "pedestal up": r"\bpedestal(?:s)?\s+up\b",
+    "crane up": (
+        r"\bcrane(?:s|ing)?\s+(?:up|upward|upwards)\b|\bboom(?:s|ing)?\s+up\b|\brising\s+crane\b"
+    ),
+    "crane down": (
+        r"\bcrane(?:s|ing)?\s+(?:down|downward|downwards)\b|\bboom(?:s|ing)?\s+down\b"
+        r"|\bdescending\s+crane\b"
+    ),
     "slow orbit": (
         r"(?:\b(?:slow|gentle|steady|fast)\s+)?\borbit(?:s|ing)?\b|\barc(?:s|ing)?\s+around\b"
+    ),
+    "handheld drift": r"\bhand[- ]?held\b",
+    "rack focus": (
+        r"\brack[- ]focus\b|\bfocus\s+(?:racks?|pulls?|pulling)\b|\bpull(?:s|ing)?\s+focus\b"
     ),
 }
 
@@ -70,15 +104,71 @@ SHOT_SIZE = re.compile(
     re.IGNORECASE,
 )
 
+# The tempo a motion prompt must say once. "Smooth", "fluid", "deliberate" and "sweeping"
+# are the cinema's tempo words for an ample move (2026-10-11); "fast" and "quick" stay for a
+# plan that asks for them (production_policy reads "fast" as a fast-motion need).
 SPEED_WORDS = re.compile(
     r"\b(?:slow(?:ly)?|gentle|gently|steady|steadily|calm(?:ly)?|subtle|measured|unhurried"
+    r"|smooth(?:ly)?|fluid(?:ly)?|deliberate(?:ly)?|sweeping|walking\s+pace"
     r"|fast|quick(?:ly)?|brisk)\b",
     re.IGNORECASE,
 )
+# Something the world does while the subject acts. Shadows, curtains, particles, sparks,
+# embers and flames joined the list with «Mișcare v2»: indoor scenes (a lamp-lit desk, an
+# office) have no cloud or grass, and their world moves in light and small things.
 ENVIRONMENT_MOTION = re.compile(
     r"\b(?:drift\w*|wind|breeze|flow\w*|dust|clouds?|mist|fog|rain\w*|water|smoke|leaves"
-    r"|ripple\w*|sway\w*|waves?|snow\w*|steam|haze|grass|current|flicker\w*|stream\w*)\b",
+    r"|ripple\w*|sway\w*|waves?|snow\w*|steam|haze|grass|current|flicker\w*|stream\w*"
+    r"|shadows?|curtains?|particles?|sparks?|embers?|flames?|light\s+(?:sweep\w*|shift\w*))\b",
     re.IGNORECASE,
+)
+# A verb of the subject's own motion, in a plan's action: what people do (stands, walks to
+# the window, turns, hands over the ledger, gestures) and what objects do (spins, pulses,
+# unfolds). Read by the compiler to admit an action clause into the motion prompt as
+# movement, never to refuse one; a noun that spells like a verb ("waves", "steps") admits
+# a clause that moves nothing, which costs a few words and nothing else.
+SUBJECT_MOTION = re.compile(
+    r"\b(?:walks?|walking|runs?|running|strides?|striding|steps?|stepping|turns?|turning"
+    r"|stands?|standing|sits?|sitting|rises?|rising|leans?|leaning|reach(?:es|ing)|lifts?"
+    r"|lifting|raises?|raising|lowers?|lowering|hands?\s+(?:over|out|back|across)|handing"
+    r"|gestures?|gesturing|nods?|nodding|shakes?|shaking|points?|pointing|waves?|waving"
+    r"|pulls?|pulling|push(?:es|ing)|carr(?:ies|ying)|offers?|offering|takes?|taking|gives?"
+    r"|giving|opens?|opening|clos(?:es|ing)|writes?|writing|typ(?:es|ing)|taps?|tapping"
+    r"|press(?:es|ing)|draws?|drawing|paints?|painting|stirs?|stirring|pours?|pouring|drops?"
+    r"|dropping|catch(?:es|ing)|throws?|throwing|climbs?|climbing|descends?|descending"
+    r"|cross(?:es|ing)|enters?|entering|approach(?:es|ing)|glanc(?:es|ing)"
+    r"|looks?\s+(?:up|over|back|around|down)|looking|watch(?:es|ing)|speaks?|speaking"
+    r"|talks?|talking|laughs?|laughing|smiles?|smiling|argu(?:es|ing)|shouts?|shouting"
+    r"|whispers?|whispering|hurr(?:ies|ying)|rush(?:es|ing)|pac(?:es|ing)|danc(?:es|ing)"
+    r"|kneels?|kneeling|crouch(?:es|ing)|jumps?|jumping|bends?|bending|stretch(?:es|ing)"
+    r"|breath(?:es|ing)|trembl(?:es|ing)|spins?|spinning|rotat(?:es|ing)|puls(?:es|ing)"
+    r"|swings?|swinging|rolls?|rolling|slides?|sliding|glid(?:es|ing)|sweeps?|sweeping"
+    r"|scatters?|scattering|flutters?|fluttering|flickers?|flickering|dims?|dimming"
+    r"|brightens?|brightening|spreads?|spreading|grows?|growing|falls?|falling|floats?"
+    r"|floating|hovers?|hovering|tumbl(?:es|ing)|surg(?:es|ing)|whips?|whipping|ooz(?:es|ing)"
+    r"|flows?|flowing|animat(?:es|ing)|mov(?:es|ing)|bur(?:ies|ying)|digs?|digging|hoes?"
+    r"|hoeing|sways?|swaying|drifts?|drifting|ripples?|rippling|unfolds?|unfolding|settles?"
+    r"|settling|lands?|landing|darkens?|darkening|collaps(?:es|ing)|crumbl(?:es|ing))\b",
+    re.IGNORECASE,
+)
+# What the studio used to ask of the video model, and what the Owner saw (2026-10-11, films
+# aa170155 and f06808c9): «barely moving», «remain perfectly still», «Background details
+# remain stable». A motion prompt that says one of these asks for the stillness it then
+# measures as a fault (MOTION_STILLNESS, a WARN: a plan may hold one object still on purpose).
+STILLNESS_WORDS = re.compile(
+    r"\b(?:barely|hardly|scarcely)\s+mov\w+\b|\bperfectly\s+still\b"
+    r"|\b(?:remains?|remaining|stays?|staying|kept|keeps?)\s+(?:perfectly\s+|completely\s+"
+    r"|entirely\s+)?(?:stable|still|motionless|frozen)\b|\bmotionless\b|\bunhurried\b"
+    r"|\bno\s+(?:camera\s+)?movement\b|\bminimal\s+(?:camera\s+)?(?:movement|motion)\b",
+    re.IGNORECASE,
+)
+# The compiler's own stillness sentences until 2026-10-11, as stored intents and prompts of
+# the films planned before still carry them: `prompt_agent.render_motion` says a living world
+# in their place when it renders a stored intent again, and `qc.stronger_motion_prompt` takes
+# them out of a stored prompt before asking for the move more firmly.
+LEGACY_STILLNESS = (
+    "Background details remain stable throughout the shot.",
+    "The movement stays smooth and unhurried.",
 )
 
 ENUM_CODE = re.compile(r"\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b")
@@ -962,6 +1052,19 @@ def lint_motion_prompt(
                     "Promptul de mișcare nu are nicio mișcare a mediului "
                     f"(„{_excerpt(text, 60)}”): nori care trec, vânt în iarbă, "
                     "apă care curge, praf.",
+                )
+            )
+        stillness = STILLNESS_WORDS.search(_strip_closing(text))
+        if stillness:
+            findings.append(
+                _finding(
+                    "MOTION_STILLNESS",
+                    WARN,
+                    scene,
+                    stillness.group(0),
+                    f"Promptul de mișcare cere nemișcare („{stillness.group(0)}”). Modelul "
+                    "face exact ce i se cere: un clip aproape static. Spuneți ce se mișcă, "
+                    "cu drum și ritm.",
                 )
             )
         count = _words(text)

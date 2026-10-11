@@ -29,7 +29,7 @@
     "precision": "Two decimals and no more: the overall boards carry +-9 to +-13 Elo (about +-0.03 near the top), the category boards +-35 to +-40 Elo (about +-0.08). Two models within 0.05 of each other are not reliably different.",
     "basis": "documented",
     "boards_read_on": "2026-10-01",
-    "camera_moves_rule": "The studio's single slow moves (prompt_lint.CAMERA_MOVES). A model gets the whole list when its vendor documents prompt-directed camera movement for it; null when nothing is documented (null excludes nothing and proves nothing).",
+    "camera_moves_rule": "The studio's single camera moves (prompt_lint.CAMERA_MOVES, the whole vocabulary of «Mișcare v2», 2026-10-12). A model gets the whole list when its vendor documents prompt-directed camera movement for it; null when nothing is documented (null excludes nothing and proves nothing).",
     "sources": [
       "https://artificialanalysis.ai/video/leaderboard/text-to-video?audio-output=false",
       "https://artificialanalysis.ai/video/leaderboard/image-to-video?audio-output=false",
@@ -44,7 +44,7 @@
     "wan3": {
       "quality_score": 0.98,
       "need_quality": {"people": 0.99, "water": 0.96, "fast_motion": 0.96},
-      "camera_moves": ["static", "slow push-in", "slow pull-back", "slow pan left", "slow pan right", "tilt up", "tilt down", "aerial drift forward", "pedestal up", "slow orbit"],
+      "camera_moves": ["static", "slow push-in", "slow pull-back", "dolly in", "dolly out", "slow pan left", "slow pan right", "tracking left", "tracking right", "tilt up", "tilt down", "aerial drift forward", "pedestal up", "crane up", "crane down", "slow orbit", "handheld drift", "rack focus"],
       "native_audio": true,
       "seconds": {"min": 2, "max": 30},
       "resolutions": ["480p", "720p", "1080p"],
@@ -60,7 +60,7 @@
     "seedance2_5": {
       "quality_score": 0.92,
       "need_quality": {"people": 0.94, "water": 0.94, "fast_motion": 0.94},
-      "camera_moves": ["static", "slow push-in", "slow pull-back", "slow pan left", "slow pan right", "tilt up", "tilt down", "aerial drift forward", "pedestal up", "slow orbit"],
+      "camera_moves": ["static", "slow push-in", "slow pull-back", "dolly in", "dolly out", "slow pan left", "slow pan right", "tracking left", "tracking right", "tilt up", "tilt down", "aerial drift forward", "pedestal up", "crane up", "crane down", "slow orbit", "handheld drift", "rack focus"],
       "native_audio": true,
       "seconds": {"min": 4, "max": 30},
       "resolutions": ["480p", "720p", "1080p"],
@@ -76,7 +76,7 @@
     "seedance2": {
       "quality_score": 0.86,
       "need_quality": {"people": 0.88, "water": 0.89, "fast_motion": 0.85},
-      "camera_moves": ["static", "slow push-in", "slow pull-back", "slow pan left", "slow pan right", "tilt up", "tilt down", "aerial drift forward", "pedestal up", "slow orbit"],
+      "camera_moves": ["static", "slow push-in", "slow pull-back", "dolly in", "dolly out", "slow pan left", "slow pan right", "tracking left", "tracking right", "tilt up", "tilt down", "aerial drift forward", "pedestal up", "crane up", "crane down", "slow orbit", "handheld drift", "rack focus"],
       "native_audio": true,
       "seconds": {"min": 5, "max": 15},
       "resolutions": ["480p", "720p", "1080p", "4K"],
@@ -114,7 +114,7 @@
     "veo3.1": {
       "quality_score": 0.56,
       "need_quality": {"people": 0.45, "water": 0.63, "fast_motion": 0.61},
-      "camera_moves": ["static", "slow push-in", "slow pull-back", "slow pan left", "slow pan right", "tilt up", "tilt down", "aerial drift forward", "pedestal up", "slow orbit"],
+      "camera_moves": ["static", "slow push-in", "slow pull-back", "dolly in", "dolly out", "slow pan left", "slow pan right", "tracking left", "tracking right", "tilt up", "tilt down", "aerial drift forward", "pedestal up", "crane up", "crane down", "slow orbit", "handheld drift", "rack focus"],
       "native_audio": true,
       "seconds": {"values": [4, 6, 8]},
       "resolutions": ["720p", "1080p", "4k"],
@@ -132,7 +132,7 @@
     "veo3.1_fast": {
       "quality_score": 0.57,
       "need_quality": {"people": 0.39, "water": 0.54, "fast_motion": 0.54},
-      "camera_moves": ["static", "slow push-in", "slow pull-back", "slow pan left", "slow pan right", "tilt up", "tilt down", "aerial drift forward", "pedestal up", "slow orbit"],
+      "camera_moves": ["static", "slow push-in", "slow pull-back", "dolly in", "dolly out", "slow pan left", "slow pan right", "tracking left", "tracking right", "tilt up", "tilt down", "aerial drift forward", "pedestal up", "crane up", "crane down", "slow orbit", "handheld drift", "rack focus"],
       "native_audio": true,
       "seconds": {"values": [4, 6, 8]},
       "resolutions": ["720p", "1080p", "4k"],
@@ -149,7 +149,7 @@
     "gen4.5": {
       "quality_score": 0.47,
       "need_quality": {"people": 0.45, "water": 0.51, "fast_motion": 0.44},
-      "camera_moves": ["static", "slow push-in", "slow pull-back", "slow pan left", "slow pan right", "tilt up", "tilt down", "aerial drift forward", "pedestal up", "slow orbit"],
+      "camera_moves": ["static", "slow push-in", "slow pull-back", "dolly in", "dolly out", "slow pan left", "slow pan right", "tracking left", "tracking right", "tilt up", "tilt down", "aerial drift forward", "pedestal up", "crane up", "crane down", "slow orbit", "handheld drift", "rack focus"],
       "native_audio": false,
       "seconds": {"min": 2, "max": 10},
       "resolutions": ["720p"],
@@ -164,7 +164,7 @@
     "gen4_turbo": {
       "quality_score": 0.33,
       "need_quality": {},
-      "camera_moves": ["static", "slow push-in", "slow pull-back", "slow pan left", "slow pan right", "tilt up", "tilt down", "aerial drift forward", "pedestal up", "slow orbit"],
+      "camera_moves": ["static", "slow push-in", "slow pull-back", "dolly in", "dolly out", "slow pan left", "slow pan right", "tracking left", "tracking right", "tilt up", "tilt down", "aerial drift forward", "pedestal up", "crane up", "crane down", "slow orbit", "handheld drift", "rack focus"],
       "native_audio": false,
       "seconds": {"values": [5, 10]},
       "resolutions": ["720p"],
@@ -216,7 +216,7 @@
     "gemini_omni_flash": {
       "quality_score": 1.0,
       "need_quality": {},
-      "camera_moves": ["static", "slow push-in", "slow pull-back", "slow pan left", "slow pan right", "tilt up", "tilt down", "aerial drift forward", "pedestal up", "slow orbit"],
+      "camera_moves": ["static", "slow push-in", "slow pull-back", "dolly in", "dolly out", "slow pan left", "slow pan right", "tracking left", "tracking right", "tilt up", "tilt down", "aerial drift forward", "pedestal up", "crane up", "crane down", "slow orbit", "handheld drift", "rack focus"],
       "native_audio": null,
       "seconds": {"min": 3, "max": 10},
       "benchmarks": {"i2v_silent_elo": 1369, "i2v_silent_rank": 1},
@@ -230,7 +230,7 @@
     "gemini_omni_flash_1.1": {
       "quality_score": 0.83,
       "need_quality": {"people": 0.79, "water": 0.88, "fast_motion": 0.65},
-      "camera_moves": ["static", "slow push-in", "slow pull-back", "slow pan left", "slow pan right", "tilt up", "tilt down", "aerial drift forward", "pedestal up", "slow orbit"],
+      "camera_moves": ["static", "slow push-in", "slow pull-back", "dolly in", "dolly out", "slow pan left", "slow pan right", "tracking left", "tracking right", "tilt up", "tilt down", "aerial drift forward", "pedestal up", "crane up", "crane down", "slow orbit", "handheld drift", "rack focus"],
       "native_audio": null,
       "benchmarks": {"t2v_silent_elo": 1068, "t2v_silent_rank": 7, "human_anatomy_elo": 987, "physics_elo": 1044, "spatio_temporal_elo": 1004, "camera_control_elo": 1001},
       "notes": "Google Gemini Omni Flash 1.1. No price row in config/runway_prices.json: not buyable today.",

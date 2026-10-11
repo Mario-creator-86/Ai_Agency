@@ -41,6 +41,7 @@ from app.media.prompt_lint import (
     BLOCK,
     ENUM_CODE,
     MOTION_CLOSING,
+    MOTION_WORDS,
     NEGATION,
     LintScene,
     camera_moves,
@@ -265,9 +266,10 @@ def test_every_nepal_motion_prompt_is_movement_only():
     packages, bible = nepal_packages()
     compiled = compile_film_prompts(packages, bible, contract={"model_id": "seedance2_5"})
     moves = []
+    low, high = MOTION_WORDS  # 25-95 since «Mișcare v2» (2026-10-11); 20-70 before
     for item in live(compiled, packages):
         motion = item["motion_prompt"]
-        assert 20 <= len(motion.split()) <= 70, (len(motion.split()), motion)
+        assert low <= len(motion.split()) <= high, (len(motion.split()), motion)
         found = camera_moves(motion)
         assert len(found) == 1, (found, motion)
         assert found[0][0] == item["camera_move"]

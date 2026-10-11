@@ -1505,19 +1505,34 @@ PUSH_IN_ZOOM = 0.03
 PAN_FRACTION = 0.05
 #: The share of the fixture's motion a clip must reach.
 FLOOR_SHARE = 0.5
-#: The fixture each camera move is held to. Moves that change the scale of the picture are
-#: held to the push-in; moves that slide it, to the pan. 'static' has no floor.
+#: The fixture each camera move is held to (one entry per key of prompt_lint.CAMERA_MOVES).
+#: Moves that change the scale of the picture are held to the push-in; moves that slide it,
+#: to the pan. 'static' has no floor. The moves of «Mișcare v2» (2026-10-11): a dolly in or
+#: out changes the scale (push_in); a tracking move, a crane and a handheld drift slide the
+#: frame (pan). A rack focus moves neither — it changes the blur — and no fixture here
+#: measures a focus pull, so it has no floor either: its clip is judged by the picture
+#: checks (`_picture_check` reads same_shot and matches_plan), and the compiler never
+#: chooses it unasked (`prompt_agent.SIZE_MOVES`). The floor stays a minimum: an ample move
+#: is never refused for moving too much; a deformation is the picture checks' finding.
 MOVE_FIXTURE: dict[str, str | None] = {
     "static": None,
     "slow push-in": "push_in",
     "slow pull-back": "push_in",
+    "dolly in": "push_in",
+    "dolly out": "push_in",
     "aerial drift forward": "push_in",
     "slow pan left": "pan",
     "slow pan right": "pan",
+    "tracking left": "pan",
+    "tracking right": "pan",
     "tilt up": "pan",
     "tilt down": "pan",
     "pedestal up": "pan",
+    "crane up": "pan",
+    "crane down": "pan",
     "slow orbit": "pan",
+    "handheld drift": "pan",
+    "rack focus": None,
 }
 #: A hard cut inside a clip is one frame that differs from the one before it far more than
 #: the clip's own motion: above eight times the clip's median YDIF and above 12 in absolute
@@ -1817,12 +1832,17 @@ def motion_check(
     mean = float(reading.mean)
     fixture = MOVE_FIXTURE[move]
     if fixture is None:
+        asked = (
+            "cadru static cerut"
+            if move == "static"
+            else f"mișcarea «{move}» nu are o fixtură locală care să o măsoare"
+        )
         return ClipCheck(
             "motion",
             "PASSED",
             False,
             mean,
-            f"cadru static cerut: fără prag de mișcare (YDIF mediu {_ro_number(mean, 2)})",
+            f"{asked}: fără prag de mișcare (YDIF mediu {_ro_number(mean, 2)})",
         )
     calibration = floors.get(fixture)
     if calibration is None:
@@ -2191,6 +2211,9 @@ def check_clip(
                 "status": getattr(judgement, "status", None),
                 "run_id": getattr(judgement, "run_id", None),
                 "looked_by": getattr(judgement, "looked_by", None),
+                # The look's own yes/no answers, so the retry can tell a clip that warped,
+                # turned a face or broke its shot (`clip_deformed`) from one that barely moved.
+                "verdict": _verdict_flags(getattr(judgement, "verdict", None)),
             }
     finally:
         if owned:
@@ -2222,17 +2245,96 @@ def check_clip(
 
 # ------------------------------------------------------------- one retry, inside the cap
 
+#: The verdict's yes/no answers kept on a clip report (`check_clip`), in the look's own names.
+_VERDICT_FLAGS = (
+    "faces_visible",
+    "readable_text",
+    "matches_plan",
+    "look_ok",
+    "technical_ok",
+    "same_shot",
+    "one_picture",
+)
+
+
+def _verdict_flags(verdict: Any) -> dict[str, bool]:
+    """The look's boolean answers, only those it gave as booleans."""
+    flags: dict[str, bool] = {}
+    for name in _VERDICT_FLAGS:
+        value = getattr(verdict, name, None)
+        if isinstance(value, bool):
+            flags[name] = value
+    return flags
+
+
+def clip_deformed(report: ClipReport) -> bool:
+    """Whether a failed clip's fault is what the motion did to the picture — a face turned to
+    the camera, warping or artefacts, a look that slid, three frames that are not one shot —
+    and not how little it moved. A clip that also failed its motion floor barely moved: the
+    retry then asks for the move more firmly, as before (`stronger_motion_prompt`)."""
+    checks = {item.code: item for item in report.checks}
+    motion = checks.get("motion")
+    if motion is not None and motion.status == "FAILED":
+        return False
+    faces = checks.get("faces")
+    if faces is not None and faces.status == "FAILED":
+        return True
+    picture = (report.measured or {}).get("picture") or {}
+    flags = picture.get("verdict") if isinstance(picture, dict) else None
+    if not isinstance(flags, dict):
+        return False
+    return bool(flags.get("faces_visible")) or any(
+        flags.get(name) is False for name in ("technical_ok", "same_shot", "look_ok")
+    )
+
+
+def _retry_body(prompt: str) -> tuple[str, bool]:
+    """(the prompt without its closing line and without the compiler's old stillness
+    sentences, whether the closing was veo's)."""
+    from app.media.prompt_lint import (  # noqa: PLC0415 - pure text module
+        LEGACY_STILLNESS,
+        MOTION_CLOSING,
+        VEO_MOTION_CLOSING,
+    )
+
+    body = str(prompt or "").strip()
+    veo_closing = False
+    for ending in (MOTION_CLOSING, VEO_MOTION_CLOSING):
+        if body.endswith(ending):
+            body = body[: -len(ending)].rstrip()
+            veo_closing = ending == VEO_MOTION_CLOSING
+            break
+    # A stored prompt of a film planned before 2026-10-11 asked the background to stay stable
+    # and the movement to stay unhurried, then measured the clip as barely moving.
+    for sentence in LEGACY_STILLNESS:
+        body = " ".join(body.replace(sentence, " ").split())
+    return body, veo_closing
+
+
+def _with_closing(body: str, firmer: str, *, veo: bool) -> str:
+    from app.media.prompt_lint import MOTION_CLOSING, VEO_MOTION_CLOSING  # noqa: PLC0415
+
+    if firmer not in body:
+        body = f"{body} {firmer}".strip()
+    return f"{body} {VEO_MOTION_CLOSING if veo else MOTION_CLOSING}"
+
+
+def _camera_words(move: str) -> str:
+    """How the retry names the move: its own words, without the "slow" of the older keys, so
+    the sentence names the one move the prompt already names (CAMERA_COUNT stays one)."""
+    return move.removeprefix("slow ")
+
 
 def stronger_motion_prompt(
     prompt: str, camera_move: str | None, *, model_id: str | None = None
 ) -> str:
-    """The same motion prompt with the camera move asked for more firmly, for the one retry.
+    """The same motion prompt with the camera move asked for more firmly, for the one retry
+    of a clip that barely moved.
 
     Positive words only (veo's prompt carries no negation), placed before the closing line,
-    which stays the last sentence in the model's own dialect.
+    which stays the last sentence in the model's own dialect. The compiler's old stillness
+    sentences, where a stored prompt carries them, are taken out: they asked for the fault.
     """
-    from app.media.prompt_lint import MOTION_CLOSING, VEO_MOTION_CLOSING  # noqa: PLC0415
-
     veo = "veo" in str(model_id or "").lower()
     move = canonical_move(camera_move)
     if move is None or move == "static":
@@ -2241,17 +2343,45 @@ def stronger_motion_prompt(
         )
     else:
         firmer = (
-            f"The camera {move.removeprefix('slow ')} is clearly visible and keeps going "
+            f"The camera's {_camera_words(move)} is clearly visible and keeps going "
             "steadily from the first frame to the last."
         )
-    body = str(prompt or "").strip()
-    for ending in (MOTION_CLOSING, VEO_MOTION_CLOSING):
-        if body.endswith(ending):
-            body = body[: -len(ending)].rstrip()
-            break
-    if firmer not in body:
-        body = f"{body} {firmer}".strip()
-    return f"{body} {VEO_MOTION_CLOSING if veo else MOTION_CLOSING}"
+    body, _veo_closing = _retry_body(prompt)
+    return _with_closing(body, firmer, veo=veo)
+
+
+def calmer_motion_prompt(
+    prompt: str, camera_move: str | None, *, model_id: str | None = None
+) -> str:
+    """The same motion prompt with the move's amplitude dialled down one step, for the one
+    retry of a clip that moved but deformed what it moved (`clip_deformed`): the move stays,
+    smooth and moderate, and every shape keeps its form. The Director's ladder (2026-10-11,
+    «Mișcare v2»): ample motion is the rule, and a deformation measured by clip QC is what
+    takes one step back, never the plan's silence."""
+    veo = "veo" in str(model_id or "").lower()
+    move = canonical_move(camera_move)
+    if move is None or move == "static":
+        calmer = (
+            "The scene keeps moving smoothly and moderately, and every shape and edge keeps "
+            "its form from the first frame to the last."
+        )
+    else:
+        calmer = (
+            f"The camera's {_camera_words(move)} stays smooth and moderate, and every shape "
+            "and edge keeps its form from the first frame to the last."
+        )
+    body, _veo_closing = _retry_body(prompt)
+    return _with_closing(body, calmer, veo=veo)
+
+
+def retry_motion_prompt(
+    prompt: str, camera_move: str | None, report: ClipReport, *, model_id: str | None = None
+) -> str:
+    """The motion prompt of the one retry, from what the first clip did wrong: firmer when it
+    barely moved, one step calmer when it moved and deformed (`clip_deformed`)."""
+    if clip_deformed(report):
+        return calmer_motion_prompt(prompt, camera_move, model_id=model_id)
+    return stronger_motion_prompt(prompt, camera_move, model_id=model_id)
 
 
 @dataclass(frozen=True)
@@ -2315,11 +2445,16 @@ def clip_retry_decision(
             f"plafonul aprobat de {cap_credits:.0f} (deja {committed_credits:.0f}); nu se "
             "cumpără. Decide Proprietarul.",
         )
+    asked = (
+        "mișcarea cerută mai lin, cu formele păstrate"
+        if clip_deformed(report)
+        else "mișcarea cerută mai ferm"
+    )
     return ClipRetry(
         "RETRY",
         int(seed) + 1,
         f"Scena {report.scene}: o singură reluare pe același model, cu sămânța {int(seed) + 1} "
-        f"și mișcarea cerută mai ferm ({price_credits:.0f} credite, în plafon).",
+        f"și {asked} ({price_credits:.0f} credite, în plafon).",
     )
 
 
@@ -2372,7 +2507,7 @@ def qc_clip_with_retry(
         )
     if decision.action == "ESCALATE" or decision.seed is None:
         return ClipQCOutcome("ESCALATED", None, 1, (seed,), (first,), 0.0, decision.reason_ro, "")
-    prompt = stronger_motion_prompt(motion_prompt, camera_move, model_id=model_id)
+    prompt = retry_motion_prompt(motion_prompt, camera_move, first, model_id=model_id)
     again = buy(decision.seed, prompt)
     seeds = (seed, decision.seed)
     if again is None:

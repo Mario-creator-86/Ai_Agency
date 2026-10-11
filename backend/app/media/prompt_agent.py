@@ -299,8 +299,8 @@ _SHOTS_INSTRUCTIONS = (
     "that the next shot can match it); the action, described as movement rather than as a "
     "label — not 'walking' but 'walking quickly toward camera, looking back over his "
     "shoulder, coat pulled by the wind'; the environment with the detail that matters and no "
-    "decoration; the camera (shot size, angle, lens character, movement — and movement only "
-    "when the story needs it); the lighting, with direction, quality and colour; the "
+    "decoration; the camera (shot size, angle, lens character, and its movement with a path "
+    "and a speed); the lighting, with direction, quality and colour; the "
     "composition for a vertical frame; the motion and how the world responds to it; the "
     "emotion, at a believable intensity; the background life, which must not compete with the "
     "subject; what must match the previous shot (continuity); what the last frame should be "
@@ -315,19 +315,29 @@ _SHOTS_INSTRUCTIONS = (
     "place.\n\n"
     "The camera: name the shot size (a wide establishing shot, a medium shot, or a detail "
     "of hands, objects or texture; never a close-up of a face) and the lens (24mm wide, "
-    "50mm, 85mm compression), and choose exactly one camera_move from this list: static, "
-    "slow push-in, slow pull-back, slow pan left, slow pan right, tilt up, tilt down, aerial "
-    "drift forward, pedestal up, slow orbit. Vary the size and the move across the film; "
-    "never the same one three scenes in a row. Optionally give second_framing: a closer "
-    "framing of the same picture the editor can cut to halfway through a long scene, at no "
-    "extra cost — what it shows and where its centre is, as fractions of the frame's width "
-    "and height (0 left or top, 1 right or bottom). In motion, say what moves in the world "
-    "(cloud, wind, water, dust, smoke) and how fast, without camera words. Name colours in "
+    "50mm, 85mm compression), and choose exactly one camera_move from this list: dolly in, "
+    "dolly out, tracking left, tracking right, crane up, crane down, slow orbit, handheld "
+    "drift, aerial drift forward, pedestal up, tilt up, tilt down, slow pan left, slow pan "
+    "right, rack focus, static. The movement is ample and specific, the way a film moves, "
+    "not a timid zoom: in camera, give the move's path with its speed — where it starts and "
+    "where it ends over the clip's seconds (a steady dolly in from the whole room to her "
+    "hands on the ledger; a crane up from the bench that reveals the hall). Keep static for "
+    "a shot the story holds its breath on, and rack focus only beside a clear action of the "
+    "subject. Vary the size and the move across the film; never the same one three scenes "
+    "in a row. Optionally give second_framing: a closer framing of the same picture the "
+    "editor can cut to halfway through a long scene, at no extra cost — what it shows and "
+    "where its centre is, as fractions of the frame's width and height (0 left or top, 1 "
+    "right or bottom). In motion, say what the subject does across the clip's seconds, as "
+    "verbs (she stands and walks to the window; he turns and hands over the ledger; the "
+    "wheel spins; the beam pulses), and what the world does and how fast (curtains lift in "
+    "the draught, leaves scatter, cloud rolls, water runs, dust rises, light sweeps across "
+    "the wall), without camera words. Ample is not spectacle: nothing happens that the "
+    "story does not say, and the shot keeps its one primary visual idea. Name colours in "
     "words, never as hex codes or codes in capitals. When the bible says people's faces must "
     "not be seen, show people only from behind, small and distant, or their hands. Return "
     "only JSON: "
     '{"shots": [{"scene_index": 1, "story_purpose": "HOOK", "subject": "...", '
-    '"action": "...", "environment": "...", "camera": "...", "camera_move": "slow push-in", '
+    '"action": "...", "environment": "...", "camera": "...", "camera_move": "dolly in", '
     '"lighting": "...", "composition": "...", "motion": "...", "emotion": "...", '
     '"background": "...", "continuity": "...", "ending_frame": "...", '
     '"audio_intent": "...", "transition": "...", "avoid": ["..."], '
@@ -1394,7 +1404,11 @@ def _validated_package(
         "lighting": (shot.lighting if shot else "") or str(bible.get("lighting") or ""),
         "composition": (shot.composition if shot else "")
         or "subject centred in a vertical frame, readable on a phone",
-        "motion": (shot.motion if shot else "") or "slow, natural movement within the frame",
+        # Two clauses, so the compiler reads the first as the subject's motion and the second
+        # as the world's (`_motion_intent`); said without camera words, which it drops. Until
+        # 2026-10-11: "slow, natural movement within the frame", every word of it dropped.
+        "motion": (shot.motion if shot else "")
+        or "the subject carries on with its action; shadows drift and the light shifts around it",
         "emotion": (shot.emotion if shot else ""),
         "background": (shot.background if shot else ""),
         "continuity": (shot.continuity if shot else "") or previous_ending,
@@ -1743,10 +1757,25 @@ def _serial_camera_move(package: dict[str, Any], previous: list[str]) -> str:
     return move
 
 
+#: What keeps the serial's people themselves while they move (2026-10-11, 45dc313).
+SERIAL_FACES_SENTENCE = "Their faces stay expressive and the same people throughout."
+#: The life of a serial shot beyond its lines: the people's bodies move as they speak, and
+#: the room — the office picture's lamps and plants, in every room of the studio's house —
+#: moves with them («Mișcare v2», 2026-10-11: the first board's clips held their people
+#: still while they spoke).
+SERIAL_LIFE_SENTENCE = (
+    "As they speak their hands gesture, heads turn and shoulders shift, and behind them the "
+    "lamp light flickers softly and the plants stir."
+)
+
+
 def compose_serial_motion(package: dict[str, Any], look: dict[str, Any]) -> str:
     """The movement of a serial shot: the shot's own camera move (``camera_move``, a held
-    camera when none), the beat's action as movement, the people's faces kept, and the
-    closing every motion prompt carries.
+    camera when none) with its path and tempo, the beat's whole action as movement (its
+    chain of moments included: a still is one moment, a clip is the chain), the people's
+    faces kept, the life of their bodies and of the room, the feeling, a second beat of
+    camera on a beat of TWO_BEAT_SECONDS or more, and the closing every motion prompt
+    carries.
 
     Until 2026-10-11 a serial scene had no motion prompt at all: the motion step sent the
     still's words again (`assembler._motion_prompt`), look block, room and rubrics included.
@@ -1755,17 +1784,20 @@ def compose_serial_motion(package: dict[str, Any], look: dict[str, Any]) -> str:
     action = _sentence(" ".join(str(package.get("action") or "").split()))
     feeling = " ".join(str(package.get("emotion") or "").split()).rstrip(". ")
     move = str(package.get("camera_move") or "static")
+    two_beats = move != "static" and _seconds_of(package) >= TWO_BEAT_SECONDS
     items = [
         (0, 0, MOVE_SENTENCES.get(move, MOVE_SENTENCES["static"])),
         (1, 1, action),
-        (3, 2, _sentence(feeling) if feeling else ""),
-        (2, 3, "Their faces stay expressive and the same people throughout."),
+        (2, 2, SERIAL_FACES_SENTENCE),
+        (3, 3, SERIAL_LIFE_SENTENCE),
+        (5, 4, _sentence(feeling) if feeling else ""),
+        (4, 5, END_BEAT if two_beats else ""),
         (0, 9, lint.MOTION_CLOSING),
     ]
     prompt = _fit_sentences(items, lint.DEFAULT_PROMPT_MAX_UTF16, MOTION_MAX_WORDS)
     if len(prompt.split()) < MOTION_MIN_WORDS:
         prompt = _fit_sentences(
-            [*items, (4, 4, MOTION_PAD)], lint.DEFAULT_PROMPT_MAX_UTF16, MOTION_MAX_WORDS
+            [*items, (6, 6, MOTION_PAD)], lint.DEFAULT_PROMPT_MAX_UTF16, MOTION_MAX_WORDS
         )
     return prompt
 
@@ -1876,31 +1908,127 @@ DEFAULT_MOTION_MODEL = "seedance2_5"
 STILL_MAX_WORDS = lint.STILL_WORDS[1]
 MOTION_MIN_WORDS, MOTION_MAX_WORDS = lint.MOTION_WORDS
 
+# «Mișcare v2» (the Owner, 2026-10-11, on the live clips of film aa170155 and the serial's
+# first board f06808c9: «Pe video pare doar un zoom, și mișcări mici. Nu este capabil de mai
+# mult? De cursivitate? De mișcări mai ample?»). The prompts asked for exactly that: «Slow
+# push-in toward the subject.», «Static camera, held steady.», «Background details remain
+# stable throughout the shot.», «barely moving». A video model does what it is told. Every
+# move below is now said with its tempo and its path (where it starts, where it ends), a clip
+# of TWO_BEAT_SECONDS or more gets a second beat of camera (the move eases into a hold), the
+# plan's action is said as the subject's own movement, and the world keeps moving. What
+# protects the picture stays: one move per clip, no text, faces as the bible says, the
+# identity and continuity sentences, the closing line; and the clip QC's floors are minimums.
+
 #: How each camera move of the enum is said. Each sentence names exactly one move (as
-#: prompt_lint.camera_moves reads it) and carries its speed word.
+#: prompt_lint.camera_moves reads it), carries its tempo (prompt_lint.SPEED_WORDS) and its
+#: path, and spells its own key, so a stored package's move is readable in its prompt. The
+#: older keys keep their "slow": a plan or a rewrite that names them by name asked for that.
 MOVE_SENTENCES: dict[str, str] = {
-    "static": "Static camera, held steady.",
-    "slow push-in": "Slow push-in toward the subject.",
-    "slow pull-back": "Slow pull-back that widens the view.",
-    "slow pan left": "Slow pan left across the scene.",
-    "slow pan right": "Slow pan right across the scene.",
-    "tilt up": "Gentle tilt up.",
-    "tilt down": "Gentle tilt down.",
-    "aerial drift forward": "Slow aerial drift forward.",
-    "pedestal up": "Gentle pedestal up.",
-    "slow orbit": "Slow orbit around the subject.",
+    "static": (
+        "Static camera on a fixed tripod, steady, the life of the scene moving inside the "
+        "fixed frame."
+    ),
+    "slow push-in": (
+        "Slow push-in from the wide view toward the subject, steady all the way, ending close "
+        "on it."
+    ),
+    "slow pull-back": (
+        "Slow pull-back from close on the subject to the wide view, steady all the way, the "
+        "space opening around it."
+    ),
+    "dolly in": (
+        "Steady dolly in from a wide view to a close framing of the subject, the foreground "
+        "sliding past the lens."
+    ),
+    "dolly out": (
+        "Steady dolly out from a close framing of the subject to a wide view, revealing the "
+        "whole space around it."
+    ),
+    "slow pan left": (
+        "Slow pan left, smooth and with a clear start and end, sweeping from the right side "
+        "of the scene across to the subject."
+    ),
+    "slow pan right": (
+        "Slow pan right, smooth and with a clear start and end, sweeping from the left side "
+        "of the scene across to the subject."
+    ),
+    "tracking left": (
+        "Steady tracking left alongside the subject at walking pace, the background sliding "
+        "past behind it."
+    ),
+    "tracking right": (
+        "Steady tracking right alongside the subject at walking pace, the background sliding "
+        "past behind it."
+    ),
+    "tilt up": (
+        "Smooth tilt up from the base of the scene to its top, steady, ending on the subject."
+    ),
+    "tilt down": (
+        "Smooth tilt down from the top of the scene, steady, settling on the subject below."
+    ),
+    "aerial drift forward": (
+        "Steady aerial drift forward over the scene, the ground sliding beneath, the horizon "
+        "opening ahead."
+    ),
+    "pedestal up": (
+        "Steady pedestal up from low at the subject to eye level, the scene rising into view "
+        "behind it."
+    ),
+    "crane up": (
+        "Steady crane up from the subject, rising and revealing the whole scene below as the "
+        "camera climbs."
+    ),
+    "crane down": (
+        "Steady crane down from high above, descending and settling on the subject as the "
+        "scene closes in around it."
+    ),
+    "slow orbit": (
+        "Slow orbit around the subject, steady, a quarter turn from its left side to its "
+        "front, the background wheeling behind it."
+    ),
+    "handheld drift": (
+        "Smooth handheld drift, the frame alive and easing slowly from the left of the "
+        "subject toward its centre through the whole shot."
+    ),
+    "rack focus": (
+        "Smooth rack focus from the foreground to the subject behind it, the focus pulling "
+        "steadily as the subject moves."
+    ),
 }
+#: The move said for an intent whose move is not in the table (a package edited by hand).
+DEFAULT_MOVE = "dolly in"
 
 #: The moves that suit each shot size, best first, for a plan that named none. "static" is
 #: never chosen for a plan that did not ask for it: the Nepal clips, asked for "no camera
-#: movement" on every scene, came back almost still (mean YDIF about 1.1 of 255).
+#: movement" on every scene, came back almost still (mean YDIF about 1.1 of 255). Nor are
+#: "slow orbit" and "rack focus": an orbit turns the people in frame toward the camera, a
+#: rack focus moves nothing by itself; both are a plan's deliberate choice, never a default.
 SIZE_MOVES: dict[str, tuple[str, ...]] = {
-    "aerial": ("aerial drift forward", "slow pan right", "slow push-in"),
-    "wide": ("slow pan right", "slow push-in", "slow pan left", "slow pull-back"),
-    "medium": ("slow push-in", "slow pan left", "slow orbit"),
-    "close": ("slow push-in", "tilt up", "pedestal up"),
-    "detail": ("slow push-in", "tilt down", "pedestal up"),
+    "aerial": ("aerial drift forward", "crane up", "tracking right", "dolly in"),
+    "wide": ("tracking right", "dolly in", "crane up", "tracking left", "dolly out"),
+    "medium": ("dolly in", "tracking left", "crane down", "handheld drift"),
+    "close": ("dolly in", "crane down", "tracking right", "tilt up"),
+    "detail": ("dolly in", "crane down", "tilt down", "pedestal up"),
 }
+#: A clip this long gets two beats of camera: the move, then (said without "then") a hold.
+TWO_BEAT_SECONDS = 7.0
+#: The second beat: the move eases into a hold while the scene goes on moving. Said in words
+#: that name no move of the enum, so the prompt still names exactly one (CAMERA_COUNT).
+END_BEAT = (
+    "In the final seconds the camera eases to a steady hold on the subject, and everything "
+    "in the frame keeps moving."
+)
+#: The amplitude of a shot's movement: AMPLE is the rule; MEASURED is one step down, for a
+#: redo of a clip whose movement deformed the picture (clip QC: faces, warping, a broken
+#: shot). The Director's rewrite may set ``motion_amplitude`` on the package; the compiler
+#: never dials it down by itself.
+AMPLE = "ample"
+MEASURED = "measured"
+AMPLITUDES = (AMPLE, MEASURED)
+MEASURED_SENTENCE = (
+    "The move stays smooth and moderate, and every shape and edge keeps its form from the "
+    "first frame to the last."
+)
 
 COMPOSITION_SENTENCE = (
     "Vertical 9:16 frame, main subject in the upper two thirds, lower quarter calm and uncluttered."
@@ -1913,8 +2041,24 @@ PEOPLE_SENTENCE = (
 #: the linter reads it as the rule kept (`prompt_lint.NO_FACE_STATED`).
 NO_PEOPLE_SENTENCE = "There are no people in the frame."
 FACES_CONSTRAINT = "Faces stay turned away from the camera."
-MOTION_PAD = "The movement stays smooth and unhurried."
-DEFAULT_WORLD_MOTION = "Background details remain stable throughout the shot."
+#: Said when a motion prompt is under its word floor. Until 2026-10-11: "The movement stays
+#: smooth and unhurried." (prompt_lint.LEGACY_STILLNESS).
+MOTION_PAD = "Everything in the frame keeps moving smoothly through the whole clip."
+#: The world's motion when the plan names none. Setting-neutral: an airless scene gets no
+#: haze or wind from it. Until 2026-10-11: "Background details remain stable throughout the
+#: shot." — the stillness the Owner then saw in every clip.
+DEFAULT_WORLD_MOTION = (
+    "Shadows drift and the light shifts across the scene, its smallest details stirring."
+)
+#: A chain word inside a plan's motion or action, read for the video model: the chain is
+#: wanted (it is the clip's sequence), the word is not (THEN_CHAIN blocks on seedance), so
+#: "pauses, then lays the pen flat" is said as "pauses, lays the pen flat". "Since then",
+#: "by then", "back then" are about the past and stay (prompt_lint.STILL_THEN's rule).
+_CHAIN_WORD = re.compile(
+    r",?\s*\b(?:(?:and\s+)?(?<!\bsince )(?<!\buntil )(?<!\btill )(?<!\bby )(?<!\bback )"
+    r"(?<!\beven )(?<!\bjust )then|after\s+that|afterwards|next,)\b\s*,?\s*",
+    re.IGNORECASE,
+)
 VEO_NEGATIVE = ("text", "subtitles", "logo", "watermark")
 VEO_FACES = "human faces"
 
@@ -2240,13 +2384,19 @@ def shot_frame(camera: Any, shot_type: Any = "") -> tuple[str, str]:
 
 
 def choose_camera_move(
-    package: dict[str, Any], size: str, previous: list[str] | tuple[str, ...] = ()
+    package: dict[str, Any],
+    size: str,
+    previous: list[str] | tuple[str, ...] = (),
+    *,
+    avoid: Sequence[str] = (),
 ) -> str:
     """The one camera move a scene's clip makes.
 
     The plan's own choice wins: its ``camera_move`` field, else the one move its camera
     text names ("static" and "no movement" name none). Otherwise the move that suits the
-    shot size, never the move of the scene before, so the film's camera varies.
+    shot size, never the move of the scene before, so the film's camera varies, and none of
+    ``avoid`` (the compiler keeps an orbit away from people shown from behind: a quarter
+    turn around them shows their faces).
     """
     stated = str(package.get("camera_move") or "").strip().lower()
     if stated in lint.CAMERA_MOVES:
@@ -2258,7 +2408,8 @@ def choose_camera_move(
         return named[0]
     choices = SIZE_MOVES.get(size) or SIZE_MOVES["medium"]
     last = previous[-1] if previous else None
-    return next((move for move in choices if move != last), choices[0])
+    allowed = [move for move in choices if move not in avoid] or list(choices)
+    return next((move for move in allowed if move != last), allowed[0])
 
 
 def _fit_sentences(items: list[tuple[int, int, str]], cap: int, max_words: int) -> str:
@@ -2303,48 +2454,102 @@ def _contract_model(contract: Any, key: str, default: str) -> str:
     return default
 
 
+def _continuous(text: Any) -> str:
+    """A plan's motion or action as one continuous movement: its chain words taken out, the
+    chain itself kept ("taps the pen, pauses, then lays it flat" is the clip's sequence)."""
+    return " ".join(_CHAIN_WORD.sub(", ", _flatten(text)).replace(" ,", ",").split())
+
+
+def _seconds_of(package: dict[str, Any]) -> float:
+    """The scene's planned length in seconds, 0 when the package does not say."""
+    value = package.get("seconds")
+    if isinstance(value, bool) or not isinstance(value, int | float | str):
+        return 0.0
+    try:
+        return max(0.0, float(value))
+    except ValueError:
+        return 0.0
+
+
 def _motion_intent(
     package: dict[str, Any], move: str, faces_banned: bool, people: bool
 ) -> dict[str, Any]:
-    """What moves in the scene, model-neutral: the move, the world's motion, the subject's.
+    """What moves in the scene, model-neutral: the move, the world's motion, the subject's,
+    the clip's length and the movement's amplitude.
 
     The world's motion is the first clause of the plan's motion, then its action, then its
-    environment, that names something the world does (cloud, wind, water, dust); the
-    subject's is what else the plan's motion says. Neither describes the picture.
+    environment, that names something the world does (cloud, wind, dust, shadows, curtains)
+    in at least three words; the subject's is what else the plan's motion says, and then
+    every clause of the plan's action that carries a verb of motion (prompt_lint.
+    SUBJECT_MOTION: stands, walks to the window, turns, hands over the ledger; spins, pulses)
+    and was not said already. Neither describes the picture. Chains are kept as sequences
+    without their "then" (`_continuous`).
     """
-    from_motion = _clauses_of(package.get("motion"), motion=True)
+    from_motion = _clauses_of(_continuous(package.get("motion")), motion=True)
+    from_action = _clauses_of(_continuous(package.get("action")), motion=True)
     candidates = [
         *from_motion,
-        *_clauses_of(package.get("action"), motion=True),
+        *from_action,
         *_clauses_of(package.get("environment"), motion=True),
     ]
     world = next(
         (
             clause
             for clause in candidates
-            if lint.ENVIRONMENT_MOTION.search(clause) and not _shows_people(clause)
+            if lint.ENVIRONMENT_MOTION.search(clause)
+            and not _shows_people(clause)
+            and len(clause.split()) >= 3
         ),
         "",
     )
     subject_clauses = [c for c in from_motion if c != world]
+    said = {clause.casefold() for clause in subject_clauses} | {world.casefold()}
+    action_clauses: list[str] = []
+    for clause in from_action:
+        key = clause.casefold()
+        if key in said or not lint.SUBJECT_MOTION.search(clause):
+            continue
+        said.add(key)
+        action_clauses.append(clause)
     subject = ", ".join(subject_clauses)
+    amplitude = str(package.get("motion_amplitude") or AMPLE).strip().lower()
     return {
         "camera_move": move,
         "world": _sentence(_phrase([world], 14)) if world else DEFAULT_WORLD_MOTION,
         "subject": _sentence(subject),
         "subject_clauses": [_sentence(clause) for clause in subject_clauses],
+        "action_clauses": [_sentence(clause) for clause in action_clauses],
+        "seconds": _seconds_of(package),
+        "amplitude": amplitude if amplitude in AMPLITUDES else AMPLE,
         "constraints": _scene_constraints(package),
         "faces_banned": faces_banned,
         "people": people,
     }
 
 
+def _intent_clauses(intent: dict[str, Any], key: str) -> list[str]:
+    """A stored intent's list of sentences under ``key``; none for an intent from before."""
+    value = intent.get(key)
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if str(item or "").strip()]
+
+
 def render_motion(
     intent: dict[str, Any], family: str | None, cap: int = lint.DEFAULT_PROMPT_MAX_UTF16
 ) -> tuple[str, str | None]:
-    """(promptText, negativePrompt or None) for one video model, from a motion intent."""
+    """(promptText, negativePrompt or None) for one video model, from a motion intent.
+
+    The camera's move with its path and tempo opens; the world's motion follows; then every
+    clause of the plan's motion and the action's verbs of motion, each its own sentence; a
+    clip of TWO_BEAT_SECONDS or more ends its camera on a hold (END_BEAT); a MEASURED
+    amplitude says the move stays moderate and the shapes keep their form; the face rule and
+    the closing line end it. A stored intent of a film planned before 2026-10-11 is said in
+    these words too: its stillness world ("remain stable") is replaced, its missing length
+    reads as one beat.
+    """
     move = str(intent.get("camera_move") or "")
-    camera = MOVE_SENTENCES.get(move, MOVE_SENTENCES["slow push-in"])
+    camera = MOVE_SENTENCES.get(move, MOVE_SENTENCES[DEFAULT_MOVE])
     positive_only = family in ("veo", "gen4")
     closing = lint.VEO_MOTION_CLOSING if positive_only else lint.MOTION_CLOSING
     faces = bool(intent.get("faces_banned"))
@@ -2362,16 +2567,26 @@ def render_motion(
     # negative channel of a model that has one.
     clauses = intent.get("subject_clauses")
     subjects = clauses if isinstance(clauses, list) else [str(intent.get("subject") or "")]
+    actions = _intent_clauses(intent, "action_clauses")
+    world = str(intent.get("world") or "")
+    if not world or world in lint.LEGACY_STILLNESS:
+        world = DEFAULT_WORLD_MOTION
+    amplitude = str(intent.get("amplitude") or AMPLE)
+    seconds = _seconds_of(intent)
+    two_beats = amplitude != MEASURED and move != "static" and seconds >= TWO_BEAT_SECONDS
     items = [
         (0, 0, camera),
-        (4, 1, str(intent.get("world") or DEFAULT_WORLD_MOTION)),
-        (0, 1000, closing),
-        (0, 900, constraint),
+        (4, 1, world),
         *[(2, 10 + index, str(clause)) for index, clause in enumerate(subjects)],
+        *[(3, 100 + index, clause) for index, clause in enumerate(actions)],
+        (5, 800, END_BEAT if two_beats else ""),
+        (1, 850, MEASURED_SENTENCE if amplitude == MEASURED else ""),
+        (0, 900, constraint),
+        (0, 1000, closing),
     ]
     prompt = _fit_sentences(items, cap, MOTION_MAX_WORDS)
     if len(prompt.split()) < MOTION_MIN_WORDS:
-        prompt = _fit_sentences([*items, (5, 8, MOTION_PAD)], cap, MOTION_MAX_WORDS)
+        prompt = _fit_sentences([*items, (6, 8, MOTION_PAD)], cap, MOTION_MAX_WORDS)
     return prompt, negative
 
 
@@ -2486,7 +2701,11 @@ def compile_prompts(
         (0, 9, STILL_EXCLUSIONS if still_family != "gen4" else ""),
     ]
     still = _fit_sentences(items, lint.prompt_cap(contract, "still"), STILL_MAX_WORDS)
-    move = choose_camera_move(package, size, previous_moves)
+    # People kept faceless are shown from behind: an orbit around them turns their faces to
+    # the camera, so it is never the compiler's choice for such a scene (a plan may ask).
+    move = choose_camera_move(
+        package, size, previous_moves, avoid=("slow orbit",) if faces_banned and people else ()
+    )
     intent = _motion_intent(package, move, faces_banned, people)
     motion, negative = render_motion(intent, family, lint.prompt_cap(contract, "motion"))
     return {
