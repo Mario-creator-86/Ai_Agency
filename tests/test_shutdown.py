@@ -201,3 +201,57 @@ def test_uvicorn_is_given_a_graceful_shutdown_timeout():
         for keyword in node.keywords
     }
     assert "timeout_graceful_shutdown" in keywords
+
+
+# ------------------------------------------------- the words of a shutdown (2026-10-12)
+
+
+def test_a_shutdown_is_worded_as_the_studios_closing_not_as_the_owners_switch(engine):
+    """At 00:03 on 2026-10-12 the serial's staircase wrote «Oprit de AUTONOMIE OPRITĂ. Scara
+    filmului s-a oprit.» and its motion step «Proprietarul a oprit autonomia» while his switch
+    was off: the process was being restarted, and `stop_requested` is true on a shutdown too.
+    The words now tell the two apart (the status, INTERRUPTED, already did)."""
+    from app.media.assembler import (
+        MOTION_SHUTDOWN_REASON,
+        MOTION_STOP_REASON,
+        RENDER_SHUTDOWN_REASON,
+        STOP_REASON,
+        motion_stop_reason,
+        render_stop_reason,
+    )
+    from app.runbook.services import OWNER_STOP_REASON, SHUTDOWN_STOP_REASON, stop_reason_words
+
+    clear_shutdown()
+    try:
+        with Session(engine) as session, session.begin():
+            session.get(OwnerPolicy, 1).autonomy_stopped = True
+        assert stop_requested(engine)
+        assert stop_reason_words(engine) == OWNER_STOP_REASON
+        assert motion_stop_reason(engine) == MOTION_STOP_REASON
+        assert render_stop_reason(engine) == STOP_REASON
+
+        request_shutdown(engine)
+        assert stop_reason_words(engine) == SHUTDOWN_STOP_REASON
+        assert motion_stop_reason(engine) == MOTION_SHUTDOWN_REASON
+        assert render_stop_reason(engine) == RENDER_SHUTDOWN_REASON
+        for words in (SHUTDOWN_STOP_REASON, MOTION_SHUTDOWN_REASON, RENDER_SHUTDOWN_REASON):
+            assert "AUTONOMIE" not in words and "Proprietarul" not in words
+            assert "repornire" in words
+    finally:
+        clear_shutdown()
+        with Session(engine) as session, session.begin():
+            session.get(OwnerPolicy, 1).autonomy_stopped = False
+
+
+def test_the_staircase_and_the_paid_loops_never_name_the_owners_switch_themselves():
+    """Every stop the staircase or a paid loop words goes through `stop_reason_words` /
+    `motion_stop_reason` / `render_stop_reason`: no file writes the Owner's words next to a
+    bare `stop_requested`, which is also true on a shutdown."""
+    stages = (ROOT / "backend" / "app" / "runbook" / "stages.py").read_text(encoding="utf-8")
+    assembler = (ROOT / "backend" / "app" / "media" / "assembler.py").read_text(encoding="utf-8")
+    assert "OWNER_STOP_REASON" not in stages
+    assert stages.count("stop_reason_words(engine)") >= 4
+    assert "Proprietarul a oprit autonomia" not in assembler.replace(
+        'MOTION_STOP_REASON = "Proprietarul a oprit autonomia; nu se mai cumpără mișcare."', ""
+    )
+    assert assembler.count("STOP_REASON if stop_requested") == 0

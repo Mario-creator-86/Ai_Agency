@@ -266,6 +266,33 @@ STOP_REASON = (
     "Randarea s-a oprit între scene: AUTONOMIE OPRITĂ a fost setată de Owner în timpul "
     "filmării. Scenele deja făcute rămân pe disc; nimic nu a fost înregistrat ca film."
 )
+#: The same stop when the studio is closing instead (a restart; `shutdown_requested`): the
+#: scenes made stay on disk and the render goes on after the restart.
+RENDER_SHUTDOWN_REASON = (
+    "Randarea s-a oprit între scene: studioul se închide (repornire). Scenele deja făcute "
+    "rămân pe disc; randarea continuă după repornire."
+)
+#: What the motion step says when `stop_requested` ends it between two shots: his switch, or
+#: the studio's closing. On 2026-10-12 at 00:03 the serial's step said «Proprietarul a oprit
+#: autonomia» during a restart, with his switch off.
+MOTION_STOP_REASON = "Proprietarul a oprit autonomia; nu se mai cumpără mișcare."
+MOTION_SHUTDOWN_REASON = (
+    "Studioul se închide (repornire); mișcarea rămasă se cumpără după repornire."
+)
+
+
+def motion_stop_reason(engine: Engine) -> str:
+    """The motion step's words for a stop `stop_requested` asked for."""
+    from app.runbook.services import shutdown_requested  # noqa: PLC0415 - runbook imports media
+
+    return MOTION_SHUTDOWN_REASON if shutdown_requested(engine) else MOTION_STOP_REASON
+
+
+def render_stop_reason(engine: Engine) -> str:
+    """The render job's words for a stop `stop_requested` asked for."""
+    from app.runbook.services import shutdown_requested  # noqa: PLC0415 - runbook imports media
+
+    return RENDER_SHUTDOWN_REASON if shutdown_requested(engine) else STOP_REASON
 
 
 def resolve_ffmpeg_path(custom_path: str | None = None) -> str | None:
@@ -11565,7 +11592,7 @@ def run_motion_step(
             camera move asked more firmly; bought like any shot (balance, stop, take)."""
             nonlocal stopped, low_balance
             if stop_requested(engine):
-                stopped = "Proprietarul a oprit autonomia; nu se mai cumpără mișcare."
+                stopped = motion_stop_reason(engine)
                 return None, None
             lowered = guard.stop_reason(_index) if guard is not None else None
             if lowered is not None:
@@ -11705,7 +11732,7 @@ def run_motion_step(
 
         while outcome is None:
             if stop_requested(engine):
-                stopped = "Proprietarul a oprit autonomia; nu se mai cumpără mișcare."
+                stopped = motion_stop_reason(engine)
                 outcome = {"status": "NOT_BOUGHT", "reason": stopped}
                 break
             lowered = guard.stop_reason(index) if guard is not None else None
@@ -12093,11 +12120,7 @@ def run_motion_step(
                     unasked=unasked,
                 ),
                 guard=guard,
-                stopped=lambda: (
-                    "Proprietarul a oprit autonomia; nu se mai cumpără mișcare."
-                    if stop_requested(engine)
-                    else None
-                ),
+                stopped=lambda: motion_stop_reason(engine) if stop_requested(engine) else None,
             )
         except MediaProviderError as exc:
             if not exc.unsent:
@@ -15998,7 +16021,7 @@ def _redo_still_rounds(
                 unasked=unasked,
             ),
             guard=guard,
-            stopped=lambda: STOP_REASON if stop_requested(engine) else None,
+            stopped=lambda: render_stop_reason(engine) if stop_requested(engine) else None,
         )
     except MediaProviderError as exc:
         if not exc.unsent:
@@ -16074,7 +16097,7 @@ class _StillRedoBuyer:
         outcome: dict[str, Any] | None = None
         while outcome is None:
             if stop_requested(engine):
-                outcome = {"status": "NOT_BOUGHT", "reason": STOP_REASON}
+                outcome = {"status": "NOT_BOUGHT", "reason": render_stop_reason(engine)}
                 break
             guard = c.get("guard")
             lowered = guard.stop_reason(index) if guard is not None else None

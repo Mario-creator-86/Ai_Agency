@@ -164,7 +164,7 @@ from app.research.agent import (
     propose_topics,
 )
 from app.research.service import research_budget, retest_stale_hosts
-from app.runbook.services import BLOCKED, OWNER_STOP_REASON, safe_mode_state, stop_requested
+from app.runbook.services import BLOCKED, safe_mode_state, stop_reason_words, stop_requested
 from app.services import (
     append_event,
     may_act,
@@ -2746,7 +2746,7 @@ def _media_staircase(
             waiting_approvals_letter(engine, asked_correlation)
         return _outcome(
             BLOCKED,
-            f"{OWNER_STOP_REASON} {said}"[:500],
+            f"{stop_reason_words(engine)} {said}"[:500],
             assets=produced,
             serial_assets=serial_assets,
             stopped_storyboard=storyboard_id,
@@ -3236,7 +3236,7 @@ def _media_films(
                 waiting_approvals_letter(engine, asked_correlation)
             return _outcome(
                 BLOCKED,
-                f"{OWNER_STOP_REASON} Filmul următor nu a fost început."[:500],
+                f"{stop_reason_words(engine)} Filmul următor nu a fost început."[:500],
                 assets=produced,
                 serial_assets=serial_assets,
                 stopped_storyboard=storyboard_id,
@@ -3470,7 +3470,7 @@ def _media_films(
             _release(engine, reservation_id, f"randare oprită: {error_words(exc)}", correlation)
             return _outcome(
                 BLOCKED,
-                f"{OWNER_STOP_REASON} {sentence(error_words(exc))}"[:500],
+                f"{stop_reason_words(engine)} {sentence(error_words(exc))}"[:500],
                 assets=produced,
                 serial_assets=serial_assets,
                 stopped_storyboard=storyboard_id,
@@ -5193,7 +5193,7 @@ def continue_film(
         return outcome
 
     if stop_requested(engine):
-        return done(BLOCKED, OWNER_STOP_REASON)
+        return done(BLOCKED, stop_reason_words(engine))
     safe = safe_mode_state(engine)
     if safe.get("active"):
         return done(

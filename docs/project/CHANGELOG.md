@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-10-12 — A stop during a restart is worded as the studio's closing, not as the Owner's switch
+
+A stop during a restart is worded as the studio's closing, not as the Owner's switch. At 00:03 on 2026-10-12 (21:03:02 UTC) the serial's staircase wrote «Oprit de AUTONOMIE OPRITĂ. Scara filmului s-a oprit.» and its motion step «Proprietarul a oprit autonomia; nu se mai cumpără mișcare.» while his switch was off (`autonomy_stopped=0`): the process was being restarted (the next start at 00:44:43), and `stop_requested` is true on a shutdown too (`request_shutdown` in the lifespan). The runbook already recorded the day INTERRUPTED; the words did not say so and the register read as if he had stopped the studio.
+
+- `runbook/services.py`: `SHUTDOWN_STOP_REASON` («Oprit de închiderea studioului (repornire); continuă după repornire.») and `stop_reason_words(engine)`, to be read right after `stop_requested` said True.
+- `runbook/stages.py`: every stop the staircase words (between films, between the walk and the assembly, a render ended by the stop, the walk's own gate) goes through `stop_reason_words`; `OWNER_STOP_REASON` is no longer imported there.
+- `media/assembler.py`: `MOTION_SHUTDOWN_REASON` / `motion_stop_reason` for the motion step's three stops («Studioul se închide (repornire); mișcarea rămasă se cumpără după repornire.»), `RENDER_SHUTDOWN_REASON` / `render_stop_reason` for the render job's two.
+
+Tests: `tests/test_shutdown.py` (+2): the words under his switch and under a shutdown; the source rule that no staircase or paid loop names his switch beside a bare `stop_requested`. The 00:03 stop itself needs no repair: the serial's continuation is in the queue and resumes after the restart.
+
 ## 2026-10-12 — The Director's editorial judgement for both channels: five criteria, a brief to the writer, up to ten versions, the best one ships
 
 The Director's editorial judgement, for both channels (decision e5e7004, the Owner's card: «vreau să încerce de 10 ori, ne trebuie un serial bun și un short bun, nu doar 3 runde!»). Built by a subagent, verified and committed by the lead.

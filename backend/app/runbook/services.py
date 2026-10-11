@@ -212,6 +212,11 @@ SHUTDOWN_REASON = (
     "Studioul a fost oprit în timpul zilei; pasul în curs s-a încheiat și nu a mai început altul."
 )
 SHUTDOWN_BLOCKED_REASON = "Nu a fost încercată: studioul s-a oprit în timpul zilei."
+#: What a staircase says when it stops between two steps because the studio is closing (a
+#: restart), as opposed to `OWNER_STOP_REASON`: on 2026-10-12 at 00:03 the serial's walk wrote
+#: «Oprit de AUTONOMIE OPRITĂ» while his switch was off — the process was being restarted, and
+#: `stop_requested` is true on a shutdown too. The work goes on after the restart.
+SHUTDOWN_STOP_REASON = "Oprit de închiderea studioului (repornire); continuă după repornire."
 CRASH_REASON = (
     "Procesul studioului s-a oprit în timpul zilei (o repornire, o închidere forțată sau o "
     "cădere), fără să o încheie."
@@ -386,6 +391,14 @@ def stop_requested(engine: Engine) -> bool:
     with Session(engine) as session:
         policy = session.get(OwnerPolicy, 1)
         return bool(policy is not None and policy.autonomy_stopped)
+
+
+def stop_reason_words(engine: Engine) -> str:
+    """The words for a stop `stop_requested` asked for: the studio's closing when a shutdown
+    is in progress (`SHUTDOWN_STOP_REASON`), else the Owner's switch (`OWNER_STOP_REASON`).
+    Read right after `stop_requested` said True; a shutdown outranks the switch because it is
+    the one the register would otherwise misname."""
+    return SHUTDOWN_STOP_REASON if shutdown_requested(engine) else OWNER_STOP_REASON
 
 
 def retryable_outcome(
