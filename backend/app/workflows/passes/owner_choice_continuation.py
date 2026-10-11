@@ -15,6 +15,16 @@ Two ways a film stopped with nothing left to ask the Owner:
   after each start: a restart usually brings the code that fixes what made it fail (the rule
   the sheet repair keeps, `blocker_repair.STUDIO_STARTED_AT`). The Owner: «studioul trebuie
   să rezolve singur, fără intervenții».
+- A film a walk left waiting on the studio's own work (2026-10-11). NASA 6fe6a577: the day's run
+  bought its stills, test shot and two clips, then stopped WAITING (TAKES_NOT_ACCEPTED: scenes 3
+  and 4 longer than one clip), and the restart that brought the code buying those scenes slowed
+  walked nothing: the film waited for the next morning's run or his button. The Owner: «Studioul
+  ar trebui să realizeze că sunt lucruri neterminate, nu? Și ar trebui să le ducă la capăt
+  singur!». A film whose newest state before this start is WAITING or HELD for a cause that is
+  not his (`runbook.stages.OWNER_DECIDES`: his money, his budget, his look, his mode, a buyer
+  at work; nor a story the Director refused), with no walk since the start, is walked once
+  after each start. Only films already in production: nothing new is started here (new work
+  starts at the 05:00 run or on his «Pornește rularea de azi»).
 
 Nothing here buys: the walk asks for anything paid under his rule, behind his stop, safe mode
 and his mode; PRODUCTION only (`app.services.queue_film_continue`).
@@ -33,6 +43,13 @@ LOOKBACK_DAYS = 7
 WALKED_EVENTS = ("runbook.film_continued", "runbook.film_state")
 #: The event a failed render is recorded under (its payload names the film).
 RENDER_FAILED_EVENT = "media.render_failed"
+#: Where a walk left a film (`runbook.stages`): its status, refusal and reason.
+FILM_STATE_EVENT = "runbook.film_state"
+#: The states of a film stopped in production, and the refusals that are not the Owner's yet
+#: are not the studio's to walk past either: a story the Director refused goes back to its
+#: writer (the sheet's story repair), not to the staircase.
+STOPPED_STATES = ("WAITING", "HELD")
+NOT_WALKED_PAST = frozenset({"STORY_GATE"})
 #: When this studio process loaded the pass (the first watchdog after the start).
 STARTED_AT = datetime.now(UTC)
 
@@ -43,9 +60,10 @@ def queue_missed_continuations(context: WatchdogContext) -> dict[str, Any]:
     from sqlalchemy.orm import Session  # noqa: PLC0415
 
     from app.db import lock_for_write  # noqa: PLC0415
-    from app.media.models import VideoRenderJob  # noqa: PLC0415
+    from app.media.models import Storyboard, VideoRenderJob  # noqa: PLC0415
     from app.media.shooting_sheet import SCENE_MODEL_EVENT, film_is_closed  # noqa: PLC0415
     from app.models import DomainEvent  # noqa: PLC0415
+    from app.runbook.stages import OWNER_DECIDES  # noqa: PLC0415 - runbook imports workflows
     from app.services import queue_film_continue  # noqa: PLC0415
     from app.workflows.models import TaskQueueItem  # noqa: PLC0415
 
@@ -122,6 +140,37 @@ def queue_missed_continuations(context: WatchdogContext) -> dict[str, Any]:
             if rendered_since is not None or film_is_closed(session, storyboard_id):
                 continue
             owed.append((storyboard_id, key, "render_failed_before_start"))
+
+        # Films a walk left stopped before this start on something of the studio's own.
+        stood: dict[str, dict[str, Any]] = {}
+        for event in session.scalars(
+            select(DomainEvent)
+            .where(
+                DomainEvent.event_type == FILM_STATE_EVENT,
+                DomainEvent.timestamp >= since,
+                DomainEvent.timestamp < started,
+            )
+            .order_by(DomainEvent.sequence)
+        ):
+            stood[str(event.aggregate_id)] = dict(event.payload or {})
+        for storyboard_id, state in stood.items():
+            refusal = str(state.get("refusal") or "")
+            if state.get("status") not in STOPPED_STATES:
+                continue
+            if refusal in OWNER_DECIDES or refusal in NOT_WALKED_PAST:
+                continue
+            if any(film == storyboard_id for film, _, _ in owed):
+                continue
+            key = f"film-continue-{storyboard_id}-unfinished-after-start-{started}"
+            if queued(key) or walked_after(storyboard_id, started):
+                continue
+            board = session.get(Storyboard, storyboard_id)
+            if board is None or board.status != "APPROVED":
+                continue  # rendered, closed or gone: nothing of it is unfinished on the sheet
+            if film_is_closed(session, storyboard_id):
+                continue
+            cause = f"unfinished_before_start:{refusal or state.get('status')}"
+            owed.append((storyboard_id, key, cause))
     if not owed:
         return {"queued": []}
     done: list[str] = []

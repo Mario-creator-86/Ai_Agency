@@ -92,6 +92,65 @@ def test_a_render_failed_before_this_start_is_walked_once_after_it(engine, tmp_p
     assert task.payload["cause"] == "render_failed_before_start"
 
 
+def stopped(engine, film: str, status: str, refusal: str) -> None:
+    event(
+        engine,
+        "runbook.film_state",
+        film,
+        {"business_date": "2026-10-11", "status": status, "refusal": refusal, "reason": "x"},
+    )
+
+
+def test_a_film_left_waiting_on_the_studios_own_work_is_finished_after_a_restart(
+    engine, tmp_path, monkeypatch
+):
+    """NASA 6fe6a577 (2026-10-11): WAITING on TAKES_NOT_ACCEPTED (scenes longer than one
+    clip); the restart brought the code that buys them slowed, and nothing walked it."""
+    film = a_film(engine, tmp_path, scenes=2)
+    production(engine)
+    stopped(engine, film, "WAITING", "TAKES_NOT_ACCEPTED")
+
+    # Stopped in this process: the code that stopped it is the code running.
+    assert run(engine) == []
+
+    monkeypatch.setattr(walk, "STARTED_AT", datetime.now(UTC) + timedelta(seconds=1))
+    assert run(engine) == [film]
+    assert run(engine) == [], "once per start"
+    (task,) = continuations(engine)
+    assert task.payload["cause"] == "unfinished_before_start:TAKES_NOT_ACCEPTED"
+
+
+def test_a_film_waiting_on_the_owner_or_a_refused_story_is_left_alone(
+    engine, tmp_path, monkeypatch
+):
+    production(engine)
+    films = {}
+    for refusal in ("OVER_FILM_BUDGET", "HERO_NOT_APPROVED", "LOW_BALANCE", "STORY_GATE"):
+        (tmp_path / refusal).mkdir()
+        films[refusal] = a_film(engine, tmp_path / refusal, scenes=2)
+    for refusal, film in films.items():
+        stopped(engine, film, "HELD" if refusal == "STORY_GATE" else "WAITING", refusal)
+    (tmp_path / "asked").mkdir()
+    asked = a_film(engine, tmp_path / "asked", scenes=2)
+    stopped(engine, asked, "ASKED", "NEEDS_APPROVAL")
+
+    monkeypatch.setattr(walk, "STARTED_AT", datetime.now(UTC) + timedelta(seconds=1))
+    assert run(engine) == []
+    assert continuations(engine) == []
+
+
+def test_a_film_walked_since_the_start_is_not_walked_again(engine, tmp_path, monkeypatch):
+    film = a_film(engine, tmp_path, scenes=2)
+    production(engine)
+    stopped(engine, film, "WAITING", "TAKES_NOT_ACCEPTED")
+    started = datetime.now(UTC)
+    # The film was walked after the start (the day's run or his button got there first).
+    event(engine, "runbook.film_continued", film, {"status": "COMPLETED", "reason": "x"})
+    monkeypatch.setattr(walk, "STARTED_AT", started)
+
+    assert run(engine) == []
+
+
 def test_a_render_failed_in_test_queues_nothing(engine, tmp_path, monkeypatch):
     film = a_film(engine, tmp_path, scenes=2)
     event(engine, "media.render_failed", str(uuid4()), {"storyboard_id": film, "reason": "x"})
