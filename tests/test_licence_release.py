@@ -56,9 +56,12 @@ class FakeYouTube:
 
     IS_SIMULATED = False
 
-    def __init__(self, *, failures: int = 0, keeps_private: bool = False) -> None:
+    def __init__(
+        self, *, failures: int = 0, keeps_private: bool = False, refusal: str | None = None
+    ) -> None:
         self.failures = failures
         self.keeps_private = keeps_private
+        self.refusal = refusal
         self.uploads: list[str] = []
         self.changes: list[tuple[str, str, bool]] = []
 
@@ -86,7 +89,9 @@ class FakeYouTube:
         self.changes.append((remote_video_id, privacy_status, made_for_kids))
         if self.failures:
             self.failures -= 1
-            raise RemoteStateUnavailable("YouTube could not be asked to change the visibility.")
+            raise RemoteStateUnavailable(
+                self.refusal or "YouTube could not be asked to change the visibility."
+            )
         return RemoteVideoStatus(
             remote_video_id=remote_video_id,
             exists=True,
@@ -515,6 +520,38 @@ def test_a_failed_change_is_asked_again_later_and_the_release_is_written_once(en
     assert len(_events(engine, RELEASED_EVENT, held["publication_id"])) == 1
     assert _release(engine, youtube, now=datetime.now(UTC) + timedelta(hours=2))["released"] == []
     assert len(_events(engine, RELEASED_EVENT)) == 1 and len(_owner_notes(engine)) == 1
+
+
+def test_a_connection_without_the_visibility_right_asks_him_once_to_reconnect(engine, tmp_path):
+    """2026-10-11: both licences confirmed, and YouTube answered 403 insufficientPermissions
+    (the connections held only the upload, read and statistics scopes). He is told once, per
+    channel, the one thing only he can do; the change is asked again later as any failure."""
+    from app.agents.models import AgentMessage
+
+    held = _held_film(engine, tmp_path)
+    _record_licence(engine, held["integration_id"])
+    youtube = FakeYouTube(
+        failures=2,
+        refusal="YouTube refused the visibility change (HTTP 403, insufficientPermissions).",
+    )
+
+    assert _release(engine, youtube)["failed"] == [held["publication_id"]]
+    later = _release(engine, youtube, now=datetime.now(UTC) + timedelta(minutes=16))
+    assert later["failed"] == [held["publication_id"]]
+
+    with Session(engine) as session:
+        letters = [
+            row
+            for row in session.scalars(select(AgentMessage))
+            if (row.body_json or {}).get("kind") == "youtube_reconnect_for_visibility"
+        ]
+    (letter,) = letters
+    assert "Reconectează contul YouTube" in letter.subject
+    assert "youtube.force-ssl" in letter.body_text
+    # Once he reconnected, the next try goes through.
+    assert _release(engine, youtube, now=datetime.now(UTC) + timedelta(hours=1))["released"] == [
+        held["publication_id"]
+    ]
 
 
 def test_youtube_keeping_the_video_private_is_recorded_with_the_letter_and_not_retried(

@@ -729,8 +729,13 @@ class YouTubeProvider(PublishingProvider):
         except HTTPError as exc:
             if exc.code == 404:
                 return RemoteVideoStatus(remote_video_id=remote_video_id, exists=False)
+            # Google's own word for the refusal (insufficientPermissions: the connection
+            # lacks youtube.force-ssl, 2026-10-11), so the studio can say what to do.
+            reason = _google_word(exc)
             raise RemoteStateUnavailable(
-                f"YouTube refused the visibility change (HTTP {exc.code})."
+                f"YouTube refused the visibility change (HTTP {exc.code}"
+                + (f", {reason}" if reason else "")
+                + ")."
             ) from None
         except Exception as exc:  # noqa: BLE001
             raise RemoteStateUnavailable(

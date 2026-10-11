@@ -53,7 +53,8 @@ YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3"
 SCOPES = (
     "https://www.googleapis.com/auth/youtube.readonly "
     "https://www.googleapis.com/auth/youtube.upload "
-    "https://www.googleapis.com/auth/yt-analytics.readonly"
+    "https://www.googleapis.com/auth/yt-analytics.readonly "
+    "https://www.googleapis.com/auth/youtube.force-ssl"
 )
 
 #: What each use of a connection needs Google to have granted. Uploading needs the upload
@@ -63,6 +64,11 @@ SCOPES = (
 #: youtube.upload and not the statistics scope, because `SCOPES` above never asked for it.
 UPLOAD_SCOPE = "https://www.googleapis.com/auth/youtube.upload"
 STATISTICS_SCOPE = "https://www.googleapis.com/auth/yt-analytics.readonly"
+#: Changing an uploaded video's visibility (videos.update) needs youtube.force-ssl; the upload
+#: scope only inserts. On 2026-10-11 the studio made two films public once their voice licence
+#: was confirmed and YouTube answered 403 to both: the connections held only the three scopes
+#: above. A connection made before then must be reconnected once to add it.
+VISIBILITY_SCOPE = "https://www.googleapis.com/auth/youtube.force-ssl"
 
 #: The ledger lines `app.analytics.services` writes when Google refuses, or never answers, a
 #: stored connection: a token refresh (the token every use of the account shares), or a

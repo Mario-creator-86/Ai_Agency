@@ -70,6 +70,10 @@ HELD_EVENT = "publishing.held_private_for_licence"
 RELEASED_EVENT = "publishing.privacy_released"
 #: A visibility change YouTube did not answer; counted for the back-off.
 RELEASE_FAILED_EVENT = "publishing.privacy_release_failed"
+#: Google's word for a token without the right the change needs (2026-10-11), and the
+#: Owner's one letter per channel about it.
+MISSING_SCOPE_WORD = "insufficientPermissions"
+RECONNECT_LETTER_KIND = "youtube_reconnect_for_visibility"
 #: A NEEDS_REVIEW film whose every component now carries commercial-use evidence.
 LICENCE_CONFIRMED_EVENT = "media.licence_confirmed"
 #: The words `runbook.stages._private_until_licensed` puts in the stage's reason, and the walk
@@ -394,6 +398,8 @@ def _release_one(
                 },
                 correlation_id,
             )
+            if MISSING_SCOPE_WORD in str(exc):
+                _tell_owner_reconnect(session, channel_id, correlation_id)
         return "failed", error_words(exc)
     return _record_release(engine, publication_id, answer, version, known, correlation_id)
 
@@ -446,6 +452,39 @@ def _record_release(
             return "kept_private", f"YouTube a păstrat videoclipul {said}"
         _tell_owner_released(session, pub, version, correlation_id)
         return "released", ""
+
+
+def _tell_owner_reconnect(session: Session, channel_id: str, correlation_id: str) -> None:
+    """Once per channel, the one thing only the Owner can do when YouTube refuses the change
+    for a missing permission: reconnect the channel's account, so Google asks him for the
+    right to change a video's visibility (`youtube.services.VISIBILITY_SCOPE`). 2026-10-11:
+    both films' licences were confirmed and YouTube answered 403 insufficientPermissions;
+    the connections held only the upload, read and statistics scopes."""
+    from app.agents.memory import agent_for_role  # noqa: PLC0415 - agents import publishing
+    from app.agents.messages import post_message  # noqa: PLC0415
+    from app.agents.models import AgentMessage  # noqa: PLC0415
+
+    for letter in session.scalars(select(AgentMessage)):
+        body = letter.body_json or {}
+        if body.get("kind") == RECONNECT_LETTER_KIND and body.get("channel_id") == channel_id:
+            return
+    channel_name = _channel_name(session, channel_id)
+    publisher = agent_for_role(session, "Publisher")
+    post_message(
+        session,
+        intent="STATUS",
+        subject=f"Reconectează contul YouTube al canalului {channel_name}"[:200],
+        body={"kind": RECONNECT_LETTER_KIND, "channel_id": channel_id},
+        from_agent_id=publisher.id if publisher is not None else None,
+        correlation_id=correlation_id,
+        body_text=(
+            f"Licența filmelor este confirmată, dar YouTube refuză să le facă publice pe "
+            f"{channel_name}: conexiunea nu are dreptul de a schimba vizibilitatea unui "
+            "videoclip (youtube.force-ssl). Reconectează contul YouTube al canalului din "
+            "Setări și acceptă drepturile cerute; studioul le face publice singur după aceea."
+        ),
+        to_owner=True,
+    )
 
 
 def _tell_owner_released(
