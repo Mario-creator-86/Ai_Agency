@@ -91,11 +91,16 @@ def test_director_reads_complete_scene_prompts_and_late_bible_rules(engine):
     }
     with Session(engine) as session, session.begin():
         session.get(Storyboard, film["board"]).visual_bible_json = bible
-        scene = session.scalar(select(StoryboardScene).where(
-            StoryboardScene.storyboard_id == film["board"], StoryboardScene.scene_index == 5,
-        ))
+        scene = session.scalar(
+            select(StoryboardScene).where(
+                StoryboardScene.storyboard_id == film["board"],
+                StoryboardScene.scene_index == 5,
+            )
+        )
         scene.prompt_json = {
-            "still_prompt": still, "motion_prompt": motion, "ending_frame": ending,
+            "still_prompt": still,
+            "motion_prompt": motion,
+            "ending_frame": ending,
         }
     context = film_qc_context(engine, failed_render_reading(engine, film["report"]))
     scene = next(item for item in context["scenes"] if item["scene_index"] == 5)
@@ -113,8 +118,11 @@ def test_director_payload_never_slices_critical_evidence_into_invalid_json():
     scenes = [{"scene_index": i, "asked": "Exact submitted intent. " * 20} for i in range(1, 25)]
     bible = {"continuity_rules": ["Keep the graphite drawing visible."]}
     context = {
-        "findings": findings, "scenes": scenes, "visual_bible": bible,
-        "paid_redo_limits": {"left_for_film": 3}, "checks": "optional detail " * 2000,
+        "findings": findings,
+        "scenes": scenes,
+        "visual_bible": bible,
+        "paid_redo_limits": {"left_for_film": 3},
+        "checks": "optional detail " * 2000,
     }
     assert len(json.dumps(context)) > DIRECTOR_QC_PAYLOAD_CHARS
     parsed = json.loads(_director_payload(context))
@@ -420,6 +428,8 @@ class FakeRedoPath:
 
         self.engine = engine
         self.calls: list[tuple[str, int | None, bool]] = []
+        #: Per paid redo, whether it was her confirmed repair (``director_repair``).
+        self.confirmed: list[bool] = []
         self.overrides: list[Any] = []
         self.planned_overrides: list[Any] = []
         self.measured: list[str] = []
@@ -449,6 +459,7 @@ class FakeRedoPath:
         if (kind, scene_index) in self.refuse:
             raise self.refuse[(kind, scene_index)]
         self.calls.append((kind, scene_index, bool(kwargs.get("unasked"))))
+        self.confirmed.append(bool(kwargs.get("director_repair")))
         self.overrides.append(kwargs.get("overrides"))
         if kind == "still":
             with Session(self.engine) as session, session.begin():
@@ -888,12 +899,36 @@ def test_a_filmed_scene_gets_its_new_still_and_the_motion_filmed_from_it(
     assert paid.payload["kinds"] == ["still", "motion"] and paid.payload["open_motion"] is False
 
 
-def test_a_scene_whose_take_he_approved_is_not_redone_even_when_she_lists_it(
+def his_final_look(engine, film: dict[str, Any], scene: int, kind: str) -> None:
+    """His APPROVED on the sheet marked final (`decide_take` ``final``), as its event records
+    it: what no repair of the Director's retires (2026-10-11, his card)."""
+    with Session(engine) as session, session.begin():
+        append_event(
+            session,
+            "media.scene_take_decided",
+            "scene_take",
+            film["takes"][scene][kind],
+            1,
+            {
+                "storyboard_id": film["board"],
+                "scene_number": scene,
+                "kind": kind,
+                "decision": "APPROVED",
+                "decided_by": "owner",
+                "final": True,
+            },
+            str(uuid4()),
+        )
+
+
+def test_a_scene_whose_take_he_approved_as_final_is_not_redone_even_when_she_lists_it(
     engine, settings, studio, monkeypatch
 ):
     from app.runbook import stages
 
     film = failed_film(engine)
+    his_final_look(engine, film, 1, "still")
+    his_final_look(engine, film, 2, "motion")
     before = take_statuses(engine, film["board"])
     repairs = [
         {"scene_index": 1, "redo": "still", "reason": "the text is in the picture"},
@@ -919,19 +954,100 @@ def test_a_scene_whose_take_he_approved_is_not_redone_even_when_she_lists_it(
     assert skipped == {("still", 1): "OWNER_APPROVED", ("motion", 2): "OWNER_APPROVED"}
     assert outcome["outcome"] == "REPAIRED"
     (letter,) = letters(engine, LETTER_KIND)
-    assert "aprobată de tine" in letter.body_text
+    assert "aprobată de tine ca finală" in letter.body_text
 
 
-def test_the_redo_path_itself_refuses_a_plan_that_would_retire_his_take(
+def test_a_take_he_approved_without_final_is_redone_by_her_confirmed_repair_and_he_is_told(
     engine, settings, studio, monkeypatch
 ):
-    """Whoever builds the list: an unasked redo whose plan retires a take he approved is
-    refused before anything is priced or bought."""
+    """His card of 2026-10-11 («Directoarea poate reface și ce am aprobat eu»): her repair of
+    a real defect replaces a take he approved without marking it final, every paid redo of
+    hers runs as her confirmed repair, and his letter says what of his was replaced and why."""
+    from app.runbook import stages
+
+    film = failed_film(engine)
+    his_still, his_clip = film["takes"][1]["still"], film["takes"][2]["motion"]
+    repairs = [
+        {"scene_index": 1, "redo": "still", "reason": "the text is in the picture"},
+        {"scene_index": 2, "redo": "motion", "reason": "the tunnel"},
+        {"scene_index": 5, "redo": "still", "reason": "three stacked panels"},
+    ]
+    registry, _model = director_says(
+        studio, answer(verdicts_for(film, real={1, 3}), "REPAIR", repairs)
+    )
+    redo = FakeRedoPath(
+        engine, monkeypatch, replaces={("still", 1): [his_still], ("motion", 2): [his_clip]}
+    )
+
+    outcome = stages.director_decides_failed_film(
+        engine, settings, None, registry, film["report"], film["asset"]
+    )
+
+    assert redo.calls == [
+        ("still", 1, True),
+        ("motion", 1, True),
+        ("motion", 2, True),
+        ("still", 5, True),
+        ("rejoin", None, False),
+    ]
+    assert redo.confirmed == [True, True, True, True]
+    assert outcome["outcome"] == "REPAIRED"
+    (decided,) = events(engine, DECISION_EVENT)
+    assert decided.payload["done"]["skipped"] == []
+    replaced = decided.payload["done"]["replaced_his"]
+    assert [(r["redo"], r["scene_index"], r["takes"], r["reason"]) for r in replaced] == [
+        ("still", 1, [his_still], "the text is in the picture"),
+        ("motion", 2, [his_clip], "the tunnel"),
+    ]
+    (letter,) = letters(engine, LETTER_KIND)
+    assert "pe care o aprobaseși" in letter.body_text and "«finală»" in letter.body_text
+    assert "the text is in the picture" in letter.body_text and "the tunnel" in letter.body_text
+
+
+def test_the_redo_path_itself_lets_her_confirmed_repair_replace_his_take_and_records_it(
+    engine, settings, studio, monkeypatch
+):
     from app.media.qc_report import RedoProposal
     from app.runbook import stages
 
     film = failed_film(engine)
     his_still = film["takes"][1]["still"]
+    redo = FakeRedoPath(engine, monkeypatch, replaces={("still", 1): [his_still]})
+    result: dict[str, Any] = {
+        "applied": [],
+        "bought": [],
+        "asked": [],
+        "refused": [],
+        "limited": [],
+        "made": [],
+        "new_asset": None,
+    }
+    reading = {
+        "storyboard_id": film["board"],
+        "media_asset_id": film["asset"],
+        "proposals": [RedoProposal(redo="still", scene_index=1, reason="x", credits=None)],
+    }
+
+    stages._apply_repairs(engine, settings, None, None, reading, result, False, "c")
+
+    assert redo.calls == [("still", 1, True)] and redo.confirmed == [True]
+    assert result["refused"] == []
+    assert result["replaced_his"] == [
+        {"redo": "still", "scene_index": 1, "takes": [his_still], "reason": "x"}
+    ]
+
+
+def test_the_redo_path_itself_refuses_a_plan_that_would_retire_his_final_take(
+    engine, settings, studio, monkeypatch
+):
+    """Whoever builds the list: an unasked redo whose plan retires a take he approved as
+    final is refused before anything is priced or bought."""
+    from app.media.qc_report import RedoProposal
+    from app.runbook import stages
+
+    film = failed_film(engine)
+    his_still = film["takes"][1]["still"]
+    his_final_look(engine, film, 1, "still")
     redo = FakeRedoPath(engine, monkeypatch, replaces={("still", 1): [his_still]})
     result: dict[str, Any] = {
         "applied": [],

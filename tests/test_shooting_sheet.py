@@ -599,13 +599,24 @@ def test_the_owner_picks_a_candidate_and_rejects_another_on_the_contact_sheet(
     picked = client.post(
         "/api/v1/media/takes/take-1/decision",
         headers=headers,
-        json={"decision": "APPROVED", "note": "Prefer lumina asta."},
+        json={"decision": "APPROVED", "note": "Prefer lumina asta.", "final": True},
     )
     assert picked.status_code == 200, picked.text
+    assert picked.json()["final"] is True
     with Session(engine) as session:
         statuses = {t.id: (t.status, t.approved_by) for t in session.scalars(select(SceneTake))}
     assert statuses["take-1"] == ("APPROVED", "owner")
     assert statuses["take-0"] == ("PAID", None), "two approved stills for one scene"
+    # His approval marked final (2026-10-11): kept on his decision, shown on the sheet, and
+    # the only approval of his the Director's confirmed repair leaves alone.
+    from app.media.assembler import owner_approved_among, owner_take_decisions
+
+    with Session(engine) as session:
+        assert owner_take_decisions(session, ["take-1"])["take-1"][-1]["final"] is True
+        assert owner_approved_among(session, ["take-1"], final_only=True) == ["take-1"]
+    marked = client.get(sheet_url(storyboard_id), headers=headers)
+    assert marked.status_code == 200, marked.text
+    assert marked.json()["scenes"][0]["still"]["owner_final"] is True
 
     rejected = client.post(
         "/api/v1/media/takes/take-0/decision", headers=headers, json={"decision": "REJECTED"}

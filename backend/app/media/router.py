@@ -1090,7 +1090,12 @@ def create_media_router() -> APIRouter:
 
         try:
             return decide_sheet_take(
-                engine, take_id, cmd.decision, note=cmd.note, sheet_reader=sheet_now
+                engine,
+                take_id,
+                cmd.decision,
+                note=cmd.note,
+                final=cmd.final,
+                sheet_reader=sheet_now,
             )
         except SheetNotFound as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc

@@ -3920,7 +3920,9 @@ def _repair_summary(repair: dict[str, Any]) -> dict[str, Any]:
 DIRECTOR_QC_ROUNDS = 4
 #: What a paid redo she decided says on the Owner's question, should his rule ask him.
 DIRECTOR_REDO_NOTE = "Controlul calității a picat scena; refacere hotărâtă de Directoare."
-#: A redo that would retire a take the Owner approved: refused before anything is priced.
+#: A redo that would retire a take the Owner approved as final: refused before anything is
+#: priced. Since 2026-10-11 (his card «Directoarea poate reface și ce am aprobat eu») her
+#: confirmed repair replaces an approval he did not mark final, and tells him.
 OWNER_APPROVED_REDO = "OWNER_APPROVED"
 
 
@@ -4397,6 +4399,7 @@ def _carry_out(
                         "limited",
                         "skipped",
                         "waiting",
+                        "replaced_his",
                         "new_asset",
                         "requalified",
                         "requalified_report_id",
@@ -4463,6 +4466,7 @@ def _director_repairs(
         "limited": [],
         "skipped": [],
         "waiting": [],
+        "replaced_his": [],
         "made": [],
         "requalified": None,
     }
@@ -4661,7 +4665,10 @@ def _apply_repairs(
     result.setdefault("waiting", [])
     with Session(engine) as session:
         free_already = asset_id in _repaired_assets(session)
-        his_takes = director_qc.owner_approved_take_ids(session, storyboard_id)
+        # What he approved as final is never retired here; what he approved without marking
+        # it final is replaced by her confirmed repair, and he is told (2026-10-11, his card).
+        his_final = director_qc.owner_approved_take_ids(session, storyboard_id, final_only=True)
+        his_all = director_qc.owner_approved_take_ids(session, storyboard_id)
 
     def newest(film: Any) -> None:
         if isinstance(film, dict) and film.get("output_asset_id"):
@@ -4765,13 +4772,14 @@ def _apply_repairs(
                 if not plan.get("buyable"):
                     raise SceneRedoRefused("NOTHING_TO_BUY", str(plan.get("reason_ro") or ""))
                 retiring = {*(plan.get("replaces") or []), *(plan.get("invalidates") or [])}
-                if retiring & his_takes:
-                    # Nobody retires a still or a clip the Owner approved himself, but him.
+                if retiring & his_final:
+                    # Nobody retires a still or a clip the Owner approved as final, but him.
                     raise SceneRedoRefused(
                         OWNER_APPROVED_REDO,
-                        f"Scena {scene}: preluarea ei a fost aprobată de tine; o refacere "
-                        "nepornită de tine nu o retrage.",
+                        f"Scena {scene}: preluarea ei a fost aprobată de tine ca finală; o "
+                        "refacere nepornită de tine nu o retrage.",
                     )
+                replacing = sorted(retiring & his_all)
                 done = redo_scene(
                     engine,
                     storyboard_id,
@@ -4794,6 +4802,9 @@ def _apply_repairs(
                     note=note,
                     # The day's repair, nobody's press: his policy before every re-roll.
                     unasked=True,
+                    # Her repair of a defect QC measured and she confirmed: it may replace a
+                    # take he approved without marking it final (the deep guard agrees).
+                    director_repair=True,
                 )
             except SceneRedoRefused as exc:
                 entry = {
@@ -4820,6 +4831,24 @@ def _apply_repairs(
             result["bought"].append(
                 {"redo": kind, "scene_index": scene, "credits": done.get("credits")}
             )
+            if replacing:
+                # His approval, not marked final, replaced at her decision: told to him with
+                # her reason (`_repair_lines`).
+                result.setdefault("replaced_his", []).append(
+                    {
+                        "redo": kind,
+                        "scene_index": scene,
+                        "takes": replacing,
+                        "reason": next(
+                            (
+                                str(proposal.reason or "")
+                                for proposal in proposals
+                                if proposal.redo == kind and proposal.scene_index == scene
+                            ),
+                            "",
+                        ),
+                    }
+                )
             newest(done.get("film"))
             if kind == "still" and (done.get("still") or {}).get("status") != "APPROVED":
                 # Bought, and waiting for the vendor's late delivery or his look on the sheet:
@@ -5047,6 +5076,16 @@ def _repair_lines(result: dict[str, Any]) -> list[str]:
             f"{count(int(item['per_scene']), 'refacere plătită', 'refaceri plătite')} pe scenă"
             f" și {count(int(item['per_film']), 'refacere plătită', 'refaceri plătite')} pe "
             "film (STUDIO_FILM_MAX_PAID_REDOS_PER_SCENE, STUDIO_FILM_MAX_PAID_REDOS)."
+        )
+    for item in result.get("replaced_his") or []:
+        what = PAID_REDO_WORDS.get(item["redo"], item["redo"])
+        why = _no_stop(item.get("reason"))
+        done.append(
+            f"- Scena {item['scene_index']}: {what} pe care o aprobaseși pe foaia de filmare a "
+            "fost înlocuită la decizia Directoarei"
+            + (f" ({why})" if why else "")
+            + "; aprobarea ta nu era marcată «finală». O aprobare marcată «finală» pe foaie "
+            "nu o reface nimeni în locul tău."
         )
     for item in result.get("refused") or []:
         done.append(f"- {str(item['what']).capitalize()}: {_no_stop(item['reason'])}.")

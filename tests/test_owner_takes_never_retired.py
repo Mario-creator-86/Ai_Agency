@@ -20,6 +20,11 @@ every new candidate ended REFUSED, and nothing was delivered. So:
   longer reproduce, is bound to the picture he approved), never a take he turned down, never
   beside a newer take, never while the film is being bought for.
 
+His card of 2026-10-11 («Directoarea poate reface și ce am aprobat eu»): the Director's repair
+of a defect quality control measured and she confirmed (``director_repair``) retires a take he
+approved unless he marked the approval final (`decide_take` ``final``, or a note that says
+«finală» / «definitiv»); every other unasked redo still spares whatever he approved.
+
 The review of the same day (section 5): candidates a gate turned down were still delivered
 (they wait for his look), so a redo that brought them gives nothing back, now or later; his
 yes to the studio's question for a plan is his decision as his press is; and the money guards
@@ -286,6 +291,130 @@ def test_only_his_own_approval_protects_a_take(engine, tmp_path):
             scene=4,
         )
     assert asked.value.status != OWNER_APPROVED
+
+
+# ------------------------- 1b. the Director's confirmed repair, and his «final» approval
+
+
+def test_her_confirmed_repair_redoes_his_scene_unless_he_marked_the_approval_final(
+    engine, tmp_path
+):
+    """His card of 2026-10-11: her repair of a defect QC measured and she confirmed goes over
+    a take he approved; a take he approved as final stands, before anything is bought."""
+    storyboard_id = a_film(engine, tmp_path, scenes=4)
+    shots = filmed(engine, storyboard_id, tmp_path, b"clip")
+    stills = {t.scene_number: t.id for t in takes(engine, storyboard_id, "still")}
+    mode_studio(engine)
+    images = SpyStills(balance=1_000)
+
+    # Scene 4: his approval marked final on the sheet. Refused first: nothing collected,
+    # asked, bought or written.
+    decide_take(engine, stills[4], "APPROVED", decided_by="owner", final=True)
+    plan = redo_plan(engine, storyboard_id, "still", 4)
+    with pytest.raises(SceneRedoRefused) as refused:
+        still_press(
+            engine,
+            storyboard_id,
+            tmp_path,
+            images,
+            plan["plan_hash"],
+            unasked=True,
+            scene=4,
+            director_repair=True,
+        )
+    assert refused.value.status == OWNER_APPROVED and refused.value.http_status == 409
+    assert "ca finală" in refused.value.reason_ro and "Directoare" in refused.value.reason_ro
+    assert images.asked == [] and events(engine, TAKE_RETIRED_EVENT) == []
+
+    # Scene 3: his approval, not marked final. Her repair buys, and retires his still and the
+    # clip filmed from it; each retirement says it was hers, not his press.
+    old = scene_three_still(engine, storyboard_id)
+    plan = redo_plan(engine, storyboard_id, "still", 3)
+    result = still_press(
+        engine,
+        storyboard_id,
+        tmp_path,
+        images,
+        plan["plan_hash"],
+        unasked=True,
+        director_repair=True,
+    )
+
+    assert len(images.asked) == 1 and result["still"]["status"] == "APPROVED"
+    assert take(engine, old.id).failure_code == REDO_FAILURE_CODE
+    assert take(engine, shots[3]).failure_code == REDO_STILL_REPLACED
+    retired = events(engine, TAKE_RETIRED_EVENT)
+    assert {e.aggregate_id for e in retired} == {old.id, shots[3]}
+    assert all(e.payload["director_repair"] is True for e in retired)
+    assert all(e.payload["owner_press"] is False for e in retired)
+    assert all(e.payload["previous_approved_by"] == "owner" for e in retired)
+
+
+def test_the_retiring_transaction_spares_only_his_final_approval_from_her_repair(engine, tmp_path):
+    storyboard_id = a_film(engine, tmp_path, scenes=4)
+    filmed(engine, storyboard_id, tmp_path, coloured_clip(tmp_path, "navy"))
+    stills = {t.scene_number: t.id for t in takes(engine, storyboard_id, "still")}
+    # Scene 3's still: his look on the sheet, marked final by his note.
+    decide_take(engine, stills[3], "APPROVED", decided_by="owner", note="Rămâne definitiv.")
+
+    # Scene 2's still: his approval, not marked final. Her repair retires it.
+    with Session(engine) as session, session.begin():
+        assert _retire_takes(
+            session,
+            [stills[2]],
+            REDO_FAILURE_CODE,
+            "her repair",
+            "c-1",
+            redo_kind="still",
+            director_repair=True,
+        ) == [stills[2]]
+    (retired,) = events(engine, TAKE_RETIRED_EVENT)
+    assert retired.payload["director_repair"] is True
+    assert retired.payload["previous_approved_by"] == "owner"
+
+    # Scene 3's still: final. Her repair is refused in the transaction, nothing written.
+    with pytest.raises(SceneRedoRefused) as refused:
+        with Session(engine) as session, session.begin():
+            _retire_takes(
+                session,
+                [stills[3]],
+                REDO_FAILURE_CODE,
+                "her repair",
+                "c-2",
+                redo_kind="still",
+                director_repair=True,
+            )
+    assert refused.value.status == OWNER_APPROVED and "ca finală" in refused.value.reason_ro
+    assert take(engine, stills[3]).status == "APPROVED"
+    assert len(events(engine, TAKE_RETIRED_EVENT)) == 1
+
+    # Not hers: the studio's own unasked redo still spares what he approved, final or not.
+    with pytest.raises(SceneRedoRefused) as other:
+        with Session(engine) as session, session.begin():
+            _retire_takes(
+                session, [stills[1]], REDO_FAILURE_CODE, "unasked", "c-3", redo_kind="still"
+            )
+    assert other.value.status == OWNER_APPROVED and "ca finală" not in other.value.reason_ro
+
+
+def test_his_note_marks_the_approval_final_and_his_newest_look_governs(engine, tmp_path):
+    storyboard_id = a_film(engine, tmp_path, scenes=4)
+    filmed(engine, storyboard_id, tmp_path, b"clip")
+    stills = {t.scene_number: t.id for t in takes(engine, storyboard_id, "still")}
+    decide_take(engine, stills[1], "APPROVED", decided_by="owner", note="Rămâne definitiv.")
+    decide_take(engine, stills[2], "APPROVED", decided_by="owner", note="Imaginea finală.")
+    # «Finalizat» is not the mark; scene 4 has no look of his at all (approved_by alone).
+    decide_take(engine, stills[3], "APPROVED", decided_by="owner", note="Finalizat pe foaie.")
+    every = [stills[1], stills[2], stills[3], stills[4]]
+
+    with Session(engine) as session:
+        assert owner_approved_among(session, every, final_only=True) == [stills[1], stills[2]]
+        assert owner_approved_among(session, every) == every
+
+    # His newer look without the mark lifts it: his newest look governs.
+    decide_take(engine, stills[1], "APPROVED", decided_by="owner")
+    with Session(engine) as session:
+        assert owner_approved_among(session, every, final_only=True) == [stills[2]]
 
 
 # --------------------------------------------------------- 2. his own press still works

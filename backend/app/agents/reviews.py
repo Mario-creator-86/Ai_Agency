@@ -580,7 +580,9 @@ DIRECTOR_QC_TASK = "director_qc_review"
 #: v2 (2026-10-10 review): the REPAIR that can be carried out, his LOCAL_MOVE, music licences.
 #: v3 (the same day's second review): an approved take bought for her repair, in no film yet.
 #: v4 (the same evening): her own looks at the pictures a gate refused, in her history.
-DIRECTOR_QC_TEMPLATE_VERSION = "director-qc-v6"
+#: v7 (2026-10-11 evening, the Owner's card): a take he approved without marking it final
+#: is redone when its flaw is real, and he is told; what he marked final stands.
+DIRECTOR_QC_TEMPLATE_VERSION = "director-qc-v7"
 #: Her verdict on one finding of the report.
 QC_VERDICTS = ("REAL", "FALSE", "OWNER_CHOICE", "ACCEPTED")
 #: Her decision on the film.
@@ -697,7 +699,7 @@ def repair_refusal(repairs: list[DirectorRedo], context: Mapping[str, Any]) -> s
             # new take is what it is joined with, not a take a redo would retire.
             return None
         if (scene.get("owner_approved_would_be_retired_by") or {}).get(redo):
-            why.append(f"{where}: the Owner approved its take; it is not redone")
+            why.append(f"{where}: the Owner approved its take as final; it is not redone")
             continue
         if redo == "motion" and scene.get("owner_choice_on_sheet") == LOCAL_MOVE:
             why.append(f"{where}: the Owner chose LOCAL_MOVE for it; no motion is bought")
@@ -764,13 +766,17 @@ _DIRECTOR_QC_INSTRUCTIONS = (
     "Give every finding one verdict: REAL (a real flaw that needs work), FALSE (quality "
     "control misread the film; the studio burns its own subtitles of the narration into the "
     "finished film, so on-screen words that are the narration are ours, not a flaw), "
-    "OWNER_CHOICE (the Owner approved that take or chose it on the sheet: it stands), or "
+    "OWNER_CHOICE (the Owner chose that take on the sheet, or approved it as final: it "
+    "stands), or "
     "ACCEPTED (a real flaw you accept as it is). Then decide the film: ACCEPT (publishable as "
     "it is; no finding may stay REAL) or REPAIR (list only what needs work: per scene still, "
     "motion or card, or the film's audio or encode, each with why; before a still or a motion "
     "is bought again you read its prompt and have it rewritten, so say in why exactly what was "
     "wrong). A film is never closed for its quality: it is redone until it passes, and only "
-    "money stops it. Never list a scene whose take the Owner approved: it is not redone. A paid "
+    "money stops it. Never list a scene whose take the Owner approved as final "
+    "(owner_approved_would_be_retired_by): it is not redone. A take he approved without "
+    "marking it final (owner_approved_would_be_replaced_by) is redone when its flaw is REAL, "
+    "and he is told what of his was replaced and why: say it plainly in why. A paid "
     "redo (still, motion) is possible only for a scene with paid redos left "
     "(paid_redos_left; a motion after the scene's new still when motion_after_new_still); a "
     "scene the Owner chose to animate locally (owner_choice_on_sheet LOCAL_MOVE) gets a new "
@@ -791,8 +797,8 @@ _DIRECTOR_QC_INSTRUCTIONS = (
     '"repairs": [{"scene_index": 5, "redo": "still" | "motion" | "card" | "audio" | "encode", '
     '"reason": "..."}], "summary": "two sentences in Romanian for the Owner"}. '
     '"repairs" is empty unless the decision is REPAIR. Every verdict and repair reason is '
-    'at most 400 characters; keep the diagnosis and the required change concise. The summary '
-    'is at most 800 characters. Judge at most 80 findings and list at most 24 repairs.\n'
+    "at most 400 characters; keep the diagnosis and the required change concise. The summary "
+    "is at most 800 characters. Judge at most 80 findings and list at most 24 repairs.\n"
 )
 
 #: A soft target for context size: optional history/check details can be omitted, but exact

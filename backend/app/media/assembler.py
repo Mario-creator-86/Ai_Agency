@@ -5407,6 +5407,7 @@ def owner_take_decisions(
             {
                 "decision": payload.get("decision"),
                 "note": payload.get("note"),
+                "final": bool(payload.get("final")),
                 "at": str(event.timestamp),
                 "sequence": int(event.sequence),
             }
@@ -8083,6 +8084,16 @@ HERO_ACCEPTED_BY = "clip_qc"
 #: Who may approve or reject a take: the Owner, on the sheet. Nobody else.
 TAKE_DECIDER = "owner"
 TAKE_DECISIONS: tuple[str, ...] = ("APPROVED", "REJECTED")
+#: His approval marked final (2026-10-11): ``final`` on his decision, or a note that says so
+#: («finală», «definitiv»). Only a final approval stands against the Director's confirmed
+#: repair (`_retire_takes` ``director_repair``); any other approval of his is still his
+#: choice for the sheet, and still protected from every other unasked redo.
+FINAL_APPROVAL_WORDS = re.compile(r"\b(?:final[aăe]?|definitiv[aăe]?)\b", re.IGNORECASE)
+
+
+def final_approval_words(note: str | None) -> bool:
+    """Whether the Owner's note on his look marks the approval final."""
+    return bool(note) and FINAL_APPROVAL_WORDS.search(str(note)) is not None
 
 
 class MotionStepRefused(RuntimeError):
@@ -9480,8 +9491,14 @@ def decide_take(
     decided_by: str,
     note: str | None = None,
     correlation_id: str | None = None,
+    final: bool = False,
 ) -> dict[str, Any]:
     """The Owner's look at a bought take: APPROVED or REJECTED. Only he decides.
+
+    ``final`` (or a note that says «finală» / «definitiv», `final_approval_words`) marks his
+    APPROVED as final (2026-10-11, his card «Directoarea poate reface și ce am aprobat eu»):
+    the Director's confirmed repair of a real defect may replace a take he approved, and tells
+    him; a take he approved as final is never replaced but by his own press.
 
     The hero test shot is approved this way before the rest of the motion may be bought; a
     rejected take is not used in a film unless he chooses it again. Raises PermissionError for
@@ -9538,6 +9555,7 @@ def decide_take(
             "previous_failure_code": row.failure_code,
             "previous_failure_detail": row.failure_detail,
         }
+        stands_final = decision == "APPROVED" and (bool(final) or final_approval_words(note))
         row.status = decision
         if decision == "APPROVED" and row.kind in SHOT_TAKE_KINDS:
             # His choice wins over the clip QC (or his own earlier «Respinge»): the take no
@@ -9564,6 +9582,7 @@ def decide_take(
                 "decision": decision,
                 "decided_by": TAKE_DECIDER,
                 "note": note,
+                "final": stands_final,
                 **before,
             },
             correlation_id or str(uuid4()),
@@ -9584,6 +9603,7 @@ def decide_take(
             "take_id": row.id,
             "status": row.status,
             "kind": row.kind,
+            "final": stands_final,
             "continue_task_id": continue_task_id,
         }
 
@@ -11145,6 +11165,7 @@ def run_motion_step(
     unasked: bool = True,
     timezone: str | None = None,
     proposal: bool = False,
+    director_repair: bool = False,
 ) -> dict[str, Any]:
     """One step of the motion staircase (``test_shot`` or ``motion``), bought only under the
     Owner's yes for this plan and this cap.
@@ -11393,6 +11414,7 @@ def run_motion_step(
                     owner_press=not unasked
                     or _owner_yes_for_redo(session, storyboard_id, plan_hash, cap, verdict),
                     plan_hash=plan_hash,
+                    director_repair=director_repair,
                 )
         if not verdict["allowed"]:
             raise MotionStepRefused(
@@ -12664,23 +12686,37 @@ _PICTURE_KINDS: tuple[str, ...] = ("still", *SHOT_TAKE_KINDS)
 _TAKE_WORDS_RO = {"still": "imaginea", "test_shot": "cadrul de probă", "motion": "clipul"}
 
 
-def _owner_stands_by(row: SceneTake, said: list[dict[str, Any]] | None, status: str) -> bool:
+def _owner_stands_by(
+    row: SceneTake,
+    said: list[dict[str, Any]] | None,
+    status: str,
+    *,
+    final_only: bool = False,
+) -> bool:
     """Whether the Owner's own approval stands on a take that is (or was) ``status``: his
     newest look on the sheet is APPROVED (`decide_take`), or the take is APPROVED by him
     (``approved_by`` owner, as an adopted or seeded take records it) and he has not turned
-    it down since."""
-    newest = said[-1]["decision"] if said else None
-    if newest == "REJECTED":
+    it down since.
+
+    ``final_only``: whether his approval marked final stands (his newest look APPROVED with
+    ``final``, `decide_take`); an approval he did not mark final, or one with no look of his
+    on record, does not (2026-10-11: the Director's confirmed repair goes over those)."""
+    newest = said[-1] if said else None
+    if newest is not None and newest.get("decision") == "REJECTED":
         return False
-    if newest == "APPROVED":
-        return True
+    if newest is not None and newest.get("decision") == "APPROVED":
+        return bool(newest.get("final")) if final_only else True
+    if final_only:
+        return False
     return status == "APPROVED" and row.approved_by == TAKE_DECIDER
 
 
-def owner_approved_among(session: Session, take_ids: Sequence[str]) -> list[str]:
+def owner_approved_among(
+    session: Session, take_ids: Sequence[str], *, final_only: bool = False
+) -> list[str]:
     """The takes among ``take_ids`` that a redo nobody pressed may not retire: still usable
     (APPROVED or PAID) and approved by the Owner himself (`_owner_stands_by`), in the order
-    given. Reads only."""
+    given; with ``final_only``, those he approved as final. Reads only."""
     ids = list(dict.fromkeys(str(take_id) for take_id in take_ids if take_id))
     if not ids:
         return []
@@ -12691,7 +12727,7 @@ def owner_approved_among(session: Session, take_ids: Sequence[str]) -> list[str]
         for take_id in ids
         if (row := rows.get(take_id)) is not None
         and row.status in REUSABLE_TAKE_STATUSES
-        and _owner_stands_by(row, decisions.get(take_id), row.status)
+        and _owner_stands_by(row, decisions.get(take_id), row.status, final_only=final_only)
     ]
 
 
@@ -12777,8 +12813,11 @@ def _proposal_asks_him(
     }
 
 
-def _owner_choice_stands_ro(session: Session, take_ids: Sequence[str], redo_kind: str) -> str:
-    """The Owner's line when a redo nobody pressed would retire what he approved himself."""
+def _owner_choice_stands_ro(
+    session: Session, take_ids: Sequence[str], redo_kind: str, *, final: bool = False
+) -> str:
+    """The Owner's line when a redo nobody pressed would retire what he approved himself
+    (``final``: what he approved as final, which the Director's confirmed repair spares)."""
     rows = list(session.scalars(select(SceneTake).where(SceneTake.id.in_(list(take_ids)))))
     kinds = {row.kind for row in rows}
     scenes = sorted({int(row.scene_number) for row in rows})
@@ -12788,6 +12827,13 @@ def _owner_choice_stands_ro(session: Session, take_ids: Sequence[str], redo_kind
     ) or "înregistrările"
     press = "«Refă imaginea»" if redo_kind == "still" else "«Refă mișcarea»"
     where = ", ".join(map(str, scenes)) or "?"
+    if final:
+        return (
+            f"Scena {where}: Proprietarul a aprobat el însuși {what} ca finală; alegerea lui "
+            "rămâne. Nici refacerea hotărâtă de Directoare nu retrage o aprobare finală, așa "
+            f"că nu se cumpără și nu se schimbă nimic. Dacă vrea altceva, apasă el {press} pe "
+            "foaia de filmare."
+        )
     return (
         f"Scena {where}: Proprietarul a aprobat el însuși {what}; alegerea lui rămâne. O "
         "refacere pe care nu a cerut-o el nu retrage ce a aprobat, așa că nu se cumpără și nu "
@@ -12805,6 +12851,7 @@ def _retire_takes(
     redo_kind: str,
     owner_press: bool = False,
     plan_hash: str | None = None,
+    director_repair: bool = False,
 ) -> list[str]:
     """REJECTED with the reason, inside the caller's transaction: never used in a film again
     (unless the redo delivers nothing, `give_back_retired_takes`).
@@ -12813,13 +12860,20 @@ def _retire_takes(
     `_owner_yes_for_redo`), a take the Owner approved himself is never retired:
     `SceneRedoRefused` (OWNER_APPROVED) is raised before anything is written, and the
     caller's transaction, his spent yes included, is rolled back (2026-10-10, film
-    babcf272). ``redo_kind`` (still | motion) names the press he would use instead. Each
-    retirement's event keeps what the take was (status, failure, approver), so it can be
-    given back exactly."""
-    standing = [] if owner_press else owner_approved_among(session, take_ids)
+    babcf272). ``director_repair`` (the Director's repair of a defect quality control
+    measured and she confirmed, `runbook.stages._apply_repairs`) retires what he approved
+    unless he marked the approval final (2026-10-11, his card: «Directoarea poate reface și
+    ce am aprobat eu»; «Aprobarea ta rămâne finală doar dacă o marchezi»): only a final
+    approval refuses it. ``redo_kind`` (still | motion) names the press he would use instead.
+    Each retirement's event keeps what the take was (status, failure, approver), so it can
+    be given back exactly."""
+    standing = (
+        [] if owner_press else owner_approved_among(session, take_ids, final_only=director_repair)
+    )
     if standing:
         raise SceneRedoRefused(
-            OWNER_APPROVED, _owner_choice_stands_ro(session, standing, redo_kind)
+            OWNER_APPROVED,
+            _owner_choice_stands_ro(session, standing, redo_kind, final=director_repair),
         )
     retired: list[str] = []
     for take_id in take_ids:
@@ -12850,6 +12904,7 @@ def _retire_takes(
                 **previous,
                 "failure_code": code,
                 "owner_press": bool(owner_press),
+                "director_repair": bool(director_repair),
                 "plan_hash": plan_hash,
             },
             correlation_id,
@@ -14651,8 +14706,15 @@ def redo_scene(
     clip_check: Callable[..., Any] | None = None,
     unasked: bool = False,
     proposal: bool = False,
+    director_repair: bool = False,
 ) -> dict[str, Any]:
     """Redo one scene (``still`` | ``motion`` | ``card``) or the film's sound (``audio``).
+
+    ``director_repair`` (with ``unasked``): the Director's repair of a defect quality control
+    measured and she confirmed (`runbook.stages._apply_repairs`, 2026-10-11): it retires a
+    take the Owner approved unless he marked the approval final (`decide_take` ``final``),
+    and he is told what of his was replaced. The money guards are the same as any unasked
+    redo's.
 
     ``unasked`` is a redo nobody pressed (the day's QC repairs, `_apply_repairs`): refused
     before the balance is read when the Policy Kernel refuses it outright, and stopped before a
@@ -14727,13 +14789,17 @@ def redo_scene(
         # proposal is that question: the motion step asks it, and buys only on his yes.
         with Session(engine) as session:
             standing = owner_approved_among(
-                session, [*plan.get("replaces", []), *plan.get("invalidates", [])]
+                session,
+                [*plan.get("replaces", []), *plan.get("invalidates", [])],
+                final_only=director_repair,
             )
             if standing and not _owner_yes_for_redo(
                 session, storyboard_id, plan_hash, plan.get("cap_credits")
             ):
                 raise SceneRedoRefused(
-                    OWNER_APPROVED, _owner_choice_stands_ro(session, standing, kind), plan=plan
+                    OWNER_APPROVED,
+                    _owner_choice_stands_ro(session, standing, kind, final=director_repair),
+                    plan=plan,
                 )
 
     storage_root = storage_root or media_root(settings)
@@ -14803,6 +14869,7 @@ def redo_scene(
         "clip_check": clip_check,
         "unasked": unasked,
         "proposal": proposal,
+        "director_repair": director_repair,
     }
     try:
         with film_purchase_lease(
@@ -14895,6 +14962,7 @@ def _paid_redo(
     clip_check: Callable[..., Any] | None,
     unasked: bool = False,
     proposal: bool = False,
+    director_repair: bool = False,
 ) -> dict[str, Any]:
     """The paid part of `redo_scene`, under the film's lease and the step's budget hold: the
     hold is settled once the redo is in the books and let go when nothing was bought.
@@ -14954,6 +15022,7 @@ def _paid_redo(
                 meter=meter,
                 unasked=unasked,
                 proposal=proposal,
+                director_repair=director_repair,
                 timezone=getattr(settings, "timezone", None),
             )
             detail["motion"] = summary
@@ -14980,6 +15049,7 @@ def _paid_redo(
                 settings=settings,
                 meter=meter,
                 unasked=unasked,
+                director_repair=director_repair,
             )
             detail["still"] = outcome
             spent = (float(outcome["spent_credits_quoted"]), outcome["spent_credits_measured"])
@@ -15508,6 +15578,7 @@ def _redo_still(
     settings: Any | None,
     meter: SpendMeter | None = None,
     unasked: bool = False,
+    director_repair: bool = False,
 ) -> dict[str, Any]:
     """One scene's still bought again: one pair of candidates (at most two re-rolls within the
     cap), judged as the stills step judges them, under the Owner's yes for this redo.
@@ -15694,6 +15765,7 @@ def _redo_still(
                 redo_kind="still",
                 owner_press=his,
                 plan_hash=plan_hash,
+                director_repair=director_repair,
             )
             _retire_takes(
                 session,
@@ -15705,6 +15777,7 @@ def _redo_still(
                 redo_kind="still",
                 owner_press=his,
                 plan_hash=plan_hash,
+                director_repair=director_repair,
             )
     if not verdict["allowed"]:
         raise SceneRedoRefused(

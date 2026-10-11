@@ -180,3 +180,6 @@ class TakeDecisionCommand(BaseModel):
 
     decision: Literal["APPROVED", "REJECTED"]
     note: str | None = Field(default=None, max_length=500)
+    #: His APPROVED marked final (2026-10-11): no repair of the Director's replaces it. A note
+    #: that says «finală» or «definitiv» marks it too.
+    final: bool = False

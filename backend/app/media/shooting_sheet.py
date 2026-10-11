@@ -85,6 +85,7 @@ from app.media.assembler import (
     motion_plan,
     motion_seconds,
     narration_to_buy,
+    owner_take_decisions,
     redo_plan,
     release_after_qc,
     run_motion_step,
@@ -501,10 +502,14 @@ def decide_sheet_take(
     decision: str,
     *,
     note: str | None = None,
+    final: bool = False,
     correlation_id: str | None = None,
     sheet_reader: Callable[[str], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """The Owner's look at a take on the contact sheet: APPROVED or REJECTED.
+
+    ``final`` marks his APPROVED final (2026-10-11): the Director's confirmed repair replaces
+    a take he approved, telling him, unless he marked it final (`decide_take`).
 
     Approving a still makes it THE still of its scene for its prompt: any other approved still
     of that scene and prompt goes back to PAID (kept, never deleted), so one scene never has
@@ -533,7 +538,13 @@ def decide_sheet_take(
     correlation = correlation_id or str(uuid4())
     try:
         result = decide_take(
-            engine, take_id, decision, decided_by=OWNER, note=note, correlation_id=correlation
+            engine,
+            take_id,
+            decision,
+            decided_by=OWNER,
+            note=note,
+            correlation_id=correlation,
+            final=final,
         )
     except FilmClosed as exc:
         # «Închide filmul»: a closed film's takes are no longer chosen, and nothing continues
@@ -727,6 +738,7 @@ def _take_view(
     current: bool,
     clip_qc: dict[str, Any] | None = None,
     accepted_by: str | None = None,
+    final: bool = False,
 ) -> dict[str, Any]:
     return {
         "take_id": take.id,
@@ -742,6 +754,8 @@ def _take_view(
         "failure_code": take.failure_code,
         "reason_ro": take.failure_detail,
         "approved_by": take.approved_by,
+        # His approval marked final (2026-10-11): no repair of the Director's replaces it.
+        "owner_final": final,
         "for_current_prompt": current,
         "file_url": _file_url(take.id) if take.path else None,
         # A shot's clip-QC report as it was kept on its take (None for a still, or a shot
@@ -1073,6 +1087,15 @@ def _sheet(
         scenes = [scene_view(row) for row in rows]
         gaps = shot_plan_gaps(session, storyboard_id)
         takes = _scene_takes(session, storyboard_id)
+        # The takes his newest look approved as final (2026-10-11): shown on the sheet, and
+        # the only ones the Director's confirmed repair leaves alone.
+        final_ids = {
+            take_id
+            for take_id, said in owner_take_decisions(
+                session, [t.id for rows_ in takes.values() for t in rows_]
+            ).items()
+            if said and said[-1].get("decision") == "APPROVED" and said[-1].get("final")
+        }
         stills: dict[int, SceneTake] = {}
         for scene in scenes:
             index = int(scene["scene_index"])
@@ -1303,7 +1326,11 @@ def _sheet(
                 "credits": 0,
             }
         candidates = [
-            _take_view(take, current=take.prompt_hash == still.prompt_hash if still else False)
+            _take_view(
+                take,
+                current=take.prompt_hash == still.prompt_hash if still else False,
+                final=take.id in final_ids,
+            )
             for take in takes.get(index, [])
             if take.kind == "still" and (still is None or take.id != still.id)
         ]
@@ -1313,6 +1340,7 @@ def _sheet(
                 current=True,
                 clip_qc=clip_reports.get(take.id),
                 accepted_by=HERO_ACCEPTED_BY if take.id in accepted_heroes else None,
+                final=take.id in final_ids,
             )
             for take in takes.get(index, [])
             if take.kind in ("test_shot", "motion")
@@ -1342,6 +1370,7 @@ def _sheet(
                         "take_id": still.id,
                         "sha256": still.sha256,
                         "approved_by": still.approved_by,
+                        "owner_final": still.id in final_ids,
                         "model_id": still.model_id,
                         "file_url": _file_url(still.id),
                     }

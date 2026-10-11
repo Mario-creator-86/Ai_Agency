@@ -469,19 +469,27 @@ def _compact_checks(checks: Mapping[str, Any]) -> dict[str, Any]:
     return out
 
 
-def owner_approved_take_ids(session: Session, storyboard_id: str) -> set[str]:
+def owner_approved_take_ids(
+    session: Session, storyboard_id: str, *, final_only: bool = False
+) -> set[str]:
     """The film's takes the Owner approved himself: ``approved_by`` "owner" (kept on a take a
-    redo retired since), or his newest look at the take (`media.scene_take_decided`) APPROVED."""
+    redo retired since), or his newest look at the take (`media.scene_take_decided`) APPROVED.
+
+    ``final_only``: only the takes his newest look approved as final (`decide_take`
+    ``final``; 2026-10-11, his card): what no repair of the Director's retires. An approval
+    with no look of his on record (an adopted take) is not a final one."""
     from app.media.assembler import TAKE_DECIDED_EVENT  # noqa: PLC0415 - a large module
 
-    approved = set(
-        session.scalars(
-            select(SceneTake.id).where(
-                SceneTake.storyboard_id == storyboard_id, SceneTake.approved_by == OWNER
+    approved: set[str] = set()
+    if not final_only:
+        approved = set(
+            session.scalars(
+                select(SceneTake.id).where(
+                    SceneTake.storyboard_id == storyboard_id, SceneTake.approved_by == OWNER
+                )
             )
         )
-    )
-    looks: dict[str, str] = {}
+    looks: dict[str, tuple[str, bool]] = {}
     for event in session.scalars(
         select(DomainEvent)
         .where(DomainEvent.event_type == TAKE_DECIDED_EVENT)
@@ -492,9 +500,16 @@ def owner_approved_take_ids(session: Session, storyboard_id: str) -> set[str]:
             continue
         if str(payload.get("decided_by") or "").lower() != OWNER:
             continue
-        looks[str(event.aggregate_id)] = str(payload.get("decision") or "")
-    approved |= {take for take, decision in looks.items() if decision == "APPROVED"}
-    approved -= {take for take, decision in looks.items() if decision == "REJECTED"}
+        looks[str(event.aggregate_id)] = (
+            str(payload.get("decision") or ""),
+            bool(payload.get("final")),
+        )
+    approved |= {
+        take
+        for take, (decision, final) in looks.items()
+        if decision == "APPROVED" and (final or not final_only)
+    }
+    approved -= {take for take, (decision, _final) in looks.items() if decision == "REJECTED"}
     return approved
 
 
@@ -514,18 +529,23 @@ def film_takes(production: Mapping[str, Any]) -> dict[int, dict[str, str | None]
 
 
 def protected_redos(
-    session: Session, storyboard_id: str, production: Mapping[str, Any]
+    session: Session,
+    storyboard_id: str,
+    production: Mapping[str, Any],
+    *,
+    final_only: bool = True,
 ) -> dict[int, dict[str, list[str]]]:
-    """Per scene and redo kind, the takes the Owner approved that the redo would take from the
-    film or retire: a still redo retires the scene's stills and every shot filmed from them, a
-    motion redo its shots. The film's own takes count whatever their status now (babcf272's
-    were retired by the mechanical repair), and so do the scene's current ones."""
+    """Per scene and redo kind, the takes the Owner approved (``final_only``, the default: as
+    final, which no repair of the Director's retires, 2026-10-11) that the redo would take from
+    the film or retire: a still redo retires the scene's stills and every shot filmed from
+    them, a motion redo its shots. The film's own takes count whatever their status now
+    (babcf272's were retired by the mechanical repair), and so do the scene's current ones."""
     from app.media.assembler import (  # noqa: PLC0415 - a large module
         REUSABLE_TAKE_STATUSES,
         SHOT_TAKE_KINDS,
     )
 
-    his = owner_approved_take_ids(session, storyboard_id)
+    his = owner_approved_take_ids(session, storyboard_id, final_only=final_only)
     in_film = film_takes(production)
     stills: dict[int, set[str]] = {}
     shots: dict[int, set[str]] = {}
@@ -578,19 +598,35 @@ def owner_scene_choices(session: Session, storyboard_id: str) -> dict[int, str]:
     return chosen
 
 
-def _take_view(row: SceneTake | None, his: set[str], take_id: str | None) -> dict[str, Any] | None:
+def _take_view(
+    row: SceneTake | None, his: set[str], take_id: str | None, final: set[str] | None = None
+) -> dict[str, Any] | None:
     if take_id is None:
         return None
+    marks = {"approved_by_owner": take_id in his, "owner_approval_final": take_id in (final or ())}
     if row is None:
-        return {"take_id": take_id, "status": "UNKNOWN", "approved_by_owner": take_id in his}
+        return {"take_id": take_id, "status": "UNKNOWN", **marks}
     return {
         "take_id": row.id,
         "kind": row.kind,
         "status": row.status,
         "approved_by": row.approved_by,
-        "approved_by_owner": row.id in his,
+        **marks,
         "failure_code": row.failure_code,
     }
+
+
+def _not_final(
+    approved: Mapping[str, list[str]], final: Mapping[str, list[str]]
+) -> dict[str, list[str]]:
+    """Per redo kind, the takes he approved without marking them final: what her confirmed
+    repair may replace (he is told). Empty kinds are left out."""
+    out: dict[str, list[str]] = {}
+    for redo, ids_ in approved.items():
+        kept = [take for take in ids_ if take not in (final.get(redo) or [])]
+        if kept:
+            out[redo] = kept
+    return out
 
 
 def decisions_of_film(session: Session, storyboard_id: str) -> list[dict[str, Any]]:
@@ -750,8 +786,20 @@ def film_qc_context(
         title = str(board.title if board is not None else storyboard_id[:8])
         bible = board.visual_bible_json if board is not None else None
         his = owner_approved_take_ids(session, storyboard_id) if storyboard_id else set()
+        final_ids = (
+            owner_approved_take_ids(session, storyboard_id, final_only=True)
+            if storyboard_id
+            else set()
+        )
         choices = owner_scene_choices(session, storyboard_id) if storyboard_id else {}
         protected = protected_redos(session, storyboard_id, production) if storyboard_id else {}
+        # His approvals he did not mark final: her confirmed repair may replace them, and he
+        # is told (2026-10-11, his card).
+        replaceable = (
+            protected_redos(session, storyboard_id, production, final_only=False)
+            if storyboard_id
+            else {}
+        )
         not_in_film = bought_not_in_film(session, storyboard_id) if storyboard_id else []
         in_film = film_takes(production)
         ids = [take for takes in in_film.values() for take in takes.values() if take]
@@ -778,8 +826,12 @@ def film_qc_context(
                     "ending_frame": prompts["ending_frame"],
                     "prompt_sources": prompts["prompt_sources"],
                     "in_film": {
-                        "still": _take_view(rows.get(takes["still"] or ""), his, takes["still"]),
-                        "motion": _take_view(rows.get(takes["motion"] or ""), his, takes["motion"]),
+                        "still": _take_view(
+                            rows.get(takes["still"] or ""), his, takes["still"], final_ids
+                        ),
+                        "motion": _take_view(
+                            rows.get(takes["motion"] or ""), his, takes["motion"], final_ids
+                        ),
                     },
                     "owner_choice_on_sheet": choices.get(index),
                     "owner_approved_would_be_retired_by": {
@@ -787,6 +839,9 @@ def film_qc_context(
                         for redo, ids_ in (protected.get(index) or {}).items()
                         if ids_
                     },
+                    "owner_approved_would_be_replaced_by": _not_final(
+                        replaceable.get(index) or {}, protected.get(index) or {}
+                    ),
                     "paid_redos_left": (
                         0
                         if kind in CARD_KINDS
@@ -1271,8 +1326,10 @@ def repair_list(
 ) -> tuple[list[RedoProposal], list[dict[str, Any]]]:
     """Her list as the redo path takes it, and what of it is not carried out, with why.
 
-    Only what she listed: a redo that would retire a take the Owner approved is skipped
-    (``OWNER_APPROVED``); a free fix (card, audio, encode) on a film whose line already had
+    Only what she listed: a redo that would retire a take the Owner approved as final is
+    skipped (``OWNER_APPROVED``; ``protected``, `protected_redos`: since 2026-10-11 an approval
+    he did not mark final is replaced by her confirmed repair, and he is told); a free fix
+    (card, audio, encode) on a film whose line already had
     one is skipped (``FREE_FIX_USED``: done once, never in a loop); a card redo of a filmed
     scene is skipped (``NOT_A_CARD``) and a still or motion redo of a card becomes its card.
     A new still brings new motion for its scene (the shot filmed from the old still is retired
@@ -1383,8 +1440,8 @@ def repair_list(
             skip(
                 entry,
                 "OWNER_APPROVED",
-                f"Scena {scene}: preluarea din film a fost aprobată de tine; nimeni nu o "
-                "retrage în locul tău, deci scena nu se reface",
+                f"Scena {scene}: preluarea din film a fost aprobată de tine ca finală; nimeni "
+                "nu o retrage în locul tău, deci scena nu se reface",
             )
             continue
         if redo == "motion" and ("still", scene) in seen and scene not in stills_run:
@@ -1408,8 +1465,8 @@ def repair_list(
                 skip(
                     {"redo": "motion", "scene_index": scene, "reason": ""},
                     "OWNER_APPROVED",
-                    f"Scena {scene}: cadrul din film a fost aprobat de tine; mișcarea nu se "
-                    "reface în locul tău",
+                    f"Scena {scene}: cadrul din film a fost aprobat de tine ca final; mișcarea "
+                    "nu se reface în locul tău",
                 )
                 continue
             run.append(paid("motion", scene, f"Scena {scene}: mișcarea filmată din imaginea nouă."))
