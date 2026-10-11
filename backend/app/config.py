@@ -123,11 +123,29 @@ class Settings(BaseSettings):
     prune_task_days: int = Field(default=30, ge=1, le=3650)
     prune_outbox_days: int = Field(default=7, ge=1, le=3650)
 
-    # Google's public "trending now" feed for this country code, read once a day and kept as
-    # a signal for the Researcher's proposals and the Director's weekly review. A trend is a
-    # hook, never a source. STUDIO_TRENDS_GEO=RO; STUDIO_TRENDS_ENABLED=false turns it off.
+    # Google's public "trending now" feed for these country codes (comma-separated), read
+    # once a day and kept as a signal for the Researcher's proposals and the Director's weekly
+    # review. A trend is a hook, never a source. The Owner, 2026-10-11: the channels speak
+    # English to the world, and a month of Romanian football and television trends had been
+    # read as hints for them; the countries are now the audience's (STUDIO_TRENDS_GEO=US,GB,CA,AU,
+    # or the ones a channel's subjects belong to). STUDIO_TRENDS_ENABLED=false turns it off.
     trends_enabled: bool = True
-    trends_geo: str = Field(default="RO", min_length=2, max_length=8, pattern="^[A-Za-z-]+$")
+    trends_geo: str = Field(
+        default="US,GB,CA,AU",
+        min_length=2,
+        max_length=64,
+        pattern=r"^\s*[A-Za-z-]+(\s*,\s*[A-Za-z-]+)*\s*$",
+    )
+
+    @property
+    def trends_geos(self) -> list[str]:
+        """The country codes of `trends_geo`, upper-cased, each once, in the order given."""
+        seen: list[str] = []
+        for part in self.trends_geo.split(","):
+            code = part.strip().upper()
+            if code and code not in seen:
+                seen.append(code)
+        return seen
 
     # The language the audience reads and hears: narration, titles, descriptions, tags. The
     # Owner's rule is English regardless of the language the office works in; a publication
@@ -400,9 +418,7 @@ class Settings(BaseSettings):
     #: attempts (STUDIO_DIRECTOR_TOKEN_MULTIPLIER). Owner, 2026-10-11: double her allowance
     #: after the cyclotron QC retry exhausted 6,000 tokens without a visible answer. Other
     #: employees and the independent daily token/USD gates keep their own limits.
-    director_token_multiplier: int = Field(
-        default=DEFAULT_DIRECTOR_TOKEN_MULTIPLIER, ge=1, le=4
-    )
+    director_token_multiplier: int = Field(default=DEFAULT_DIRECTOR_TOKEN_MULTIPLIER, ge=1, le=4)
 
     #: How much reading the day does: candidates the research stage gathers pages for, and
     #: pages read per candidate. Measured on the live copy: two candidates of three pages

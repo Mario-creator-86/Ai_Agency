@@ -169,6 +169,9 @@ def test_the_researcher_is_told_what_is_trending_and_what_measured(engine, setti
 
 
 def test_the_weekly_digest_lists_the_weeks_trends(engine, settings):
+    settings.trends_geo = (
+        "RO"  # the digest below asks for RO; the default is the audience's countries
+    )
     refresh_trends(engine, settings, fetcher=lambda geo: RSS)
     digest = weekly_digest(engine, geo="RO")
     assert [t["title"] for t in digest["trends"]] == ["eclipsa de luna", "simona halep"]
@@ -355,3 +358,57 @@ def test_research_all_skips_purposes_without_a_chosen_catalogue_service(engine, 
     assert model.prompts == []
     with pytest.raises(ModelResearchError):
         research_models(engine, registry, settings, "music")
+
+
+def test_several_countries_are_read_one_by_one_and_merged_for_the_prompt(engine, settings):
+    """The Owner, 2026-10-11: the channels speak English to the world and a month of Romanian
+    trends had been read for them; STUDIO_TRENDS_GEO names the audience's countries."""
+    from app.analytics.trends import geos_of, is_fresh
+
+    settings.trends_geo = " us, gb ,US"
+    assert settings.trends_geos == ["US", "GB"]
+    assert geos_of("US,GB") == ["US", "GB"] and geos_of(["gb", "GB"]) == ["GB"]
+    answers = {"US": RSS, "GB": RSS.replace(b"simona halep", b"a british trend")}
+
+    result = refresh_trends(engine, settings, fetcher=lambda geo: answers[geo])
+
+    assert result["status"] == "COMPLETED" and result["geo"] == " us, gb ,US"
+    assert result["count"] == 4 and result["seen"] == 4
+    assert [item["geo"] for item in result["by_geo"]] == ["US", "GB"]
+    assert is_fresh(engine, settings.trends_geo) and is_fresh(engine, ["US"])
+    assert not is_fresh(engine, "US,CA")
+    now = trending_now(engine, settings.trends_geo)
+    by_title = {item["title"]: item for item in now}
+    # A trend both countries search for is one line carrying both.
+    assert by_title["eclipsa de luna"]["geos"] == ["US", "GB"]
+    assert by_title["a british trend"]["geos"] == ["GB"]
+    assert by_title["simona halep"]["geos"] == ["US"]
+    text = trends_as_text(now, settings.trends_geo)
+    assert text.startswith("Tendințe acum (US, GB)")
+    assert "- eclipsa de luna [US, GB]" in text and "- a british trend [GB]" in text
+    # One country answers as it always did: no per-country list, no country tags.
+    settings.trends_geo = "US"
+    single = refresh_trends(engine, settings, fetcher=lambda geo: RSS)
+    assert single == {"status": "COMPLETED", "geo": "US", "count": 0, "seen": 2}
+    assert "[US]" not in trends_as_text(trending_now(engine, "US"), "US")
+    # A country whose feed does not answer is recorded; the others still count.
+    settings.trends_geo = "US,FR"
+
+    def partial(geo):
+        if geo == "FR":
+            raise TrendsUnavailable("no answer")
+        return RSS
+
+    mixed = refresh_trends(engine, settings, fetcher=partial)
+    assert mixed["status"] == "COMPLETED" and [i["status"] for i in mixed["by_geo"]] == [
+        "COMPLETED",
+        "FAILED",
+    ]
+    assert events_of(engine, "trends.unavailable")[-1].payload["geo"] == "FR"
+
+
+def test_the_shipped_default_reads_the_audiences_countries():
+    from app.config import Settings
+
+    config = Settings(_env_file=None, owner_token="test-owner-token-for-budget-check")
+    assert config.trends_geos == ["US", "GB", "CA", "AU"]
