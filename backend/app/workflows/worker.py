@@ -102,6 +102,11 @@ MODEL_REVIEW_JOB_NAME = "model_review_daily"
 DIRECTOR_LOOP = "DIRECTOR_LOOP"
 DIRECTOR_LOOP_JOB_NAME = "director_loop"
 
+#: One repair the Director chose in her loop (2026-10-11): queued by `app.agents.repairs.desk`
+#: after the Policy Kernel allowed it, applied and recorded by its executor. Behind the
+#: autonomy stop like every queued thing, and the kernel is asked again when it runs.
+DIRECTOR_REPAIR = "DIRECTOR_REPAIR"
+
 #: The watchdog: every ten minutes, work that is stuck — a task past its lease, a run that
 #: never finished, a provider job never collected — is found and named. The names match
 #: what `app.workflows.watchdog` exports; the module itself is imported only when a task
@@ -341,9 +346,17 @@ def build_task_handlers(
             "status": result["status"],
             "reason": result["reason"],
             "assignments": result.get("assignments", []),
+            "repairs": result.get("repairs", []),
             "escalated": result.get("escalated", []),
             "maturity": result.get("maturity"),
         }
+
+    def director_repair(task: dict[str, Any]) -> dict[str, Any]:
+        from app.agents.repairs.desk import execute_repair  # noqa: PLC0415
+
+        return execute_repair(
+            engine, registry, settings, task.get("payload") or {}, correlation_id=task["id"]
+        )
 
     def model_review(task: dict[str, Any]) -> dict[str, Any]:
         from app.integrations.lifecycle import review_models  # noqa: PLC0415
@@ -445,6 +458,7 @@ def build_task_handlers(
         MODEL_RESEARCH: model_research,
         MODEL_REVIEW: model_review,
         DIRECTOR_LOOP: director_loop,
+        DIRECTOR_REPAIR: director_repair,
         WATCHDOG: watchdog,
         BACKUP: backup,
     }

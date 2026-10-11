@@ -10,8 +10,9 @@ they say what the live read (`treasury_snapshot`, `budget_status`) said then, by
 
 * the spendable balance is the VR_CASH class of the postings made by then;
 * a period's spend is every provider cost recorded in it by then that no invoice had yet
-  replaced, and the price of every agent run in it that had finished by then; a hold counts
-  while it was held; the budget is the one that was active then;
+  replaced, and the price of every agent run in it that had finished by then, if the books
+  held it then (a run priced later carries `priced_after.at`); a hold counts while it was
+  held; the budget is the one that was active then;
 * the day's tokens are those of the runs that had finished by then (a run's tokens are known
   when it finishes).
 
@@ -146,6 +147,7 @@ def economy_as_of(engine: Engine, moments: Sequence[str]) -> dict[str, Any]:
                 AgentRun.cost_vr,
                 AgentRun.prompt_tokens,
                 AgentRun.completion_tokens,
+                AgentRun.context_json,
             ).where(AgentRun.started_at >= window, AgentRun.started_at <= last)
         ).all()
         holds = session.execute(
@@ -164,13 +166,27 @@ def economy_as_of(engine: Engine, moments: Sequence[str]) -> dict[str, Any]:
     postings = [(_moment(at), code, int(d or 0), int(c or 0)) for at, code, d, c in later]
     cost_rows = [(_moment(r), int(usd or 0), _moment(rec)) for r, usd, rec in costs]
     run_rows = []
-    for started, finished, status, cost_vr, prompt, completion in runs:
+    for started, finished, status, cost_vr, prompt, completion, context in runs:
         try:
             price = to_micros(cost_vr) if cost_vr is not None else None
         except EconomyError:
             price = None  # a malformed string is not money, as in the live budget
+        # A cost given after the run (the Director's re-pricing at the price active later,
+        # 2026-10-11, stamps when): the books did not know it before that moment, so the
+        # replay keeps the run unpriced until then.
+        late = context.get("priced_after") if isinstance(context, dict) else None
+        priced_at = _moment(str(late.get("at") or "")) if isinstance(late, dict) else None
         run_rows.append(
-            (_moment(started), _moment(finished), status, cost_vr, price, prompt, completion)
+            (
+                _moment(started),
+                _moment(finished),
+                status,
+                cost_vr,
+                price,
+                prompt,
+                completion,
+                priced_at,
+            )
         )
     hold_rows = [(_moment(r), _moment(rel), int(usd or 0)) for r, rel, usd in holds]
     budget_rows = [(b, _moment(b.created_at), _moment(b.replaced_at)) for b in budgets]
@@ -220,7 +236,12 @@ def economy_as_of(engine: Engine, moments: Sequence[str]) -> dict[str, Any]:
             for row in run_rows
             if _within(row[0], since, at) and row[1] is not None and row[1] <= at
         ]
-        agent_micros = sum(row[4] or 0 for row in done)
+
+        def known(row: tuple[Any, ...]) -> bool:
+            """Whether the run's price was in the books at `at`."""
+            return row[3] is not None and (row[7] is None or row[7] <= at)
+
+        agent_micros = sum(row[4] or 0 for row in done if known(row))
         succeeded = [row for row in done if row[2] == "SUCCEEDED"]
         reserved = sum(
             usd
@@ -239,7 +260,7 @@ def economy_as_of(engine: Engine, moments: Sequence[str]) -> dict[str, Any]:
             "agent_runs": len(succeeded),
             "prompt_tokens": sum(int(row[5] or 0) for row in succeeded),
             "completion_tokens": sum(int(row[6] or 0) for row in succeeded),
-            "unpriced_agent_runs": sum(1 for row in succeeded if row[3] is None),
+            "unpriced_agent_runs": sum(1 for row in succeeded if not known(row)),
         }
 
     def budget(at: datetime) -> dict[str, Any]:

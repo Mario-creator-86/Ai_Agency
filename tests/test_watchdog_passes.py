@@ -479,8 +479,12 @@ def test_pass_modules_import_media_and_providers_inside_their_functions():
 # import-time code of each module (review of 2026-10-09), under the same two checks: no paid
 # adapter method without the Owner's gate on the path, and none without the books. A callable
 # registered any other way is refused by `unreadable_registrations` below.
+#
+# The Director's repairs (`app.agents.repairs`, 2026-10-11) are reached the same way, through
+# their registry from the DIRECTOR_REPAIR task and her loop, so they are read here too: no
+# repair spends unguarded, and none acts in the Owner's name.
 
-REGISTRY_PACKAGES = ("app.workflows.passes", "app.decisions.producers")
+REGISTRY_PACKAGES = ("app.workflows.passes", "app.decisions.producers", "app.agents.repairs")
 
 
 def _registry_roots(routes) -> list[str]:
@@ -859,11 +863,15 @@ REGISTRARS = {
     "register_pass": (1, "run"),
     "register_applier": (1, "applier"),
     "register_condition": (1, "condition"),
+    "register_repair": (1, "apply"),
     "watchdog_pass": None,
 }
+#: The other callables a registrar is given by keyword, read the same way: a repair's
+#: precondition and its detector run like the repair itself.
+REGISTRAR_KEYWORDS = {"register_repair": ("precondition", "detector")}
 #: The tables behind the registrars: written by hand, an entry is one no scan has read.
 #: (`APPLIERS` is refused above, with what decides a card.)
-REGISTRY_TABLES = frozenset({"_PASSES", "CONDITIONS", "MISSING_RO", "_register"})
+REGISTRY_TABLES = frozenset({"_PASSES", "CONDITIONS", "MISSING_RO", "_register", "_REPAIRS"})
 
 
 def _argument(call: ast.Call, position: int | None, keyword: str) -> ast.expr | None:
@@ -933,6 +941,13 @@ def unreadable_registrations(tree: ast.Module) -> list[tuple[int, str]]:
             continue
         if not readable(_argument(sub, *where)):
             problems.append((sub.lineno, f"{callee} registers a callable the scans cannot read"))
+        for keyword in REGISTRAR_KEYWORDS.get(callee, ()):
+            given = _argument(sub, None, keyword)
+            absent = given is None or (isinstance(given, ast.Constant) and given.value is None)
+            if not absent and not readable(given):
+                problems.append(
+                    (sub.lineno, f"{callee} is given a {keyword} the scans cannot read")
+                )
         if callee == "register_condition" and not readable_words(
             _argument(sub, None, "missing_ro")
         ):
@@ -1059,10 +1074,11 @@ def _core_applier_named(
 
 
 def _registry_trees() -> dict[str, ast.Module]:
+    import app.agents.repairs as repairs_package
     import app.decisions.producers as producers_package
 
     trees: dict[str, ast.Module] = {}
-    for package in (passes_package, producers_package):
+    for package in (passes_package, producers_package, repairs_package):
         folder = Path(str(package.__file__)).parent
         for path in sorted(folder.rglob("*.py")):
             parts = path.relative_to(folder).with_suffix("").parts

@@ -31,7 +31,7 @@ from datetime import UTC, datetime
 from statistics import median
 from typing import Any
 
-from sqlalchemy import Engine, select
+from sqlalchemy import Engine, and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.analytics.models import AnalyticsSnapshot
@@ -122,27 +122,86 @@ def _latest_snapshots(session: Session, publication_id: str) -> dict[str, Analyt
     return {row.window: row for row in rows}
 
 
+def film_cost(session: Session, storyboard_id: str) -> dict[str, Any]:
+    """What the books hold for one film, split by how sure the figure is (2026-10-11).
+
+    The rows are the ones the film's ceiling counts (`media.shooting_sheet.film_spend_micros`):
+    every cost row attributed to the board (its stills, shots, redos, interrupted steps), and
+    the narration of its renders that names no board. A hold still standing is left out: this
+    is what was spent, not what may still be. ESTIMATED is the studio's own figure (a measured
+    balance drop, GPU seconds at the hourly rate, characters at the documented price), BILLED
+    the vendor's invoice. An estimate an invoice has since covered (``reconciled_at``) is
+    counted apart, as reconciled: the reconciliation's BILLED row names the invoice's period,
+    not a film, so the film keeps its estimate's figure and says an invoice stands behind it.
+    Until this day the film's cost read only the rows naming its render,
+    so a film whose RunPod shots were booked on the board (the Higgs film, 4.58 USD) read as
+    having no cost at all. ``rows`` 0 means the books hold nothing for it: unpriced, not free.
+    """
+    attributed = func.json_extract(ProviderCostRecord.attribution_json, "$.storyboard_id")
+    rendered = func.json_extract(ProviderCostRecord.attribution_json, "$.render_job_id")
+    jobs = list(
+        session.scalars(
+            select(VideoRenderJob.id).where(VideoRenderJob.storyboard_id == storyboard_id)
+        )
+    )
+    mine = (
+        or_(attributed == storyboard_id, and_(rendered.in_(jobs), attributed.is_(None)))
+        if jobs
+        else attributed == storyboard_id
+    )
+    out: dict[str, Any] = {
+        "storyboard_id": storyboard_id,
+        "estimated_usd_micros": 0,
+        "reconciled_usd_micros": 0,
+        "billed_usd_micros": 0,
+        "total_usd_micros": 0,
+        "rows": 0,
+        "reconciled_rows": 0,
+        "by_provider": {},
+    }
+    for row in session.scalars(select(ProviderCostRecord).where(mine)):
+        micros = int(row.usd_micros or 0)
+        side = (
+            "billed_usd_micros"
+            if row.status == "BILLED"
+            else "reconciled_usd_micros"
+            if row.reconciled_at
+            else "estimated_usd_micros"
+        )
+        out[side] += micros
+        out["total_usd_micros"] += micros
+        out["rows"] += 1
+        out["reconciled_rows"] += 1 if row.reconciled_at else 0
+        provider = out["by_provider"].setdefault(
+            str(row.provider),
+            {
+                "estimated_usd_micros": 0,
+                "reconciled_usd_micros": 0,
+                "billed_usd_micros": 0,
+                "rows": 0,
+            },
+        )
+        provider[side] += micros
+        provider["rows"] += 1
+    return out
+
+
 def _cost_and_time(session: Session, media_asset_id: str) -> tuple[float | None, float | None]:
     """What this film cost and how long its render took, from the books and the render job.
 
-    Cost is the sum of the provider records attributed to the render, in dollars. A film with
-    no priced usage returns None rather than zero: unpriced is not free, and the studio has
-    been bitten by exactly that reading before.
+    Cost is `film_cost` of the board the render belongs to, in dollars. A film with no priced
+    usage returns None rather than zero: unpriced is not free, and the studio has been bitten
+    by exactly that reading before.
     """
     job = session.scalar(
         select(VideoRenderJob).where(VideoRenderJob.output_asset_id == media_asset_id)
     )
     if job is None:
         return None, None
-    micros = 0
-    found = False
-    for row in session.scalars(select(ProviderCostRecord)):
-        attribution = row.attribution_json if isinstance(row.attribution_json, dict) else {}
-        if attribution.get("render_job_id") == job.id:
-            micros += int(row.usd_micros or 0)
-            found = True
+    cost = film_cost(session, job.storyboard_id)
     minutes = round(float(job.duration_ms) / 60000.0, 2) if job.duration_ms else None
-    return (round(micros / 1_000_000, 4) if found else None), minutes
+    usd = round(cost["total_usd_micros"] / 1_000_000, 4) if cost["rows"] else None
+    return usd, minutes
 
 
 def video_performance(engine: Engine, channel_id: str | None = None) -> list[dict[str, Any]]:

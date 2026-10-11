@@ -23,12 +23,20 @@ escalated rather than retried forever.
 production. When it is blocked, the blocker is the work. When there is genuinely nothing in
 flight, the work is the improvement the evidence points at — topic research, a source check, a
 prompt lesson, a benchmark — never activity invented to look busy.
+
+**What she can repair herself, she repairs** (2026-10-11, the Owner: «vreau ca directoarea să
+poată repara asta»). A matter the studio's own data can settle (runs left unpriced by a price
+typed after them, a model that fails now, a thread going round, a decision whose work is over,
+what a film cost) carries a repair from `app.agents.repairs`. Chosen, it is not a letter to a
+department: the Policy Kernel is asked with the repair's tier and a DIRECTOR_REPAIR task does
+it, records it and tells the Owner (`repairs.desk`). What only he can do stays a card for him.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
@@ -40,6 +48,15 @@ from app.agents.identity import parse_structured
 from app.agents.memory import agent_for_role, remember
 from app.agents.messages import post_message
 from app.agents.models import Agent, Role
+from app.agents.repairs import registered_repairs
+from app.agents.repairs.desk import (
+    ask_owner_about_repair,
+    fingerprint,
+    hold_repair,
+    repair_matters,
+    submit_repair,
+    undecided,
+)
 from app.analytics.models import DirectorDecision
 from app.analytics.performance import (
     anomalies,
@@ -142,6 +159,41 @@ MAX_ASSIGNMENTS = 3
 #: is the end of the retry loop the Owner asked for.
 MAX_ATTEMPTS_PER_MATTER = 3
 
+#: How many repairs one loop may queue, beside its assignments: as many as one choice holds
+#: (`Direction`), and a matter repaired this many times within a day goes to the Owner
+#: instead. A repair asks no model and writes no letter to an employee, so the bound is
+#: the loop's, not anyone's attention.
+MAX_REPAIRS = 6
+REPAIR_ATTEMPTS_HOURS = 24
+#: The repairs that follow her choice when she left them out (the Owner, 2026-10-11: free and
+#: T1-T2 repairs within her mode run unasked). The kernel still decides each one.
+UNASKED_TIERS = ("T0", "T1", "T2")
+
+#: Work a department was asked for that the studio computes itself, so nobody is written to
+#: for it (2026-10-11): what a film cost against what it returned is one join over stored rows
+#: (`repairs.film_cost`). Nadia was sent it three times on 2026-10-11 and could not answer.
+#: Her model writes the action in its own words («Report what a film cost against what it
+#: returned for the 3 measured films to …»), so an action is matched by how it begins, once
+#: case and spacing are set aside (`_computed_by`), never by equality.
+ACTION_REPAIRS: dict[str, str] = {
+    "report what a film cost against what it returned": "film_cost_report",
+}
+#: The matters whose work is such a computation whatever words carry it: known by the matter.
+MATTER_REPAIRS: dict[str, str] = {"idle_costs_unread": "film_cost_report"}
+
+#: Her choice that a matter waits: the repair it offers is not made this time
+#: (`repairs.desk.hold_repair`). NEEDS_MORE_DATA waits too where the measurements suggested
+#: acting; where they suggested it themselves (a diagnosis, a report) the repair is how the
+#: data is gathered. STOP on a repair is «do not», not a direction for the Owner: a repair
+#: is bounded by its own tier, which the kernel judges, so SCALE changes nothing either.
+WAIT_DECISIONS = ("HOLD", "COOLDOWN", "REDUCE", "STOP")
+
+
+def repair_desk() -> dict[str, str]:
+    """What the Director can repair herself: each registered repair and what it does. Her
+    own desk, beside the departments' `ASSIGNABLE`; she does not hand herself a letter."""
+    return {name: repair.summary for name, repair in registered_repairs().items()}
+
 
 class CommandError(ValueError):
     """The loop could not run; nothing was decided and nothing was assigned."""
@@ -160,6 +212,8 @@ class Choice(BaseModel):
     action: str = Field(default="", max_length=1200)
     owner_role: str = Field(default="", max_length=50)
     review_after_videos: int | None = Field(default=None, ge=1, le=100)
+    #: The repair she makes herself for this matter (`repair_desk`), when the matter offers one.
+    repair_action: str = Field(default="", max_length=60)
 
 
 class Direction(BaseModel):
@@ -179,12 +233,16 @@ _INSTRUCTIONS = (
     "samples, the honest decision is NEEDS_MORE_DATA: one bad video does not condemn a "
     "category and one good video does not prove a format. Prefer finishing work in flight "
     "over starting new work.\n\n"
+    "A matter that names a repair is one you put right yourself, from the studio's own data, "
+    'without writing to anyone: choose it with owner_role "Director" and repair_action set to '
+    "that repair (director_repairs says what each does). Up to {repairs} repairs do not count "
+    "against the limit above.\n\n"
     "Decisions: SCALE, CONTINUE, ITERATE, EXPERIMENT, HOLD, COOLDOWN, REDUCE, STOP, "
     "NEEDS_MORE_DATA. Return only JSON: "
     '{{"choices": [{{"matter_key": "...", "decision": "ITERATE", "interpretation": "what '
     'you think is happening and why", "confidence": "LOW|MEDIUM|HIGH", "action": "the '
     'specific thing to do, naming what to change", "owner_role": "RoleName", '
-    '"review_after_videos": 5}}], "note": "one line for the Owner"}}.\n'
+    '"review_after_videos": 5, "repair_action": ""}}], "note": "one line for the Owner"}}.\n'
 )
 
 
@@ -495,21 +553,23 @@ def findings(engine: Engine, settings: Settings, state: dict[str, Any]) -> list[
         confidence: str = "MEDIUM",
         channel_id: str | None = None,
         review_after_videos: int | None = 3,
+        repair: dict[str, Any] | None = None,
     ) -> None:
-        matters.append(
-            {
-                "matter_key": key,
-                "scope": scope,
-                "observation": observation,
-                "evidence": evidence,
-                "suggested_decision": suggestion,
-                "action": action,
-                "owner_role": role,
-                "confidence": confidence,
-                "channel_id": channel_id,
-                "review_after_videos": review_after_videos,
-            }
-        )
+        matter: dict[str, Any] = {
+            "matter_key": key,
+            "scope": scope,
+            "observation": observation,
+            "evidence": evidence,
+            "suggested_decision": suggestion,
+            "action": action,
+            "owner_role": role,
+            "confidence": confidence,
+            "channel_id": channel_id,
+            "review_after_videos": review_after_videos,
+        }
+        if repair is not None:
+            matter["repair"] = repair
+        matters.append(matter)
 
     # 1. Blockers first: a studio that cannot finish what it started has no use for new work.
     pipe = state["pipeline"]
@@ -684,7 +744,9 @@ def findings(engine: Engine, settings: Settings, state: dict[str, Any]) -> list[
                 )
                 break
 
-    # 6. Decisions whose review has come due.
+    # 6. Decisions whose review has come due. The review is what the films cost against what
+    # they returned: computed by the Director's desk, which closes the decision it reviews,
+    # not a letter to the Accountant, who cannot see a film's cost (2026-10-11).
     for due in due_reviews(engine):
         add(
             f"review_{due['matter_key']}",
@@ -694,10 +756,21 @@ def findings(engine: Engine, settings: Settings, state: dict[str, Any]) -> list[
             due,
             "NEEDS_MORE_DATA" if due["published_since"] == 0 else "CONTINUE",
             "report what a film cost against what it returned",
-            "Accountant",
+            DIRECTOR_ROLE,
             confidence="MEDIUM",
             review_after_videos=None,
+            repair={
+                "name": ACTION_REPAIRS["report what a film cost against what it returned"],
+                "params": {"decision_id": due["decision_id"]},
+                "fingerprint": fingerprint("review", due["decision_id"]),
+            },
         )
+
+    # A review her desk already made (or that failed today) is not offered again at every
+    # loop: the same rule as the detectors' cases (`repairs.desk.undecided`).
+    matters = undecided(engine, matters)
+    # 7. What she can repair herself: the registered repairs' own detectors.
+    matters.extend(repair_matters(engine, settings))
     return matters
 
 
@@ -708,6 +781,12 @@ MATTER_WORDS = {
     "renders_failed": "randări eșuate",
     "dead_letters": "sarcini moarte în coadă",
     "scripts_blocked": "scenarii blocate",
+    # What the Director's repairs see (`app.agents.repairs`).
+    "unpriced_usage": "rulări fără cost",
+    "thread_loops": "fire de scrisori care se învârt",
+    "stale_decisions": "decizii cu munca încheiată",
+    "unbilled_estimates": "estimări fără factură",
+    "film_cost_missing": "filme fără cost",
 }
 
 
@@ -730,6 +809,8 @@ def matter_words(key: str) -> str:
         return "o anomalie"
     if text.startswith("idle_"):
         return "un departament fără lucru"
+    if text.startswith("agent_failing_"):
+        return "un angajat ale cărui rulări eșuează"
     return text.replace("_", " ")
 
 
@@ -756,6 +837,10 @@ def due_reviews(engine: Engine) -> list[dict[str, Any]]:
         for row in session.scalars(
             select(DirectorDecision).where(DirectorDecision.state == "OPEN")
         ):
+            if isinstance(row.evidence_json, dict) and "repair" in row.evidence_json:
+                # One of her repairs: its task closes it, and a task that died is closed by
+                # `close_stale_decisions`. A film-cost review of a re-pricing would say nothing.
+                continue
             since = published - int(row.published_at_decision or 0)
             by_videos = row.review_after_videos is not None and since >= int(
                 row.review_after_videos
@@ -807,6 +892,7 @@ def direct_company(
             "status": "COMPLETED",
             "reason": "Nimic nu cere o decizie: producția merge, nu sunt blocaje, nimic anormal.",
             "assignments": [],
+            "repairs": [],
             "state": state,
         }
 
@@ -827,6 +913,17 @@ def direct_company(
                 )
             ).all()
         }
+        # A repair is counted within a day: a case it settled does not come back, so a matter
+        # repaired three times since yesterday is one the repair does not settle.
+        since = (datetime.now(UTC) - timedelta(hours=REPAIR_ATTEMPTS_HOURS)).isoformat()
+        repaired_lately = {
+            key: count
+            for key, count in session.execute(
+                select(DirectorDecision.matter_key, func.count())
+                .where(DirectorDecision.created_at >= since)
+                .group_by(DirectorDecision.matter_key)
+            ).all()
+        }
     # A matter under an open decision is being worked on; raising it again is the endless
     # conversation the Owner asked to be prevented.
     fresh = [m for m in matters if m["matter_key"] not in open_keys]
@@ -840,16 +937,96 @@ def direct_company(
                 "o decizie deschisă."
             ),
             "assignments": [],
+            "repairs": [],
             "state": state,
         }
 
     chosen, run_id, note = _choose(engine, registry, director_id, state, fresh, correlation)
+    # A repair up to T2 (a report, a price already set applied, a loop closed, a model that
+    # fails now replaced) has its own checks and nothing to weigh against growth: the ones her
+    # choice left out follow it, in the measurements' order, and her mode decides through the
+    # kernel whether each may run unasked (`submit_repair`). Nothing above T2 is done unchosen.
+    named = {choice.matter_key for choice in chosen}
+    tiers = {name: repair.tier for name, repair in registered_repairs().items()}
+    chosen = chosen + [
+        _suggested(m)
+        for m in fresh
+        if m["matter_key"] not in named
+        and tiers.get((m.get("repair") or {}).get("name", "")) in UNASKED_TIERS
+    ]
     assignments: list[dict[str, Any]] = []
+    repairs: list[dict[str, Any]] = []
     escalated: list[str] = []
-    for choice in chosen[:MAX_ASSIGNMENTS]:
-        matter = next((m for m in fresh if m["matter_key"] == choice.matter_key), None)
-        if matter is None:
+    picks = [
+        (choice, next((m for m in fresh if m["matter_key"] == choice.matter_key), None))
+        for choice in chosen
+    ]
+    # Her own repairs first, and apart: they are not letters to a department, and they have
+    # their own bound (`MAX_REPAIRS`).
+    to_repair = [
+        (choice, matter, spec)
+        for choice, matter in picks
+        if matter is not None and (spec := _repair_spec(matter, choice)) is not None
+    ]
+    for choice, matter, spec in to_repair[:MAX_REPAIRS]:
+        decided = {
+            "matter": matter,
+            "spec": spec,
+            "decision": choice.decision,
+            "interpretation": choice.interpretation or matter["observation"],
+            "confidence": choice.confidence,
+            "correlation_id": correlation,
+            "run_id": run_id,
+            "published": state["pipeline"]["stages"]["published"],
+        }
+        if choice.decision in WAIT_DECISIONS or (
+            choice.decision == "NEEDS_MORE_DATA" and matter["suggested_decision"] != choice.decision
+        ):
+            hold_repair(engine, **decided)
             continue
+        repeated = int(repaired_lately.get(matter["matter_key"], 0))
+        if repeated >= MAX_ATTEMPTS_PER_MATTER:
+            # Made this many times in a day and back again: the repair does not hold, so it is
+            # his to look at. One card, not a letter at every loop.
+            escalated.append(matter["matter_key"])
+            ask_owner_about_repair(
+                engine,
+                matter=matter,
+                spec=spec,
+                cause="REPEATED",
+                about_ro=matter_words(matter["matter_key"]),
+                why_ro=(
+                    f"{matter['observation']} Directoarea s-a ocupat de ea de {repeated} ori "
+                    f"în ultimele {REPAIR_ATTEMPTS_HOURS} de ore și a revenit de fiecare dată, "
+                    "așa că nu o mai repară singură."
+                ),
+            )
+            continue
+        record = submit_repair(engine, **decided)
+        if record["status"] == "REFUSED":
+            # The kernel would not let her (safe mode, or his mode does not reach the repair's
+            # tier): the matter is his, as one card per cause, asked again only when his mode
+            # changes or a week after he answered it.
+            escalated.append(matter["matter_key"])
+            ask_owner_about_repair(
+                engine,
+                matter=matter,
+                spec=spec,
+                cause=f"{record.get('verdict')}:{record.get('mode')}",
+                about_ro=matter_words(matter["matter_key"]),
+                why_ro=(
+                    f"{matter['observation']} Directoarea ar fi reparat-o singură, dar "
+                    f"politica studioului nu o lasă: {record.get('reason') or ''}"
+                ).strip(),
+            )
+        elif record["status"] == "QUEUED":
+            repairs.append(record)
+    repaired = {id(choice) for choice, _matter, _spec in to_repair}
+    others = [(choice, matter) for choice, matter in picks if id(choice) not in repaired]
+    for choice, found in others[:MAX_ASSIGNMENTS]:
+        if found is None:
+            continue
+        matter = found
         role = choice.owner_role or matter["owner_role"] or ""
         action = (choice.action or matter["action"] or "").strip()
         # Three refusals to a matter is not a fourth attempt; it is the Owner's decision.
@@ -876,15 +1053,31 @@ def direct_company(
         "status": "COMPLETED",
         "reason": (
             f"{count(len(assignments), 'repartizare', 'repartizări')}, "
-            f"{len(escalated)} {'escaladată' if len(escalated) == 1 else 'escaladate'} la "
+            + (f"{count(len(repairs), 'reparație', 'reparații')}, " if repairs else "")
+            + f"{len(escalated)} {'escaladată' if len(escalated) == 1 else 'escaladate'} la "
             f"Proprietar, din {count(len(fresh), 'chestiune', 'chestiuni')}."
         ),
         "assignments": assignments,
+        "repairs": repairs,
         "escalated": escalated,
         "note": note,
         "maturity": state["maturity"],
         "state": state,
     }
+
+
+def _suggested(matter: dict[str, Any]) -> Choice:
+    """The measurements' own suggestion for a matter, as a choice."""
+    return Choice(
+        matter_key=matter["matter_key"],
+        decision=matter["suggested_decision"],
+        interpretation=matter["observation"],
+        confidence=matter["confidence"],
+        action=matter["action"] or "",
+        owner_role=matter["owner_role"] or "",
+        review_after_videos=matter["review_after_videos"],
+        repair_action=(matter.get("repair") or {}).get("name", ""),
+    )
 
 
 def _choose(
@@ -901,19 +1094,7 @@ def _choose(
     produced them — blockers, then the bottleneck, then growth. That is a worse executive than
     a model and a far better one than nothing.
     """
-    fallback = [
-        Choice(
-            matter_key=m["matter_key"],
-            decision=m["suggested_decision"],
-            interpretation=m["observation"],
-            confidence=m["confidence"],
-            action=m["action"] or "",
-            owner_role=m["owner_role"] or "",
-            review_after_videos=m["review_after_videos"],
-        )
-        for m in matters
-        if m["action"] and m["owner_role"]
-    ]
+    fallback = [_suggested(m) for m in matters if m["action"] and m["owner_role"]]
     if director_id is None or registry is None:
         return fallback, None, "fără model: am urmat ordinea măsurătorilor"
 
@@ -954,17 +1135,19 @@ def _choose(
                     "can_be_done_by": m["owner_role"],
                     "suggested_action": m["action"],
                     "suggested_decision": m["suggested_decision"],
+                    "repair": (m.get("repair") or {}).get("name"),
                 }
                 for m in matters
             ],
             "departments": {role: list(work) for role, work in ASSIGNABLE.items()},
+            "director_repairs": repair_desk(),
         },
         ensure_ascii=False,
         default=str,
     )[:14000]
-    prompt = _INSTRUCTIONS.format(limit=MAX_ASSIGNMENTS) + wrap_in_inert_boundary(
-        payload, "company-state"
-    )
+    prompt = _INSTRUCTIONS.format(
+        limit=MAX_ASSIGNMENTS, repairs=MAX_REPAIRS
+    ) + wrap_in_inert_boundary(payload, "company-state")
     try:
         # This is a strategic decision, and it is declared as one. What happens next is the
         # Director's own configuration: with a second model in her slot and a REVIEW strategy,
@@ -1002,7 +1185,13 @@ def _choose(
     if not isinstance(direction, Direction) or not direction.choices:
         return fallback, result["id"], "răspunsul nu respecta schema: am urmat măsurătorile"
     allowed = {m["matter_key"] for m in matters}
-    kept = [c for c in direction.choices if c.matter_key in allowed]
+    # One choice per matter, the first: a matter named twice is one decision, not two
+    # (two repairs of one case left the second decision OPEN with no task to close it).
+    kept: list[Choice] = []
+    for choice in direction.choices:
+        if choice.matter_key in allowed:
+            kept.append(choice)
+            allowed.discard(choice.matter_key)
     note = direction.note
     collaboration = result.get("collaboration") or {}
     if collaboration.get("strategy") != "SINGLE":
@@ -1017,6 +1206,38 @@ def _choose(
         kept = [c.model_copy(update={"confidence": "LOW"}) for c in kept]
         note = (note + " Verificarea strategică nu s-a putut face; încredere redusă.").strip()
     return (kept or fallback), result["id"], note
+
+
+def _computed_by(action: str) -> str | None:
+    """The repair that computes an action's work (`ACTION_REPAIRS`), read by how the action
+    begins once case and spacing are set aside; None for a department's work."""
+    words = " ".join(str(action or "").casefold().split())
+    return next((name for start, name in ACTION_REPAIRS.items() if words.startswith(start)), None)
+
+
+def _repair_spec(matter: dict[str, Any], choice: Choice) -> dict[str, Any] | None:
+    """The repair a chosen matter is carried out by, or None for a department's work.
+
+    A matter that offers a repair is done by it: she chose the matter, and the repair is how
+    it is done (handing Nadia the unpriced runs again is the loop of 2026-10-09..11). A matter
+    without one is still hers when its work is one the studio computes itself
+    (`MATTER_REPAIRS`, `ACTION_REPAIRS`), whoever the choice named for it.
+    """
+    offered = matter.get("repair")
+    if isinstance(offered, dict) and offered.get("name"):
+        return dict(offered)
+    name = MATTER_REPAIRS.get(str(matter.get("matter_key") or ""))
+    if name is None:
+        name = _computed_by(choice.action or str(matter.get("action") or ""))
+    if name is None and choice.repair_action in ACTION_REPAIRS.values():
+        name = choice.repair_action
+    if name is None or name not in registered_repairs():
+        return None
+    return {
+        "name": name,
+        "params": {},
+        "fingerprint": fingerprint(name, matter["matter_key"], datetime.now(UTC).date()),
+    }
 
 
 def _assign(
@@ -1137,7 +1358,8 @@ def _escalate(
     run_id: str | None,
     too_many: bool,
 ) -> None:
-    """State the case and wait: this one is the Owner's to decide."""
+    """State the case and wait: this one is the Owner's to decide. (A repair she may not make
+    is one card for him instead, `repairs.desk.ask_owner_about_repair`.)"""
     with Session(engine) as session, session.begin():
         post_message(
             session,

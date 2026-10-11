@@ -554,13 +554,19 @@ def assign_agent(
 
     A model named in a slot is configuration. Nothing in the studio's logic reads its name,
     so the Owner can replace any of the three from here tomorrow without a code change.
+
+    ``assignment_origin`` says whose choice it is: the Owner's (his Settings), the starting
+    allocation file, or the Director's repair of an employee whose model stopped working
+    (DIRECTOR_REPAIR, 2026-10-11: `app.agents.repairs.agent_health`, behind `may_act`'s
+    ``agent.change_model``). The event keeps the slots it replaced, so a repair can be undone.
     """
     from app.agents.ensemble import IMPORTANCE, POLICIES, STRATEGIES
+    from app.agents.services import DIRECTOR_REPAIR_ORIGIN
 
     strategy = (multi_llm_strategy or "SINGLE").upper()
     policy = (additional_llm_policy or "IMPORTANT_ONLY").upper()
     importance = (min_importance or "STRATEGIC").upper()
-    if assignment_origin not in {"OWNER", "SEED_ALLOCATION"}:
+    if assignment_origin not in {"OWNER", "SEED_ALLOCATION", DIRECTOR_REPAIR_ORIGIN}:
         raise ValueError("Origine necunoscută pentru alocarea modelului")
     if strategy not in STRATEGIES:
         raise ValueError(f"Strategie necunoscută: {strategy}")
@@ -580,6 +586,13 @@ def assign_agent(
             raise ValueError("Agentul lucrează sau versiunea s-a schimbat; reîncarcă")
         if agent.lifecycle == "TERMINATED":
             raise ValueError("Agentul nu mai este activ în companie")
+        previous = {
+            "model_id": agent.model_id,
+            "provider_id": agent.provider_id,
+            "secondary_model_id": agent.secondary_model_id,
+            "tertiary_model_id": agent.tertiary_model_id,
+            "multi_llm_strategy": agent.multi_llm_strategy,
+        }
         agent.provider_id, agent.model_id = model.provider_id, model.id
         from app.agents.services import PolicyKernelError, _check_required_capabilities
 
@@ -630,6 +643,7 @@ def assign_agent(
                 "multi_llm_strategy": strategy,
                 "additional_llm_policy": policy,
                 "assignment_origin": assignment_origin,
+                "previous": previous,
             },
             str(uuid4()),
         )
