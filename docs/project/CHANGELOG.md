@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-11 — The register speaks for people and the office says it in bubbles
+
+- 1cf04da — backend/app/events_feed.py (new) + services.read_events: words_ro / actor / film_title / bubble_ro on every event of the page; frontend ledger.js (describeEvent, withoutName, setPortraits), main.js (sayInOffice, registerPortrait), pixel_office.js (bubbles for every employee), style.css (.ledger-portrait).
+
 ## 2026-10-11 — A serial still is one moment in a fixed frame
 
 - 48bbcd1 — prompt_agent.compose_serial_prompt: fixed framing per shot size, SERIAL_FRAME_SENTENCE, first moment only (_still_moment), whole-clause identities (_identity, _clean_cut); the camera path and the chain of moments stay in the motion prompt.

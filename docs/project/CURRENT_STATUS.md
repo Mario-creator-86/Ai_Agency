@@ -18,6 +18,10 @@ the durable worker and its normal film lease; do not replace QC results or manuf
 No new interface or unrelated feature. Live model/media actions can occur only through the
 existing authorized production workflow and are reported separately from offline tests.
 
+## The register speaks for people, the office says it in bubbles; motion v2 and the editorial judgement in progress (2026-10-11)
+
+- The Owner's card («Preiau eu și UI-ul»): the pixel session's living-studio work was committed as a takeover (2be35a6) and the register now speaks for people (1cf04da): backend/app/events_feed.py gives every event of the record's page its sentence (film by title, take by kind, who did what), its employee (name, role, portrait) and a short word for the office; the page shows the sentence with the employee's portrait and the office says the word in a bubble over the employee (every employee, 7 s, fresh events only). Tested on fakes: 5 backend tests, 935 frontend unit tests, vite build. Needs the Owner's restart (start.py rebuilds the page). In progress in parallel, by two subagents with tests on fakes: «Mișcare v2» (cinematic camera moves and real subject motion in every motion prompt; the clip QC enforces only a minimum motion floor, so nothing there holds it back) and the Director's editorial judgement (five criteria, up to ten rounds, best version ships).
+
 ## A serial still is one moment in a fixed frame: the stacked panels' cause and its prevention (2026-10-11)
 
 - Live, 22:29–23:05 (the serial's first stills step ever, board f06808c9, Qwen-Image-2512 at 9:16, 24 images, 168 credits): scenes 1, 2, 5, 6, 7, 8 got one still approved by the gate; scenes 3 and 4 came back as the same picture three times, stacked, on both candidates and on two re-rolls each (8 images for nothing). The gate's one_picture check and the re-rolls worked as built (the Owner's rule: detect and correct) — but the Owner: «trebuie să ne asigurăm că de la început nu există loc de astfel de erori».
