@@ -69,6 +69,22 @@ export const publicationStatus = lookup({
   PUBLISHED_SIMULATED: 'simulat, nepublicat', VALIDATED: 'validat, neîncărcat',
 });
 
+/** A video's visibility on YouTube (the film, masculine). */
+export const privacyWord = lookup({ PRIVATE: 'privat', PUBLIC: 'public', UNLISTED: 'nelistat' });
+
+/**
+ * A film's newest upload on its card in the media list (2026-10-11, the Owner, on a film shown
+ * only as «randat · QC: a trecut» the evening it went up: «Este publicat! Ar trebui să apară
+ * asta!»): its state, and the visibility YouTube reports, «publicat · privat».
+ * @param {{status?: unknown, privacy?: unknown}|null|undefined} publication
+ * @returns {string} '' for a film never uploaded
+ */
+export function publicationBadge(publication) {
+  if (!publication || !publication.status) return '';
+  const visible = publication.privacy ? ` · ${privacyWord(publication.privacy)}` : '';
+  return `${publicationStatus(publication.status)}${visible}`;
+}
+
 /** An employee's standing in the company (statut). */
 export const lifecycleWord = lookup({ ACTIVE: 'activ', PAUSED: 'în pauză', SUSPENDED: 'suspendat', TERMINATED: 'concediat' });
 

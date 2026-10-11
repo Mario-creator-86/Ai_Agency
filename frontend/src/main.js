@@ -42,7 +42,7 @@ import { friendlyAnswer } from './friendly_text.js';
 import {
   accountTypeWord, budgetStateWord, channelTypeWord, confidenceWord, consistencyWord, constraintWord, decisionStateWord,
   accountLine, decisionWord, frameSize, isoDay, providerName, letterStateWord, lifecycleWord, lifecycleActs, matterWords, moneyTagWord, ownerName, pipelineStageWord,
-  preflightWord, publicationStatus, qcWord, runStatusWord, seconds, shotWords, storyboardStatus, storyboardTone, topicStatus, workWord,
+  preflightWord, publicationBadge, publicationStatus, qcWord, runStatusWord, seconds, shotWords, storyboardStatus, storyboardTone, topicStatus, workWord,
   deskPlace, sharedTail, hostFailureWords, promptFirstSentence, voiceWords,
 } from './dialog_words.js';
 import {
@@ -3513,6 +3513,13 @@ function storyboardSummaryHtml(sb) {
   const qc = sb.qc_status
     ? `<span class="${sb.qc_status === 'PASSED' ? 'qc-badge-pass' : 'qc-badge-fail'}">QC: ${escapeHtml(qcWord(sb.qc_status))}</span>`
     : (sb.asset_id ? '<span class="tag">QC: Neefectuat</span>' : '');
+  // Its newest upload, linked to the video: the list read only the render and its verdict.
+  const upload = publicationBadge(sb.publication);
+  const published = upload
+    ? (sb.publication.url
+      ? `<a class="qc-badge-pass" href="${escapeHtml(sb.publication.url)}" target="_blank" rel="noopener" title="${escapeHtml(sb.publication.channel || '')}">${escapeHtml(upload)}</a>`
+      : `<span class="qc-badge-pass" title="${escapeHtml(sb.publication.channel || '')}">${escapeHtml(upload)}</span>`)
+    : '';
   return `
         <div class="storyboard-card" data-id="${escapeHtml(sb.id)}" data-door-steps>
           <div class="storyboard-header">
@@ -3523,6 +3530,7 @@ function storyboardSummaryHtml(sb) {
                 <span>${escapeHtml(countWords(sb.scene_count, 'scenă', 'scene'))}</span>
                 <span>Stare: <strong class="${storyboardTone(sb.status)}" data-status="${escapeHtml(sb.status)}" title="${escapeHtml(sb.status)}">${escapeHtml(storyboardStatus(sb.status))}</strong></span>
                 ${qc}
+                ${published}
               </div>
             </div>
             <div class="storyboard-actions">

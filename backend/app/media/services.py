@@ -1581,6 +1581,39 @@ STORYBOARD_PAGE = 20
 STORYBOARD_PAGE_MAX = 100
 
 
+def _newest_publications(session: Session, rendered: dict[str, str]) -> dict[str, dict[str, Any]]:
+    """Per storyboard, the newest publication of any of its finished films: its status, the
+    visibility YouTube reports (else the one asked for), its link and its channel.
+
+    2026-10-11, the Owner, on «The Particle That Shouldn't Exist (But Does)» uploaded the
+    evening before and shown only as «randat · QC: a trecut»: «Este publicat! Ar trebui să
+    apară asta!». The list read the render and its verdict and never the upload."""
+    from app.publishing.models import ChannelRecord, PublicationRecord  # noqa: PLC0415
+
+    if not rendered:
+        return {}
+    names = {
+        channel_id: name
+        for channel_id, name in session.execute(
+            select(ChannelRecord.id, ChannelRecord.channel_name)
+        ).all()
+    }
+    newest: dict[str, dict[str, Any]] = {}
+    for row in session.scalars(
+        select(PublicationRecord)
+        .where(PublicationRecord.media_asset_id.in_(list(rendered)))
+        .order_by(PublicationRecord.created_at)
+    ):
+        newest[rendered[row.media_asset_id]] = {
+            "status": row.status,
+            "privacy": row.remote_privacy_status or row.privacy_status,
+            "url": row.remote_url,
+            "channel": names.get(row.channel_id),
+            "published_at": row.published_at,
+        }
+    return newest
+
+
 def list_storyboards(
     engine: Engine,
     *,
@@ -1617,6 +1650,7 @@ def list_storyboards(
             ).all()
         }
         films: dict[str, str] = {}
+        rendered: dict[str, str] = {}  # every finished film's asset, to the board it is of
         for board_id, asset_id in session.execute(
             select(VideoRenderJob.storyboard_id, VideoRenderJob.output_asset_id)
             .where(
@@ -1626,6 +1660,8 @@ def list_storyboards(
             .order_by(VideoRenderJob.finished_at, VideoRenderJob.started_at)
         ).all():
             films[board_id] = asset_id  # the newest completed render wins
+            rendered[asset_id] = board_id
+        published = _newest_publications(session, rendered)
         verdicts: dict[str, str] = {}
         if films:
             for asset_id, verdict in session.execute(
@@ -1645,6 +1681,7 @@ def list_storyboards(
             view["scene_count"] = int(scene_counts.get(board.id, 0))
             view["asset_id"] = asset_id
             view["qc_status"] = verdict
+            view["publication"] = published.get(board.id)
             rows.append(view)
     page = rows[offset : offset + limit]
     following = offset + limit
