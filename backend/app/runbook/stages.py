@@ -2544,9 +2544,11 @@ def _assemble_from_takes(
     correlation: str,
     *,
     sheet_hash: str | None = None,
+    registry: ProviderRegistry | None = None,
 ) -> dict[str, Any]:
     """Assemble a film whose sheet has nothing left to buy: from its takes, buying no still
     and no shot. Only the narration is paid, so only the narration is asked and held.
+    ``registry`` reaches the mix: the Voice Artist plans the sound through it.
 
     The question is the sheet's own (`shooting_sheet.narration_gate`'s action, subject and
     context): bound to ``sheet_hash`` and the assemble step, so the Owner's one yes for that
@@ -2615,6 +2617,7 @@ def _assemble_from_takes(
             environment=environment,
             production_plan=planned.get("plan"),
             settings=settings,
+            registry=registry,
         )
     except TakesMissing as exc:
         _release(engine, reservation_id, f"preluări lipsă: {exc}"[:120], correlation)
@@ -2825,6 +2828,7 @@ def _media_staircase(
                         plan_cost,
                         correlation,
                         sheet_hash=str(sheet.get("sheet_hash") or "") or None,
+                        registry=registry,
                     )
             except FilmBusy as exc:
                 if exc.status == FILM_CLOSED:
@@ -3329,6 +3333,8 @@ def _media_films(
                 str(uuid4()),
                 storage_root=getattr(settings, "media_root", None),
                 ffmpeg_path=settings.ffmpeg_path,
+                # The day's registry reaches the mix: the Voice Artist plans the sound.
+                registry=registry,
                 # The plan resolves the hierarchy's image choice (Runway included); the
                 # Organization-level adapter is the fallback for a plan that names none.
                 image_adapter=planned.get("image") or images,
@@ -4674,6 +4680,11 @@ def _apply_repairs(
                 storage_root=getattr(settings, "media_root", None),
                 settings=settings,
                 environment=environment,
+                # The sound redo re-plans a refused mix with the Voice Artist, told who asked
+                # and why (her reason for the redo), through the day's registry.
+                registry=registry,
+                note=f"{note} {words}".strip(),
+                requester="director",
             )
         except SceneRedoRefused as exc:
             result["refused"].append({"what": words, "reason": exc.reason_ro[:300]})
@@ -4684,7 +4695,9 @@ def _apply_repairs(
     wanted = {proposal.redo for proposal in proposals if proposal.free}
     if free and not free_already:
         if "encode" in wanted:
-            _reencode_from_takes(engine, settings, vault, storyboard_id, result, correlation)
+            _reencode_from_takes(
+                engine, settings, vault, storyboard_id, result, correlation, registry=registry
+            )
         for proposal in proposals:
             if proposal.free and proposal.redo == "card":
                 free_redo("card", proposal.scene_index, proposal.reason)
@@ -4878,6 +4891,7 @@ def _apply_repairs(
                 correlation,
                 redo=director_qc.REJOIN,
                 words=" ".join(proposal.reason for proposal in ready),
+                registry=registry,
             )
             if not result["new_asset"]:
                 # The approved take is in no film yet: her decision waits for the film to be
@@ -4948,12 +4962,14 @@ def _reencode_from_takes(
     *,
     redo: str = "encode",
     words: str | None = None,
+    registry: ProviderRegistry | None = None,
 ) -> None:
     """The film encoded again from the same takes: no still and no shot is bought, and the
     narration already voiced is reused (BOOK_EVERY_PURCHASE); any narration left to buy goes
     through the same question and hold as the day's assembly. ``redo`` and ``words`` name it
     in the repair's record (the Director's `director_qc.REJOIN`: the film rejoined with a
-    take bought for her list)."""
+    take bought for her list). ``registry`` reaches the mix, so the sound is planned by the
+    Voice Artist again rather than falling to the deterministic plan."""
     from app.media.shooting_sheet import build_sheet  # noqa: PLC0415 - media imports runbook
 
     environment = studio_environment(engine)
@@ -4986,6 +5002,7 @@ def _reencode_from_takes(
         plan_cost,
         correlation,
         sheet_hash=str(sheet.get("sheet_hash") or "") or None,
+        registry=registry,
     )
     words = words or (
         "Codare: filmul refăcut din aceleași preluări, fără credite pentru imagini sau cadre."

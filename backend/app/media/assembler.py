@@ -21,7 +21,7 @@ import shutil
 import subprocess
 import tempfile
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -91,6 +91,8 @@ from app.media.speaker_voices import SPEAKER_GAP_SECONDS
 from app.media.toolchain import (
     AUDIO_CODEC_ARGS,
     AUDIO_CODEC_LABEL,
+    BED_FADE_IN_SECONDS,
+    BED_FADE_OUT_SECONDS,
     EDGE_KEEP_SECONDS,
     LOUDNESS_TARGET_LUFS,
     MASTER_SAMPLE_RATE,
@@ -5629,18 +5631,23 @@ def _as_dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
-def _mood_text(
-    engine: Engine, storyboard_id: str, title: str, scenes: Sequence[dict[str, Any]]
-) -> str:
-    """What the bed is chosen from: the film's title and core message, and each scene's
-    words, purpose and audio intent."""
+def _core_message(engine: Engine, storyboard_id: str) -> str:
+    """The film's core message, from its approved script; "" without one."""
     from app.factual.models import ScriptDraft  # noqa: PLC0415 - factual reads media models
 
     with Session(engine) as session:
         board = session.get(Storyboard, storyboard_id)
         script = session.get(ScriptDraft, board.script_draft_id) if board is not None else None
         story = script.story_json if script is not None else None
-    parts: list[Any] = [title, (story or {}).get("core_message") if isinstance(story, dict) else ""]
+    return str((story or {}).get("core_message") or "") if isinstance(story, dict) else ""
+
+
+def _mood_text(
+    engine: Engine, storyboard_id: str, title: str, scenes: Sequence[dict[str, Any]]
+) -> str:
+    """What the bed is chosen from: the film's title and core message, and each scene's
+    words, purpose and audio intent."""
+    parts: list[Any] = [title, _core_message(engine, storyboard_id)]
     for scene in scenes:
         parts += [
             scene.get("voiceover_segment"),
@@ -5648,6 +5655,106 @@ def _mood_text(
             (scene.get("prompt_json") or {}).get("audio_intent"),
         ]
     return " ".join(str(part) for part in parts if part)
+
+
+def _scene_spans(scenes: Sequence[dict[str, Any]]) -> dict[int, tuple[float, float]]:
+    """Each scene's (start, seconds) in the film, from the scenes' durations in order."""
+    spans: dict[int, tuple[float, float]] = {}
+    offset = 0.0
+    for scene in scenes:
+        seconds = float(scene.get("duration_seconds") or 0.0)
+        spans[int(scene["scene_index"])] = (offset, seconds)
+        offset += seconds
+    return spans
+
+
+def _tracks_of_plan(
+    library: music_library.Library,
+    plan: Mapping[str, Any],
+    *,
+    duration: float,
+    made_with: Mapping[str, Any] | None = None,
+) -> tuple[music_library.Track | None, list[dict[str, Any]], dict[str, music_library.Track], int]:
+    """The bed and the placed ambiences a plan names, as the library vouches for them now.
+
+    Returns (bed, ambience placements for `mix_bed`, the tracks by id, how many the plan named
+    that were left out). A track the library no longer has is left out; so is one whose bytes
+    are no longer the ones the film was made with (``made_with``: production['audio'] of that
+    film, whose records carry each track's sha256), never replaced by another."""
+    bed_id = str(plan.get("bed") or "")
+    bed = library.entry(bed_id) if bed_id else None
+    if bed is not None and bed.kind != "music":
+        bed = None
+    recorded_bed = (made_with or {}).get("bed") if made_with else None
+    if (
+        bed is not None
+        and isinstance(recorded_bed, Mapping)
+        and recorded_bed.get("track_id") == bed.id
+        and recorded_bed.get("sha256") not in (None, bed.sha256)
+    ):
+        bed = None
+    dropped = 1 if bed_id and bed is None else 0
+    recorded_ambience = {
+        str(item.get("track_id")): str(item.get("sha256") or "")
+        for item in ((made_with or {}).get("ambience") or [])
+        if isinstance(item, Mapping)
+    }
+    placed: list[dict[str, Any]] = []
+    tracks: dict[str, music_library.Track] = {}
+    for item in plan.get("scenes") or []:
+        if not isinstance(item, Mapping) or not item.get("ambience"):
+            continue
+        name = str(item["ambience"])
+        start = max(0.0, float(item.get("start") or 0.0))
+        seconds = min(float(item.get("seconds") or 0.0), max(0.0, duration - start))
+        track = library.entry(name)
+        if track is None or track.kind != "ambience":
+            dropped += 1
+            continue
+        if name in recorded_ambience and recorded_ambience[name] not in ("", track.sha256):
+            dropped += 1
+            continue
+        if seconds <= 0.2:
+            continue
+        tracks[track.id] = track
+        placed.append(
+            {
+                "path": track.path,
+                "start": start,
+                "seconds": seconds,
+                "scene_index": item.get("scene_index"),
+                "track_id": track.id,
+            }
+        )
+    return bed, placed, tracks, dropped
+
+
+def _mix_with_plan(
+    ffmpeg_exe: str,
+    voice: Path,
+    target: Path,
+    folder: Path,
+    *,
+    duration: float,
+    bed: music_library.Track | None,
+    placed: list[dict[str, Any]],
+    plan: Mapping[str, Any],
+) -> dict[str, Any]:
+    """`mix_bed` with a sound plan: its fades and its level per scene (`sound_design`)."""
+    from app.media import sound_design  # noqa: PLC0415 - it imports this module's neighbours
+
+    return mix_bed(
+        ffmpeg_exe,
+        voice,
+        target,
+        bed=bed.path if bed is not None else None,
+        duration=duration,
+        work_dir=folder,
+        ambience=placed,
+        fade_in=float(plan.get("fade_in_seconds") or BED_FADE_IN_SECONDS),
+        fade_out=float(plan.get("fade_out_seconds") or BED_FADE_OUT_SECONDS),
+        levels=sound_design.levels_for_mix(plan),
+    )
 
 
 def film_mix(
@@ -5660,66 +5767,86 @@ def film_mix(
     *,
     duration: float,
     title: str,
+    registry: Any = None,
+    correlation_id: str | None = None,
 ) -> dict[str, Any]:
     """The film's sound before the master: the joined narration, a bed from the Owner's
     library ducked under it, and an ambience under the scenes whose audio_intent names one.
 
+    Which bed, how far under the words per scene and where it may rise is the sound
+    department's plan (`sound_design.sound_plan`: the Voice Artist, asked through ``registry``;
+    without one, or refused twice, the deterministic plan, and the record says which). The
+    plan is recorded as ``plan`` and as a `sound_design.PLAN_EVENT` on the storyboard.
+
     Returns the stem to master as ``path`` and the record production['audio'] keeps: ``bed``
-    (the track, its licence and attribution, and the measured level under the voice),
-    ``ambience``, ``attributions`` (what the publication must credit), ``advisory`` (why
-    there is no bed) and ``library`` (the tracks it refused, with their reasons). A mix that
-    fails leaves the film voice only, with a warning for the Owner: the bed is never worth the
-    film."""
+    (the track, its licence and attribution, and the measured level under the voice — over the
+    film, where the voice speaks, and in its gaps), ``ambience``, ``attributions`` (what the
+    publication must credit), ``advisory`` (why there is no bed), ``plan`` and ``library`` (the
+    tracks it refused, with their reasons). A mix that fails leaves the film voice only, with a
+    warning for the Owner: the bed is never worth the film."""
+    from app.media import sound_design  # noqa: PLC0415 - it imports this module's neighbours
+
     library = music_library.load_library()
     record: dict[str, Any] = {
         "bed": None,
         "ambience": [],
         "attributions": [],
         "advisory": None,
+        "plan": None,
         "library": {
             "path": library.path.name,
             "tracks": len(library.tracks),
             "refused": library.refused[:20],
         },
     }
-    bed = music_library.choose_bed(
-        library, mood_text=_mood_text(engine, storyboard_id, title, scenes), seed=storyboard_id
+    correlation = correlation_id or str(uuid4())
+    outcome = sound_design.sound_plan(
+        engine,
+        registry,
+        film={"title": title, "core_message": _core_message(engine, storyboard_id)},
+        scenes=[sound_design.scene_brief(scene) for scene in scenes],
+        library=library,
+        correlation_id=correlation,
+        mood_text=_mood_text(engine, storyboard_id, title, scenes),
+        seed=storyboard_id,
     )
-    placed: list[dict[str, Any]] = []
-    tracks: dict[str, music_library.Track] = {}
-    offset = 0.0
-    for scene in scenes:
-        span = float(scene.get("duration_seconds") or 0.0)
-        intent = str((scene.get("prompt_json") or {}).get("audio_intent") or "")
-        ambience = music_library.choose_ambience(library, intent) if intent else None
-        if ambience is not None and span > 0.2:
-            tracks[ambience.id] = ambience
-            placed.append(
-                {
-                    "path": ambience.path,
-                    "start": offset,
-                    "seconds": span,
-                    "scene_index": scene.get("scene_index"),
-                    "track_id": ambience.id,
-                }
-            )
-        offset += span
+    plan = sound_design.plan_record(outcome, _scene_spans(scenes))
+    record["plan"] = plan
+    try:
+        _storyboard_event(
+            engine,
+            sound_design.PLAN_EVENT,
+            storyboard_id,
+            sound_design.plan_event_payload(plan, storyboard_id),
+            correlation,
+        )
+    except SQLAlchemyError:
+        logger.warning("sound_plan_not_recorded", extra={"storyboard_id": storyboard_id})
+    bed, placed, tracks, _dropped = _tracks_of_plan(library, plan, duration=duration)
+    has_music = any(track.kind == "music" for track in library.tracks)
     if bed is None:
-        record["advisory"] = NO_BED_ADVISORY
-        if not any(track.kind == "music" for track in library.tracks):
+        if outcome.source == sound_design.SOURCE_VOICE_ARTIST and has_music:
+            # Her choice, not a missing library: the words stand alone, and she says why.
+            who = outcome.agent_name or "departamentului de sunet"
+            why = outcome.plan.why or "cuvintele stau singure"
+            record["advisory"] = f"Fără muzică sub narațiune, la alegerea {who}: {why}"
+        else:
+            record["advisory"] = NO_BED_ADVISORY
+        if not has_music:
             # Where the music comes from is his choice: the music card (DECISION_SOURCES).
             from app.decisions.sources import film_without_music  # noqa: PLC0415
 
             film_without_music(engine, title)
     try:
-        mixed = mix_bed(
+        mixed = _mix_with_plan(
             ffmpeg_exe,
             voice,
             work_dir / "mixed_audio.wav",
-            bed=bed.path if bed is not None else None,
+            work_dir,
             duration=duration,
-            work_dir=work_dir,
-            ambience=placed,
+            bed=bed,
+            placed=placed,
+            plan=plan,
         )
     except AudioMixError as exc:
         record["advisory"] = NO_BED_ADVISORY if bed is None else None
@@ -5755,59 +5882,100 @@ def _drop_mix_stems(folder: Path, mixed: Path, record: dict[str, Any], *, keep: 
 
 
 def remix_film_sound(
-    ffmpeg_exe: str, voice: Path, folder: Path, audio: dict[str, Any], *, duration: float
+    ffmpeg_exe: str,
+    voice: Path,
+    folder: Path,
+    audio: dict[str, Any],
+    *,
+    duration: float,
+    plan: Mapping[str, Any] | None = None,
 ) -> tuple[Path, dict[str, Any]]:
     """The bed and ambience a film was made with, mixed again under a remade voice track (an
-    audio repair). A track the library no longer vouches for is left out, and the record
-    says so; nothing is chosen anew."""
+    audio repair), with the sound plan it was made with (``audio['plan']``: the same bed, the
+    same levels, the same fades) — or with ``plan``, a plan asked anew after quality control
+    refused the mix (`repair_audio`). A track the library no longer vouches for is left out,
+    and the record says so; nothing is chosen anew here. A film mixed before plans existed is
+    remixed from its recorded tracks, as before."""
     library = music_library.load_library()
     record = dict(audio)
+    used_plan = plan if plan is not None else audio.get("plan")
+    target = folder / f"mixed_audio_repair_{uuid4().hex[:8]}.wav"
     bed_record = audio.get("bed") if isinstance(audio.get("bed"), dict) else None
-    bed = library.entry(str(bed_record.get("track_id"))) if bed_record else None
-    if bed is not None and bed_record is not None and bed.sha256 != bed_record.get("sha256"):
-        bed = None
-    placed = []
-    for item in audio.get("ambience") or []:
-        track = library.entry(str(item.get("track_id"))) if isinstance(item, dict) else None
-        if track is not None and track.sha256 == item.get("sha256"):
-            placed.append(
-                {
-                    "path": track.path,
-                    "start": float(item.get("start") or 0.0),
-                    "seconds": float(item.get("seconds") or 0.0),
-                    "scene_index": item.get("scene_index"),
-                    "track_id": track.id,
-                }
-            )
-    dropped = (1 if bed_record and bed is None else 0) + (
-        len(audio.get("ambience") or []) - len(placed)
-    )
-    mixed = mix_bed(
-        ffmpeg_exe,
-        voice,
-        folder / f"mixed_audio_repair_{uuid4().hex[:8]}.wav",
-        bed=bed.path if bed is not None else None,
-        duration=duration,
-        work_dir=folder,
-        ambience=placed,
-    )
+    if isinstance(used_plan, Mapping):
+        bed, placed, _tracks, dropped = _tracks_of_plan(
+            library, used_plan, duration=duration, made_with=audio
+        )
+        record["plan"] = dict(used_plan)
+        mixed = _mix_with_plan(
+            ffmpeg_exe,
+            voice,
+            target,
+            folder,
+            duration=duration,
+            bed=bed,
+            placed=placed,
+            plan=used_plan,
+        )
+    else:
+        bed = library.entry(str(bed_record.get("track_id"))) if bed_record else None
+        if bed is not None and bed_record is not None and bed.sha256 != bed_record.get("sha256"):
+            bed = None
+        placed = []
+        for item in audio.get("ambience") or []:
+            track = library.entry(str(item.get("track_id"))) if isinstance(item, dict) else None
+            if track is not None and track.sha256 == item.get("sha256"):
+                placed.append(
+                    {
+                        "path": track.path,
+                        "start": float(item.get("start") or 0.0),
+                        "seconds": float(item.get("seconds") or 0.0),
+                        "scene_index": item.get("scene_index"),
+                        "track_id": track.id,
+                    }
+                )
+        dropped = (1 if bed_record and bed is None else 0) + (
+            len(audio.get("ambience") or []) - len(placed)
+        )
+        mixed = mix_bed(
+            ffmpeg_exe,
+            voice,
+            target,
+            bed=bed.path if bed is not None else None,
+            duration=duration,
+            work_dir=folder,
+            ambience=placed,
+        )
     record["bed"] = (
         {**bed.record(), **mixed["bed"], "stem": Path(mixed["bed"]["stem"]).name}
         if bed is not None and mixed["bed"] is not None
         else None
     )
     record["ambience"] = []
+    used: list[music_library.Track] = [bed] if bed is not None and record["bed"] else []
     for item in mixed["ambience"]:
         track = library.entry(str(item["track_id"]))
         if track is not None:
             record["ambience"].append({**track.record(), **item, "stem": Path(item["stem"]).name})
+            used.append(track)
+    # The credits follow the tracks actually under this remix: a plan asked anew may have
+    # changed the bed, and a track left out owes no credit.
+    record["attributions"] = list(
+        dict.fromkeys(track.attribution for track in used if track.attribution)
+    )
     if dropped:
         record["warning"] = (
             "La refacerea sunetului, piese din bibliotecă nu mai sunt cele licențiate și au fost "
             "scoase din film."
         )
-    if record["bed"] is None and bed_record is None:
-        record["advisory"] = NO_BED_ADVISORY
+    if record["bed"] is None:
+        has_music = any(track.kind == "music" for track in library.tracks)
+        if isinstance(used_plan, Mapping) and not used_plan.get("bed") and has_music:
+            why = str(used_plan.get("why") or "cuvintele stau singure")
+            record["advisory"] = (
+                f"Fără muzică sub narațiune, la alegerea departamentului de sunet: {why}"
+            )
+        elif bed_record is None:
+            record["advisory"] = NO_BED_ADVISORY
     return Path(mixed["path"]), record
 
 
@@ -6082,6 +6250,7 @@ def assemble_video_job(
     production_plan: dict[str, Any] | None = None,
     settings: Any | None = None,
     takes_only: bool = False,
+    registry: Any = None,
 ) -> dict:
     """Run end-to-end video assembly and provenance recording.
 
@@ -7102,6 +7271,8 @@ def assemble_video_job(
     # Before the master, the bed: a licensed track from the Owner's library, ducked under the
     # voice, and an ambience where a scene's audio_intent names one (audit Q1). Nothing here
     # is bought; a film without a usable track is voice only and says so.
+    # The sound department's plan (the Voice Artist through ``registry``; without one the
+    # deterministic plan) decides the bed, its level per scene and where it may rise.
     mix = film_mix(
         engine,
         storyboard_id,
@@ -7111,6 +7282,8 @@ def assemble_video_job(
         work_dir,
         duration=total_duration,
         title=storyboard_title,
+        registry=registry,
+        correlation_id=correlation_id,
     )
     mastered = work_dir / MASTERED_TRACK_NAME
     mixed_sound = Path(mix.pop("path"))
@@ -7564,12 +7737,98 @@ def remux_with_audio(ffmpeg_exe: str, video: Path, audio: Path, target: Path) ->
     return command
 
 
+def _refused_mix(engine: Engine, asset_id: str) -> dict[str, Any] | None:
+    """The newest quality report of the film whose audio mix check failed: the check with its
+    report id, or None when the mix passed (or was never judged)."""
+    with Session(engine) as session:
+        report = session.scalars(
+            select(QualityControlReport)
+            .where(QualityControlReport.media_asset_id == asset_id)
+            .order_by(QualityControlReport.verified_at.desc())
+        ).first()
+        if report is None:
+            return None
+        checks = report.checks_json if isinstance(report.checks_json, dict) else {}
+        check = checks.get("audio_mix_qc")
+        if not isinstance(check, dict) or check.get("passed") is not False:
+            return None
+        return {**check, "report_id": report.id}
+
+
+def _replan_sound(
+    engine: Engine,
+    registry: Any,
+    storyboard_id: str,
+    audio: dict[str, Any],
+    refused: dict[str, Any],
+    *,
+    asked_by: str,
+    correlation_id: str,
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    """The sound plan asked anew after quality control refused the mix (the Owner, 2026-10-11:
+    what is wrong goes back to the agent and is repaired): the Voice Artist is told the measured
+    numbers, the reasons and her previous plan, and her new plan must change (`sound_design`);
+    the deterministic plan is the last resort. Returns (the new plan record, the replan entry),
+    or None when the film has no plan or no scenes to plan for."""
+    from app.media import sound_design  # noqa: PLC0415 - it imports this module's neighbours
+
+    previous = audio.get("plan")
+    if not isinstance(previous, dict):
+        return None
+    try:
+        title, scenes = _storyboard_scenes(engine, storyboard_id)
+    except ValueError:
+        return None
+    library = music_library.load_library()
+    refusal = sound_design.mix_refusal(audio, refused)
+    refusal["asked_by"] = asked_by
+    outcome = sound_design.sound_plan(
+        engine,
+        registry,
+        film={"title": title, "core_message": _core_message(engine, storyboard_id)},
+        scenes=[sound_design.scene_brief(scene) for scene in scenes],
+        library=library,
+        correlation_id=correlation_id,
+        mood_text=_mood_text(engine, storyboard_id, title, scenes),
+        seed=storyboard_id,
+        previous=previous,
+        refusal=refusal,
+    )
+    # The scenes' places in the film are the film's: read from the plan it was mixed with.
+    spans = {
+        int(item["scene_index"]): (
+            float(item.get("start") or 0.0),
+            float(item.get("seconds") or 0.0),
+        )
+        for item in previous.get("scenes") or []
+        if isinstance(item, dict) and item.get("scene_index") is not None
+    }
+    current = sound_design.plan_record(outcome, spans)
+    entry = sound_design.replan_record(
+        previous, outcome, current, asked_by=asked_by, refusal=refusal
+    )
+    try:
+        _storyboard_event(
+            engine,
+            sound_design.REPLAN_EVENT,
+            storyboard_id,
+            {**entry, "storyboard_id": storyboard_id},
+            correlation_id,
+        )
+    except SQLAlchemyError:
+        logger.warning("sound_replan_not_recorded", extra={"storyboard_id": storyboard_id})
+    return current, entry
+
+
 def repair_audio(
     engine: Engine,
     asset_id: str,
     correlation_id: str,
     *,
     ffmpeg_path: str | None = None,
+    registry: Any = None,
+    note: str | None = None,
+    requester: str = "video_editor",
 ) -> dict[str, Any]:
     """Remake a finished film's sound from its voice takes, for no credits at all.
 
@@ -7578,7 +7837,14 @@ def repair_audio(
     under the film's picture with ``-c:v copy``: the video packets are the same packets,
     which is checked, not assumed. The film it came from is left untouched; the repaired one
     is a new asset with a render record of its own, so quality control reads its manifest,
-    and that manifest says what it is a remaster of. Nothing here calls a provider.
+    and that manifest says what it is a remaster of. Nothing here calls a provider for media.
+
+    The sound plan the film was mixed with goes back under the remade voice — unless the film's
+    newest quality report refused the mix (the bed covered the voice, a track not in the
+    library): then the Voice Artist is asked for a new plan through ``registry`` with the
+    refusal quoted, by ``note`` or ``requester`` (the Director's reason), and the remix is made
+    from it (`_replan_sound`). What was asked, why and what changed is kept in
+    production['audio']['replans'] and as a `sound_design.REPLAN_EVENT`.
     """
     ffmpeg_exe = find_ffmpeg(ffmpeg_path)
     if not ffmpeg_exe:
@@ -7608,11 +7874,31 @@ def repair_audio(
     stamp = uuid4().hex[:8]
     mastered = folder / f"master_audio_repair_{stamp}.m4a"
     # The bed and the ambience the film was made with go back under the remade voice; a
-    # track the library no longer vouches for is left out, never replaced by another.
+    # track the library no longer vouches for is left out, never replaced by another. A mix
+    # quality control refused is planned again first, so the same plan is not mixed again.
     previous_audio = production.get("audio") if isinstance(production.get("audio"), dict) else {}
+    refused = _refused_mix(engine, asset_id)
+    replanned = (
+        _replan_sound(
+            engine,
+            registry,
+            storyboard_id,
+            previous_audio or {},
+            refused,
+            asked_by=" ".join(str(note or "").split()) or requester,
+            correlation_id=correlation_id,
+        )
+        if refused is not None
+        else None
+    )
     try:
         sound, remixed = remix_film_sound(
-            ffmpeg_exe, voice, folder, previous_audio or {}, duration=seconds
+            ffmpeg_exe,
+            voice,
+            folder,
+            previous_audio or {},
+            duration=seconds,
+            plan=replanned[0] if replanned is not None else None,
         )
     except AudioMixError as exc:
         raise AudioRepairError(f"Muzica nu a putut fi mixată din nou sub voce: {exc}") from exc
@@ -7637,6 +7923,12 @@ def repair_audio(
     audio_record = {**dict(production.get("audio") or {}), **remixed}
     audio_record["loudness"] = loudness
     audio_record["repaired_from"] = voice.name
+    if replanned is not None:
+        earlier = audio_record.get("replans")
+        audio_record["replans"] = [
+            *(earlier if isinstance(earlier, list) else []),
+            replanned[1],
+        ]
     production["audio"] = audio_record
     warnings = [w for w in production.get("owner_warnings") or [] if w != loudness["warning"]]
     if loudness["warning"]:
@@ -14414,7 +14706,16 @@ def redo_scene(
 
     plan = current()
     if kind in ("card", "audio"):
-        free = _free_redo(engine, storyboard_id, correlation_id, plan, ffmpeg_path=ffmpeg_path)
+        free = _free_redo(
+            engine,
+            storyboard_id,
+            correlation_id,
+            plan,
+            ffmpeg_path=ffmpeg_path,
+            registry=registry,
+            note=note,
+            requester=requester,
+        )
         return _redo_done(engine, correlation_id, plan, free, {}, (0.0, None))
     if unasked and not (proposal and kind == "motion"):
         # 2026-10-10 (babcf272): the day's QC repair retired the Owner's own approved takes of
@@ -14864,8 +15165,13 @@ def _free_redo(
     plan: dict[str, Any],
     *,
     ffmpeg_path: str | None,
+    registry: Any = None,
+    note: str | None = None,
+    requester: str = "video_editor",
 ) -> dict[str, Any]:
-    """A card or the sound, redone for 0 credits on the newest film."""
+    """A card or the sound, redone for 0 credits on the newest film. The sound redo carries
+    ``registry``, ``note`` and ``requester`` to `repair_audio`: a mix quality control refused is
+    planned again by the Voice Artist, told who asked and why."""
     if plan["base_asset_id"] is None:
         raise SceneRedoRefused("NO_FILM", plan["reason_ro"], plan=plan)
     ffmpeg_exe = resolve_ffmpeg_path(ffmpeg_path)
@@ -14884,7 +15190,13 @@ def _free_redo(
         )
     try:
         repaired = repair_audio(
-            engine, plan["base_asset_id"], correlation_id, ffmpeg_path=ffmpeg_exe
+            engine,
+            plan["base_asset_id"],
+            correlation_id,
+            ffmpeg_path=ffmpeg_exe,
+            registry=registry,
+            note=note,
+            requester=requester,
         )
     except AudioRepairError as exc:
         raise SceneRedoRefused("AUDIO_REPAIR_FAILED", str(exc), plan=plan) from exc

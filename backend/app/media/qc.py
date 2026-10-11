@@ -737,11 +737,18 @@ def rights_verdict(license_status: str | None, manifest: Mapping[str, Any]) -> d
     }
 
 
+def _lu(value: Any) -> float | None:
+    return float(value) if isinstance(value, int | float) and not isinstance(value, bool) else None
+
+
 def audio_mix_verdict(manifest: Mapping[str, Any]) -> dict[str, Any]:
     """Audio mix QC: every music or ambience file the film carries is an entry of the Owner's
     library as it is now (same id, same sha256, commercial use confirmed), and the bed sits
-    18-22 LU under the voice (`toolchain.BED_UNDER_VOICE_BAND_LU`). A film without a bed
-    passes, carrying the advisory that says why."""
+    18-22 LU under the voice (`toolchain.BED_UNDER_VOICE_BAND_LU`) — measured where the voice
+    speaks (``measured_lu_under_voice_in_speech``, a film mixed with a sound plan, 2026-10-11),
+    else over the whole film, as the films before the plan were measured. Both readings and the
+    bed's level in the voice's gaps (where a lift shows) are reported, with the plan that asked
+    for them. A film without a bed passes, carrying the advisory that says why."""
     from app.media import music_library  # noqa: PLC0415 - read at call time, as tests patch it
     from app.media.toolchain import BED_UNDER_VOICE_BAND_LU  # noqa: PLC0415
 
@@ -763,22 +770,54 @@ def audio_mix_verdict(manifest: Mapping[str, Any]) -> dict[str, Any]:
         elif entry.sha256 != str(track.get("sha256") or ""):
             reasons.append(f"Piesa „{name}” din film nu este fișierul licențiat (sha256 diferit)")
     under: float | None = None
+    in_speech: float | None = None
+    in_gaps: float | None = None
+    judged: str | None = None
     if isinstance(bed, Mapping):
-        value = bed.get("measured_lu_under_voice")
-        under = float(value) if isinstance(value, int | float) else None
+        under = _lu(bed.get("measured_lu_under_voice"))
+        in_speech = _lu(bed.get("measured_lu_under_voice_in_speech"))
+        in_gaps = _lu(bed.get("measured_lu_under_voice_in_gaps"))
         low, high = BED_UNDER_VOICE_BAND_LU
-        if under is None:
+        judged = "speech" if in_speech is not None else "film" if under is not None else None
+        value = in_speech if in_speech is not None else under
+        where = "sub cuvinte" if judged == "speech" else "pe tot filmul"
+        if value is None:
             reasons.append("Nivelul muzicii sub voce nu a fost măsurat")
-        elif not low - 0.5 <= under <= high + 0.5:
+        elif value < low - 0.5:
             reasons.append(
-                f"Muzica stă la {under:.1f} LU sub voce, nu la {low:.0f}-{high:.0f} LU: "
+                f"Muzica stă la {value:.1f} LU sub voce ({where}), nu la {low:.0f}-{high:.0f} LU: "
                 "vocea trebuie să conducă"
             )
+        elif value > high + 0.5:
+            reasons.append(
+                f"Muzica stă la {value:.1f} LU sub voce ({where}), nu la {low:.0f}-{high:.0f} LU: "
+                "fundalul abia se mai aude"
+            )
+    plan = (audio or {}).get("plan") if isinstance((audio or {}).get("plan"), Mapping) else None
+    replans = (audio or {}).get("replans")
     return {
         "passed": not reasons,
         "bed": (bed or {}).get("track_id") if isinstance(bed, Mapping) else None,
         "ambience": [str(track.get("track_id")) for track in tracks[1 if bed else 0 :]],
         "lu_under_voice": under,
+        "lu_under_voice_in_speech": in_speech,
+        "lu_under_voice_in_gaps": in_gaps,
+        "judged": judged,
+        "plan": (
+            {
+                "source": plan.get("source"),
+                "by": plan.get("by"),
+                "bed": plan.get("bed"),
+                "levels": plan.get("levels"),
+                "lifted_seconds": (bed or {}).get("lifted_seconds")
+                if isinstance(bed, Mapping)
+                else None,
+                "summary_ro": plan.get("summary_ro"),
+            }
+            if plan is not None
+            else None
+        ),
+        "replans": len(replans) if isinstance(replans, list) else 0,
         "attributions": list((audio or {}).get("attributions") or []),
         "advisory": (audio or {}).get("advisory"),
         "reasons_ro": reasons,

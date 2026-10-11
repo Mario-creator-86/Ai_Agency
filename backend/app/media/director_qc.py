@@ -377,6 +377,75 @@ def report_findings(report: Mapping[str, Any]) -> list[dict[str, Any]]:
     return findings
 
 
+def sound_reading(production: Mapping[str, Any]) -> dict[str, Any] | None:
+    """The film's sound as she reads it before deciding an audio redo (2026-10-11): the plan
+    (who made it, the bed, each scene's level and ambience, the fades), the measured level of
+    the bed under the voice where the words are, in the gaps and over the film, and every time
+    the plan was asked again after a refusal. None for a film mixed before plans existed."""
+    audio = production.get("audio") if isinstance(production.get("audio"), Mapping) else None
+    if not audio:
+        return None
+    plan = audio.get("plan") if isinstance(audio.get("plan"), Mapping) else None
+    bed = audio.get("bed") if isinstance(audio.get("bed"), Mapping) else {}
+    if plan is None and not bed:
+        return None
+    reading: dict[str, Any] = {
+        "plan": (
+            {
+                "source": plan.get("source"),
+                "by": plan.get("by"),
+                "reason": _short(plan.get("reason"), 200) or None,
+                "bed": plan.get("bed"),
+                "why": _short(plan.get("why"), 300),
+                "scenes": [
+                    {
+                        "scene_index": item.get("scene_index"),
+                        "level": item.get("level"),
+                        "ambience": item.get("ambience"),
+                        "why": _short(item.get("why"), 160),
+                    }
+                    for item in plan.get("scenes") or []
+                    if isinstance(item, Mapping)
+                ][:60],
+                "fade_in_seconds": plan.get("fade_in_seconds"),
+                "fade_out_seconds": plan.get("fade_out_seconds"),
+                "summary_ro": _short(plan.get("summary_ro"), 400),
+            }
+            if plan is not None
+            else None
+        ),
+        "measured": {
+            "bed": bed.get("track_id"),
+            "lu_under_voice_in_speech": bed.get("measured_lu_under_voice_in_speech"),
+            "lu_under_voice_in_gaps": bed.get("measured_lu_under_voice_in_gaps"),
+            "lu_under_voice_film": bed.get("measured_lu_under_voice"),
+            "target_lu_under_voice": bed.get("target_lu_under_voice"),
+            "accepted_band_lu": [18, 22],
+            "lifted_seconds": bed.get("lifted_seconds"),
+            "lift_spans": bed.get("lift_spans"),
+            "speech_seconds": bed.get("speech_seconds"),
+            "gap_seconds": bed.get("gap_seconds"),
+        }
+        if bed
+        else None,
+        "replans": [
+            {
+                "at": item.get("at"),
+                "asked_by": _short(item.get("asked_by"), 160),
+                "reasons": [_short(reason, 200) for reason in item.get("reasons") or []][:4],
+                "changed": [_short(change, 120) for change in item.get("changed") or []][:12],
+                "source": item.get("source"),
+                "reason": _short(item.get("reason"), 200) or None,
+            }
+            for item in (audio.get("replans") or [])[-4:]
+            if isinstance(item, Mapping)
+        ],
+        "advisory": _short(audio.get("advisory"), 300) or None,
+        "warning": _short(audio.get("warning"), 300) or None,
+    }
+    return reading
+
+
 def _compact_checks(checks: Mapping[str, Any]) -> dict[str, Any]:
     """Each check as she needs it: passed or not, what it says, and its failing scenes."""
     out: dict[str, Any] = {}
@@ -773,6 +842,10 @@ def film_qc_context(
         "free_fix_already_used": bool(free_used),
         "money": MONEY_NOTE,
         "video_editor_diagnosis": found or None,
+        # The film's sound: the plan it was mixed with, who made it, the bed measured under
+        # the words and in the gaps, and every re-plan a refusal caused — so an audio redo of
+        # hers is decided on the numbers, and a loop that repeats is in front of her.
+        "sound": sound_reading(production),
         "earlier_reviews": earlier,
         # Her own looks at the pictures a gate refused: after she rejected them all, the
         # report is hers again with her reasons in front of her.

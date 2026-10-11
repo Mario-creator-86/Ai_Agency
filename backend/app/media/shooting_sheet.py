@@ -3947,6 +3947,8 @@ def run_assemble_step(
             environment=environment,
             production_plan=production_plan,
             settings=settings,
+            # The registry reaches the mix: the Voice Artist plans the sound through it.
+            registry=registry,
         )
     except ClipsNotAccepted as exc:
         # Recorded where it was refused (the pre-check or the render, `assemble_from_takes`).

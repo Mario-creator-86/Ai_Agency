@@ -27,6 +27,7 @@ import os
 import re
 import shutil
 import subprocess
+from collections.abc import Mapping, Sequence
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -596,6 +597,27 @@ DUCK_FILTER = "sidechaincompress=threshold=0.03:ratio=6:attack=15:release=350:kn
 #: An ambience sits under the voice at about -30 LUFS once the film is mastered at -14.
 AMBIENCE_UNDER_VOICE_LU = 16.0
 AMBIENCE_FADE_SECONDS = 0.15
+#: The three levels a sound plan may ask of the bed per scene (`app.media.sound_design`):
+#: "under" (where it always is), "soft" (6 dB further down: the words stand alone) and "lift"
+#: (8 dB up, and only inside a silence of the voice). The Owner, 2026-10-11: «să fie încet sau
+#: tare, acolo unde trebuie. Mare grijă totuși să nu acopere vocea.»
+LEVEL_GAIN_DB: dict[str, float] = {"under": 0.0, "soft": -6.0, "lift": 8.0}
+#: How long the bed takes to move between two levels, inside the span that asks for it.
+LEVEL_RAMP_SECONDS = 0.4
+#: A silence of the voice a lift may use: under -35 dBFS for at least 0.8 s. A pause between
+#: two sentences reads 0.3-0.6 s and is left to the ducking; the head before the first word and
+#: the tail after the last count as silence. The lift keeps clear of the words at both ends.
+LIFT_SILENCE_DB = -35.0
+LIFT_SILENCE_MIN_SECONDS = 0.8
+LIFT_EDGE_GUARD_SECONDS = 0.1
+#: What a sound plan may ask of the bed's fades, in seconds.
+BED_FADE_BOUNDS = (0.3, 4.0)
+#: The least of a film's speech or silence a loudness can be read from (one gating block).
+MIN_MEASURE_SECONDS = 0.5
+#: How many spans a selection may name before the measure falls back to the whole file.
+MAX_MEASURE_SPANS = 120
+#: Ten-millisecond frames, so a span's edges land within 10 ms of where the voice has them.
+_SELECT_FRAME_SAMPLES = 480
 #: How far a track may be turned down or up to sit where it belongs. A mastered music track
 #: (-8 to -14 LUFS) goes 30-40 dB down under a vendor's narration (-23 to -25 LUFS); a track
 #: that would need more than +30 dB is silence or a broken file, not a quiet track.
@@ -691,6 +713,150 @@ def speech_edges(ffmpeg: str | None, path: Path | str, duration: float) -> tuple
     return max(0.0, lead), max(0.0, trail)
 
 
+# ----------------------------------------------------------------- where the voice is silent
+#
+# The sound plan (2026-10-11, `app.media.sound_design`) asks the bed to rise only where nobody
+# speaks. Where that is comes from the voice itself, never from the plan's word: the silences
+# silencedetect finds, the speech their complement. The same spans are what the bed is
+# measured in afterwards, so the number quality control judges (the bed under the words) is
+# read where the words are.
+
+Span = tuple[float, float]
+
+
+def merge_spans(spans: Sequence[Span]) -> list[Span]:
+    """``spans`` sorted and joined where they touch or overlap, each kept only when it lasts."""
+    merged: list[Span] = []
+    for start, end in sorted((float(a), float(b)) for a, b in spans):
+        if end - start < 0.01:
+            continue
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def complement_spans(spans: Sequence[Span], duration: float) -> list[Span]:
+    """The parts of [0, ``duration``] outside ``spans``, each at least 10 ms long."""
+    out: list[Span] = []
+    cursor = 0.0
+    for start, end in merge_spans(spans):
+        if start - cursor >= 0.01:
+            out.append((cursor, min(start, duration)))
+        cursor = max(cursor, end)
+    if duration - cursor >= 0.01:
+        out.append((cursor, duration))
+    return [(a, b) for a, b in out if b - a >= 0.01]
+
+
+def speech_and_gaps(
+    ffmpeg: str | None, voice: Path | str, duration: float
+) -> tuple[list[Span], list[Span], bool]:
+    """(the voice's speech spans, its silences, whether they were measured) over ``duration``.
+
+    The silences are what silencedetect finds at LIFT_SILENCE_DB for LIFT_SILENCE_MIN_SECONDS;
+    the speech is their complement. When the voice cannot be read the whole film is speech and
+    there is no gap: nothing is lifted, and the record says the silences were not measured."""
+    silences = silence_spans(
+        ffmpeg, voice, threshold_db=LIFT_SILENCE_DB, min_seconds=LIFT_SILENCE_MIN_SECONDS
+    )
+    if silences is None:
+        return [(0.0, duration)], [], False
+    gaps = [(max(0.0, a), min(duration, b)) for a, b in merge_spans(silences) if b > a]
+    gaps = [(a, b) for a, b in gaps if b - a >= 0.01]
+    return complement_spans(gaps, duration), gaps, True
+
+
+def level_segments(
+    levels: Sequence[Mapping[str, Any]], gaps: Sequence[Span], duration: float
+) -> list[tuple[float, float, float]]:
+    """Where the bed leaves its level, as (start, end, gain dB): a "soft" scene over its whole
+    span; a "lift" only inside the voice's silences that fall in the scene, clear of the words
+    by LIFT_EDGE_GUARD_SECONDS at both ends. "under" asks nothing."""
+    segments: list[tuple[float, float, float]] = []
+    for item in levels:
+        level = str(item.get("level") or "under").strip().lower()
+        gain = LEVEL_GAIN_DB.get(level, 0.0)
+        start = max(0.0, float(item.get("start") or 0.0))
+        end = min(duration, start + float(item.get("seconds") or 0.0))
+        if gain == 0.0 or end - start < 0.05:
+            continue
+        if level != "lift":
+            segments.append((start, end, gain))
+            continue
+        for gap_start, gap_end in gaps:
+            low = max(gap_start, start) + LIFT_EDGE_GUARD_SECONDS
+            high = min(gap_end, end) - LIFT_EDGE_GUARD_SECONDS
+            if high - low >= 0.3:
+                segments.append((low, high, gain))
+    return segments
+
+
+def level_expression(
+    segments: Sequence[tuple[float, float, float]], ramp: float = LEVEL_RAMP_SECONDS
+) -> str | None:
+    """The `volume` filter's expression for ``segments``: each a trapezoid of its gain, up over
+    ``ramp`` seconds from its start and down over ``ramp`` to its end (a segment shorter than
+    two ramps peaks in the middle), summed in dB and turned into a gain. None without one."""
+    if not segments:
+        return None
+    terms = [
+        f"{gain:.1f}*clip(min(t-{start:.3f},{end:.3f}-t)/{ramp:.3f},0,1)"
+        for start, end, gain in segments
+    ]
+    return f"pow(10,({'+'.join(terms)})/20)"
+
+
+def _selection(spans: Sequence[Span]) -> str:
+    """The filters that keep only ``spans`` of a stream, timestamps made continuous again."""
+    inside = "+".join(f"between(t,{a:.3f},{b:.3f})" for a, b in spans)
+    return f"asetnsamples=n={_SELECT_FRAME_SAMPLES},aselect='{inside}',asetpts=N/SR/TB"
+
+
+def measure_loudness_in(ffmpeg: str | None, path: Path | str, spans: Sequence[Span]) -> dict | None:
+    """`measure_loudness` of the parts of ``path`` inside ``spans``, joined end to end. None
+    when there is nothing long enough to read (under MIN_MEASURE_SECONDS in all), or the file
+    cannot be read; the whole file when the spans are too many to name (MAX_MEASURE_SPANS)."""
+    kept = merge_spans(spans)
+    if not ffmpeg or not Path(path).is_file():
+        return None
+    if sum(b - a for a, b in kept) < MIN_MEASURE_SECONDS:
+        return None
+    if len(kept) > MAX_MEASURE_SPANS:
+        return measure_loudness(ffmpeg, path)
+    try:
+        result = subprocess.run(  # noqa: S603 - argument list, no shell
+            [
+                ffmpeg,
+                "-nostdin",
+                "-v",
+                "info",
+                "-nostats",
+                "-i",
+                str(path),
+                "-vn",
+                "-af",
+                f"{_selection(kept)},{loudnorm_filter(None)}",
+                "-f",
+                "null",
+                "-",
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            stdin=subprocess.DEVNULL,
+            timeout=_MEASURE_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    return parse_loudnorm_json(result.stderr)
+
+
 def _run_mix(ffmpeg: str, command: list[str], what: str, timeout: int) -> None:
     try:
         result = subprocess.run(  # noqa: S603 - argument list, no shell
@@ -716,6 +882,34 @@ def _integrated(ffmpeg: str, path: Path | str, what: str) -> float:
     if not isinstance(value, int | float) or not math.isfinite(float(value)):
         raise AudioMixError(f"The {what} could not be measured")
     return float(value)
+
+
+def _integrated_in(ffmpeg: str, path: Path | str, spans: Sequence[Span], what: str) -> float:
+    """The integrated loudness of ``path`` inside ``spans``; the whole file when the spans
+    cover it. Raises AudioMixError when it cannot be read: the correction needs a number."""
+    reading = measure_loudness_in(ffmpeg, path, spans)
+    value = reading.get("integrated_lufs") if reading else None
+    if not isinstance(value, int | float) or not math.isfinite(float(value)):
+        raise AudioMixError(f"The {what} could not be measured where the voice speaks")
+    return float(value)
+
+
+def _loudness_in(ffmpeg: str, path: Path | str, spans: Sequence[Span]) -> float | None:
+    """`_integrated_in` for a reading that may be absent (the gaps of a voice that never
+    pauses): None instead of an error."""
+    reading = measure_loudness_in(ffmpeg, path, spans)
+    value = reading.get("integrated_lufs") if reading else None
+    if not isinstance(value, int | float) or not math.isfinite(float(value)):
+        return None
+    return float(value)
+
+
+def _level_counts(levels: Sequence[Mapping[str, Any]]) -> dict[str, int]:
+    counts = {level: 0 for level in LEVEL_GAIN_DB}
+    for item in levels:
+        level = str(item.get("level") or "under").strip().lower()
+        counts[level if level in counts else "under"] += 1
+    return counts
 
 
 def _stereo(position: int) -> str:
@@ -749,6 +943,7 @@ def mix_bed(
     fade_in: float = BED_FADE_IN_SECONDS,
     fade_out: float = BED_FADE_OUT_SECONDS,
     timeout: int = 600,
+    levels: Sequence[Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """The narration with a bed ducked under it, and any ambience, as one stem for the master.
 
@@ -764,6 +959,16 @@ def mix_bed(
        voice, faded at its edges and placed at its scene;
     5. everything is summed at unity (no automatic rescaling) under a sample ceiling.
 
+    ``levels`` is the sound plan's level per scene ({"start", "seconds", "level"}, the levels
+    of LEVEL_GAIN_DB; `app.media.sound_design`). With one, the bed is shaped by time before
+    the ducking (`level_segments`, `level_expression`): "soft" over its scene, "lift" only
+    inside the voice's own silences (`speech_and_gaps`), never under a word. The correction
+    then lands the bed ``under_lu`` under the voice WHERE THE VOICE SPEAKS, not over the whole
+    film (a lifted gap would otherwise pull the words' bed down), and the record carries the
+    measure that matters, ``measured_lu_under_voice_in_speech``, beside the whole-film one and
+    the bed's level in the gaps (``measured_lu_under_voice_in_gaps``, where a lift shows).
+    Without ``levels`` the mix is as it was before the plan existed, judged over the film.
+
     Returns {"path", "bed": {...} | None, "ambience": [...]}. Raises AudioMixError; never a
     stem it did not write.
     """
@@ -771,6 +976,9 @@ def mix_bed(
     ambience = [item for item in (ambience or []) if Path(item["path"]).is_file()]
     if bed is None and not ambience:
         return {"path": Path(voice), "bed": None, "ambience": []}
+    low_fade, high_fade = BED_FADE_BOUNDS
+    fade_in = min(max(float(fade_in), low_fade), high_fade, max(0.05, duration / 2))
+    fade_out = min(max(float(fade_out), low_fade), high_fade, max(0.05, duration / 2))
     seconds = f"{duration:.3f}"
     voice_stereo = folder / "mix_voice_stereo.wav"
     mono = _channels(ffmpeg, voice) == 1
@@ -789,11 +997,20 @@ def mix_bed(
         timeout,
     )
     voice_lufs = _integrated(ffmpeg, voice_stereo, "voice")
+    planned = levels is not None
+    speech: list[Span] = [(0.0, duration)]
+    gaps: list[Span] = []
+    silences_measured = False
+    if planned:
+        speech, gaps, silences_measured = speech_and_gaps(ffmpeg, voice_stereo, duration)
     stems: list[Path] = []
     bed_record: dict[str, Any] | None = None
     if bed is not None:
         raw_lufs = _integrated(ffmpeg, bed, "bed")
         pre = _correction(voice_lufs - under_lu, raw_lufs, "bed")
+        segments = level_segments(levels or [], gaps, duration) if planned else []
+        shaping = level_expression(segments)
+        shape = f"volume='{shaping}':eval=frame," if shaping else ""
         ducked = folder / "mix_bed_ducked.wav"
         out_at = max(0.0, duration - fade_out)
         _run_mix(
@@ -808,8 +1025,11 @@ def mix_bed(
                 "-filter_complex",
                 # The bed runs a second past the film and the key never ends: the compressor
                 # drops its last partial block at an input's end, so the cut comes after it.
+                # The plan's shaping sits on the film's own clock (after asetpts), before the
+                # ducking, which reads only the voice and so ducks the shaped bed the same.
                 f"{_stereo(0)},atrim=duration={duration + 1.0:.3f},asetpts=N/SR/TB,"
-                f"volume={pre:.2f}dB[b];{_stereo(1)},apad[k];[b][k]{DUCK_FILTER},"
+                f"volume={pre:.2f}dB,{shape}aformat=sample_fmts=fltp[b];{_stereo(1)},apad[k];"
+                f"[b][k]{DUCK_FILTER},"
                 f"atrim=duration={seconds},afade=t=in:st=0:d={fade_in:.3f},"
                 f"afade=t=out:st={out_at:.3f}:d={fade_out:.3f}[out]",
                 "-map",
@@ -822,8 +1042,14 @@ def mix_bed(
             "duck the bed under the voice",
             timeout,
         )
-        ducked_lufs = _integrated(ffmpeg, ducked, "ducked bed")
-        fix = _correction(voice_lufs - under_lu, ducked_lufs, "ducked bed")
+        if planned:
+            # Corrected where the words are: the voice and the ducked bed read in the same
+            # speech spans, so a lift in the gaps cannot pull the bed under the words down.
+            voice_ref = _integrated_in(ffmpeg, voice_stereo, speech, "voice")
+            ducked_ref = _integrated_in(ffmpeg, ducked, speech, "ducked bed")
+        else:
+            voice_ref, ducked_ref = voice_lufs, _integrated(ffmpeg, ducked, "ducked bed")
+        fix = _correction(voice_ref - under_lu, ducked_ref, "ducked bed")
         stem = folder / "mix_bed.wav"
         _run_mix(
             ffmpeg,
@@ -845,6 +1071,29 @@ def mix_bed(
             "fade_in_seconds": fade_in,
             "fade_out_seconds": fade_out,
         }
+        if planned:
+            bed_speech = _integrated_in(ffmpeg, stem, speech, "bed")
+            bed_gaps = _loudness_in(ffmpeg, stem, gaps)
+            lifted = [(a, b) for a, b, gain in segments if gain > 0]
+            bed_record.update(
+                {
+                    "corrected_in": "speech",
+                    "voice_speech_lufs": round(voice_ref, 2),
+                    "bed_speech_lufs": round(bed_speech, 2),
+                    "measured_lu_under_voice_in_speech": round(voice_ref - bed_speech, 2),
+                    "bed_gaps_lufs": round(bed_gaps, 2) if bed_gaps is not None else None,
+                    "measured_lu_under_voice_in_gaps": (
+                        round(voice_ref - bed_gaps, 2) if bed_gaps is not None else None
+                    ),
+                    "speech_seconds": round(sum(b - a for a, b in speech), 2),
+                    "gap_seconds": round(sum(b - a for a, b in gaps), 2),
+                    "voice_silences_measured": silences_measured,
+                    "levels": _level_counts(levels or []),
+                    "lift_spans": [[round(a, 2), round(b, 2)] for a, b in lifted[:40]],
+                    "lifted_seconds": round(sum(b - a for a, b in lifted), 2),
+                    "soft_seconds": round(sum(b - a for a, b, gain in segments if gain < 0), 2),
+                }
+            )
     placed: list[dict[str, Any]] = []
     for position, item in enumerate(ambience):
         start = max(0.0, float(item.get("start") or 0.0))

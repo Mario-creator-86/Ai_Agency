@@ -1109,7 +1109,9 @@ _ROLE_DEFINITIONS = [
     (
         "VoiceArtist",
         "Synthesize speech, narration timing, and vocal emotional inflection",
-        "synthesize_voice,audio_align",
+        # sound_design (2026-10-11): the sound department plans the music under the words
+        # (`app.media.sound_design`); `seed_role_task_types` gives it to a studio hired before.
+        "synthesize_voice,audio_align,sound_design",
         "unauthorized_cloning",
     ),
     (
@@ -1132,6 +1134,46 @@ _ROLE_DEFINITIONS = [
         "post_without_reference,pay_anyone,change_budget",
     ),
 ]
+
+
+#: A seed role's task types reached a studio that already had the role (`seed_role_task_types`).
+ROLE_TASK_TYPES_EXTENDED_EVENT = "role.task_types_extended"
+
+
+def seed_role_task_types(engine: Engine) -> dict[str, list[str]]:
+    """Give every seeded role the task types its seed definition names and it lacks.
+
+    A role is created once, with the seed's list of that day; a task type added to the seed
+    later (sound_design for the Voice Artist, 2026-10-11) never reached a studio that already
+    existed, and her identity kept saying she may not do it. Runs on every start
+    (`seed_initial_workforce`, as the contracts and preferences do): what a role has is kept,
+    what the seed added is appended, each extension an event. Returns {role: added}.
+    """
+    added: dict[str, list[str]] = {}
+    with Session(engine) as session, session.begin():
+        roles = {role.name: role for role in session.scalars(select(Role))}
+        correlation_id = str(uuid4())
+        for name, _mission, allowed, _prohibited in _ROLE_DEFINITIONS:
+            role = roles.get(name)
+            if role is None:
+                continue
+            have = [item.strip() for item in (role.allowed_task_types or "").split(",")]
+            have = [item for item in have if item]
+            missing = [item for item in allowed.split(",") if item and item not in have]
+            if not missing:
+                continue
+            role.allowed_task_types = ",".join([*have, *missing])
+            append_event(
+                session,
+                ROLE_TASK_TYPES_EXTENDED_EVENT,
+                "role",
+                role.id,
+                1,
+                {"name": name, "added": missing, "allowed_task_types": role.allowed_task_types},
+                correlation_id,
+            )
+            added[name] = missing
+    return added
 
 
 def seed_missing_workforce(engine: Engine) -> list[str]:
@@ -1524,6 +1566,7 @@ def seed_initial_workforce(engine: Engine) -> None:
     """
     _seed_initial_workforce(engine)
     seed_missing_workforce(engine)
+    seed_role_task_types(engine)
     seed_role_contracts(engine)
     seed_role_preferences(engine)
     prefer_capable_models(engine)

@@ -142,6 +142,11 @@ class Track:
     mood: tuple[str, ...] = ()
     bpm: float | None = None
     tags: tuple[str, ...] = ()
+    #: What the Owner called the track and how long it runs, as the entry says (scripts/
+    #: music_add.py writes both; the loader vouches for neither): read by the Voice Artist's
+    #: sound brief (`app.media.sound_design`), never by the mix.
+    title: str | None = None
+    duration: str | None = None
 
     def record(self) -> dict[str, Any]:
         """What a film records about the track it used."""
@@ -228,6 +233,8 @@ def _checked(raw: Any, folder: Path) -> tuple[Track | None, str]:
             mood=_strings(raw.get("mood")),
             bpm=float(bpm) if isinstance(bpm, int | float) and not isinstance(bpm, bool) else None,
             tags=_strings(raw.get("tags")),
+            title=str(raw.get("title") or "").strip() or None,
+            duration=str(raw.get("duration") or "").strip() or None,
         ),
         "",
     )

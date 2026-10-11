@@ -594,6 +594,8 @@ def create_media_router() -> APIRouter:
                 correlation_id,
                 storage_root=Path(storage) if storage else None,
                 ffmpeg_path=getattr(request.app.state.settings, "ffmpeg_path", None),
+                # The studio's registry reaches the mix: the Voice Artist plans the sound.
+                registry=getattr(request.app.state, "registry", None),
                 image_adapter=injected_image or planned["image"],
                 # The vendors this film's stills may be drawn by, in order — the same chain
                 # the day's media stage passes: the resolved vendor and, where the Owner
