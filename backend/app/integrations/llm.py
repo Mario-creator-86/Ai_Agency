@@ -35,10 +35,23 @@ class ProviderHTTPError(ValueError):
     vendor's Retry-After ride along so the retry policy can tell "not now" from "never".
     """
 
-    def __init__(self, http_status: int, retry_after: float | None = None) -> None:
+    def __init__(
+        self,
+        http_status: int,
+        retry_after: float | None = None,
+        *,
+        word: str | None = None,
+        keyless: bool = False,
+    ) -> None:
         super().__init__(f"Provider request failed (HTTP {http_status})")
         self.http_status = http_status
         self.retry_after = retry_after
+        #: The vendor's own one-word code for the refusal («unauthorized», «PERMISSION_DENIED»)
+        #: when its body carried one; never the body's message, which can quote the request.
+        self.word = word
+        #: The call carried no key of the studio's (the seeded local endpoint): a refused
+        #: authorisation is that service's own sign-in, not a key to re-enter in Settings.
+        self.keyless = keyless
         #: A 5xx the vendor does not call safe to retry may come after the model wrote (and
         #: billed) the answer: a generation is not asked again on it.
         self.unanswered = 500 <= http_status <= 599 and http_status not in SAFE_TO_RESEND_STATUSES

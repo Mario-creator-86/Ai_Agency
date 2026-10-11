@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session
 from app.agents.identity import blocker_of, clipped, parse_structured
 from app.agents.memory import agent_for_role, remember
 from app.agents.messages import message_view, open_messages, post_message, resolve_message
-from app.agents.models import Agent, Role
+from app.agents.models import Agent, AgentMessage, Role
 from app.agents.services import run_agent_task
 from app.factual.sanitizer import wrap_in_inert_boundary
 from app.providers.registry import ProviderRegistry
@@ -230,6 +230,37 @@ def file_stage_reports(
     return filed
 
 
+def answers_an_investigation(session: Session, message: AgentMessage) -> bool:
+    """Whether a letter answers one of her investigations: titled as one, or written in reply
+    to one. 2026-10-11: the replies answered the thread's handoff instead of her letter, were
+    titled «Re: Continuă: …», and she asked again; a reply now answers her letter, and is
+    known by what it answers even when a title says otherwise."""
+    if any(prefix.strip() in message.subject for prefix in INVESTIGATE_PREFIXES):
+        return True
+    asked = session.get(AgentMessage, message.in_reply_to) if message.in_reply_to else None
+    return asked is not None and asked.subject.startswith(INVESTIGATE_PREFIXES)
+
+
+def threads_decided_since(session: Session, since_iso: str) -> set[str]:
+    """The threads in which the Director decided a letter since a moment.
+
+    A reply in such a thread waits for her next review instead of calling one. 2026-10-11:
+    each of the Accountant's replies called a review, each review wrote again into the same
+    thread, and three rounds ran in two minutes; the hour's ration of reviews was all that
+    stopped it.
+    """
+    director = agent_for_role(session, "Director")
+    if director is None:
+        return set()
+    rows = session.execute(
+        select(AgentMessage.thread_id, AgentMessage.id).where(
+            AgentMessage.resolved_by == director.display_name[:100],
+            AgentMessage.resolved_at >= since_iso,
+        )
+    ).all()
+    return {thread_id or message_id for thread_id, message_id in rows}
+
+
 def _apply_decisions(
     session: Session,
     director: Agent,
@@ -257,8 +288,8 @@ def _apply_decisions(
         # An answer to her own investigation is not investigated again. "Investigate: Re:
         # Investigate: …" was a conversation feeding itself; after one round what she owes
         # is a decision, and the answer is read as read.
-        if decision.action == "REQUEST_INVESTIGATION" and any(
-            prefix.strip() in message.subject for prefix in INVESTIGATE_PREFIXES
+        if decision.action == "REQUEST_INVESTIGATION" and answers_an_investigation(
+            session, message
         ):
             decision = decision.model_copy(update={"action": "ACKNOWLEDGE"})
         if decision.action == "REQUEST_INVESTIGATION":

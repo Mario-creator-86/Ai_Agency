@@ -245,7 +245,7 @@ def test_an_instruction_stays_open_until_the_employee_says_the_work_is_done(engi
 
     registry, _ = registry_with(staffed, letter_json("Gata, narațiunea e refăcută. Lyra", True))
     with Session(engine) as session, session.begin():
-        post_message(
+        asked_id = post_message(
             session,
             intent="REQUEST_INFO",
             subject="Re: Narațiune mai caldă pe episodul 3",
@@ -253,11 +253,18 @@ def test_an_instruction_stays_open_until_the_employee_says_the_work_is_done(engi
             from_agent_id=sarah.id,
             to_agent_id=lyra.id,
             in_reply_to=handoff_id,
-        )
+        ).id
     with Session(engine) as session:
-        assert letters_awaiting_answer(session) == [handoff_id]
-    answer_mail(engine, registry, handoff_id)
+        # She wrote in the thread a moment ago: the question waits a quarter of an hour, and
+        # then it is the newest letter to her that she answers, not the handoff.
+        assert letters_awaiting_answer(session) == []
+        later = datetime.now(UTC) + timedelta(minutes=16)
+        assert letters_awaiting_answer(session, now=later) == [asked_id]
+    sent = answer_mail(engine, registry, asked_id)
     with Session(engine) as session:
+        assert session.get(AgentMessage, sent["message_id"]).in_reply_to == asked_id
+        assert session.get(AgentMessage, asked_id).status == "ANSWERED"
+        # "Gata" is her word that the work is done: the handoff closes with the answer.
         assert session.get(AgentMessage, handoff_id).status == "ANSWERED"
 
 

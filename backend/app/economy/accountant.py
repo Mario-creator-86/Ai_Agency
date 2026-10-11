@@ -39,18 +39,20 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
+from functools import partial
 from typing import Any
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from sqlalchemy import Engine, func, select
+from sqlalchemy import Engine, case, func, select
 from sqlalchemy.orm import Session
 
 from app.agents.identity import blocker_of, clipped
 from app.agents.memory import agent_for_role, remember
 from app.agents.messages import post_message
-from app.agents.models import AgentMessage, AgentRun
+from app.agents.models import AgentMessage, AgentRun, ProviderRecord
+from app.analytics.models import AnalyticsSnapshot
 from app.db import lock_for_write
 from app.economy.budget import (
     UNPRICED_CAVEAT_PREFIX,
@@ -58,13 +60,16 @@ from app.economy.budget import (
     budget_status,
     studio_timezone,
 )
-from app.economy.prices import price_row
+from app.economy.models import ProviderCostRecord
+from app.economy.prices import llm_cost_vr, price_for, price_row
 from app.economy.services import EconomyError, format_micros, record_provider_cost
+from app.factual.models import ScriptDraft
 from app.factual.sanitizer import wrap_in_inert_boundary
 from app.integrations.models import Integration
-from app.media.models import VideoRenderJob
+from app.media.models import Storyboard, VideoRenderJob
 from app.media.production_policy import credit_usd, estimate_cost_usd, record_measured_price
 from app.providers.registry import ProviderRegistry
+from app.publishing.models import PublicationRecord
 from app.services import pending_approvals
 from app.wording import budget_period, budget_state, count
 
@@ -84,11 +89,21 @@ class NoAccountant(AccountantError):
 
 
 def daily_figures(engine: Engine, now: datetime | None = None) -> dict[str, Any]:
-    """Everything the Accountant reads before saying a word. Computed from the books."""
+    """Everything the Accountant reads before saying a word. Computed from the books.
+
+    The day's and the month's spend carry the usage nobody priced per model, with whether a
+    price active now covers it (`unpriced_by_model`), and the published films carry what
+    each cost (`published_film_costs`). With only counts she asked the Director, three times
+    on 2026-10-11, for a rate card the Owner had typed on 10-05 and for film costs that sat
+    in her own books.
+    """
     status = budget_status(engine, now)
+    with Session(engine) as session:
+        today = _with_unpriced(session, status["today"])
+        month = _with_unpriced(session, status["month"])
     return {
-        "today": status["today"],
-        "month": status["month"],
+        "today": today,
+        "month": month,
         "budgets": [
             {
                 "period": b["period"],
@@ -102,8 +117,249 @@ def daily_figures(engine: Engine, now: datetime | None = None) -> dict[str, Any]
             }
             for b in status["budgets"]
         ],
+        "films": {
+            "published": published_film_costs(engine),
+            "agent_cost": AGENT_COST_PER_FILM_RO,
+        },
         "measured_at": status["measured_at"],
     }
+
+
+def _with_unpriced(session: Session, spend: dict[str, Any]) -> dict[str, Any]:
+    """A period's spend (`budget.spend_since`) with its unpriced usage per model beside the
+    count. Read here and not in `spend_since`: that sum is the money gate every agent run
+    passes, and a price read per model there slowed every run and could refuse it on a fault
+    in a reading only the Accountant needs."""
+    groups = unpriced_by_model(session, spend["since"]) if spend["unpriced_agent_runs"] else []
+    return {
+        **spend,
+        # Their tokens, apart from the period's totals, which count every run: the Director
+        # once read the month's 1.88 million prompt tokens as the unpriced usage.
+        "unpriced_prompt_tokens": sum(group["prompt_tokens"] for group in groups),
+        "unpriced_completion_tokens": sum(group["completion_tokens"] for group in groups),
+        "unpriced_by_model": groups,
+    }
+
+
+def unpriced_by_model(session: Session, since_iso: str) -> list[dict[str, Any]]:
+    """The succeeded runs with no cost since a moment, per provider kind and model: how many,
+    their tokens, when they ran, and whether a price active now covers both token sides.
+
+    A run's cost is computed once, when the model answers. On 2026-10-11 the month held 167
+    such runs, all from 10-03..05, before the Owner's Ollama price of 10-05 13:46; the
+    Accountant, shown only their count, asked the Director for a rate card that existed.
+    Usage a price covers now is the studio's to value at that price; usage none covers is the
+    Owner's to price. Read only: nothing here writes a cost or a price.
+    """
+    rows = session.execute(
+        select(
+            AgentRun.provider_name,
+            AgentRun.model_name,
+            func.count(),
+            func.sum(AgentRun.prompt_tokens),
+            func.sum(AgentRun.completion_tokens),
+            func.sum(
+                case(
+                    (
+                        AgentRun.prompt_tokens.is_(None) | AgentRun.completion_tokens.is_(None),
+                        1,
+                    ),
+                    else_=0,
+                )
+            ),
+            func.min(AgentRun.started_at),
+            func.max(AgentRun.started_at),
+        )
+        .where(
+            AgentRun.started_at >= since_iso,
+            AgentRun.status == "SUCCEEDED",
+            AgentRun.cost_vr.is_(None),
+        )
+        .group_by(AgentRun.provider_name, AgentRun.model_name)
+    ).all()
+    # The price table is keyed by the connection's kind, which the provider record holds
+    # (upper case for the seeded endpoint, lower case for a connection saved in Settings).
+    kinds = {
+        str(name): str(kind or "").lower()
+        for name, kind in session.execute(
+            select(ProviderRecord.name, ProviderRecord.provider_type).where(
+                ProviderRecord.name.in_(sorted({str(row[0]) for row in rows}))
+            )
+        )
+    }
+    groups: list[dict[str, Any]] = []
+    for provider, model, runs, prompt, completion, untokened, first, last in rows:
+        kind = kinds.get(str(provider)) or None
+        prompt_tokens, completion_tokens = int(prompt or 0), int(completion or 0)
+        # The adapters' own arithmetic, with the price table read as it stands now.
+        cost = (
+            llm_cost_vr(
+                partial(price_for, session, kind), str(model), prompt_tokens, completion_tokens
+            )
+            if kind is not None
+            else None
+        )
+        groups.append(
+            {
+                "provider_kind": kind,
+                "provider_name": provider,
+                "model": model,
+                "runs": int(runs or 0),
+                "runs_without_token_counts": int(untokened or 0),
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "first_run_at": first,
+                "last_run_at": last,
+                # Both token sides priced by a row active now, so these runs can be valued.
+                "covered_by_active_price": cost is not None,
+                # What the active price makes of these tokens; None when no price covers them.
+                "at_active_price_usd": cost,
+            }
+        )
+    return sorted(groups, key=lambda group: (-group["runs"], str(group["model"])))
+
+
+#: How many published films the figures carry, newest first: enough to say what the latest
+#: films cost against what they returned, and short enough for the prompt the close sends.
+FILMS_IN_FIGURES = 8
+
+#: Why the films' costs leave the employees' thinking out. Said, not hidden.
+AGENT_COST_PER_FILM_RO = (
+    "neatribuit: rulările angajaților nu poartă filmul pentru care au lucrat, deci costul lor "
+    "stă în totalul zilei, nu în costul unui film"
+)
+
+
+def published_film_costs(engine: Engine, limit: int = FILMS_IN_FIGURES) -> list[dict[str, Any]]:
+    """What each published film cost, from the books, beside what it has returned so far.
+
+    The cost is `film_spend_micros`, the figure the film ceiling reads: every cost row
+    attributed to the film's board, the narration of its renders and any hold still standing.
+    It is split, by the same two attributions, into ESTIMATED (the studio's own figure, no
+    invoice behind it yet), RECONCILED (estimates an invoice the Owner entered has since
+    replaced: the invoice's own BILLED row covers a provider and a period, not a film, so the
+    estimate stays this film's figure, now checked), BILLED (an invoice row booked to the film
+    itself) and held. The topic's boards rejected before the published one are given apart:
+    they were attempts paid for this same film. A board still in work, or another film
+    published on the topic, is not this film's. 2026-10-11: asked what a film cost against
+    what it returned, the Accountant wrote that the cost «cannot be attributed», while 4.58
+    USD of RunPod rows stood in the books under the Higgs film's board.
+    """
+    from app.media.shooting_sheet import film_spend_micros  # noqa: PLC0415 - media imports us
+
+    films: list[dict[str, Any]] = []
+    with Session(engine) as session:
+        publications = session.scalars(
+            select(PublicationRecord)
+            .where(
+                PublicationRecord.status == "PUBLISHED",
+                PublicationRecord.remote_video_id.is_not(None),
+            )
+            .order_by(PublicationRecord.published_at.desc())
+            .limit(limit)
+        ).all()
+        for publication in publications:
+            board_id = session.scalar(
+                select(VideoRenderJob.storyboard_id).where(
+                    VideoRenderJob.output_asset_id == publication.media_asset_id
+                )
+            )
+            entry: dict[str, Any] = {
+                "publication_id": publication.id,
+                "title": publication.title,
+                "published_at": publication.published_at,
+                "storyboard_id": board_id,
+            }
+            if board_id is not None:
+                total = film_spend_micros(engine, board_id)
+                booked = _film_booked_micros(session, board_id)
+                estimated, billed = booked.get("ESTIMATED", 0), booked.get("BILLED", 0)
+                reconciled = booked.get("RECONCILED", 0)
+                siblings = _rejected_attempts(session, board_id)
+                entry.update(
+                    {
+                        "cost_usd": format_micros(total),
+                        "estimated_usd": format_micros(estimated),
+                        "reconciled_usd": format_micros(reconciled),
+                        "billed_usd": format_micros(billed),
+                        "held_usd": format_micros(max(0, total - estimated - reconciled - billed)),
+                        "rejected_boards_same_topic_usd": format_micros(
+                            sum(film_spend_micros(engine, sibling) for sibling in siblings)
+                        ),
+                    }
+                )
+            latest = session.scalars(
+                select(AnalyticsSnapshot)
+                .where(AnalyticsSnapshot.publication_id == publication.id)
+                .order_by(
+                    (AnalyticsSnapshot.window == "LIFETIME").desc(),
+                    AnalyticsSnapshot.snapshot_at.desc(),
+                )
+                .limit(1)
+            ).first()
+            entry["views"] = int(latest.views) if latest is not None else None
+            entry["views_measured_at"] = latest.snapshot_at if latest is not None else None
+            films.append(entry)
+    return films
+
+
+def _rejected_attempts(session: Session, board_id: str) -> list[str]:
+    """The topic's boards rejected on the way to this one: after the topic's previous board
+    that was not rejected, and before this one. A board still in work, another film of the
+    topic, or an attempt that led to that other film, is not this film's cost."""
+    board = session.get(Storyboard, board_id)
+    if board is None:
+        return []
+    topic = (
+        select(Storyboard.id, Storyboard.status, Storyboard.created_at)
+        .join(ScriptDraft, Storyboard.script_draft_id == ScriptDraft.id)
+        .where(
+            ScriptDraft.topic_id
+            == select(ScriptDraft.topic_id)
+            .where(ScriptDraft.id == board.script_draft_id)
+            .scalar_subquery(),
+            Storyboard.id != board_id,
+            Storyboard.created_at <= board.created_at,
+        )
+        .order_by(Storyboard.created_at.desc())
+    )
+    attempts: list[str] = []
+    for other_id, status, _created in session.execute(topic):
+        if status != "REJECTED":
+            break  # the previous film's board, or one abandoned unrejected: its attempts are its
+        attempts.append(str(other_id))
+    return attempts
+
+
+def _film_booked_micros(session: Session, storyboard_id: str) -> dict[str, int]:
+    """The film's cost rows per status, attributed as `film_spend_micros` attributes them: to
+    its board, or (narration) to one of its renders with no board of their own. A row an
+    invoice has replaced (``reconciled_at``) is RECONCILED, whatever its status: `spend_since`
+    skips it for the invoice, and an estimate shown as unbilled after the Owner reconciled it
+    said the opposite of his books."""
+    attributed = func.json_extract(ProviderCostRecord.attribution_json, "$.storyboard_id")
+    rendered = func.json_extract(ProviderCostRecord.attribution_json, "$.render_job_id")
+    jobs = list(
+        session.scalars(
+            select(VideoRenderJob.id).where(VideoRenderJob.storyboard_id == storyboard_id)
+        )
+    )
+    belongs = attributed == storyboard_id
+    if jobs:
+        belongs = belongs | (rendered.in_(jobs) & attributed.is_(None))
+    booked: dict[str, int] = {}
+    for status, replaced, micros in session.execute(
+        select(
+            ProviderCostRecord.status,
+            ProviderCostRecord.reconciled_at.is_not(None),
+            func.sum(ProviderCostRecord.usd_micros),
+        )
+        .where(belongs)
+        .group_by(ProviderCostRecord.status, ProviderCostRecord.reconciled_at.is_not(None))
+    ):
+        key = "RECONCILED" if replaced else str(status)
+        booked[key] = booked.get(key, 0) + int(micros or 0)
+    return booked
 
 
 # ----------------------------------------------------------------------------- render costs

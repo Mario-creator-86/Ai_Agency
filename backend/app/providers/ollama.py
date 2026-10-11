@@ -8,21 +8,70 @@ If Ollama is not running, returns OFFLINE status. A refused connection or a 5xx 
 again a bounded number of times (`app.providers.retry`) before it is one.
 Never fabricates a model response, and never presents a model's private reasoning as one:
 generation asks for thinking off, and what comes back in `response` is the whole answer.
+
+A generation the endpoint refused is raised as `ProviderHTTPError`, the class the configured
+adapter raises, with the status and the vendor's one-word code. 2026-10-04: an employee on a
+model of this endpoint failed 492 times between 05:23 and 07:51 and every run recorded only
+"HTTPError" — no status, so nobody could tell a refused key from a missing model, and the
+Owner's reconnect card could not be raised.
 """
 
 from __future__ import annotations
 
 import json as _json
+import re
 import time
 from typing import Any
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from app.economy.prices import PriceLookup, llm_cost_vr
+from app.integrations.llm import ProviderHTTPError
 from app.providers.base import GenerateResult, HealthResult, LLMProvider, ModelInfo
-from app.providers.retry import call_with_retries
+from app.providers.retry import call_with_retries, retry_after_seconds
 
 ADAPTER_VERSION = "1.0.0"
+
+#: What a vendor's refusal code looks like: one word of letters, underscores or dashes
+#: («unauthorized», «PERMISSION_DENIED», «quotaExceeded»). A sentence is not kept: it can quote
+#: the request, and a key in a request is exactly what must never reach a record.
+_VENDOR_WORD = re.compile(r"[A-Za-z][A-Za-z_-]{1,59}")
+#: The most of a refusal's body read to find that word.
+_REFUSAL_BODY_BYTES = 16_384
+
+
+def _vendor_word(exc: HTTPError) -> str | None:
+    """The refusal's own code from its body: Ollama's ``{"error": "unauthorized"}``, or a
+    Google-shaped ``{"error": {"status": "PERMISSION_DENIED", "errors": [{"reason": …}]}}``.
+    None when the body has no single word to give."""
+    try:
+        raw = exc.read(_REFUSAL_BODY_BYTES)
+        body = _json.loads(raw.decode("utf-8", errors="replace")) if raw else None
+    except (OSError, ValueError, AttributeError):
+        return None
+    error = body.get("error") if isinstance(body, dict) else None
+    candidates: list[Any] = [error]
+    if isinstance(error, dict):
+        candidates = [error.get("status")] + [
+            item.get("reason") for item in error.get("errors") or [] if isinstance(item, dict)
+        ]
+    for candidate in candidates:
+        if isinstance(candidate, str) and _VENDOR_WORD.fullmatch(candidate.strip()):
+            return candidate.strip()
+    return None
+
+
+def _refused(exc: HTTPError, *, keyless: bool) -> ProviderHTTPError:
+    """The endpoint's refusal as the studio's provider error: the status, the wait the vendor
+    asked for, its one-word code, and whether the call carried a key at all. The urllib error
+    itself is closed, not carried along — its text names the URL, and its body is the
+    vendor's."""
+    try:
+        return ProviderHTTPError(
+            int(exc.code), retry_after_seconds(exc), word=_vendor_word(exc), keyless=keyless
+        )
+    finally:
+        exc.close()
 
 
 class OllamaProvider(LLMProvider):
@@ -157,7 +206,13 @@ class OllamaProvider(LLMProvider):
             body.update(extra)
         # Not repeatable: a generation that timed out may still be running, and on a cloud
         # model the tokens are spent either way. A refusal (429, 5xx) is retried; silence is not.
-        data = self._post("/api/generate", body, repeatable=False)
+        # The refusal that remains is the studio's provider error, with its status (see the
+        # module's docstring); `from None`, because the urllib error's text names the URL.
+        # The seeded endpoint is called with no key: what refuses it is its own sign-in.
+        try:
+            data = self._post("/api/generate", body, repeatable=False)
+        except HTTPError as exc:
+            raise _refused(exc, keyless=not self.api_key) from None
         text = data.get("response", "")
         prompt_tokens = data.get("prompt_eval_count")
         completion_tokens = data.get("eval_count")

@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, patch
 from urllib.error import HTTPError, URLError
 
 import pytest
+from app.integrations.llm import ProviderHTTPError
 from app.providers.ollama import OllamaProvider
 
 # ---------------------------------------------------------------------------
@@ -244,9 +245,10 @@ def test_a_503_then_200_generates_after_one_retry():
 def test_a_400_is_not_retried():
     provider = OllamaProvider()
     with patch("app.providers.ollama.urlopen", side_effect=_http_error(400)) as urlopen:
-        with pytest.raises(HTTPError) as excinfo:
+        # A refused generation is the studio's provider error, with the status on it.
+        with pytest.raises(ProviderHTTPError) as excinfo:
             run(provider.generate("llama3.2:latest", "test"))
-    assert excinfo.value.code == 400 and urlopen.call_count == 1
+    assert excinfo.value.http_status == 400 and urlopen.call_count == 1
 
 
 def test_after_three_refusals_the_original_error_class_is_raised():
