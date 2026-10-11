@@ -2007,6 +2007,10 @@ def test_morning_rounds_that_delivered_nothing_leave_her_repair_of_scene_5_possi
 ):
     from app.runbook import stages
 
+    # The limits the studio had then (one a scene, two a film); since 2026-10-11 they
+    # default to the most the settings allow.
+    settings.film_max_paid_redos_per_scene = 1
+    settings.film_max_paid_redos = 2
     film = failed_film(engine)
     _morning(engine, film)
     with Session(engine) as session:
@@ -2326,6 +2330,10 @@ def test_an_approved_take_bought_for_her_and_in_no_film_is_something_she_can_sti
     from app.agents.reviews import DirectorRedo, repair_refusal
     from app.runbook import stages
 
+    # The limits the studio had then (one a scene, two a film); since 2026-10-11 they
+    # default to the most the settings allow.
+    settings.film_max_paid_redos_per_scene = 1
+    settings.film_max_paid_redos = 2
     film = failed_film(engine)
     registry, model = director_says(studio, answer(verdicts_for(film), "REPAIR", REPAIR_5))
     redo = FakeRedoPath(engine, monkeypatch, still_status="PAID")
