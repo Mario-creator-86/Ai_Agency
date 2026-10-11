@@ -58,7 +58,6 @@ Nothing here buys, calls a vendor or answers in the Owner's name: a REPAIR is bo
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 import re
 from collections.abc import Iterable, Mapping, Sequence
@@ -343,7 +342,7 @@ def report_findings(report: Mapping[str, Any]) -> list[dict[str, Any]]:
         findings.append(
             {
                 "id": len(findings) + 1,
-                "text": _short(text, 500),
+                "text": " ".join(text.split()),
                 "check": check,
                 "scene_index": scene,
                 "not_yours": is_not_yours(text, check),
@@ -357,8 +356,8 @@ def report_findings(report: Mapping[str, Any]) -> list[dict[str, Any]]:
             findings.append(
                 {
                     "id": len(findings) + 1,
-                    "text": _short(
-                        f"Controlul «{name}» a picat" + (f": {detail}" if detail else ""), 500
+                    "text": " ".join(
+                        (f"Controlul «{name}» a picat" + (f": {detail}" if detail else "")).split()
                     ),
                     "check": name,
                     "scene_index": None,
@@ -660,6 +659,8 @@ def film_qc_context(
     ``free_used`` whether a free fix was already applied to this film's line (it is done
     once). A scene with an approved take bought for her earlier REPAIR and in no film yet
     (`bought_not_in_film`) says so (``approved_new_take_not_in_film``)."""
+    from app.media.picture_qc import film_scene_prompts  # noqa: PLC0415 - shared render evidence
+
     report = reading.get("report") or {}
     report_id = str(reading.get("report_id") or "")
     storyboard_id = str(reading.get("storyboard_id") or "")
@@ -695,7 +696,7 @@ def film_qc_context(
             .order_by(StoryboardScene.scene_index)
         ):
             index = int(scene.scene_index)
-            package = scene.prompt_json if isinstance(scene.prompt_json, dict) else {}
+            prompts = film_scene_prompts(session, production, scene)
             takes = in_film.get(index, {"still": None, "motion": None})
             kind = kinds.get(index) or str(scene.scene_kind or LIVE).upper()
             scenes.append(
@@ -703,7 +704,10 @@ def film_qc_context(
                     "scene_index": index,
                     "kind": kind,
                     "narration": _short(scene.voiceover_segment, 300),
-                    "asked": _short(package.get("still_prompt") or scene.visual_prompt, 300),
+                    "asked": prompts["still_prompt"],
+                    "motion_requested": prompts["motion_prompt"],
+                    "ending_frame": prompts["ending_frame"],
+                    "prompt_sources": prompts["prompt_sources"],
                     "in_film": {
                         "still": _take_view(rows.get(takes["still"] or ""), his, takes["still"]),
                         "motion": _take_view(rows.get(takes["motion"] or ""), his, takes["motion"]),
@@ -759,9 +763,7 @@ def film_qc_context(
             "burned_in": burned,
             "note": CAPTIONS_BURNED_NOTE if burned else CAPTIONS_NOT_BURNED_NOTE,
         },
-        "visual_bible": _short(json.dumps(bible, ensure_ascii=False, default=str), 2000)
-        if bible
-        else None,
+        "visual_bible": bible or None,
         "paid_redo_limits": {
             "per_scene": per_scene,
             "per_film": per_film,

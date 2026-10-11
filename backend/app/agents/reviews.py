@@ -580,7 +580,7 @@ DIRECTOR_QC_TASK = "director_qc_review"
 #: v2 (2026-10-10 review): the REPAIR that can be carried out, his LOCAL_MOVE, music licences.
 #: v3 (the same day's second review): an approved take bought for her repair, in no film yet.
 #: v4 (the same evening): her own looks at the pictures a gate refused, in her history.
-DIRECTOR_QC_TEMPLATE_VERSION = "director-qc-v4"
+DIRECTOR_QC_TEMPLATE_VERSION = "director-qc-v6"
 #: Her verdict on one finding of the report.
 QC_VERDICTS = ("REAL", "FALSE", "OWNER_CHOICE", "ACCEPTED")
 #: Her decision on the film.
@@ -790,23 +790,29 @@ _DIRECTOR_QC_INSTRUCTIONS = (
     '"reason": "..."}], "decision": "ACCEPT" | "REPAIR", '
     '"repairs": [{"scene_index": 5, "redo": "still" | "motion" | "card" | "audio" | "encode", '
     '"reason": "..."}], "summary": "two sentences in Romanian for the Owner"}. '
-    '"repairs" is empty unless the decision is REPAIR.\n'
+    '"repairs" is empty unless the decision is REPAIR. Every verdict and repair reason is '
+    'at most 400 characters; keep the diagnosis and the required change concise. The summary '
+    'is at most 800 characters. Judge at most 80 findings and list at most 24 repairs.\n'
 )
 
-#: The most of the report's data one prompt carries; the findings come first in it.
+#: A soft target for context size: optional history/check details can be omitted, but exact
+#: scene prompts, findings and continuity rules must remain complete, valid JSON.
 DIRECTOR_QC_PAYLOAD_CHARS = 24000
 
 
 def _director_payload(context: Mapping[str, Any]) -> str:
-    """The context as JSON, cut from its least needed end when it is too long: the findings,
-    the scenes and the limits are never cut; the checks and the history go first."""
+    """Complete decision evidence as JSON; omit optional details before core evidence.
+
+    Slicing a serialized object can lose a scene's corrective intent and even its closing
+    structure. The Director must receive every finding, exact scene prompt and bible rule.
+    """
     data = dict(context)
-    for key in ("checks", "earlier_reviews", "redo_proposals", "visual_bible", "your_looks"):
+    for key in ("checks", "earlier_reviews", "redo_proposals", "your_looks"):
         text = json.dumps(data, ensure_ascii=False, default=str)
         if len(text) <= DIRECTOR_QC_PAYLOAD_CHARS:
             return text
         data[key] = "(omis: prea lung)"
-    return json.dumps(data, ensure_ascii=False, default=str)[:DIRECTOR_QC_PAYLOAD_CHARS]
+    return json.dumps(data, ensure_ascii=False, default=str)
 
 
 def review_film_qc(

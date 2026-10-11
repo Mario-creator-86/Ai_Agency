@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 
 class Vault:
     def decrypt(self, _blob):
-        return {"api_key": "xi-test-key"}
+        return {"api_key": "xi-test-key"}  # pragma: allowlist secret - test fixture
 
 
 def connection(engine, *, status="VERIFIED", config=None) -> str:
@@ -37,7 +37,7 @@ def connection(engine, *, status="VERIFIED", config=None) -> str:
                 kind="elevenlabs",
                 name="AMN-AI",
                 config=dict(config or {}),
-                encrypted_secrets="sealed",
+                encrypted_secrets="sealed",  # pragma: allowlist secret - test fixture
                 secret_fields=["api_key"],
                 version=1,
                 status=status,

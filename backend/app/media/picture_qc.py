@@ -86,6 +86,7 @@ from app.media.cards import CAPTION_BAND_TOP, FRAME_HEIGHT
 from app.media.models import (
     CharacterBible,
     MediaAsset,
+    SceneTake,
     Storyboard,
     StoryboardScene,
     VideoRenderJob,
@@ -101,7 +102,7 @@ PICTURE_TASK = "picture_qc"
 #: v2 (2026-10-09): the one-picture question, after scene 5 came out as three stacked panels.
 #: v3 (2026-10-10): the model is told where its frames were cut from and that the narration's
 #: subtitles are the studio's own (film babcf272 was failed for its own captions).
-TEMPLATE_VERSION = "picture-qc-v3"
+TEMPLATE_VERSION = "picture-qc-v4"
 
 #: The departments asked to look, in order. The Video Editor owns the pictures, so the
 #: department that made them is the department that answers for them; the Director is asked
@@ -159,7 +160,12 @@ _INSTRUCTIONS = (
     "split screen, a grid, panels stacked one above another, a comic strip, or a picture "
     "with a blank or black band across it is not one picture, however good each part is. "
     "Third: does it show what the scene asked for — its written picture and what the "
-    "narration says over it? Something well made that shows none of what the scene asked "
+    "narration says over it, including its requested motion and ending frame? A visual "
+    "effect explicitly requested by the motion is not an unrequested addition. Judge whether "
+    "it is well made and consistent with the scene; the request does not excuse artefacts, "
+    "unwanted faces, text or other visual-rule violations. Prompt sources identify submitted "
+    "requests versus the current storyboard, which may have changed since filming. "
+    "Something well made that shows none of what the scene asked "
     "for does not show it.\n"
     "{character_note}"
     'Return only JSON: {{"scenes": [{{"scene": 1, "is_a_picture": true, "one_picture": true, '
@@ -594,6 +600,73 @@ def _not_applicable(reason: str, *, characters_configured: int = 0) -> dict[str,
     }
 
 
+def film_scene_prompts(
+    session: Session, production: Mapping[str, Any], scene: StoryboardScene
+) -> dict[str, Any]:
+    """The render's submitted prompts, or explicitly labelled storyboard fallback.
+
+    A rewritten storyboard does not change what an older take was asked to show. RunPod's
+    journal keeps the actual request for the take named in the render; no provider is called.
+    Ending-frame prose is not journalled, so it is omitted when its motion was rewritten.
+    """
+    from app.providers.runpod.jobs import GenerationJob  # noqa: PLC0415
+
+    package = scene.prompt_json if isinstance(scene.prompt_json, dict) else {}
+    still = str(package.get("still_prompt") or scene.visual_prompt or "")
+    motion = str(package.get("motion_prompt") or package.get("motion") or "")
+    ending = str(package.get("ending_frame") or "")
+    sources = {
+        "still": "current_storyboard",
+        "motion": "current_storyboard",
+        "ending_frame": "current_storyboard" if ending else "unavailable",
+    }
+    recorded = next(
+        (
+            entry
+            for entry in production.get("scenes") or []
+            if isinstance(entry, Mapping) and entry.get("scene_index") == scene.scene_index
+        ),
+        {},
+    )
+    words = {"still": still, "motion": motion}
+    for layer, key in (("still", "still_take"), ("motion", "motion")):
+        entry = recorded.get(key)
+        take_id = entry.get("take_id") if isinstance(entry, Mapping) else None
+        take = session.get(SceneTake, take_id) if take_id else None
+        if (
+            take is None
+            or take.storyboard_id != scene.storyboard_id
+            or take.scene_number != scene.scene_index
+            or take.kind not in (("still",) if layer == "still" else ("motion", "test_shot"))
+            or not take.remote_task_id
+        ):
+            continue
+        job = session.scalar(
+            select(GenerationJob)
+            .where(
+                GenerationJob.remote_job_id == take.remote_task_id,
+                GenerationJob.project_id == scene.storyboard_id,
+            )
+            .order_by(GenerationJob.created_at.desc(), GenerationJob.id.desc())
+            .limit(1)
+        )
+        request = job.request if job is not None and isinstance(job.request, dict) else {}
+        submitted = request.get("prompt")
+        if not isinstance(submitted, str) or not submitted.strip():
+            continue
+        words[layer] = submitted
+        sources[layer] = "submitted_generation_job"
+        if layer == "motion" and " ".join(submitted.split()) != " ".join(motion.split()):
+            ending = ""
+            sources["ending_frame"] = "unavailable_for_submitted_take"
+    return {
+        "still_prompt": words["still"],
+        "motion_prompt": words["motion"],
+        "ending_frame": ending,
+        "prompt_sources": sources,
+    }
+
+
 def evaluate_pictures(
     engine: Engine,
     registry: Any | None,
@@ -643,7 +716,7 @@ def evaluate_pictures(
             {
                 "index": scene.scene_index,
                 "seconds": scene.duration_seconds,
-                "picture": scene.visual_prompt,
+                **film_scene_prompts(session, production, scene),
                 "narration": scene.voiceover_segment,
                 "characters": [
                     cid for cid in (scene.character_ids_json or []) if isinstance(cid, str)
@@ -791,7 +864,10 @@ def evaluate_pictures(
         "scenes": [
             {
                 "scene": scene["index"],
-                "picture": scene["picture"],
+                "picture": scene["still_prompt"],
+                "motion": scene["motion_prompt"],
+                "ending_frame": scene["ending_frame"],
+                "prompt_sources": scene["prompt_sources"],
                 "narration": scene["narration"],
             }
             for scene in looked
@@ -1298,7 +1374,7 @@ CLIP_TASK = "clip_qc"
 #: v3 (2026-10-10): a film's frames come with `studio_text_note` (where they were cut from, and
 #: the narration's subtitles named as the studio's) and, when their caption rows were cut out,
 #: the strip of each below them; a bought clip's prompt is unchanged.
-CLIP_TEMPLATE_VERSION = "clip-qc-v3"
+CLIP_TEMPLATE_VERSION = "clip-qc-v4"
 #: The frames shown per clip, in order: first, middle, last.
 CLIP_FRAMES = 3
 
@@ -1356,7 +1432,10 @@ _CLIP_INSTRUCTIONS = (
     "You are the studio's quality control. Attached are THREE frames of ONE generated clip "
     "for scene {scene} of a factual short, in order: the first frame, the middle frame and "
     "the last frame. {provenance} Judge only what you can see. The plan, the camera move asked "
-    "for, the film's look and the visual bible's rules are below.\n"
+    "for, its requested motion and ending frame, the film's look and the visual bible's "
+    "rules are below. Explicitly requested motion or effects are not unrequested additions; "
+    "still judge their execution, artefacts, faces, text and every bible rule. Prompt sources "
+    "identify submitted requests versus a current storyboard that may have changed.\n"
     "{studio_note}"
     "Answer each question about the clip, looking at all three frames:\n"
     "- faces_visible: is any human face visible in ANY of the three frames, even small, "
@@ -1418,6 +1497,8 @@ def judge_clip(
     correlation_id: str,
     *,
     motion_prompt: str = "",
+    ending_frame: str = "",
+    prompt_sources: Mapping[str, str] | None = None,
     ffmpeg_path: str | None = None,
     studio_text: StudioText | None = None,
 ) -> ClipJudgement:
@@ -1458,6 +1539,8 @@ def judge_clip(
         "plan": plan.still_prompt,
         "camera_move": plan.camera_move,
         "motion": motion_prompt,
+        "ending_frame": ending_frame,
+        "prompt_sources": dict(prompt_sources or {}),
         "look": plan.look_block,
         "faces_forbidden": plan.faces_forbidden,
         "bible_rules": list(plan.bible_rules),

@@ -554,6 +554,138 @@ def test_a_run_that_produced_no_text_is_not_recorded_as_a_success(seeded):
     assert _message_events(seeded["engine"]) == []
 
 
+@pytest.mark.parametrize(
+    ("role_name", "requested", "expected"),
+    [
+        ("Director", 6000, 12000),
+        ("Director", 24000, 48000),
+        ("Director", None, None),
+        ("Research", 6000, 6000),
+    ],
+)
+def test_director_token_budget_is_doubled_by_role_and_recorded(
+    seeded, monkeypatch, role_name, requested, expected
+):
+    from app.agents import services
+    from app.config import Settings
+
+    config = Settings(_env_file=None, owner_token="test-owner-token-for-budget-check")
+    monkeypatch.setattr(services, "_studio_settings", lambda: config)
+    clear_stop(seeded["engine"])
+    with Session(seeded["engine"]) as session, session.begin():
+        session.get(Role, seeded["role_id"]).name = role_name
+    seen = []
+
+    class BudgetAdapter(_StubAdapter):
+        async def generate(self, model, prompt, **kwargs):
+            seen.append(kwargs["max_tokens"])
+            return await super().generate(model, prompt, **kwargs)
+
+    registry = ProviderRegistry()
+    registry.register(seeded["provider_id"], BudgetAdapter("A concise decision."))
+    result = run_agent_task(
+        seeded["engine"], registry, seeded["agent_active_id"], "plan", "Plan", "v1",
+        str(uuid4()), max_tokens=requested,
+    )
+    assert result["status"] == "SUCCEEDED"
+    assert seen == [expected]
+    limits = result["context_json"]["generation_limits"]
+    assert limits["requested_max_tokens"] == requested
+    assert limits["effective_max_tokens"] == expected
+    assert limits["token_multiplier"] == (2 if role_name == "Director" else 1)
+
+
+@pytest.mark.parametrize("multiplier", [1, 3])
+def test_director_token_multiplier_uses_configuration(seeded, monkeypatch, multiplier):
+    from app.agents import services
+    from app.config import Settings
+
+    config = Settings(
+        _env_file=None, owner_token="test-owner-token-for-budget-check",
+        director_token_multiplier=multiplier,
+    )
+    monkeypatch.setattr(services, "_studio_settings", lambda: config)
+    clear_stop(seeded["engine"])
+    seen = []
+
+    class BudgetAdapter(_StubAdapter):
+        async def generate(self, model, prompt, **kwargs):
+            seen.append(kwargs["max_tokens"])
+            return await super().generate(model, prompt, **kwargs)
+
+    registry = ProviderRegistry()
+    registry.register(seeded["provider_id"], BudgetAdapter("A concise decision."))
+    result = run_agent_task(
+        seeded["engine"], registry, seeded["agent_active_id"], "plan", "Plan", "v1",
+        str(uuid4()), max_tokens=6000,
+    )
+    assert result["status"] == "SUCCEEDED"
+    assert seen == [6000 * multiplier]
+
+
+@pytest.mark.parametrize("invalid", [0, 5])
+def test_director_token_multiplier_rejects_out_of_range_configuration(invalid):
+    from app.config import Settings
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        Settings(
+            _env_file=None, owner_token="test-owner-token-for-budget-check",
+            director_token_multiplier=invalid,
+        )
+
+
+def test_director_qc_both_attempts_send_doubled_limit_to_ollama(seeded, monkeypatch):
+    import json
+
+    from app.agents import services
+    from app.agents.reviews import DIRECTOR_QC_TASK, review_film_qc
+    from app.config import Settings
+    from app.providers.ollama import OllamaProvider
+
+    config = Settings(
+        _env_file=None,
+        owner_token="test-owner-token-for-budget-check",
+        director_token_multiplier=2,
+    )
+    monkeypatch.setattr(services, "_studio_settings", lambda: config)
+    clear_stop(seeded["engine"])
+    with Session(seeded["engine"]) as session, session.begin():
+        session.get(Role, seeded["role_id"]).allowed_task_types += "," + DIRECTOR_QC_TASK
+    first = {
+        "verdicts": [{"finding": 1, "verdict": "REAL", "reason": "The image is wrong."}],
+        "decision": "REPAIR",
+        "repairs": [{"scene_index": 1, "redo": "still", "reason": "x" * 500}],
+        "summary": "Refacem scena.",
+    }
+    second = {**first, "repairs": [{"scene_index": 1, "redo": "still", "reason": "Remove panels."}]}
+    answers = iter([first, second])
+    bodies = []
+
+    def reply(_path, body, **_kwargs):
+        bodies.append(body)
+        return {"response": json.dumps(next(answers)), "prompt_eval_count": 10, "eval_count": 100}
+
+    adapter = OllamaProvider("http://127.0.0.1:11434")
+    monkeypatch.setattr(adapter, "_post", reply)
+    registry = ProviderRegistry()
+    registry.register(seeded["provider_id"], adapter)
+    result = review_film_qc(
+        seeded["engine"], registry,
+        {
+            "film": {"title": "A film", "report_id": "test-report"},
+            "findings": [{"id": 1, "text": "Wrong image"}],
+            "scenes": [{"scene_index": 1, "kind": "LIVE", "paid_redos_left": 1}],
+        },
+    )
+    assert result["decision"] == "REPAIR"
+    assert len(bodies) == 2
+    assert [body["options"]["num_predict"] for body in bodies] == [12000, 12000]
+    assert [body["think"] for body in bodies] == [False, True]
+    assert "400 characters" in bodies[0]["prompt"]
+    assert "800 characters" in bodies[0]["prompt"]
+
+
 # ---------------------------------------------------------------------------
 # What a role prefers of a model: the studio can see, or says it cannot
 # ---------------------------------------------------------------------------

@@ -8,6 +8,7 @@ from pydantic import AliasChoices, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_DIRECTOR_TOKEN_MULTIPLIER = 2
 
 
 def validate_public_host(host: str, where: str = "the allowlist") -> str:
@@ -394,6 +395,14 @@ class Settings(BaseSettings):
     #: (2026-10-02, MONEY-10), and the preflight degrades when a paid model runs with no
     #: ceiling. The figure is the Owner's; none is chosen for him here.
     agent_daily_token_budget: int = Field(default=0, ge=0)
+
+    #: Scale each explicitly bounded Director generation, including both structured-output
+    #: attempts (STUDIO_DIRECTOR_TOKEN_MULTIPLIER). Owner, 2026-10-11: double her allowance
+    #: after the cyclotron QC retry exhausted 6,000 tokens without a visible answer. Other
+    #: employees and the independent daily token/USD gates keep their own limits.
+    director_token_multiplier: int = Field(
+        default=DEFAULT_DIRECTOR_TOKEN_MULTIPLIER, ge=1, le=4
+    )
 
     #: How much reading the day does: candidates the research stage gathers pages for, and
     #: pages read per candidate. Measured on the live copy: two candidates of three pages

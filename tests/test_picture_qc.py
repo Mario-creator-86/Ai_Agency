@@ -336,6 +336,104 @@ def test_pictures_that_show_the_scene_pass_and_the_film_is_looked_at_once(
     assert seen_frames["scene_seconds"] == [6.0, 6.0, 6.0]
 
 
+def test_finished_picture_qc_reads_requested_motion_and_ending_not_only_the_still(
+    engine, staffed, seen_frames
+):
+    ids = a_film(engine)
+    give_vision(engine, staffed["agents"]["VideoEditor"].id)
+    with Session(engine) as session, session.begin():
+        scene = session.scalar(
+            select(StoryboardScene).where(
+                StoryboardScene.storyboard_id == ids["board"], StoryboardScene.scene_index == 1
+            )
+        )
+        scene.prompt_json = {
+            "still_prompt": "A pencil spiral on a cream napkin lies on a walnut table.",
+            "motion_prompt": "A faint glowing trail of particles rises from the pencil spiral.",
+            "ending_frame": "The napkin is still flat; the faint glow has risen above it.",
+        }
+    registry, model = registry_with(staffed, lambda p: all_good())
+
+    evaluate_pictures(engine, registry, ids["asset"], str(uuid4()))
+
+    prompt = model.calls[0]["prompt"]
+    assert "A pencil spiral on a cream napkin" in prompt
+    assert "A faint glowing trail of particles rises" in prompt
+    assert "the faint glow has risen above it" in prompt
+    assert "requested motion" in prompt
+
+
+@pytest.mark.parametrize("rewritten", [False, True])
+def test_render_prompt_context_uses_submitted_take_before_a_later_storyboard_rewrite(
+    engine, rewritten
+):
+    from app.media.models import SceneTake
+    from app.media.picture_qc import film_scene_prompts
+    from app.providers.runpod.jobs import GenerationJob
+
+    ids = a_film(engine)
+    take_id, remote, now = str(uuid4()), "offline-recorded-motion:0", utc_now()
+    original_motion = "A faint glowing trail of particles rises from the pencil spiral."
+    with Session(engine) as session, session.begin():
+        scene = session.scalar(
+            select(StoryboardScene).where(
+                StoryboardScene.storyboard_id == ids["board"], StoryboardScene.scene_index == 1
+            )
+        )
+        scene.prompt_json = {
+            "still_prompt": "The same pencil spiral and napkin.",
+            "motion_prompt": "The napkin stays dark and still." if rewritten else original_motion,
+            "ending_frame": "No glow is visible." if rewritten else "The faint glow has risen.",
+        }
+        session.add(
+            SceneTake(
+                id=take_id,
+                storyboard_id=ids["board"],
+                scene_number=1,
+                kind="motion",
+                prompt_hash="b" * 64,
+                model_id="offline-motion",
+                resolution="1080:1920",
+                remote_task_id=remote,
+                status="APPROVED",
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        session.add(
+            GenerationJob(
+                id=str(uuid4()),
+                idempotency_key=str(uuid4()),
+                payload_hash="c" * 64,
+                provider="runpod",
+                target="offline",
+                project_id=ids["board"],
+                scene_id="1",
+                attempt=1,
+                operation="video",
+                model="offline-motion",
+                gpu="offline",
+                hourly_rate="0",
+                remote_job_id=remote,
+                status="COMPLETED",
+                request={"prompt": original_motion},
+                output={},
+                created_at=now,
+            )
+        )
+        session.flush()
+        reading = film_scene_prompts(
+            session, {"scenes": [{"scene_index": 1, "motion": {"take_id": take_id}}]}, scene
+        )
+
+    assert reading["motion_prompt"] == original_motion
+    assert reading["prompt_sources"]["motion"] == "submitted_generation_job"
+    assert reading["ending_frame"] == ("" if rewritten else "The faint glow has risen.")
+    assert reading["prompt_sources"]["ending_frame"] == (
+        "unavailable_for_submitted_take" if rewritten else "current_storyboard"
+    )
+
+
 def test_a_scene_made_of_panels_fails_the_film_and_names_the_scene(engine, staffed, seen_frames):
     """2026-10-09: scene 5 was three stacked panels and a model told the plan's three moments
     found it matched. The look now asks whether each frame is ONE picture."""
@@ -1331,6 +1429,107 @@ def test_each_live_scene_is_judged_on_its_first_middle_and_last_frame(engine, st
     assert record["frame_width"] == 1080
 
 
+@pytest.mark.parametrize("fps", [12.0, 24.0, 30.0, 60.0, 24000 / 1001, 30000 / 1001])
+@pytest.mark.parametrize("cut_frame", [1, 2, 17, 65, 736])
+def test_rounded_timeline_cut_keeps_each_frame_in_its_own_scene(fps, cut_frame):
+    from app.media.qc import span_frame_numbers
+
+    # The assembler persists seconds at six decimal places, including the cyclotron's
+    # 736 / 24 boundary (30.666667). The cut frame starts the next scene, never the last.
+    cut = round(cut_frame / fps, 6)
+    before = dict(span_frame_numbers(0, cut, fps))
+    after = dict(span_frame_numbers(cut, round((cut_frame + 24) / fps, 6), fps))
+
+    assert before["last"] == cut_frame - 1
+    assert after["first"] == cut_frame
+
+
+def test_rounded_dissolve_ends_on_its_own_frame_without_moving_a_real_partial_frame():
+    from app.media.qc import span_frame_numbers
+
+    # Both recorded times can round up; together they still name exactly frame 738.
+    assert dict(span_frame_numbers(30.666667, 32, 24, 0.083333))["first"] == 738
+    assert dict(span_frame_numbers(30.666667, 32, 24, 0.166667))["first"] == 740
+    # An actual fractional frame is not snapped to the previous frame.
+    assert dict(span_frame_numbers(1.001, 2.001, 24))["first"] == 25
+    assert dict(span_frame_numbers(1.001, 2.001, 24))["last"] == 48
+
+
+@requires_ffmpeg
+def test_span_qc_never_shows_the_next_scenes_picture_at_a_rounded_cut(engine, staffed, tmp_path):
+    import shutil
+    import subprocess
+
+    from app.media.qc import span_picture_qc
+    from PIL import Image
+
+    film = tmp_path / "rounded_cut.mp4"
+    rendered = subprocess.run(
+        [
+            shutil.which("ffmpeg"),
+            "-v",
+            "error",
+            "-nostdin",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=red:s=1080x1920:r=24:d=0.666667",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=blue:s=1080x1920:r=24:d=1",
+            "-filter_complex",
+            "[0:v]trim=end_frame=16,setpts=PTS-STARTPTS[a];"
+            "[1:v]trim=end_frame=23,setpts=PTS-STARTPTS[b];"
+            "[a][b]concat=n=2:v=1:a=0[v]",
+            "-map",
+            "[v]",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            str(film),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert rendered.returncode == 0, rendered.stderr[-1500:]
+    ids = _spanned_film(engine, tmp_path, film=film)
+    with Session(engine) as session, session.begin():
+        job = session.get(VideoRenderJob, ids["job"])
+        production = dict(job.production_json)
+        production["timeline"] = {
+            "fps": 24,
+            "spans": [
+                {"scene_index": 1, "start": 0.0, "end": 0.666667},
+                {"scene_index": 2, "start": 0.666667, "end": 1.625},
+            ],
+        }
+        job.production_json = production
+    shown: dict[int, list[str]] = {}
+
+    def judge(paths, plan):
+        colours = []
+        for path in paths:
+            with Image.open(path) as image:
+                red, _, blue = image.convert("RGB").getpixel((540, 960))
+            colours.append("red" if red > blue else "blue")
+        shown[plan.scene] = colours
+        return _keep(plan.scene)
+
+    record = span_picture_qc(engine, None, ids["asset"], str(uuid4()), judge=judge)
+
+    assert shown == {1: ["red"] * 3, 2: ["blue"] * 3}
+    scene_frames = {
+        row["scene_index"]: {item["at"]: item["frame"] for item in row["frames"]}
+        for row in record["scenes"]
+    }
+    assert scene_frames[1]["last"] == 15
+    assert scene_frames[2]["first"] == 16
+
+
 @requires_ffmpeg
 def test_a_face_yunet_finds_on_any_of_the_three_frames_fails_the_film(engine, staffed, tmp_path):
     from app.media.qc import span_picture_qc
@@ -1524,6 +1723,43 @@ def test_the_studios_own_judge_is_one_vision_call_per_live_scene(engine, staffed
         assert len(images) == 3
         assert _jpeg_size(base64.b64decode(images[0])) == (1080, 1920)
         assert "No human faces appear" in call["prompt"]
+
+
+@requires_ffmpeg
+def test_finished_span_judge_receives_motion_ending_and_keeps_visual_rules(
+    engine, staffed, tmp_path
+):
+    from app.media.qc import span_picture_qc
+
+    ids = _spanned_film(engine, tmp_path, bible=NO_FACES_BIBLE)
+    give_vision(engine, staffed["agents"]["VideoEditor"].id)
+    with Session(engine) as session, session.begin():
+        scene = session.scalar(
+            select(StoryboardScene).where(
+                StoryboardScene.storyboard_id == ids["board"], StoryboardScene.scene_index == 1
+            )
+        )
+        scene.prompt_json = {
+            "still_prompt": "A pencil spiral on a cream napkin.",
+            "motion_prompt": "A faint glowing trail rises from the pencil spiral.",
+            "ending_frame": "The trail has risen; the napkin remains flat.",
+        }
+
+    def answer(prompt):
+        import re
+
+        scene = int(re.search(r"for scene (\d+)", prompt).group(1))
+        return json.dumps({"clips": [_keep(scene).verdict.model_dump()]})
+
+    registry, model = registry_with(staffed, answer)
+    span_picture_qc(engine, registry, ids["asset"], str(uuid4()), face_counter=_Faces())
+
+    prompt = model.calls[0]["prompt"]
+    assert "A faint glowing trail rises from the pencil spiral." in prompt
+    assert "The trail has risen; the napkin remains flat." in prompt
+    assert "Explicitly requested motion or effects are not unrequested additions" in prompt
+    assert "No human faces appear" in prompt
+    assert '"faces_forbidden": true' in prompt
 
 
 @requires_ffmpeg

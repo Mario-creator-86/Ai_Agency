@@ -39,6 +39,7 @@ from app.agents.models import (
     RoleCapability,
 )
 from app.agents.schemas import AgentRunView, AgentView, ModelView, ProviderView, RoleView
+from app.config import DEFAULT_DIRECTOR_TOKEN_MULTIPLIER
 from app.db import lock_for_write
 from app.economy.accountant import may_run_agent
 from app.models import DomainEvent, OwnerPolicy
@@ -604,8 +605,16 @@ def _studio_settings() -> Any:
         return None
 
 
-def _assert_policy_allows_run(session: Session, agent: Agent, registry: ProviderRegistry) -> None:
-    """Full policy kernel gate. Raises PolicyKernelError on any block."""
+def _assert_policy_allows_run(
+    session: Session, agent: Agent, registry: ProviderRegistry, model_id: str | None = None
+) -> None:
+    """Full policy kernel gate. Raises PolicyKernelError on any block.
+
+    ``model_id`` is the model that will answer when it is not the agent's own (a slot, or the
+    Director's probe of a replacement, 2026-10-11): its availability and its provider's health
+    are what decide, not those of the model it stands in for. Before, a call on a working
+    second model was refused because the first one had gone, which is when it was needed.
+    """
     # 1. Autonomy stop
     policy = session.get(OwnerPolicy, 1)
     if policy and policy.autonomy_stopped:
@@ -629,8 +638,13 @@ def _assert_policy_allows_run(session: Session, agent: Agent, registry: Provider
             "BLOCKED_POLICY",
         )
 
-    model = session.get(ModelRecord, agent.model_id)
-    if model is None or model.provider_id != agent.provider_id or not model.is_available:
+    answering = model_id or agent.model_id
+    model = session.get(ModelRecord, answering)
+    if (
+        model is None
+        or not model.is_available
+        or (answering == agent.model_id and model.provider_id != agent.provider_id)
+    ):
         raise PolicyKernelError("Assigned model is unavailable or not verified", "BLOCKED_PROVIDER")
     # WORKING is production without a model (a voice being recorded) and has no AgentRun
     # behind it by nature, so it is not "stale" — a model task may run beside it.
@@ -654,10 +668,10 @@ def _assert_policy_allows_run(session: Session, agent: Agent, registry: Provider
         )
 
     # 3. Capabilities
-    _check_required_capabilities(session, agent)
+    _check_required_capabilities(session, agent, model_id=answering)
 
-    # 4. Provider health (in-process cache)
-    provider_status = registry.cached_status(agent.provider_id)
+    # 4. Provider health (in-process cache), of the provider that will answer
+    provider_status = registry.cached_status(model.provider_id)
     if provider_status not in ("HEALTHY", "UNKNOWN"):
         raise PolicyKernelError(
             f"Provider status is {provider_status!r}; cannot run.",
@@ -681,18 +695,39 @@ _HTTP_MEANING_RO: dict[int, str] = {
 
 
 def _failure_detail(exc: BaseException) -> str:
-    """The error class, with the provider's HTTP status and its meaning when it has one.
+    """The error class, with the provider's HTTP status, its one-word code and its meaning
+    when it has them.
 
-    Never the exception's message: a vendor's text can carry a URL with a key in it.
+    Never the exception's message: a vendor's text can carry a URL with a key in it. The
+    code is the vendor's single word («unauthorized», «PERMISSION_DENIED»), which tells two
+    refusals with the same status apart; the adapter keeps nothing longer. A refusal of a
+    call that carried no key (``keyless``: the seeded local endpoint) is not a key to
+    re-enter — there is none in Settings — but that service's own sign-in, or another model.
     """
     name = type(exc).__name__
     status = getattr(exc, "http_status", None)
     if not isinstance(status, int) or isinstance(status, bool):
         return name
-    meaning = _HTTP_MEANING_RO.get(status)
+    keyless_meaning = {
+        401: "serviciul local nu este autentificat la contul furnizorului (nu are cheie în "
+        "Setări); autentifică-l sau mută angajatul pe un model al unei conexiuni verificate",
+        403: "contul serviciului local nu are acces la acest model; mută angajatul pe un "
+        "model al unei conexiuni verificate",
+    }
+    meaning = (
+        keyless_meaning.get(status) if getattr(exc, "keyless", False) is True else None
+    ) or _HTTP_MEANING_RO.get(status)
     if meaning is None and 500 <= status < 600:
         meaning = "furnizorul are o problemă de partea lui; se reîncearcă mai târziu"
-    return f"{name}: HTTP {status}" + (f" — {meaning}" if meaning else "")
+    word = getattr(exc, "word", None)
+    one_word = (
+        isinstance(word, str)
+        and len(word) <= 60
+        and word.isascii()
+        and word.replace("_", "").replace("-", "").isalpha()
+    )
+    code = f" ({word})" if one_word else ""
+    return f"{name}: HTTP {status}{code}" + (f" — {meaning}" if meaning else "")
 
 
 def run_agent_task(
@@ -730,6 +765,7 @@ def run_agent_task(
     started_at = utc_now()
     system_prompt: str | None = None
     context: dict = {}
+    effective_max_tokens = max_tokens
 
     # The day's token ceiling, before the run's write transaction opens: the Accountant's
     # letter to the Owner writes in a transaction of its own, and two writers on one SQLite
@@ -741,7 +777,8 @@ def run_agent_task(
     # An exceeded USD budget refuses the run as well (MONEY-10); the Accountant's own close,
     # which reports it, is the one run it does not stop (`BUDGET_EXEMPT_TASKS`).
     gate: dict[str, Any] = {"correlation_id": correlation_id, "task_type": task_type}
-    budget_verdict = may_run_agent(engine, _studio_settings(), **gate)
+    settings = _studio_settings()
+    budget_verdict = may_run_agent(engine, settings, **gate)
 
     with Session(engine) as session, session.begin():
         # This transaction reads the agent and its identity and then writes the run: it is
@@ -752,6 +789,21 @@ def run_agent_task(
             raise ValueError(f"Agent {agent_id} not found")
         identity = compose_identity(session, agent, task_type=task_type)
         system_prompt, context = identity.system, identity.context
+        role = session.get(Role, agent.role_id)
+        multiplier = (
+            getattr(settings, "director_token_multiplier", DEFAULT_DIRECTOR_TOKEN_MULTIPLIER)
+            if role is not None and role.name == "Director"
+            else 1
+        )
+        effective_max_tokens = max_tokens * multiplier if max_tokens is not None else None
+        context = {
+            **context,
+            "generation_limits": {
+                "requested_max_tokens": max_tokens,
+                "token_multiplier": multiplier,
+                "effective_max_tokens": effective_max_tokens,
+            },
+        }
         if summary:
             context = {**context, "task_summary": " ".join(str(summary).split())[:300]}
 
@@ -776,7 +828,7 @@ def run_agent_task(
         try:
             if not budget_verdict["allowed"]:
                 raise PolicyKernelError(budget_verdict["reason"], budget_verdict["status"])
-            _assert_policy_allows_run(session, agent, registry)
+            _assert_policy_allows_run(session, agent, registry, model_id=model_rec.id)
         except PolicyKernelError as exc:
             run = AgentRun(
                 id=run_id,
@@ -878,7 +930,7 @@ def run_agent_task(
                 model_name,
                 objective,
                 system=system_prompt,
-                max_tokens=max_tokens,
+                max_tokens=effective_max_tokens,
                 temperature=temperature,
                 extra=extra,
             )
@@ -1345,24 +1397,59 @@ def prefer_capable_models(engine: Engine) -> dict[str, list[dict[str, str]]]:
     return {"moved": moved, "skipped": skipped}
 
 
+#: The origin of a model the Director put an employee on because hers had stopped working
+#: (`app.agents.repairs.agent_health`, 2026-10-11). Not the Owner's choice, and never read as it.
+DIRECTOR_REPAIR_ORIGIN = "DIRECTOR_REPAIR"
+
+
+def _assignments(session: Session, agent_id: str) -> list[DomainEvent]:
+    """The employee's model assignments and preferred moves, newest first, without the
+    Director's repairs: a detour while a model is down is not anyone's choice of model."""
+    rows = session.scalars(
+        select(DomainEvent)
+        .where(
+            DomainEvent.aggregate_id == agent_id,
+            DomainEvent.event_type.in_(("agent.model_assigned", "agent.model_preferred")),
+        )
+        .order_by(DomainEvent.sequence.desc())
+    )
+    return [
+        row
+        for row in rows
+        if (row.payload or {}).get("assignment_origin") != DIRECTOR_REPAIR_ORIGIN
+    ]
+
+
+def owner_home_model(session: Session, agent_id: str) -> str | None:
+    """The model the Owner last put this employee on himself, or None.
+
+    Where she goes back to once that model works again: the Director's repair moves her off
+    it while it fails and keeps it as her home, and the preference mover leaves her alone
+    (`_owner_chose_models`), because his choice still stands behind the detour.
+    """
+    for row in _assignments(session, agent_id):
+        if row.event_type != "agent.model_assigned":
+            continue
+        origin = (row.payload or {}).get("assignment_origin")
+        if origin in (None, "OWNER"):
+            model_id = (row.payload or {}).get("model_id")
+            return str(model_id) if model_id else None
+    return None
+
+
 def _owner_chose_models(session: Session, agent: Agent, role_name: str) -> bool:
     """Protect explicit assignments even when they match the current seed configuration.
 
     New assignment events record their origin. Minimal legacy events came from the Owner's
     command and stay protected. Older ensemble events have no origin; retain their slot
-    comparison for compatibility, protecting them when the seed cannot be read.
+    comparison for compatibility, protecting them when the seed cannot be read. The
+    Director's repairs (``DIRECTOR_REPAIR``) are skipped: what decides is the choice behind
+    them, so an employee he placed stays his while she stands in on another model.
     """
     from app.agents.ensemble import resolve_model  # noqa: PLC0415
 
-    last = session.scalar(
-        select(DomainEvent)
-        .where(
-            DomainEvent.aggregate_id == agent.id,
-            DomainEvent.event_type.in_(("agent.model_assigned", "agent.model_preferred")),
-        )
-        .order_by(DomainEvent.sequence.desc())
-        .limit(1)
-    )
+    found = _assignments(session, agent.id)
+    last = found[0] if found else None
     if last is None or last.event_type == "agent.model_preferred":
         return False
     origin = last.payload.get("assignment_origin")

@@ -66,6 +66,7 @@ from app.media.picture_qc import (
     cut_caption_rows,
     evaluate_pictures,
     film_captions,
+    film_scene_prompts,
     judge_clip,
 )
 from app.media.prompt_lint import bible_face_rule
@@ -2908,6 +2909,19 @@ def film_length_budget(
 #: Which frames of a span are looked at.
 SPAN_FRAME_POSITIONS = ("first", "middle", "last")
 
+#: The assembler records timeline seconds rounded to six decimal places. The resulting
+#: uncertainty is in seconds, not frames, and two rounded times can be added at a dissolve.
+TIMELINE_TIME_PRECISION_SECONDS = 1e-6
+
+
+def _timeline_frame_ceiling(seconds: float, fps: float, *, rounded_times: int = 1) -> int:
+    frames = seconds * fps
+    nearest = round(frames)
+    uncertainty = fps * TIMELINE_TIME_PRECISION_SECONDS * rounded_times / 2 + 4 * math.ulp(frames)
+    if abs(frames - nearest) <= uncertainty:
+        return nearest
+    return math.ceil(frames)
+
 
 def span_frame_numbers(
     start: float, end: float, fps: float, dissolve_in: float = 0.0
@@ -2917,8 +2931,11 @@ def span_frame_numbers(
     The first is the first whole frame once the dissolve into the scene (if any) has ended,
     so it is the scene's own picture and not a mix; the last is the frame before the span
     ends (a dissolve out of the scene happens inside the next scene's span)."""
-    first = max(0, math.ceil((start + max(0.0, dissolve_in)) * fps - 1e-6))
-    last = max(first, math.ceil(end * fps - 1e-6) - 1)
+    dissolve = max(0.0, dissolve_in)
+    first = max(
+        0, _timeline_frame_ceiling(start + dissolve, fps, rounded_times=2 if dissolve else 1)
+    )
+    last = max(first, _timeline_frame_ceiling(end, fps) - 1)
     middle = (first + last + 1) // 2
     return list(zip(SPAN_FRAME_POSITIONS, (first, middle, last), strict=True))
 
@@ -3087,10 +3104,9 @@ def span_picture_qc(
             package = row.prompt_json if isinstance(row.prompt_json, dict) else {}
             rows[int(row.scene_index)] = {
                 "planned": float(row.duration_seconds or 0.0),
-                "still_prompt": str(package.get("still_prompt") or row.visual_prompt or ""),
+                **film_scene_prompts(session, production, row),
                 "camera_move": str(package.get("camera_move") or ""),
                 "look_block": str(package.get("look_block") or ""),
-                "motion_prompt": str(package.get("motion_prompt") or ""),
             }
         film_path = str(asset.uri_or_path or "")
 
@@ -3109,6 +3125,8 @@ def span_picture_qc(
                 plan,
                 correlation_id,
                 motion_prompt=rows.get(int(plan.scene), {}).get("motion_prompt", ""),
+                ending_frame=rows.get(int(plan.scene), {}).get("ending_frame", ""),
+                prompt_sources=rows.get(int(plan.scene), {}).get("prompt_sources"),
                 ffmpeg_path=ffmpeg_path,
                 studio_text=studio_texts.get(int(plan.scene)),
             )

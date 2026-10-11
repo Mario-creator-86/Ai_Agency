@@ -131,6 +131,7 @@ def append_event_with_outbox(
             "timestamp": event.timestamp,
             "aggregate_type": event.aggregate_type,
             "aggregate_id": event.aggregate_id,
+            "aggregate_version": event.aggregate_version,
             "correlation_id": event.correlation_id,
             "schema_version": event.schema_version,
             "payload": event.payload,

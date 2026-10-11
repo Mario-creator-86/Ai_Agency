@@ -21,6 +21,7 @@ from app.workflows.publisher import (
     ConnectionManager,
     dispatch_pending_outbox,
     publish_pending_outbox,
+    replay_events,
 )
 from app.workflows.services import append_event_with_outbox
 from sqlalchemy import event, select
@@ -126,3 +127,26 @@ def test_the_claim_takes_the_write_lock_and_an_empty_outbox_takes_none(engine, m
     _pending(engine, 1)
     assert publish_pending_outbox(engine, manager) == 1
     assert taken == [1]
+
+
+def test_live_event_and_replay_preserve_the_committed_agent_version(engine):
+    with Session(engine) as session, session.begin():
+        row, outbox = append_event_with_outbox(
+            session,
+            "agent.state_changed",
+            "agent",
+            "employee",
+            17,
+            {"runtime_state": "WORKING"},
+            str(uuid4()),
+        )
+        event_id = row.event_id
+        assert row.aggregate_version == 17
+        assert outbox.payload["aggregate_version"] == 17
+    manager = Recorder()
+    assert publish_pending_outbox(engine, manager) == 1
+    live = manager.sent[0]["data"]
+    replay = next(e for e in replay_events(engine) if e["event_id"] == event_id)
+    for field in ("aggregate_id", "aggregate_version", "event_type", "payload"):
+        assert live[field] == replay[field]
+    assert live["aggregate_version"] == 17
