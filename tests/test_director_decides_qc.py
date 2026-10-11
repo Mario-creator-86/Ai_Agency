@@ -76,6 +76,61 @@ TUNNEL = "bible: near-black void, the clip shows a tunnel"
 PANELS = "cadrul nu este o singură imagine: trei panouri suprapuse"
 
 
+def test_director_reads_complete_scene_prompts_and_late_bible_rules(engine):
+    from app.agents.reviews import failed_render_reading
+    from app.media.director_qc import film_qc_context
+
+    film = failed_film(engine)
+    still = "Warm cinematic period setting. " * 20 + "A graphite spiral drawn on the napkin."
+    motion = "A faint glowing trail rises while the graphite lines remain visible on paper."
+    ending = "The paper sketch remains visible beneath the lifted trail."
+    bible = {
+        "style": "Warm period detail. " * 150,
+        "continuity_rules": ["The same pencil spiral remains drawn on the cream napkin."],
+        "avoid": ["No visible faces."],
+    }
+    with Session(engine) as session, session.begin():
+        session.get(Storyboard, film["board"]).visual_bible_json = bible
+        scene = session.scalar(select(StoryboardScene).where(
+            StoryboardScene.storyboard_id == film["board"], StoryboardScene.scene_index == 5,
+        ))
+        scene.prompt_json = {
+            "still_prompt": still, "motion_prompt": motion, "ending_frame": ending,
+        }
+    context = film_qc_context(engine, failed_render_reading(engine, film["report"]))
+    scene = next(item for item in context["scenes"] if item["scene_index"] == 5)
+    assert scene["asked"] == still
+    assert scene["motion_requested"] == motion
+    assert scene["ending_frame"] == ending
+    assert scene["prompt_sources"]["motion"] == "current_storyboard"
+    assert context["visual_bible"] == bible
+
+
+def test_director_payload_never_slices_critical_evidence_into_invalid_json():
+    from app.agents.reviews import DIRECTOR_QC_PAYLOAD_CHARS, _director_payload
+
+    findings = [{"id": i, "text": f"Finding {i}: " + "evidence " * 40} for i in range(1, 81)]
+    scenes = [{"scene_index": i, "asked": "Exact submitted intent. " * 20} for i in range(1, 25)]
+    bible = {"continuity_rules": ["Keep the graphite drawing visible."]}
+    context = {
+        "findings": findings, "scenes": scenes, "visual_bible": bible,
+        "paid_redo_limits": {"left_for_film": 3}, "checks": "optional detail " * 2000,
+    }
+    assert len(json.dumps(context)) > DIRECTOR_QC_PAYLOAD_CHARS
+    parsed = json.loads(_director_payload(context))
+    assert parsed["findings"] == findings
+    assert parsed["scenes"] == scenes
+    assert parsed["visual_bible"] == bible
+    assert parsed["paid_redo_limits"] == context["paid_redo_limits"]
+
+
+def test_director_finding_keeps_the_end_of_the_actual_qc_diagnosis():
+    reason = "Scena 5: " + "Observed picture detail. " * 25 + "The graphite sketch is missing."
+    findings = report_findings({"failure_reasons_json": [reason], "checks_json": {}})
+    assert findings[0]["scene_index"] == 5
+    assert findings[0]["text"] == reason
+
+
 class ScriptedModel:
     """Every agent's model: the Director answers ``director``; anyone else gets ``other``."""
 
