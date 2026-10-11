@@ -18,6 +18,13 @@ the durable worker and its normal film lease; do not replace QC results or manuf
 No new interface or unrelated feature. Live model/media actions can occur only through the
 existing authorized production workflow and are reported separately from offline tests.
 
+## The serial passes the sheet's own gates: the look's scenes are no shot-plan gap, every serial shot has a camera move of its own (2026-10-11)
+
+- Claim: Claude Fable 5.1 session 23d615c3, after the Owner's restarts of 22:01 and 22:15. Live after them (database copy): the serial board f06808c9 was still stopped by the sheet's own gates — NEEDS_SHOT_PLAN for the scene the look composed (the sheet read the factual gap rule) and SAME_CAMERA_EVERY_SCENE (every serial shot «static», 45dc313's choice); the repair rounds continued at 19:16 and 19:18 UTC, UNRESOLVED, no media bought. The workflow's fix agent for package B had written the strict-xfail tests naming both (tests/test_serial_sheet_gate.py).
+- Done: 3c30bc6 — `shot_plan_gaps` reads `shot_plan_sources` (the sheet, the walk's refusal, the repair's issues, the media stage's hold); each serial shot gets a camera move of its own (`_serial_camera_move`: the plan's, never the scene before's) and `compose_serial_motion` opens with it. The four xfails are tests now.
+- Tested on fakes only: serial sheet gate 6, serial look 16, and the sheet/gap-rule/daily-run/dry-run/film-close/serial suites (317 passed). Needs the Owner's restart to reach the live board; nothing was pressed.
+- Verified, not changed: the serial's bible has no face rule (`bible_face_rule` → None), so YuNet's face count never fails a serial still or clip; identity consistency between shots rests on the bibles' reference portraits in the prompts (44fc998) — a measured identity-drift check is not built yet.
+
 ## The loop without progress is braked, the serial follows the Owner's office and continues the same day, the music sits under the voice, and the Director may replace what he approved unless he marked it final (2026-10-11)
 
 - Claim: Claude Fable 5.1 session 23d615c3 (evening). The Owner, 21:50: «Verifică te rog, se repetă? Este un loop fără progres?» — it was: the serial's board f06808c9 («The Zero Script Club», the first approved episode) had six sheet-repair rounds in 23 minutes (18:26–18:49 UTC), each UNRESOLVED on the same eight TEMPLATE_LABEL blockers, no media bought, only model calls. Two causes, both fixed in the tree before his restart: the live server (started 21:17) ran the serial composer from before 45dc313 (it put «Camera:» back after every rewrite), and the brake of 2026-10-03 counted attempts by a fingerprint that changed every round.

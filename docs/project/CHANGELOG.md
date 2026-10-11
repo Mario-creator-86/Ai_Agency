@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-11 — The serial passes the sheet's own gates
+
+- 3c30bc6 — prompt_agent.shot_plan_gaps(…, sources) reads assembler.shot_plan_sources (the sheet, the walk's NEEDS_SHOT_PLAN, the repair's issues, the media stage's hold); prompt_agent._serial_camera_move gives each serial shot its own move and compose_serial_motion opens with it; tests/test_serial_sheet_gate.py's four strict xfails are tests now.
+
 ## 2026-10-11 — Sheet repair brake, serial look v2 and same-day continuation, sound plan under the voice, the Owner's final approval
 
 - 6510d04 — config/serial_series_look.json v2: the serial's look follows the Owner's office picture (warm hand-drawn 2D, the studio house, faces seen and kept the same person; 445 characters, under half the prompt cap); shots described under v1 are described again.
