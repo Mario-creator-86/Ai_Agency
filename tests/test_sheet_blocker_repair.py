@@ -207,14 +207,21 @@ def test_a_changed_sheet_is_not_rewritten_from_stale_instructions(engine, film, 
 
 
 def test_repairs_continue_beyond_two_attempts_without_asking_the_owner(engine, film):
+    """Up to the day's ceiling on the same blockers (`MAX_SAME_ISSUES_PER_DAY`, each attempt
+    after its back-off), the repair goes on by itself; nothing asks the Owner."""
+    from datetime import UTC, datetime, timedelta
+
     reading = sheet(engine, film)
-    for _n in range(6):
+    rounds = repair.MAX_SAME_ISSUES_PER_DAY
+    for n in range(rounds):
         reading = {**reading, "sheet_hash": str(uuid4())}
         dispatched = repair.submit_sheet_issues(engine, reading)
-        assert dispatched.get("task_id")
+        assert dispatched.get("task_id"), (n, dispatched)
         with Session(engine) as session, session.begin():
             task_row = session.get(TaskQueueItem, dispatched["task_id"])
             task_row.status = "COMPLETED"
+            # Its back-off passed: the attempt is dated back within the day.
+            task_row.created_at = (datetime.now(UTC) - timedelta(minutes=600 - n)).isoformat()
             report = session.get(AgentMessage, dispatched["message_id"])
             report.body_json = {**report.body_json, "repair_result": {"status": "UNRESOLVED"}}
     with Session(engine) as session:
@@ -226,7 +233,7 @@ def test_repairs_continue_beyond_two_attempts_without_asking_the_owner(engine, f
                     )
                 )
             )
-            == 6
+            == rounds
         )
         assert not any(
             m.body_json.get("owner_attention") for m in session.scalars(select(AgentMessage))

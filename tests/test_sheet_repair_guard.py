@@ -157,22 +157,87 @@ def test_five_attempts_a_day_on_the_same_blockers_then_a_pause_the_owner_never_h
     (note,) = paused_letters(engine)
     assert note.body_json.get("to") != "Owner" and not note.body_json.get("owner_attention")
     assert note.to_agent_id is not None, "the Director's own inbox"
-    assert "de 5 ori" in note.body_text and "foaia se schimbă" in note.body_text
+    assert "de 5 ori" in note.body_text and "blocajele se schimbă" in note.body_text
     with Session(engine) as session:
         assert list(session.scalars(select(OwnerDecision))) == [], "no card for him"
 
 
-def test_a_changed_sheet_starts_again_from_zero(engine, film):  # noqa: F811
+def test_a_rewritten_sheet_with_the_same_blockers_stays_paused_until_they_change(
+    engine,
+    film,  # noqa: F811
+):
+    """2026-10-11, the serial's board f06808c9: the Video Editor's rewrite changed the sheet's
+    hash and the lint's wording every round while the same TEMPLATE_LABEL blockers stood on the
+    same scenes, and the repair ran every five minutes with no back-off and no ceiling. The
+    ceiling counts on the blockers themselves (`issue_key`); only different blockers (fewer, or
+    other ones) start again from zero."""
     reading = sheet(engine, film)
     for n in range(repair.MAX_SAME_ISSUES_PER_DAY):
         dispatched = repair.submit_sheet_issues(engine, reading)
         unresolved(engine, dispatched, minutes_ago=600 - n)
     assert repair.submit_sheet_issues(engine, reading)["status"] == "PAUSED"
 
-    changed = repair.submit_sheet_issues(engine, {**reading, "sheet_hash": str(uuid4())})
+    # The prompts rewritten (a new sheet hash, the blockers reworded): the same problem.
+    reworded = [{**b, "message_ro": f"{b['message_ro']} (rescris)"} for b in reading["blocks"]]
+    rewritten = repair.submit_sheet_issues(
+        engine, {**reading, "sheet_hash": str(uuid4()), "blocks": reworded}
+    )
+    assert rewritten["status"] == "PAUSED"
+    assert repair_tasks(engine) == repair.MAX_SAME_ISSUES_PER_DAY
+    assert len(paused_letters(engine)) == 1
+
+    # Other blockers (the story review now failing as well): a new problem, a new attempt.
+    changed = repair.submit_sheet_issues(
+        engine,
+        {
+            **reading,
+            "sheet_hash": str(uuid4()),
+            "story_review": {"passed": False, "reason": "Povestea trebuie recenzată."},
+        },
+    )
 
     assert changed.get("task_id")
     assert paused_letters(engine) == [], "the pause letter is closed when the repair resumes"
+
+
+def test_a_sheet_rewritten_every_round_still_backs_off_and_stops(engine, film):  # noqa: F811
+    """The live loop of 2026-10-11 (six rounds in 23 minutes): each round's rewrite makes a
+    different fingerprint, and the back-off and the day's ceiling still hold."""
+    reading = sheet(engine, film)
+    fingerprints: set[str] = set()
+
+    def round_n(n: int) -> dict:
+        reworded = [
+            {**b, "message_ro": f"{b['message_ro']} (runda {n})"} for b in reading["blocks"]
+        ]
+        return {**reading, "sheet_hash": str(uuid4()), "blocks": reworded}
+
+    first = repair.submit_sheet_issues(engine, round_n(1))
+    unresolved(engine, first)
+    second = repair.submit_sheet_issues(engine, round_n(2))
+    assert second["task_id"] != first["task_id"], "the first retry is immediate"
+    unresolved(engine, second)
+
+    waiting = repair.submit_sheet_issues(engine, round_n(3))
+    assert waiting["status"] == "BACKING_OFF", waiting
+
+    with Session(engine) as session:
+        for task_row in session.scalars(
+            select(TaskQueueItem).where(TaskQueueItem.task_type == repair.REPAIR_TASK)
+        ):
+            fingerprints.add(str(task_row.payload["fingerprint"]))
+            assert task_row.payload["issue_key"] == repair.issue_key(repair.sheet_issues(reading))
+    assert len(fingerprints) == 2, "every round is its own attempt, on the same blockers"
+
+    # Dated back: five attempts on these blockers in the day, each reworded, then the pause.
+    unresolved(engine, first, minutes_ago=700)
+    unresolved(engine, second, minutes_ago=690)
+    for n in range(3, repair.MAX_SAME_ISSUES_PER_DAY + 1):
+        dispatched = repair.submit_sheet_issues(engine, round_n(n))
+        assert dispatched.get("task_id"), (n, dispatched)
+        unresolved(engine, dispatched, minutes_ago=600 - n)
+    assert repair.submit_sheet_issues(engine, round_n(9))["status"] == "PAUSED"
+    assert repair_tasks(engine) == repair.MAX_SAME_ISSUES_PER_DAY
 
 
 def test_no_attempt_while_the_language_model_is_failing_and_one_letter_says_so(

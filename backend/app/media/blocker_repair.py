@@ -163,13 +163,45 @@ def allow_repair_retry(
         return str(event.event_id)
 
 
+def issue_key(issues: list[dict[str, Any]]) -> str:
+    """What «the same blockers» means to the ceiling and the back-off: the set of (kind, code,
+    scene) of the sheet's issues, never their wording and never the sheet's hash.
+
+    2026-10-11 (the serial's board f06808c9, «The Zero Script Club»): every round the Video
+    Editor rewrote the prompts, so the sheet's hash changed, and the lint's wording with it
+    («Camera:» and «Action:», then «Camera:» alone); the fingerprint never matched twice, and
+    the repair ran every five minutes for half an hour on the same eight TEMPLATE_LABEL
+    blockers, each round UNRESOLVED, with no back-off and no ceiling. Progress is fewer or
+    different blockers, not different words for the same ones."""
+    blockers = sorted(
+        {
+            (str(i.get("kind") or ""), str(i.get("code") or ""), str(i.get("scene_index")))
+            for i in issues
+        }
+    )
+    return hashlib.sha256(json.dumps(blockers).encode()).hexdigest()
+
+
+def _same_blockers(item: TaskQueueItem, fingerprint: str, blockers: str | None) -> bool:
+    """Whether an earlier attempt was on these blockers: by `issue_key` when both sides carry
+    one, by the old fingerprint for attempts queued before 2026-10-11."""
+    payload = item.payload or {}
+    if blockers and payload.get("issue_key"):
+        return str(payload.get("issue_key")) == blockers
+    return payload.get("fingerprint") == fingerprint
+
+
 def _repair_guard(
     session: Session,
     sheet: dict[str, Any],
     fingerprint: str,
     tasks: list[TaskQueueItem],
+    blockers: str | None = None,
 ) -> dict[str, Any] | None:
-    """Why no new attempt may start now (BACKING_OFF or PAUSED), or None when one may."""
+    """Why no new attempt may start now (BACKING_OFF or PAUSED), or None when one may.
+
+    ``blockers`` (`issue_key`) is what the attempts are counted on: a sheet rewritten with the
+    same blockers still standing is the same problem, not a new one."""
     unresolved: list[datetime] = []
     window_start = datetime.now(UTC) - timedelta(days=1)
     # The Owner's "try again now": the attempts before it no longer count.
@@ -178,7 +210,7 @@ def _repair_guard(
         window_start = retried
     window_start = max(window_start, STUDIO_STARTED_AT)
     for item in tasks:
-        if item.payload.get("fingerprint") != fingerprint:
+        if not _same_blockers(item, fingerprint, blockers):
             continue
         letter = session.get(AgentMessage, item.payload.get("message_id"))
         result = (letter.body_json or {}).get("repair_result") if letter else None
@@ -206,9 +238,10 @@ def _repair_guard(
             "cause": "DAILY_LIMIT",
             "reason_ro": (
                 f"Remedierea automată a foii „{sheet.get('title') or sheet['storyboard_id']}” "
-                f"a încercat de {len(unresolved)} ori în ultimele 24 de ore aceleași blocaje, "
-                "fără succes, și s-a oprit pentru restul zilei sau până când foaia se schimbă. "
-                "Blocajele rămân pe foaia de filmare; nu s-a cumpărat nimic."
+                f"a încercat de {len(unresolved)} ori în ultimele 24 de ore aceleași blocaje "
+                "(aceleași coduri pe aceleași scene, oricum ar fi fost rescrise prompturile), "
+                "fără succes, și s-a oprit pentru restul zilei sau până când blocajele se "
+                "schimbă. Blocajele rămân pe foaia de filmare; nu s-a cumpărat nimic."
             ),
         }
     wait = 0 if len(unresolved) < 2 else BACKOFF_BASE_SECONDS * 2 ** (len(unresolved) - 2)
@@ -412,6 +445,9 @@ def submit_sheet_issues(engine: Engine, sheet: dict[str, Any]) -> dict[str, Any]
     fingerprint = hashlib.sha256(
         json.dumps([sheet["sheet_hash"], issues], sort_keys=True, ensure_ascii=False).encode()
     ).hexdigest()
+    # The fingerprint tells one attempt from another (the sheet as it was, the issues as they
+    # were worded); the ceiling and the back-off count on the blockers themselves.
+    blockers = issue_key(issues)
     with Session(engine) as session:
         tasks = [
             t
@@ -443,7 +479,7 @@ def submit_sheet_issues(engine: Engine, sheet: dict[str, Any]) -> dict[str, Any]
             }
         today = datetime.now(UTC).date().isoformat()
         attempts = [t for t in tasks if t.created_at >= today]
-        guard = _repair_guard(session, sheet, fingerprint, tasks)
+        guard = _repair_guard(session, sheet, fingerprint, tasks, blockers)
     if guard is not None:
         if guard["status"] == "PAUSED":
             with Session(engine) as session, session.begin():
@@ -477,6 +513,7 @@ def submit_sheet_issues(engine: Engine, sheet: dict[str, Any]) -> dict[str, Any]
                     "storyboard_id": identifier,
                     "sheet_hash": sheet["sheet_hash"],
                     "fingerprint": fingerprint,
+                    "issue_key": blockers,
                     "dispatch_key": key,
                     "attempt": attempt,
                     "issues": issues,
@@ -501,6 +538,7 @@ def submit_sheet_issues(engine: Engine, sheet: dict[str, Any]) -> dict[str, Any]
             "message_id": message_id,
             "sheet_hash": sheet["sheet_hash"],
             "fingerprint": fingerprint,
+            "issue_key": blockers,
             "attempt": attempt,
         },
         priority=6,
