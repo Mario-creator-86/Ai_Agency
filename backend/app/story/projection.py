@@ -129,10 +129,15 @@ _VALUE_CHARS = 160
 
 # --- redaction -------------------------------------------------------------------------
 
-#: A key or token: a labelled secret, or a long opaque run of letters and digits.
+#: A key or token: a vendor-prefixed key («sk-…», «xi_…»), a label given a value («password:
+#: …», «token abc123…»), or a bearer header; a long opaque run is `_OPAQUE`'s. The label is a
+#: whole word now: until 2026-10-11 «key» glued to any six letters matched, and episode 1 of
+#: the serial («One View Morning») was refused for «one hand already on the keyboard.».
 _SECRET = re.compile(
-    r"(?i)\b(?:sk|xi|rk|key|token|secret|bearer|api[_-]?key|password|parol[aă])"
-    r"[\s=:_-]*[A-Za-z0-9_\-./+]{6,}"
+    r"(?i)\b(?:sk|xi|rk|pk)[-_][A-Za-z0-9_\-]{6,}"
+    r"|\b(?:key|token|secret|api[_-]?key|password|parol[aă])\s*[=:]\s*\S{6,}"
+    r"|\b(?:key|token|secret|api[_-]?key|password|parol[aă])\s+(?=[\w\-./+]*\d)[\w\-./+]{6,}"
+    r"|\bbearer\s+[A-Za-z0-9_\-./+]{6,}"
 )
 _OPAQUE = re.compile(r"\b(?=[A-Za-z0-9_\-]*\d)(?=[A-Za-z0-9_\-]*[A-Za-z])[A-Za-z0-9_\-]{24,}\b")
 _HEX = re.compile(r"\b[0-9a-fA-F]{24,}\b")

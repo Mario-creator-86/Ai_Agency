@@ -1613,6 +1613,25 @@ def test_a_year_is_not_an_account_number(text, kept):
     assert (redact(text) == text) is kept, redact(text)
 
 
+@pytest.mark.parametrize(
+    ("text", "kept"),
+    [
+        ("Sarah, one hand already on the keyboard.", True),
+        ("The keynote ran long; tokens of thanks; a secretary; the skeleton crew.", True),
+        ("The secret plan: ship it tonight.", True),
+        ("Her key sk-live_ABCDEF123456 was pasted.", False),
+        ("xi_0123456789abcdef in the log.", False),
+        ("password: hunter22 written down.", False),
+        ("token abc123def in a letter.", False),
+        ("Authorization: Bearer abcdef.123456", False),
+    ],
+)
+def test_a_word_that_starts_like_a_key_is_not_a_key(text, kept):
+    """2026-10-11: episode 1 («One View Morning») was refused for «one hand already on the
+    keyboard.»: «key» glued to any six letters read as a labelled secret."""
+    assert (redact(text) == text) is kept, redact(text)
+
+
 def test_a_day_of_routine_alone_has_nothing_to_tell(engine, staffed):
     """A day where only stages ended and letters were answered is a quiet day: the serial
     goes back to the newest day that happened rather than dramatise the machinery."""

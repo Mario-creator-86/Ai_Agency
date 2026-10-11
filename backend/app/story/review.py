@@ -518,15 +518,30 @@ def episode_checks(
 
     missing = [eid for eid in cited if eid not in recorded]
     private = [eid for eid in cited if eid in recorded and eid not in projection]
+    # Which part of each beat leaks, said to the writer: «beat-urile [1] conțin ceva» left the
+    # rewrite guessing which words to change (2026-10-11, a scene description).
+    leaking_fields: dict[str, list[str]] = {}
+    for beat, lines in zip(beats, lines_by_beat, strict=True):
+        fields = [
+            label
+            for label, found in (
+                ("descrierea scenei", leaks(str(beat.get("scene") or ""))),
+                ("replicile", leaks(str(beat.get("dialogue") or ""))),
+                (
+                    "indicațiile de joc",
+                    any(leaks(str(line.get("direction") or "")) for line in lines),
+                ),
+            )
+            if found
+        ]
+        if fields:
+            leaking_fields[str(beat.get("beat_number"))] = fields
     leaking = [
-        beat.get("beat_number")
-        for beat, lines in zip(beats, lines_by_beat, strict=True)
-        if leaks(str(beat.get("scene") or ""))
-        or leaks(str(beat.get("dialogue") or ""))
-        or any(leaks(str(line.get("direction") or "")) for line in lines)
+        beat.get("beat_number") for beat in beats if str(beat.get("beat_number")) in leaking_fields
     ]
     if leaks(episode.title):
         leaking.insert(0, 0)
+        leaking_fields["0"] = ["titlul"]
     # What canon would keep of this episode: measured, a key in the summary passed the
     # beats' check and would have reached every later showrunner prompt through
     # `_previously`.
@@ -588,12 +603,25 @@ def episode_checks(
             "passed": not private and not leaking and not leaking_canon,
             "private_citations": private,
             "leaking_beats": leaking,
+            "leaking_fields": leaking_fields,
             "leaking_canon": leaking_canon,
             "reason": "; ".join(
                 part
                 for part in (
                     f"{len(private)} evenimente citate nu sunt publice" if private else "",
-                    f"beat-urile {leaking} conțin ceva ce nu poate fi public" if leaking else "",
+                    (
+                        "conțin ceva ce nu poate fi public (o cheie, un link, un preț, un model "
+                        "sau un număr de cont): "
+                        + ", ".join(
+                            "titlul"
+                            if number == "0"
+                            else f"beat-ul {number} ({', '.join(fields)})"
+                            for number, fields in leaking_fields.items()
+                        )
+                        + "; scrie-le fără"
+                    )
+                    if leaking
+                    else "",
                     (
                         "rezumatul, firele sau elementele recurente conțin ceva ce nu poate "
                         "fi public"
