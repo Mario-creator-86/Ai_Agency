@@ -39,7 +39,7 @@ from app.media.scene_rewrite import (
     rewrite_failed_scene,
 )
 from app.media.toolchain import find_ffmpeg
-from app.models import DomainEvent, OwnerPolicy
+from app.models import OwnerPolicy
 from app.providers.base import GenerateResult, HealthResult
 from app.providers.registry import ProviderRegistry
 from sqlalchemy import select
@@ -215,9 +215,7 @@ def test_her_brief_rewrites_the_motion_and_the_shot_is_bought_again_and_passes(
     assert rewritten.payload["layer"] == MOTION and rewritten.payload["scene_index"] == 1
     # Her brief and his answer are letters between them, settled.
     with Session(engine) as session:
-        letters = session.scalars(
-            select(AgentMessage).order_by(AgentMessage.created_at)
-        ).all()
+        letters = session.scalars(select(AgentMessage).order_by(AgentMessage.created_at)).all()
         mine = [m for m in letters if "Rescrie scena 1" in m.subject]
     assert len(mine) == 2
     assert mine[0].from_agent_id == studio["agents"]["Director"]
@@ -398,6 +396,4 @@ def test_a_paid_redo_after_the_film_failed_is_bought_only_on_a_corrected_prompt(
 
     # A scene with no plan to rewrite goes on as it would have.
     other = a_film(engine, tmp_path, scenes=1)
-    assert (
-        stages._correct_before_redo(engine, None, other, 1, ["motion"], [], {}, "c") is None
-    )
+    assert stages._correct_before_redo(engine, None, other, 1, ["motion"], [], {}, "c") is None
