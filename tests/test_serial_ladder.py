@@ -22,9 +22,11 @@ size and the look stay the studio's. Every provider is faked; nothing is bought.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 from uuid import uuid4
 
+import pytest
 from app.agents.models import Agent, ModelRecord
 from app.media.assembler import SCENE_PROMPTS_REWRITTEN_EVENT, _scene_prompt_rewrite
 from app.media.models import SceneTake, StoryboardScene
@@ -32,16 +34,20 @@ from app.media.prompt_agent import (
     MOVE_SENTENCES,
     SERIAL_BLANK_SENTENCE,
     SERIAL_FACES_SENTENCE,
+    SERIAL_LIFE_SENTENCE,
     _serial_camera_move,
     compose_serial_motion,
     compose_serial_prompt,
 )
+from app.media.prompt_lint import MOTION_CLOSING
 from app.media.scene_rewrite import (
     BRIEF_EVENT,
     CONTENT_REFUSAL,
+    MOTION,
     REWRITE_REASON,
     SERIAL_RECOMPOSE_REASON,
     SERIAL_REROLL_REASON,
+    STILL,
     TECHNICAL_REFUSAL,
     refusal_kind,
     rewrite_failed_scene,
@@ -56,6 +62,7 @@ from app.providers.registry import ProviderRegistry
 from app.services import utc_now
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from test_failed_brief_is_recorded import contract_lessons
 from test_serial_look import (  # noqa: F401
     SEQUENCE_SHOT,
     fake_editor,
@@ -249,17 +256,26 @@ SHOT_FOUR = {
     ),
     "camera_move": "dolly in",
 }
+#: Her review of it, answering quality control's two findings (the gate's «; »-joined reasons)
+#: by their ids (2026-10-12).
 REVIEW_FOUR = {
-    "verdict": "TREATS",
     "findings": [
         {
+            "id": 1,
             "finding": "two women face to face instead of a single on Nadia",
             "treated": True,
+            "severity": "serious",
             "by": (
                 "Sarah stands a sliver inside the right edge of the frame, turned to the viewer."
             ),
         },
-        {"finding": "garbled text on the ledger", "treated": True, "by": SERIAL_BLANK_SENTENCE},
+        {
+            "id": 2,
+            "finding": "garbled text on the ledger",
+            "treated": True,
+            "severity": "serious",
+            "by": SERIAL_BLANK_SENTENCE,
+        },
     ],
     "reason_ro": "Acțiunea nouă o pune pe Sarah la marginea cadrului; paginile rămân goale.",
     "cause": "The action named both women's first moments, so the picture became a two-shot.",
@@ -287,11 +303,12 @@ SHOT_ENDING = {
     "emotion": "Nadia calm, Sarah attentive",
 }
 REVIEW_ENDING = {
-    "verdict": "TREATS",
     "findings": [
         {
+            "id": 1,
             "finding": "ending frame in profile facing each other",
             "treated": True,
+            "severity": "serious",
             "by": (
                 "The shot ends on Nadia and Sarah both turned to the viewer, Nadia's hands on "
                 "the closed ledger."
@@ -304,10 +321,51 @@ REVIEW_ENDING = {
 }
 
 
-class SerialAgents:
-    """The Director's and the Video Editor's models, scripted: her brief, his shot, her review."""
+#: Scene 4's clip refused by clip QC for what the beat's action asks: the motion layer keeps
+#: the action word for word, so no motion rewrite can treat it (f06808c9, 16:46-16:48).
+TURNED_AWAY = "Sarah leans in and turns toward Nadia instead of facing the viewer"
+#: Her review of the motion rewrite: the finding is locked on the motion layer, quoted from
+#: the kept action.
+LOCKED_ON_MOTION = {
+    "findings": [
+        {
+            "id": 1,
+            "finding": "Sarah turns toward Nadia",
+            "treated": False,
+            "severity": "serious",
+            "why_not": "the kept action still has Sarah lean in toward Nadia",
+            "locked": True,
+            "locked_words": "Sarah leans in a fraction",
+        }
+    ],
+    "reason_ro": "Mișcarea nu poate schimba acțiunea: Sarah se apleacă tot spre Nadia.",
+    "cause": "The beat's action has Sarah lean in toward Nadia.",
+    "lesson": "",
+}
+#: Her review of the picture's rewrite that follows: the finding is treated by the new action.
+TREATED_ON_STILL = {
+    "findings": [
+        {
+            "id": 1,
+            "finding": "Sarah turns toward Nadia",
+            "treated": True,
+            "severity": "serious",
+            "by": "Sarah stands a sliver inside the right edge of the frame, turned to the viewer.",
+        }
+    ],
+    "reason_ro": "Acțiunea nouă o ține pe Sarah la marginea cadrului, cu fața spre privitor.",
+    "cause": "The beat's action has Sarah lean in toward Nadia.",
+    "lesson": (
+        "In a single, anyone beside the speaker stands at the frame's edge facing the viewer."
+    ),
+}
 
-    def __init__(self, brief: dict[str, Any], shot: dict[str, Any], review: Any):
+
+class SerialAgents:
+    """The Director's and the Video Editor's models, scripted: her brief, his shot, her review
+    — each one answer, or a list answered in order (the last repeats)."""
+
+    def __init__(self, brief: Any, shot: Any, review: Any):
         self.brief, self.shot, self.review = brief, shot, review
         self.briefs: list[str] = []
         self.rewrites: list[str] = []
@@ -319,18 +377,39 @@ class SerialAgents:
     async def list_models(self):
         return []
 
+    @staticmethod
+    def _said(script: Any, asked: int) -> str:
+        if isinstance(script, list):
+            script = script[min(asked, len(script) - 1)]
+        return json.dumps(script) if isinstance(script, dict) else str(script)
+
     async def generate(self, model, prompt, **kwargs):
         if '"scene-brief"' in prompt:
             self.briefs.append(prompt)
-            return GenerateResult(json.dumps(self.brief), 10, 40, None)
+            return GenerateResult(self._said(self.brief, len(self.briefs) - 1), 10, 40, None)
         if '"scene-rewrite"' in prompt:
             self.rewrites.append(prompt)
-            return GenerateResult(json.dumps(self.shot), 10, 40, None)
+            return GenerateResult(self._said(self.shot, len(self.rewrites) - 1), 10, 40, None)
         if '"rewrite-review"' in prompt:
             self.reviews.append(prompt)
-            said = json.dumps(self.review) if isinstance(self.review, dict) else str(self.review)
-            return GenerateResult(said, 10, 40, None)
+            return GenerateResult(self._said(self.review, len(self.reviews) - 1), 10, 40, None)
         return GenerateResult("{}", 10, 40, None)
+
+
+@pytest.fixture(autouse=True)
+def lesson_store(monkeypatch):
+    return contract_lessons(monkeypatch)
+
+
+def boundary_data(prompt: str, name: str) -> dict[str, Any]:
+    """The data an agent was given inside its inert boundary."""
+    found = re.search(
+        rf'<untrusted_source_evidence hash="{name}">\n(.*?)\n</untrusted_source_evidence>',
+        prompt,
+        re.DOTALL,
+    )
+    assert found is not None, name
+    return json.loads(found.group(1))
 
 
 def agents_say(engine, agents: SerialAgents) -> ProviderRegistry:
@@ -648,3 +727,62 @@ def test_a_redo_of_a_serial_scene_buys_on_todays_words_not_the_stored_ones(
         assert rewrite["visual_prompt"] == rewrite["still_prompt"]
         # A scene whose words are today's needs no rewrite.
         assert _scene_prompt_rewrite(session, board_id, 2, "Qwen-Image-2512") is None
+
+
+def test_a_serial_motion_rewrite_whose_finding_is_in_the_kept_action_turns_to_the_picture(
+    engine,
+    staffed,  # noqa: F811
+    monkeypatch,
+):
+    """2026-10-12, 16:46-16:48, f06808c9 scenes 3, 4, 7: the clips were refused for what the
+    beat's action asks («Sarah leans in a fraction», «turning fully toward her») and the
+    Director briefed the motion; the motion layer keeps the action word for word, her review
+    said the words were untreated, his second rewrite could not touch them, and nothing turned
+    to the picture. Now her review is given what the motion layer lets him change and the
+    words it keeps — the action, the move's sentence, the faces and the room, the closing —
+    and says the finding is locked there; he is not asked again on that layer, and her brief
+    for the picture follows at once."""
+    board_id = described_board(engine, monkeypatch)
+    make_scene_four(engine, board_id, 4)
+    refused_by_clip_qc(engine, board_id, 4, TURNED_AWAY)
+    agents = SerialAgents(
+        [BRIEF_ENDING, BRIEF_FOUR],
+        [{**SHOT_ENDING, "scene_index": 4}, SHOT_FOUR],
+        [LOCKED_ON_MOTION, TREATED_ON_STILL],
+    )
+
+    outcome = rewrite_failed_scene(engine, agents_say(engine, agents), board_id, 4, "c-4")
+
+    assert outcome["rewritten"] is True and outcome["layer"] == STILL, outcome
+    assert outcome["escalated_from"] == MOTION
+    # One motion rewrite, refused as locked, then the picture: two briefs, two rewrites.
+    assert len(agents.briefs) == 2 and len(agents.rewrites) == 2 and len(agents.reviews) == 2
+    # Her review of the motion rewrite read what the motion layer keeps: the beat's action,
+    # the move's own sentence, the faces and the room, and the still as it stays.
+    review_data = boundary_data(agents.reviews[0], "rewrite-review")
+    terms = review_data["this_layer"]
+    assert list(terms["fields_he_may_change"]) == ["camera_move", "ending_frame", "emotion"]
+    assert terms["kept_word_for_word"]["action"] == SCENE_FOUR["action"]
+    fixed = terms["fixed_sentences"]["motion"]
+    motion_said = review_data["prompts_after"]["motion"]
+    assert fixed[0] == MOVE_SENTENCES[terms["camera_move"]] and fixed[-1] == MOTION_CLOSING
+    assert SERIAL_FACES_SENTENCE in fixed
+    # Only the composer's sentences the prompt carries: the room's life gave way to the budget.
+    assert all(sentence in motion_said for sentence in fixed)
+    assert (SERIAL_LIFE_SENTENCE in fixed) == (SERIAL_LIFE_SENTENCE in motion_said)
+    assert terms["fixed_sentences"]["still"] == [review_data["prompts_after"]["still"]]
+    findings = review_data["quality_control_findings"]
+    assert [(f["id"], f["qc_text"]) for f in findings] == [(1, TURNED_AWAY)]
+    # Her first brief was told the same, for every open layer; the second opens only the still.
+    first_brief = boundary_data(agents.briefs[0], "scene-brief")
+    assert set(first_brief["layers_he_may_change"]) == {MOTION, STILL}
+    assert "only still is open" in agents.briefs[1]
+    motion, picture = brief_events(engine)
+    assert motion.payload["layer"] == MOTION and motion.payload["layer_exhausted"] is True
+    assert motion.payload["rewritten"] is False
+    assert picture.payload["layer"] == STILL and picture.payload["rewritten"] is True
+    # The picture's words changed: Sarah at the frame's edge; her lesson is the serial's.
+    (event,) = rewritten_events(engine)
+    assert event.payload["layer"] == STILL and event.payload["review"]["lesson_scope"] == "serial"
+    package = dict(next(s for s in scenes_of(engine, board_id) if s.scene_index == 4).prompt_json)
+    assert "Sarah stands a sliver inside the right edge of the frame" in package["still_prompt"]

@@ -27,6 +27,7 @@ QC!». What is held here, every provider faked, 0 credits:
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 from uuid import uuid4
 
@@ -51,6 +52,7 @@ from app.providers.registry import ProviderRegistry
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from test_clip_qc_wiring import ScriptedCheck, events, shots
+from test_failed_brief_is_recorded import contract_lessons
 from test_film_costing import SEEDANCE, Account, Models, SpyVideo, a_film, approved
 
 pytestmark = pytest.mark.skipif(find_ffmpeg() is None, reason="ffmpeg not installed")
@@ -88,13 +90,15 @@ STILL_SHOT = {
     "motion": "wind sweeps waves through the rice while cloud rolls over the ridges",
     "camera_move": "slow push-in",
 }
-#: Her review of his rewrite: the finding is treated by the new sentence it quotes.
+#: Her review of his rewrite: the finding is treated by the new sentence it quotes. Every one
+#: of quality control's findings is answered by its id (2026-10-12): the scripted answer is
+#: given for each id the review's data names (`answer_each`).
 REVIEW = {
-    "verdict": "TREATS",
     "findings": [
         {
             "finding": "the clip barely moved",
             "treated": True,
+            "severity": "serious",
             "by": "Thick grey cloud rolls steadily across the ridges from left to right.",
         }
     ],
@@ -105,21 +109,40 @@ REVIEW = {
     ),
 }
 #: Her review when the rewrite changed words the finding never named; each untreated finding
-#: says why (2026-10-12).
+#: says why and the field he must change (2026-10-12).
 MISSED = {
-    "verdict": "MISSES",
     "findings": [
         {
             "finding": "a face seen in profile",
             "treated": False,
+            "severity": "serious",
             "by": "",
             "why_not": "the figure on the ridge is still described, and it can turn its head",
+            "field": "motion",
         }
     ],
     "reason_ro": "Rescrierea schimbă doar norii; fața din profil rămâne posibilă în cadru.",
     "cause": "The plan places a figure on the ridge, whose head can turn to the camera.",
     "lesson": "Show people only as small distant figures seen from behind for the whole shot.",
 }
+
+
+@pytest.fixture(autouse=True)
+def lesson_store(monkeypatch):
+    return contract_lessons(monkeypatch)
+
+
+def answer_each(prompt: str, review: dict[str, Any]) -> dict[str, Any]:
+    """Her scripted review given for every finding id quality control's findings carry in the
+    review's data, each answered as the script's first finding."""
+    found = re.search(
+        r'<untrusted_source_evidence hash="rewrite-review">\n(.*?)\n</untrusted_source_evidence>',
+        prompt,
+        re.DOTALL,
+    )
+    ids = [item["id"] for item in json.loads(found.group(1))["quality_control_findings"]]
+    template = review["findings"][0]
+    return {**review, "findings": [{**template, "id": number} for number in ids]}
 
 
 class Agents:
@@ -149,7 +172,11 @@ class Agents:
             return GenerateResult(json.dumps(self.shot), 10, 40, None)
         if '"rewrite-review"' in prompt:
             self.reviews.append(prompt)
-            said = json.dumps(self.review) if isinstance(self.review, dict) else str(self.review)
+            said = (
+                json.dumps(answer_each(prompt, self.review))
+                if isinstance(self.review, dict)
+                else str(self.review)
+            )
             return GenerateResult(said, 10, 40, None)
         return GenerateResult("{}", 10, 40, None)
 
@@ -578,10 +605,12 @@ def test_a_rewrite_that_does_not_treat_the_finding_is_not_stored_and_nothing_is_
     assert outcome["review_verdict"] == "MISSES" and outcome["same_prompt"] is False
     assert scene(engine, storyboard_id).prompt_json == before.prompt_json
     # He rewrote twice, the second time with her why_not; his second answer was the refused
-    # words again, so she was not asked to read them twice.
+    # words again, so she was not asked to read them twice — and the motion layer, with
+    # nothing else to say, is exhausted: the picture's turn, but the Owner approved it.
     assert len(agents.rewrites) == 2 and len(agents.reviews) == 1
     assert "it can turn its head" in agents.rewrites[1]
     assert "aceleași cuvinte pe care Directoarea le-a refuzat" in outcome["reason"]
+    assert outcome["layer_exhausted"] is True and "escalated_from" not in outcome
     assert "nu se mișcă" in agents.reviews[0] and "grey cloud rolls steadily" in agents.reviews[0]
     (brief,) = events(engine, BRIEF_EVENT, storyboard_id)
     assert brief.payload["rewritten"] is False and brief.payload["not_treating"] is True
