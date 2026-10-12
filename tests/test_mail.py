@@ -509,15 +509,16 @@ def test_the_owner_reads_a_thread_and_writes_into_it_through_the_api(
 
 
 def test_the_director_writes_to_the_owner_when_a_decision_is_the_owners(engine, staffed):
-    """An ESCALATE_TO_OWNER decision is a letter to the Owner, in the thread, out of the
-    Director's own inbox, and the Owner's reply closes it and reaches the Director."""
+    """An ESCALATE_TO_OWNER decision on a matter that is his (his account's sign-in,
+    2026-10-12: a title or a prompt is hers) is a letter to the Owner, in the thread, out of
+    the Director's own inbox, and the Owner's reply closes it and reaches the Director."""
     vera = staffed["agents"]["Publisher"]
     with Session(engine) as session, session.begin():
         hold = post_message(
             session,
             intent="ESCALATE",
-            subject="Publication HOLD: titlul promite mai mult decât scenariul",
-            body_text="Nu public așa. Vera",
+            subject="Publication HOLD: contul YouTube cere re-autentificare",
+            body_text="Token-ul canalului a expirat; nu pot publica. Vera",
             from_agent_id=vera.id,
         )
         hold_id = hold.id
@@ -525,12 +526,12 @@ def test_the_director_writes_to_the_owner_when_a_decision_is_the_owners(engine, 
     def answer(prompt):
         return json.dumps(
             {
-                "summary": "Titlul este o decizie editorială a Owner-ului.",
+                "summary": "Autentificarea contului este a Owner-ului.",
                 "decisions": [
                     {
                         "message_id": hold_id,
                         "action": "ESCALATE_TO_OWNER",
-                        "note": "Am nevoie să decizi titlul: cel promis sau cel din scenariu.",
+                        "note": "Am nevoie să te autentifici din nou pe canal.",
                     }
                 ],
             }
@@ -545,7 +546,7 @@ def test_the_director_writes_to_the_owner_when_a_decision_is_the_owners(engine, 
     letter = letters[0]
     assert letter["for_owner"] is True and letter["to_name"] == "Owner"
     assert letter["thread_id"] == hold_id
-    assert letter["body_text"].startswith("Am nevoie să decizi titlul")
+    assert letter["body_text"].startswith("Am nevoie să te autentifici")
     assert letter["from_name"] == staffed["agents"]["Director"].display_name
     with Session(engine) as session:
         # Not the Director's to review: the inbox holds the hold, not her own letter.
@@ -958,3 +959,97 @@ def test_owner_reply_survives_another_writer_committing_after_the_parent_is_read
     assert threads and writer_finished.is_set() and not writer_errors
     assert reply.status_code == 200
     assert reply.json()["in_reply_to"] == letter_id
+
+
+# ------------------------------------------------- what reaches the Owner (2026-10-12)
+
+
+def test_a_matter_that_is_hers_never_reaches_the_owner_and_a_tool_is_noted_for_the_developer(
+    engine, staffed
+):
+    """The Owner, 2026-10-12, over six «Am nevoie de decizia ta» letters about a prompt that
+    came back unchanged and a redo the tariff could not price: «ar trebui să nu ajungă la
+    mine, este la Director!». Quality, prompts and tools are hers: the escalation becomes her
+    own decision on the record, no letter goes to him, and the tool she names is written
+    down for the developer in her own thread, resolved at once."""
+    from app.agents.director import DEVELOPER_DEFECT_KIND, director_review
+
+    kael = staffed["agents"]["VideoEditor"]
+    with Session(engine) as session, session.begin():
+        qc = post_message(
+            session,
+            intent="ESCALATE",
+            subject="Randarea nu a trecut QC: picture_qc failed on Scene 5",
+            body_text="Scena 5 arată o spirală de lumină nedorită deasupra șervetului. Kael",
+            from_agent_id=kael.id,
+        ).id
+    registry, _ = registry_with(
+        staffed,
+        _decide_all(
+            "ESCALATE_TO_OWNER",
+            note=(
+                "Owner decision needed: fix or replace the rewrite tool — the motion-prompt "
+                "rewrite returned byte-identical prompts twice."
+            ),
+        ),
+    )
+
+    director_review(engine, registry, str(uuid4()))
+
+    assert letters_for_owner(engine) == []
+    with Session(engine) as session:
+        row = session.get(AgentMessage, qc)
+        assert row.status == "RESOLVED"
+        assert "Decizia este a Directoarei" in (row.resolution or "")
+        assert "rewrite tool" in (row.resolution or "")
+        notes = [
+            m
+            for m in session.scalars(select(AgentMessage))
+            if isinstance(m.body_json, dict) and m.body_json.get("kind") == DEVELOPER_DEFECT_KIND
+        ]
+        assert len(notes) == 1
+        (note,) = notes
+        assert note.to_agent_id == staffed["agents"]["Director"].id
+        assert note.status == "RESOLVED" and note.in_reply_to == qc
+        assert "byte-identical" in (note.body_text or "")
+        assert open_messages(session, inbox=True) == []
+
+    # Read again: nothing left to escalate, no second note.
+    director_review(engine, registry, str(uuid4()))
+    with Session(engine) as session:
+        assert (
+            len(
+                [
+                    m
+                    for m in session.scalars(select(AgentMessage))
+                    if isinstance(m.body_json, dict)
+                    and m.body_json.get("kind") == DEVELOPER_DEFECT_KIND
+                ]
+            )
+            == 1
+        )
+    assert letters_for_owner(engine) == []
+
+
+def test_his_accounts_and_what_only_he_authorises_still_reach_him(engine, staffed):
+    from app.agents.director import director_review
+
+    vera = staffed["agents"]["Publisher"]
+    with Session(engine) as session, session.begin():
+        hold = post_message(
+            session,
+            intent="ESCALATE",
+            subject="Publication HOLD: contul YouTube cere re-autentificare",
+            body_text="Token-ul canalului B a expirat; nu pot publica. Vera",
+            from_agent_id=vera.id,
+        ).id
+    registry, _ = registry_with(
+        staffed, _decide_all("ESCALATE_TO_OWNER", note="Trebuie să te autentifici din nou.")
+    )
+
+    director_review(engine, registry, str(uuid4()))
+
+    (letter,) = letters_for_owner(engine)
+    assert letter["thread_id"] == hold and letter["for_owner"] is True
+    with Session(engine) as session:
+        assert session.get(AgentMessage, hold).status == "ANSWERED"

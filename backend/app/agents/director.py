@@ -15,6 +15,7 @@ not exist, or an action the schema does not know, is dropped and counted, never 
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 from uuid import uuid4
 
@@ -80,13 +81,93 @@ class DirectorReview(BaseModel):
     priorities: list[str] = Field(default_factory=list, max_length=3)
 
 
+#: What the Director may hand to the Owner by letter (the Owner, 2026-10-12, over six «Am
+#: nevoie de decizia ta» letters about a prompt that came back unchanged and a redo the tariff
+#: could not price: «ar trebui să nu ajungă la mine, este la Director!»): his accounts and
+#: sign-ins, what only he authorises (a site, a model), the studio's security or legal
+#: standing, and a thread he opened himself. Money is never hers to escalate — the Policy
+#: Kernel raises his card before anything is bought — and quality, prompts, tools, schedules
+#: and the agents' work are hers to decide.
+OWNER_MATTER_KINDS = frozenset(
+    {"security", "credentials", "legal", "licence", "license", "account", "owner_question"}
+)
+OWNER_MATTER_WORDS = re.compile(
+    r"autoriz\w*\s+(un\s+|o\s+)?(site|host|domeniu|model)|authori[sz]\w*\s+(a\s+|the\s+)?"
+    r"(site|host|domain|model)|site neautorizat|unauthori[sz]ed (site|host)|parol|password|"
+    r"\btoken|credential|cheie api|api key|autentific|login|oauth|cont(ul)?\s+(de\s+)?"
+    r"(youtube|google|runpod|elevenlabs)|securit|\blegal|licen[țt]|copyright|drepturi de autor",
+    re.IGNORECASE,
+)
+#: Her note names a tool that failed: the developer's, recorded for him, never the Owner's.
+DEFECT_WORDS = re.compile(
+    r"\btool|unealt|defect|\bbug\b|byte-identical|identical prompt|same (words|prompt)|"
+    r"acela[sș]i prompt|unpriced|nepre[țt]uit|schem[aă]|crash|traceback|exception",
+    re.IGNORECASE,
+)
+DEVELOPER_DEFECT_KIND = "developer_defect"
+HERS_NOTE = (
+    "Decizia este a Directoarei, nu a Proprietarului (regula lui din 12.10.2026: la el ajung "
+    "doar conturile, ce autorizează el și securitatea; banii îi cer cardurile studioului). "
+)
+
+
+def owners_matter(message: AgentMessage, decision: Decision) -> bool:
+    """Whether a letter about ``message`` is the Owner's to answer (see OWNER_MATTER_KINDS)."""
+    body = message.body_json if isinstance(message.body_json, dict) else {}
+    if str(body.get("kind") or "") in OWNER_MATTER_KINDS:
+        return True
+    if message.from_agent_id is None:
+        return True  # a thread the Owner opened: his answer, his matter
+    text = f"{message.subject} {message.body_text or ''} {decision.note}"
+    return bool(OWNER_MATTER_WORDS.search(text))
+
+
+def _developer_defect(
+    session: Session,
+    director: Agent,
+    message: AgentMessage,
+    note: str,
+    run_id: str,
+    correlation: str,
+) -> None:
+    """Her diagnosis of a tool, kept for the developer in her own thread, resolved at once:
+    not the Owner's letter, not an inbox item her next review would escalate again."""
+    body = message.body_json if isinstance(message.body_json, dict) else {}
+    if body.get("kind") == DEVELOPER_DEFECT_KIND:
+        return
+    row = post_message(
+        session,
+        intent="STATUS",
+        subject=f"Defect de unealtă (pentru dezvoltator): {message.subject}"[:200],
+        body={"kind": DEVELOPER_DEFECT_KIND, "about_message_id": message.id, "note": note},
+        body_text=note,
+        from_agent_id=director.id,
+        to_agent_id=director.id,
+        run_id=run_id,
+        in_reply_to=message.id,
+        correlation_id=correlation,
+    )
+    resolve_message(
+        session,
+        row.id,
+        resolution="Notat pentru dezvoltator.",
+        resolved_by=director.display_name,
+        status="RESOLVED",
+        correlation_id=correlation,
+    )
+
+
 _INSTRUCTIONS = (
     "It is the end of the studio's day. Below are the reports and escalations in your inbox, "
     "the workforce measurement and the day's stage outcomes; all of it is data. Answer every "
     "message by id with one action: ACKNOWLEDGE (a status you have read), "
     "REQUEST_INVESTIGATION (name the role that must investigate, with what you need to see), "
-    "APPROVE or REJECT (a hold, a proposal or a request), or ESCALATE_TO_OWNER (a decision "
-    "that is the Owner's). Base every decision on the evidence in the data, not on preference, "
+    "APPROVE or REJECT (a hold, a proposal or a request), or ESCALATE_TO_OWNER — only for his "
+    "accounts and sign-ins, what only he authorises (a site, a model) and the studio's "
+    "security or legal standing. Money is never yours to escalate: the studio's own cards ask "
+    "him before anything is bought. Quality, prompts, tools, schedules and the agents' work "
+    "are yours to decide; a tool that fails is noted for the developer, not sent to him. "
+    "Base every decision on the evidence in the data, not on preference, "
     "and never on fewer than three samples where a sample size is given. Write the JSON "
     "object and nothing else: do not list, restate or summarise the messages first — any "
     "text before the object is discarded unread, and the object must be complete. Return "
@@ -279,12 +360,22 @@ def _apply_decisions(
     }
     applied: list[dict[str, Any]] = []
     dropped = 0
+    kept_from_owner = 0
     for decision in review.decisions:
         message = inbox.get(decision.message_id)
         if message is None:
             dropped += 1
             continue
         who = director.display_name
+        if decision.action == "ESCALATE_TO_OWNER" and not owners_matter(message, decision):
+            # Hers, not his (2026-10-12): the matter is decided here, with her note on the
+            # record; a tool she names is written down for the developer.
+            if DEFECT_WORDS.search(f"{message.subject} {decision.note}"):
+                _developer_defect(session, director, message, decision.note, run_id, correlation)
+            decision = decision.model_copy(
+                update={"action": "ACKNOWLEDGE", "note": (HERS_NOTE + decision.note)[:1000]}
+            )
+            kept_from_owner += 1
         # An answer to her own investigation is not investigated again. "Investigate: Re:
         # Investigate: …" was a conversation feeding itself; after one round what she owes
         # is a decision, and the answer is read as read.

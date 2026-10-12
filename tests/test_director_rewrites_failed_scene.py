@@ -499,3 +499,32 @@ def test_a_motion_rewrite_that_came_back_the_same_is_the_movements_turn_taken(
     with Session(engine) as session:
         # The still rewrite started the count again; the blocked attempt did not count.
         assert open_layers(session, storyboard_id, 1, last_code="QC.CLIP") == (MOTION, STILL)
+
+
+def test_a_rewrite_that_comes_back_with_the_same_words_tells_the_redo_so(engine, tmp_path, studio):
+    """2026-10-12, the cyclotron's scenes 4 and 5: the redo's rewrite of the movement came back
+    with the same words every hour, the paid redo was refused PROMPT_NOT_CORRECTED and the
+    Director wrote to the Owner about a «tooling defect». The outcome of `rewrite_for_redo`
+    now says `same_prompt`, so the repair turns to the picture (`_correct_before_redo`)."""
+    from app.media.scene_rewrite import rewrite_for_redo
+
+    storyboard_id = a_planned_film(engine, tmp_path, still_by="still_gate")
+    reasons = ["the glow replaced the pencil drawing"]
+    # The first rewrite lands: the stored movement is now the Video Editor's own words.
+    first = rewrite_for_redo(
+        engine, agents_say(studio, Agents()), storyboard_id, 1, "motion", reasons, str(uuid4())
+    )
+    assert first["rewritten"] is True and first["same_prompt"] is False, first
+    stored = dict(scene(engine, storyboard_id).prompt_json)
+
+    # Asked again, he answers the same words.
+    again = rewrite_for_redo(
+        engine, agents_say(studio, Agents()), storyboard_id, 1, "motion", reasons, str(uuid4())
+    )
+
+    assert again["rewritten"] is False and again["same_prompt"] is True, again
+    assert "același prompt" in again["reason"]
+    assert scene(engine, storyboard_id).prompt_json == stored
+    briefs = [e for e in events(engine, BRIEF_EVENT) if e.payload.get("scene_index") == 1]
+    assert [b.payload["same_prompt"] for b in briefs] == [False, True]
+    assert [b.payload["rewritten"] for b in briefs] == [True, False]

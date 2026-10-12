@@ -1202,6 +1202,10 @@ def _rung(
         layer=done.get("layer"),
         reason=str(done.get("reason") or ""),
         summary_ro=str(asked["brief"].get("summary_ro") or ""),
+        # The rewrite came back with the same words: the caller's cue to turn to the picture
+        # (2026-10-12: the cyclotron's scenes 4 and 5 were asked the same movement every hour
+        # because this flag stopped here, and the Director wrote to the Owner about a tool).
+        same_prompt=bool(done.get("same_prompt")),
     )
     return outcome
 

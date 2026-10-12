@@ -44,7 +44,7 @@ from app.agents.services import run_agent_task
 from app.analytics.models import ContentStrategy
 from app.config import Settings
 from app.factual.editorial import IDEA_WEIGHTS, composite, idea_rejections
-from app.factual.models import SourceSnapshot, TopicIdea
+from app.factual.models import ScriptDraft, SourceSnapshot, TopicIdea
 from app.factual.sanitizer import wrap_in_inert_boundary
 from app.providers.registry import ProviderRegistry
 from app.research.retrieval import RateLimited, RetrievalError
@@ -100,19 +100,72 @@ def _words(text: str) -> set[str]:
     return {w for w in re.findall(r"[a-z0-9]+", str(text).lower()) if len(w) > 2}
 
 
-def _too_similar(title: str, existing: list[str]) -> str | None:
-    """The existing title this one duplicates, if any (Jaccard over word sets)."""
+#: Long words that carry no subject: never a shared key between two ideas.
+_KEY_STOPWORDS = frozenset(
+    "about after again against almost among around because before being between could "
+    "during every first might never other really should since still their there these "
+    "those through under until where which while without within would storyboard".split()
+)
+#: Two title keys in common («Particle … Shouldn't», «Higgs Boson»), or three across title
+#: and topic, name the same subject: the film the studio made under another title.
+SHARED_TITLE_KEYS = 2
+SHARED_KEYS = 3
+
+
+def _keys(text: str) -> set[str]:
+    """The words of a title or topic that carry its subject: five letters or more, no
+    function word, no «Storyboard:» prefix."""
+    return {w for w in _words(text) if len(w) >= 5 and w not in _KEY_STOPWORDS}
+
+
+def _too_similar(title: str, topic: str, existing: list[tuple[str, str]]) -> str | None:
+    """The existing title this idea duplicates, if any.
+
+    Either the titles are the same idea (Jaccard over word sets, `DUPLICATE_RATIO`), or they
+    share the subject: `SHARED_TITLE_KEYS` subject words between the titles, or `SHARED_KEYS`
+    across title and topic. 2026-10-12: «The Particle That Shouldn't Exist (And Briefly
+    Didn't)» was proposed, chosen and filmed two days after «The Particle That Shouldn't
+    Exist (But Does)» was published — the titles overlapped 0.5 on words, the earlier film's
+    idea had a third title, and only ideas' titles were compared.
+    """
     words = _words(title)
     if not words:
         return None
-    for other in existing:
-        other_words = _words(other)
+    title_keys = _keys(title)
+    all_keys = title_keys | _keys(topic)
+    for other_title, other_topic in existing:
+        other_words = _words(other_title)
         if not other_words:
             continue
         overlap = len(words & other_words) / len(words | other_words)
         if overlap >= DUPLICATE_RATIO:
-            return other
+            return other_title
+        other_title_keys = _keys(other_title)
+        if len(title_keys & other_title_keys) >= SHARED_TITLE_KEYS:
+            return other_title
+        if len(all_keys & (other_title_keys | _keys(other_topic))) >= SHARED_KEYS:
+            return other_title
     return None
+
+
+def _made_title(title: str) -> str:
+    return re.sub(r"^\s*storyboard\s*:\s*", "", str(title or ""), flags=re.IGNORECASE).strip()
+
+
+def existing_subjects(session: Session) -> list[tuple[str, str]]:
+    """Every subject the studio already has, as (title, topic): its ideas, and the scripts,
+    storyboards and publications made from them — under whatever title the writer, the
+    storyboard or the publisher gave them."""
+    from app.media.models import Storyboard  # noqa: PLC0415 - media imports research
+    from app.publishing.models import PublicationRecord  # noqa: PLC0415
+
+    records: list[tuple[str, str]] = [
+        (str(row.title or ""), str(row.topic or "")) for row in session.scalars(select(TopicIdea))
+    ]
+    records += [(_made_title(t), "") for t in session.scalars(select(ScriptDraft.title)) if t]
+    records += [(_made_title(t), "") for t in session.scalars(select(Storyboard.title)) if t]
+    records += [(_made_title(t), "") for t in session.scalars(select(PublicationRecord.title)) if t]
+    return [record for record in records if record[0]]
 
 
 def _tested_hosts(settings: Settings, engine: Engine) -> list[str]:
@@ -251,7 +304,9 @@ _IDEA_INSTRUCTIONS = (
     "Each candidate must be something the sites listed below could actually evidence — you "
     "may only name hosts from that list, and the studio fetches the pages itself, so a site "
     "that cannot support the topic is a topic that dies at verification. Do not repeat "
-    "anything in the recent topics list, and do not restate one idea in different words. Do "
+    "anything in the recent topics list or the made subjects list — not the same subject "
+    "under another title, not the same particle, telescope, person or event from another "
+    "angle — and do not restate one idea in different words. Do "
     "not propose a topic because it is trending, recent, or would look beautiful: a trend is "
     "a hook, not a source, and a film with nothing to say fails however good the pictures "
     "are. You are given what people in the studio's country are searching for and what "
@@ -365,6 +420,13 @@ def propose_topics(
                 select(TopicIdea).order_by(TopicIdea.created_at.desc()).limit(40)
             )
         ]
+        # What the studio made and published, under the titles the writer, the storyboard and
+        # the publisher gave them (2026-10-12: a second film on the Higgs boson was proposed
+        # against a list of ideas' titles that named the first one differently).
+        made = sorted(
+            {title for title, _topic in existing_subjects(session)} - set(recent),
+            key=str.lower,
+        )[:60]
         strategy = session.scalar(
             select(ContentStrategy)
             .where(ContentStrategy.is_active.is_(True))
@@ -376,6 +438,7 @@ def propose_topics(
         {
             "authorised_hosts": hosts,
             "recent_topics": recent,
+            "made_subjects": made,
             "topic_weights": weights,
             **_signals(engine, settings),
         },
@@ -438,9 +501,9 @@ def propose_topics(
     allowed = set(hosts)
     stored: list[dict[str, Any]] = []
     with Session(engine) as session, session.begin():
-        existing = [row.title for row in session.scalars(select(TopicIdea))]
+        existing = existing_subjects(session)
         for candidate in candidates:
-            duplicate = _too_similar(candidate.title, existing)
+            duplicate = _too_similar(candidate.title, candidate.topic, existing)
             if duplicate:
                 rejected.append({"title": candidate.title, "why": f"duplicat: «{duplicate[:60]}»"})
                 continue
@@ -488,7 +551,7 @@ def propose_topics(
                         decision_notes="; ".join(refusals)[:2000],
                     )
                 )
-                existing.append(candidate.title)
+                existing.append((candidate.title, candidate.topic))
                 rejected.append(
                     {"title": candidate.title, "why": "editorial: " + "; ".join(refusals[:2])}
                 )
@@ -521,7 +584,7 @@ def propose_topics(
                     rejection_reasons_json=[],
                 )
             )
-            existing.append(candidate.title)
+            existing.append((candidate.title, candidate.topic))
             stored.append(
                 {
                     "id": identifier,
