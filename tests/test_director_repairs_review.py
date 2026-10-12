@@ -44,6 +44,8 @@ from test_director_repairs import (
     agent_of,
     an_open_decision,
     cards,
+    choosing,
+    director_reports,
     matter_of,
     owner_letters,
     owner_price,
@@ -249,10 +251,14 @@ def test_a_looping_thread_keeps_standing_guidance_and_a_budget_request_open(
         assert session.get(AgentMessage, question).status == "RESOLVED"
 
 
-# ------------------------------------------------- 3. a review closes the decision, not work
+# ------------------------------------- 3. a review goes back to the work, which stays owed
 
 
-def test_a_review_closes_the_decision_but_not_the_departments_owed_work(engine, studio, settings):
+def test_a_review_goes_back_to_the_departments_work_which_stays_owed(engine, studio, settings):
+    """2026-10-11's review: the cost report that answered a review closed Kael's owed work.
+    2026-10-12: a review is no cost report at all unless its decision asked one; it goes back
+    to the department with the decision's own work, its decision stays open until the review
+    is reviewed (`stale_decisions`), and the letter Kael never answered done stays owed."""
     a_published_film(engine, studio["channel_id"])
     kael, sarah = agent_of(engine, "VideoEditor"), agent_of(engine, "Director")
     with Session(engine) as session, session.begin():
@@ -272,14 +278,43 @@ def test_a_review_closes_the_decision_but_not_the_departments_owed_work(engine, 
         role="VideoEditor",
         message_id=handoff,
     )
+    model = choosing(
+        {
+            "matter_key": "review_growth_reach_12345678",
+            "decision": "CONTINUE",
+            "interpretation": "one film since",
+            "confidence": "LOW",
+        }
+    )(refusing=set())
     registry = ProviderRegistry()
-    registry.register(studio["local_provider"], Models(refusing=set()))
-    direct_company(engine, registry, settings)
+    registry.register(studio["local_provider"], model)
+    result = direct_company(engine, registry, settings)
     _drain(engine, settings, registry)
+    (assigned,) = result["assignments"]
+    assert assigned["matter_key"] == "review_growth_reach_12345678"
+    assert assigned["owner_role"] == "VideoEditor"
+    assert assigned["action"] == "improve the first frame and the thumbnail moment"
+    assert not [e for e in _applied(engine) if e.payload["repair"] == "film_cost_report"]
     with Session(engine) as session:
-        assert session.get(DirectorDecision, reviewed).state == "REVIEWED"
+        row = session.get(DirectorDecision, reviewed)
+        assert row.state == "OPEN" and row.outcome is None
         letter = session.get(AgentMessage, handoff)
         assert letter.status == "OPEN", "Kael never said it was done: the work is still owed"
+        to_kael = session.scalars(
+            select(AgentMessage).where(AgentMessage.to_agent_id == kael.id)
+        ).all()
+    assert len(to_kael) == 2 and any("trebuia revăzută" in m.subject for m in to_kael)
+    assert owner_letters(engine) == []
+
+
+def _applied(engine) -> list:
+    from app.agents.repairs.desk import APPLIED_EVENT
+    from app.models import DomainEvent
+
+    with Session(engine) as session:
+        return list(
+            session.scalars(select(DomainEvent).where(DomainEvent.event_type == APPLIED_EVENT))
+        )
 
 
 # ------------------------------------------- 4. her model's own words for the film cost
@@ -902,3 +937,86 @@ def test_a_price_card_waits_the_detectors_grace_when_the_repair_runs(engine, stu
 def test_the_film_cost_report_asks_the_kernel_for_a_write():
     report = registered_repairs()["film_cost_report"]
     assert report.tier == "T1" and report.action != "analytics.read"
+
+
+# ------------------------------------------- 17. a report is hers to read, and said once
+
+
+def test_the_same_cost_report_is_written_once_and_new_figures_are_a_new_report(
+    engine, studio, settings
+):
+    """2026-10-12: «Costul filmelor față de ce au adus» reached the Owner three times in 26
+    hours, the same words each time, as «Pentru tine — așteaptă răspunsul tău» though it asked
+    nothing of him («nu trebuie să ajungă la mine, este la Director»; «nu trebuie să se
+    repete»). A report is information in her own thread, written again only when its figures
+    change, and it holds his rule for text."""
+    from app.agents.repairs.film_cost import film_report, report_words
+    from app.wording import owner_text_problems
+
+    film = a_published_film(engine, studio["channel_id"])
+
+    def report() -> dict:
+        return execute_repair(
+            engine, None, settings, {"repair": "film_cost_report"}, correlation_id=str(uuid4())
+        )
+
+    assert report()["status"] == "APPLIED"
+    assert report()["status"] == "APPLIED"
+    (said,) = director_reports(engine)
+    assert "6,26 USD" in said.body_text and said.status == "RESOLVED"
+    assert owner_text_problems(said.body_text) == [], said.body_text
+
+    # One more shot booked on the film: new figures, a new report beside the first.
+    with Session(engine) as session, session.begin():
+        session.add(
+            ProviderCostRecord(
+                id=str(uuid4()),
+                provider="runpod",
+                external_reference=str(uuid4()),
+                status="ESTIMATED",
+                amount_micros=1_000_000,
+                currency="USD",
+                usd_micros=1_000_000,
+                attribution_json={"storyboard_id": film["storyboard_id"]},
+                recorded_at=utc_now(),
+            )
+        )
+    report()
+    reports = sorted(director_reports(engine), key=lambda m: m.created_at)
+    assert len(reports) == 2 and "7,26 USD" in reports[-1].body_text
+    assert reports[-1].body_text == report_words(film_report(engine))
+    assert owner_letters(engine) == [], "nothing of it waits for the Owner"
+
+
+def test_a_repair_that_needs_his_account_is_the_one_letter_that_waits_for_him(
+    engine, studio, settings
+):
+    """Only his own matters reach him as a letter awaiting his answer (the Owner, 2026-10-12:
+    accounts, what only he authorises, the studio's security; `director.OWNER_MATTER_KINDS`).
+    Every other report of hers is information (`desk.status_letter`)."""
+    from app.agents.repairs import APPLIED, outcome, register_repair, unregister_repair
+
+    words = "Cheia YouTube a canalului B a expirat; autentifică-te din nou în Setări."
+
+    def needs_him(context, params):
+        said = outcome(APPLIED, words, letter_subject_ro="Contul YouTube cere autentificare")
+        return {**said, "owner_matter": "credentials"}
+
+    register_repair(
+        "needs_his_account",
+        needs_him,
+        tier="T1",
+        action="director.close_review",
+        precondition=lambda context, params: None,
+    )
+    try:
+        done = execute_repair(
+            engine, None, settings, {"repair": "needs_his_account"}, correlation_id=str(uuid4())
+        )
+    finally:
+        unregister_repair("needs_his_account")
+    assert done["status"] == "APPLIED"
+    (letter,) = owner_letters(engine)
+    assert letter.intent == "ESCALATE" and letter.status == "OPEN"
+    assert letter.body_json["kind"] == "credentials" and letter.body_text == words
+    assert director_reports(engine) == []

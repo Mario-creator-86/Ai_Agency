@@ -383,3 +383,129 @@ def test_the_api_answers_a_change_that_changes_nothing_with_409(client, headers,
 
     missing = client.post(f"/api/v1/agents/{uuid4()}/pause", headers=headers)
     assert missing.status_code == 404
+
+
+# ----------------------------------------------------------------------- his rule for text
+
+#: Sarah's letter 4d84450b of 2026-10-12, 17:20 UTC, as he read it.
+SARAH_COST_LETTER = (
+    "«The Universe's Missing Pieces: Why the LHC Upgrade Matters» (2026-09-12): niciun cost în "
+    "cărți; pe același subiect, 1 altă placă au costat 1,62 USD; a adus 0 vizualizări, 0,0 "
+    "minute vizionate, CTR 0,0 %, 0 abonați câștigați. «How ATLAS Caught the Higgs Boson in Real "
+    "Time» (2026-09-12): 0,316 USD în cărți (0,316 estimat, 0 facturat); a adus 1 vizualizare, "
+    "0,0 minute vizionate, CTR 0,0 %, 0 abonați câștigați. «The Higgs Boson: The Particle That "
+    "Explains Why Mass Exists» (2026-10-10): 4,584453 USD în cărți (4,584453 estimat, 0 "
+    "facturat); a adus 0 vizualizări, 0,0 minute vizionate, CTR 0,0 %, 0 abonați câștigați. "
+    "«How NASA Keeps Webb Alive With Frozen Fuel» (2026-10-11): 3,03676 USD în cărți (3,03676 "
+    "estimat, 0 facturat); a adus 0 vizualizări, 0,0 minute vizionate, CTR 0,0 %, 0 abonați "
+    "câștigați. «The Higgs Boson: Why Heavy Particles Shouldn't Exist» (2026-10-12): 7,57392 USD "
+    "în cărți (7,57392 estimat, 0 facturat); a adus încă nemăsurat. Costul agenților pe film: "
+    "neatribuit (rulările nu poartă încă filmul)."
+)
+
+
+def test_a_sum_in_a_letter_is_said_in_cents():
+    """«4,584453 USD» in the books is «4,58 USD» in a letter (2026-10-12, the Owner: «să îmi
+    spună exact»): half-up on integers, a decimal comma, a dot between the thousands."""
+    from app.wording import usd
+
+    assert usd(4_584_453) == "4,58 USD"
+    assert usd(316_000) == "0,32 USD"
+    assert usd(3_036_760) == "3,04 USD"
+    assert usd(17_131_133) == "17,13 USD"
+    assert usd(0) == usd(None) == "0 USD"
+    assert usd(4_999) == "sub 0,01 USD"
+    assert usd(5_000) == "0,01 USD"
+    assert usd(1_234_500_000) == "1.234,50 USD"
+    assert usd(-2_500_000) == "-2,50 USD"
+
+
+def test_his_rule_for_text_names_what_sarahs_cost_letter_did_wrong():
+    """The Owner over this letter, 2026-10-12: «Textul de la Sara este greu de înțeles!
+    Trebuie să fie mai succint, să îmi spună exact. Nu trebuie să conțină cod, nu trebuie să
+    se repete!»"""
+    from app.wording import owner_text_findings, owner_text_problems
+
+    problems = owner_text_problems(SARAH_COST_LETTER)
+    assert {"money_precision", "internal_word", "repeated_sentence", "too_long"} <= set(problems)
+    found = owner_text_findings(SARAH_COST_LETTER)
+    assert "4,584453 USD" in found["money_precision"] and "0,316 USD" in found["money_precision"]
+    assert {"în cărți", "placă"} <= set(found["internal_word"])
+    # The film titles are English and are his to read: nothing in «…» is called English.
+    assert "english" not in problems
+
+
+def test_his_rule_for_text_names_code_paths_ids_and_english():
+    """What the Director's QC letters carried on 2026-10-12: a code's names, an /api path, a
+    board's id, a redo code, the environment's code and English quotes."""
+    from app.wording import owner_text_findings, owner_text_problems
+
+    letter = (
+        "Ce a găsit: picture_spans_qc pe storyboard_id f06808c9-40d4-4f40-a980-84b6a5540348, "
+        "prompt_hash b2a94fcd. Foaia: /api/v1/media/storyboards/x/shooting-sheet. REDO.OWNER, "
+        "mediul PRODUCTION, scena LIVE. The still is not the scene and the faces must go."
+    )
+    assert {"code_token", "api_path", "id", "english"} <= set(owner_text_problems(letter))
+    assert owner_text_findings("picture_spans_qc pe storyboard_id, prompt_hash")["code_token"] == [
+        "picture_spans_qc",
+        "storyboard_id",
+        "prompt_hash",
+    ]
+    assert owner_text_findings("Cod REDO.OWNER.")["code_token"] == ["REDO.OWNER"]
+    assert owner_text_findings("în PRODUCTION, scena LIVE")["code_token"] == ["PRODUCTION", "LIVE"]
+    found = owner_text_findings(letter)
+    assert found["api_path"] == ["/api/"]
+    assert found["id"] == ["f06808c9-40d4-4f40-a980-84b6a5540348", "b2a94fcd"]
+    assert owner_text_findings("prin endpoint-ul de imagini")["internal_word"] == ["endpoint"]
+
+
+def test_his_rule_for_text_lets_a_plain_letter_through():
+    """The cost letter as the investigation of 2026-10-12 wrote it from the day's figures, a
+    name in capitals that is a name (NASA, CERN), the studio's own Romanian headings, and an
+    English title in guillemets: nothing to say. A «Storyboard:» prefix in a title is code."""
+    from app.wording import owner_text_problems
+
+    letter = "\n".join(
+        [
+            "Cheltuit pe filme până azi: 43,27 USD.",
+            "Cele 5 filme publicate au costat 17,13 USD și au adus 1 vizualizare și 0 abonați.",
+            "Filmele încă nepublicate au costat 26,14 USD: «Why Ernest Lawrence's First "
+            "Cyclotron…» 12,61 USD, «The Zero Script Club» 11,89 USD.",
+            "Concluzie: încă nu se poate spune ce aduc filmele — 2 filme sunt private; 3 filme "
+            "sunt publice de mai puțin de 3 zile, iar YouTube dă cifrele cu până la 3 zile "
+            "întârziere.",
+            "Nu ai nimic de decis.",
+        ]
+    )
+    assert owner_text_problems(letter) == []
+    assert owner_text_problems("«How NASA Keeps Webb Alive With Frozen Fuel» costă 3,04 USD.") == []
+    assert owner_text_problems("Filmul despre CERN și NASA a costat 3,04 USD pe GPU.") == []
+    assert owner_text_problems("OBSERVAȚIE: 2 randări au eșuat.\nDE FĂCUT: refă imaginea.") == []
+    assert owner_text_problems("Foaia de filmare: «Storyboard: The Zero Script Club».") == [
+        "internal_word"
+    ]
+    # One sentence said twice is repetition; a short refrain is not.
+    twice = "Imaginea scenei 1 are fețe vizibile. Imaginea scenei 1 are fețe vizibile."
+    assert owner_text_problems(twice) == ["repeated_sentence"]
+    assert owner_text_problems("• «A»: 0 vizualizări.\n• «B»: 0 vizualizări.") == []
+    assert owner_text_problems("rând\n" * 9) == ["too_many_lines"]
+
+
+def test_his_rule_for_text_reads_two_films_as_two_and_a_graphics_card_as_a_word():
+    """The review of 2026-10-12 tried to break the rule with the letters it must pass: two
+    films with the same figures are two sentences, not one said twice (their titles differ),
+    and «placa video» in a GPU letter is a graphics card, not the sheet's «placă»."""
+    from app.wording import owner_text_problems
+
+    two = (
+        "«Film A» a costat 4,58 USD și a adus 0 vizualizări. "
+        "«Film B» a costat 4,58 USD și a adus 0 vizualizări."
+    )
+    assert owner_text_problems(two) == []
+    assert owner_text_problems(two + " «Film B» a costat 4,58 USD și a adus 0 vizualizări.") == [
+        "repeated_sentence"
+    ]
+    assert owner_text_problems("Placa video a RunPod este încă pornită; verific din nou.") == []
+    assert owner_text_problems("Pe aceeași temă, 1 altă placă a costat 1,62 USD.") == [
+        "internal_word"
+    ]

@@ -632,3 +632,159 @@ def clause(text: str) -> str:
 def error_fields(exc: BaseException) -> dict[str, str]:
     """The fault as data: its class and its own text, for whoever diagnoses it."""
     return {"error_class": type(exc).__name__, "error_detail": str(exc)[:500]}
+
+
+# ----------------------------------------------------------------------------- money in a letter
+
+
+def usd(micros: int | float | None) -> str:
+    """A sum in USD as the Owner reads it: whole cents, a decimal comma, a dot between the
+    thousands («4,58 USD», «1.234,50 USD»), «0 USD» for nothing and «sub 0,01 USD» for less
+    than half a cent. Rounded half-up on integers, never through a float's binary digits.
+
+    2026-10-12, over Sarah's «4,584453 USD în cărți (4,584453 estimat, 0 facturat)»: «Trebuie
+    să fie mai succint, să îmi spună exact». The books keep the micro; a letter says the cent.
+    """
+    value = round(float(micros or 0)) if isinstance(micros, float) else int(micros or 0)
+    if value == 0:
+        return "0 USD"
+    cents = (abs(value) + 5_000) // 10_000
+    if cents == 0:
+        return "sub 0,01 USD"
+    whole, fraction = divmod(cents, 100)
+    return f"{'-' if value < 0 else ''}{whole:,}".replace(",", ".") + f",{fraction:02d} USD"
+
+
+# ----------------------------------------------------------------------------- his text
+
+#: All-caps words a letter to him may carry as words: the units and names he uses himself.
+OWNER_ALLOWED_CAPS = frozenset({"USD", "GPU", "CTR", "AI", "LTX", "RTX", "API", "HTTP"})
+#: The codes this module has words for (and the letters' own intents): left as the code in a
+#: sentence, each one is a word the studio forgot to say. An acronym that is a name (NASA,
+#: CERN, LHC) is a word, so only the studio's own codes are counted, never every capital.
+OWNER_CODE_WORDS = frozenset(
+    code
+    for table in (
+        STAGE_STATUS,
+        AUTONOMY_MODE,
+        ENVIRONMENT,
+        BUDGET_PERIOD,
+        BUDGET_STATE,
+        WORK_STATUS,
+        REVIEW_VERDICT,
+        VIEWING_VERDICT,
+        PUBLICATION_VERDICT,
+        PUBLICATION_STATUS,
+        PRIVACY,
+        QC_STATUS,
+        DECISION,
+        CONFIDENCE,
+        PIPELINE_STAGE,
+        CONSTRAINT,
+        DIAGNOSIS,
+        ANOMALY,
+        dict.fromkeys(("LIVE", "HANDOFF", "REQUEST_INFO", "REQUEST_REVIEW", "CHALLENGE", "REDO")),
+    )
+    for code in table
+    if len(code) >= 3 and code not in OWNER_ALLOWED_CAPS
+)
+#: The books' and the code's own words, which mean nothing to him in a letter: Sarah's cost
+#: letter of 2026-10-12 («în cărți», «estimat», «facturat», «neatribuit», «rulările»), the
+#: shooting sheet's «placă» and «preluare», «Owner» where a letter speaks to him, a board's
+#: «Storyboard:» title prefix and an «endpoint».
+OWNER_INTERNAL_WORDS = re.compile(
+    r"în cărți|\bestimat(?:ă|e|ul|a|ele)?\b|\bfacturat(?:ă|e|ul|a)?\b|\bneatribuit(?:ă|e)?\b|"
+    # «placa video» is a graphics card, a GPU letter's own word, not the sheet's board.
+    r"\brul(?:are|area|ării|ări|ările|ărilor)\b|"
+    r"\b(?:plac(?:ă|a|ăi)|plăci(?:le|lor)?)\b(?!\s+(?:video|grafic))|"
+    r"\bpreluar(?:e|ea|ii)\b|\bpreluări(?:le|lor)?\b|\bOwner(?:-ul|-ului)?\b|\bendpoint\w*",
+    re.IGNORECASE,
+)
+_OWNER_CASED = re.compile(r"\bOwner(?:-ul|-ului)?\b")
+_QUOTED = re.compile(r"«[^»]*»")
+_SNAKE = re.compile(r"\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b")
+_DOTTED_CODE = re.compile(r"\b[A-Z][A-Z0-9]+(?:[._][A-Z0-9]+)+\b")
+_CAPS = re.compile(r"\b[A-Z][A-Z_]{2,}\b")
+_UUID = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b")
+_HEX_ID = re.compile(r"\b(?=[0-9a-f]*[0-9])(?=[0-9a-f]*[a-f])[0-9a-f]{8,}\b")
+_MONEY_PRECISION = re.compile(r"\d,\d{3,}\s*USD|\b\d+,\d{4,}\b|\b\d+\.\d{4,}\s*USD")
+#: English's commonest words, none of them a Romanian word («are», «a», «in», «an» are).
+_ENGLISH = re.compile(
+    r"\b(?:the|is|was|were|and|of|not|with|this|that|it|to|on|for|must|be|has|have|should|"
+    r"will|from|by|which|there|its|been|into|than|but)\b",
+    re.IGNORECASE,
+)
+_WORD = re.compile(r"[^\W\d_]+")
+_SENTENCES = re.compile(r"[.\n;!?]+")
+#: Above this share of English's commonest words a text is English, whatever it quotes.
+ENGLISH_SHARE = 0.08
+#: A sentence this long said twice is a repetition, not a refrain («0 vizualizări» is not).
+REPEATED_SENTENCE_CHARS = 25
+
+
+def owner_text_findings(
+    text: str | None, *, max_lines: int = 8, max_chars: int = 900
+) -> dict[str, list[str]]:
+    """`owner_text_problems`, with up to three of the words that raised each problem: what a
+    log says, so whoever reads it sees the word without opening the letter."""
+    raw = str(text or "")
+    # A film's title may be English and is his to read as it is: what is quoted is not judged.
+    plain = _QUOTED.sub("«»", raw)
+    found: dict[str, list[str]] = {}
+
+    def note(code: str, items: list[str]) -> None:
+        unique = list(dict.fromkeys(items))
+        if unique:
+            found[code] = unique[:3]
+
+    note("money_precision", _MONEY_PRECISION.findall(plain))
+    codes = _SNAKE.findall(plain) + _DOTTED_CODE.findall(plain)
+    undotted = _DOTTED_CODE.sub(" ", plain)
+    codes += [w for w in _CAPS.findall(undotted) if w in OWNER_CODE_WORDS]
+    note("code_token", codes)
+    note("api_path", ["/api/"] if "/api/" in plain else [])
+    note("id", _UUID.findall(plain) + _HEX_ID.findall(_UUID.sub(" ", plain)))
+    internal = [m.group(0) for m in OWNER_INTERNAL_WORDS.finditer(plain)]
+    # «owner» lower-cased is English, said by the English rule; «Owner» is the code's name.
+    internal = [w for w in internal if not w.lower().startswith("owner") or _OWNER_CASED.match(w)]
+    if "«Storyboard:" in raw or plain.lstrip().startswith("Storyboard:"):
+        internal.append("Storyboard:")
+    note("internal_word", internal)
+    words = _WORD.findall(plain)
+    english = _ENGLISH.findall(plain)
+    if words and len(english) / len(words) > ENGLISH_SHARE:
+        note("english", english)
+    seen: set[str] = set()
+    repeated: list[str] = []
+    # Judged with the titles in: «A» a costat 4,58 USD and «B» a costat 4,58 USD are two
+    # films, not one sentence said twice (the review of 2026-10-12).
+    for sentence in _SENTENCES.split(raw):
+        said = " ".join(sentence.strip(" •-–—:,").lower().split())
+        if len(said) < REPEATED_SENTENCE_CHARS:
+            continue
+        if said in seen:
+            repeated.append(said[:60])
+        seen.add(said)
+    note("repeated_sentence", repeated)
+    lines = [line for line in raw.splitlines() if line.strip()]
+    note("too_many_lines", [str(len(lines))] if len(lines) > max_lines else [])
+    note("too_long", [str(len(raw))] if len(raw) > max_chars else [])
+    return found
+
+
+def owner_text_problems(text: str | None, *, max_lines: int = 8, max_chars: int = 900) -> list[str]:
+    """What is wrong, for the Owner, with a text written for him: one code per problem, none
+    when it reads as he asked (2026-10-12, over Sarah's cost letter: «Textul de la Sara este
+    greu de înțeles! Trebuie să fie mai succint, să îmi spună exact. Nu trebuie să conțină
+    cod, nu trebuie să se repete!»).
+
+    ``money_precision`` a sum past the cent («4,584453 USD»); ``code_token`` a snake_case
+    name (``storyboard_id``, ``prompt_hash``), a dotted code («REDO.OWNER») or a code this
+    module has a word for («PRODUCTION», «LIVE»); ``api_path`` an «/api/» path; ``id`` a UUID
+    or a hex id («4be4364e»); ``internal_word`` the books' and the code's words («în cărți»,
+    «estimat», «facturat», «neatribuit», «rulări», «endpoint», «Owner», «Storyboard:»);
+    ``english`` a text in English; ``repeated_sentence`` the same sentence twice;
+    ``too_many_lines`` and ``too_long`` past ``max_lines`` lines or ``max_chars`` characters.
+    Text inside «…» (a film's own title) is not judged, but for its «Storyboard:» prefix.
+    """
+    return list(owner_text_findings(text, max_lines=max_lines, max_chars=max_chars))

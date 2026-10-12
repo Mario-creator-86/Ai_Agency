@@ -29,7 +29,8 @@ poată repara asta»). A matter the studio's own data can settle (runs left unpr
 typed after them, a model that fails now, a thread going round, a decision whose work is over,
 what a film cost) carries a repair from `app.agents.repairs`. Chosen, it is not a letter to a
 department: the Policy Kernel is asked with the repair's tier and a DIRECTOR_REPAIR task does
-it, records it and tells the Owner (`repairs.desk`). What only he can do stays a card for him.
+it, records it and reports it in her own thread (`repairs.desk`). What only he can do stays a
+card for him.
 """
 
 from __future__ import annotations
@@ -744,26 +745,51 @@ def findings(engine: Engine, settings: Settings, state: dict[str, Any]) -> list[
                 )
                 break
 
-    # 6. Decisions whose review has come due. The review is what the films cost against what
-    # they returned: computed by the Director's desk, which closes the decision it reviews,
-    # not a letter to the Accountant, who cannot see a film's cost (2026-10-11).
+    # 6. Decisions whose review has come due. A review asks what the decision it reviews
+    # asked (2026-10-12). A decision that asked what the films cost against what they returned
+    # is answered by the Director's desk, which computes it and closes the decision it reviews,
+    # not by a letter to the Accountant, who cannot see a film's cost (2026-10-11). Any other
+    # review goes back to the department of the decision it reviews, with that decision's own
+    # work: until 2026-10-12 every review was the cost report, so the review of «review the
+    # shot prompts of the failed renders» (63acf8ef) was closed with a cost text and the
+    # prompts were never looked at, and each review sent the Owner the same cost letter again.
+    from app.agents.repairs.film_cost import FILM_COST_ACTION, asks_film_cost  # noqa: PLC0415
+
     for due in due_reviews(engine):
-        add(
-            f"review_{due['matter_key']}",
-            "COMPANY",
+        key = f"review_{due['matter_key']}"
+        said = (
             f"Decizia «{matter_words(due['matter_key'])}» trebuia revăzută: "
-            f"{count(due['published_since'], 'film publicat', 'filme publicate')} de atunci.",
+            f"{count(due['published_since'], 'film publicat', 'filme publicate')} de atunci."
+        )
+        suggestion = "NEEDS_MORE_DATA" if due["published_since"] == 0 else "CONTINUE"
+        if asks_film_cost(due["matter_key"], due["action"]):
+            add(
+                key,
+                "COMPANY",
+                said,
+                due,
+                suggestion,
+                FILM_COST_ACTION,
+                DIRECTOR_ROLE,
+                confidence="MEDIUM",
+                review_after_videos=None,
+                repair={
+                    "name": ACTION_REPAIRS[FILM_COST_ACTION],
+                    "params": {"decision_id": due["decision_id"]},
+                    "fingerprint": fingerprint("review", due["decision_id"]),
+                },
+            )
+            continue
+        add(
+            key,
+            "COMPANY",
+            said,
             due,
-            "NEEDS_MORE_DATA" if due["published_since"] == 0 else "CONTINUE",
-            "report what a film cost against what it returned",
-            DIRECTOR_ROLE,
+            suggestion,
+            due["action"],
+            due["owner_role"] if due["owner_role"] in ASSIGNABLE else None,
             confidence="MEDIUM",
-            review_after_videos=None,
-            repair={
-                "name": ACTION_REPAIRS["report what a film cost against what it returned"],
-                "params": {"decision_id": due["decision_id"]},
-                "fingerprint": fingerprint("review", due["decision_id"]),
-            },
+            review_after_videos=due["review_after_videos"],
         )
 
     # A review her desk already made (or that failed today) is not offered again at every
@@ -852,7 +878,13 @@ def due_reviews(engine: Engine) -> list[dict[str, Any]]:
                         "decision_id": row.id,
                         "matter_key": row.matter_key,
                         "decision": row.decision,
-                        "action": row.action[:200],
+                        # Whole: a review that is not the cost report hands this work on as
+                        # it is, and 63acf8ef's last order («Report which element caused
+                        # each failure.») lay past the 200 characters it was cut to before
+                        # 2026-10-12.
+                        "action": row.action,
+                        # Who the decision gave its work to: the review goes back to them.
+                        "owner_role": row.owner_role,
                         "published_since": since,
                         "review_after_videos": row.review_after_videos,
                     }
@@ -913,6 +945,21 @@ def direct_company(
                 )
             ).all()
         }
+        # A review is counted against the decision it reviews: the key ``review_<matter>`` is
+        # shared by every review that matter ever had, the cost reports of 2026-10-11/12 among
+        # them, and three of those would have sent the next prompt review to the Owner.
+        reviews_of: dict[str, int] = {}
+        for key, evidence in session.execute(
+            select(DirectorDecision.matter_key, DirectorDecision.evidence_json)
+        ).all():
+            if (
+                str(key or "").startswith("review_")
+                and isinstance(evidence, dict)
+                and evidence.get("decision_id")
+                and "repair" not in evidence
+            ):
+                reviewed = str(evidence["decision_id"])
+                reviews_of[reviewed] = reviews_of.get(reviewed, 0) + 1
         # A repair is counted within a day: a case it settled does not come back, so a matter
         # repaired three times since yesterday is one the repair does not settle.
         since = (datetime.now(UTC) - timedelta(hours=REPAIR_ATTEMPTS_HOURS)).isoformat()
@@ -1031,6 +1078,29 @@ def direct_company(
         action = (choice.action or matter["action"] or "").strip()
         # Three refusals to a matter is not a fourth attempt; it is the Owner's decision.
         too_many = int(attempts.get(matter["matter_key"], 0)) >= MAX_ATTEMPTS_PER_MATTER
+        if _is_review(matter):
+            if _computed_by(action) is not None:
+                # Her model asked the cost report for the review of a decision that did not
+                # ask it: the review is that decision's own work, by its own department
+                # (2026-10-12, the renders' prompts reviewed with a cost text). Written to the
+                # Accountant, it would be the question she cannot answer (2026-10-11).
+                logger.info(
+                    "review_kept_to_its_work",
+                    extra={"matter": matter["matter_key"], "asked": action[:120]},
+                )
+                role = matter["owner_role"] or ""
+                action = str(matter["action"] or "").strip()
+            elif role not in ASSIGNABLE:
+                role = matter["owner_role"] or ""
+            if role not in ASSIGNABLE:
+                # No department of the studio holds that work: nothing to hand on, and never
+                # the Owner's letter (a review is hers: «nu trebuie să ajungă la mine, este la
+                # Director», 2026-10-12). Until 2026-10-12 a review was her cost report and
+                # never reached him; a review sent on as work must not either.
+                logger.info("review_without_department", extra={"matter": matter["matter_key"]})
+                continue
+            reviewed = str((matter.get("evidence") or {}).get("decision_id") or "")
+            too_many = reviews_of.get(reviewed, 0) >= MAX_ATTEMPTS_PER_MATTER
         if choice.decision in HIGH_IMPACT or too_many or role not in ASSIGNABLE:
             escalated.append(matter["matter_key"])
             _escalate(engine, director_id, matter, choice, correlation, run_id, too_many)
@@ -1215,6 +1285,14 @@ def _computed_by(action: str) -> str | None:
     return next((name for start, name in ACTION_REPAIRS.items() if words.startswith(start)), None)
 
 
+def _is_review(matter: dict[str, Any]) -> bool:
+    """A decision's review (`findings` section 6): its key and the reviewed decision's id."""
+    evidence = matter.get("evidence")
+    return str(matter.get("matter_key") or "").startswith("review_") and bool(
+        isinstance(evidence, dict) and evidence.get("decision_id")
+    )
+
+
 def _repair_spec(matter: dict[str, Any], choice: Choice) -> dict[str, Any] | None:
     """The repair a chosen matter is carried out by, or None for a department's work.
 
@@ -1222,10 +1300,15 @@ def _repair_spec(matter: dict[str, Any], choice: Choice) -> dict[str, Any] | Non
     it is done (handing Nadia the unpriced runs again is the loop of 2026-10-09..11). A matter
     without one is still hers when its work is one the studio computes itself
     (`MATTER_REPAIRS`, `ACTION_REPAIRS`), whoever the choice named for it.
+
+    But never a review that offers none: it reviews a decision that did not ask what a film
+    cost, and its work is that decision's, whatever words her choice used (2026-10-12).
     """
     offered = matter.get("repair")
     if isinstance(offered, dict) and offered.get("name"):
         return dict(offered)
+    if _is_review(matter):
+        return None
     name = MATTER_REPAIRS.get(str(matter.get("matter_key") or ""))
     if name is None:
         name = _computed_by(choice.action or str(matter.get("action") or ""))

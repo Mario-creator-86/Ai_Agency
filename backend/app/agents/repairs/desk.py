@@ -18,12 +18,15 @@ only what it sees and what it changes:
    Owner may have stopped the studio meanwhile), the precondition is read again, the repair
    runs, and in one transaction the event ``director.repair_applied`` (or
    ``director.repair_declined``) with what changed, the decision closed with the outcome (and
-   the repair's status kept on it), and for an applied repair one STATUS letter to the Owner:
-   a statement, never a question.
+   the repair's status kept on it), and for an applied repair one report (`status_letter`):
+   information in her own thread, closed as it is written, never a letter waiting for the
+   Owner's answer, and never the same words twice in `messages.OWNER_REPEAT_DAYS` days.
 
 What only the Owner can do is one card in his Decisions window (`owner_card`), never a letter
 to an employee: the loop of 2026-10-09..11 was Nadia asked, every morning, for what only he
-could give.
+could give. A letter reaches him only for what is his by the rule of 2026-10-12 («nu trebuie
+să ajungă la mine, este la Director»): his accounts, what only he authorises and the studio's
+security (`director.OWNER_MATTER_KINDS`); money is a card.
 """
 
 from __future__ import annotations
@@ -78,6 +81,10 @@ MAX_TRIES = 3
 BLOCKED_CARD = "director_repair:"
 #: Such a card he has answered is not asked again for this long (`decisions.sources`' quiet).
 BLOCKED_QUIET_DAYS = 7
+#: What a repair's report is in the record: the kind its letter carries.
+REPORT_KIND = "director_repair"
+#: How a report is closed as it is written: something to read, not a question for anyone.
+REPORT_READ_RO = "De citit: raportul Directoarei, nu o întrebare."
 
 
 def fingerprint(*parts: Any) -> str:
@@ -612,7 +619,9 @@ def _record(
     correlation_id: str,
 ) -> None:
     """The event, the decision closed with the repair's status kept on it (what `undecided`
-    reads), and the Owner's letter, in one transaction."""
+    reads), and the repair's report (`status_letter`), in one transaction. A repair that needs
+    the Owner for his own matter says so (``owner_matter``, one of
+    `director.OWNER_MATTER_KINDS`); every other report is information, never his letter."""
     from app.analytics.models import DirectorDecision  # noqa: PLC0415
     from app.services import append_event  # noqa: PLC0415
 
@@ -653,6 +662,7 @@ def _record(
                 text=words,
                 body={"repair": name, "decision_id": decision_id},
                 correlation_id=correlation_id,
+                owner_matter=result.get("owner_matter"),
             )
 
 
@@ -682,22 +692,69 @@ def status_letter(
     text: str,
     body: Mapping[str, Any],
     correlation_id: str,
+    owner_matter: str | None = None,
 ) -> str:
-    """One STATUS letter to the Owner saying what the Director repaired: a statement, never a
-    question. The same subject still open is that letter (`post_message` dedupes it)."""
-    from app.agents.messages import post_message  # noqa: PLC0415
+    """The report of what the Director repaired: a STATUS letter in her own thread, closed as
+    it is written (`REPORT_READ_RO`), so it is information in the register and the thread and
+    never a letter in anyone's inbox. Returns its id; the same subject and words reported in
+    the last `messages.OWNER_REPEAT_DAYS` days are not reported again, and that report's id
+    is returned.
 
-    letter = post_message(
+    2026-10-12: «Costul filmelor față de ce au adus» reached the Owner three times in 26 hours
+    as «Pentru tine — așteaptă răspunsul tău» (the page flags every OPEN letter to him that
+    way, `mail_thread.js`), though it asked nothing of him. The Owner: «nu trebuie să ajungă
+    la mine, este la Director». Only a repair that needs him for his own matter (an account,
+    an authorisation, the studio's security: ``owner_matter`` in
+    `director.OWNER_MATTER_KINDS`) writes him a letter, and that one waits for his answer."""
+    from app.agents.director import OWNER_MATTER_KINDS  # noqa: PLC0415
+    from app.agents.messages import (  # noqa: PLC0415
+        post_message,
+        repeated_letter,
+        resolve_message,
+    )
+    from app.agents.models import Agent  # noqa: PLC0415
+
+    if owner_matter and str(owner_matter) in OWNER_MATTER_KINDS:
+        asked = post_message(
+            session,
+            intent="ESCALATE",
+            subject=subject,
+            body={**dict(body), "kind": str(owner_matter), "report_kind": REPORT_KIND},
+            body_text=text,
+            from_agent_id=director_id,
+            to_owner=True,
+            correlation_id=correlation_id,
+        )
+        return asked.id
+    said = repeated_letter(
+        session,
+        subject=subject,
+        body_text=text,
+        to_owner=False,
+        from_agent_id=director_id,
+        kind=REPORT_KIND,
+    )
+    if said is not None:
+        return said.id
+    director = session.get(Agent, director_id) if director_id else None
+    report = post_message(
         session,
         intent="STATUS",
         subject=subject,
-        body={"kind": "director_repair", **dict(body)},
+        body={"kind": REPORT_KIND, **dict(body)},
         body_text=text,
         from_agent_id=director_id,
-        to_owner=True,
+        to_agent_id=director_id,
         correlation_id=correlation_id,
     )
-    return letter.id
+    resolve_message(
+        session,
+        report.id,
+        resolution=REPORT_READ_RO,
+        resolved_by=director.display_name if director is not None else DIRECTOR,
+        correlation_id=correlation_id,
+    )
+    return report.id
 
 
 def owner_card(session: Session, **card: Any) -> str | None:
@@ -775,6 +832,8 @@ __all__ = [
     "DECLINED_EVENT",
     "HELD",
     "REPAIR_TASK",
+    "REPORT_KIND",
+    "REPORT_READ_RO",
     "ask_owner_about_repair",
     "blocked_card",
     "close_decision",

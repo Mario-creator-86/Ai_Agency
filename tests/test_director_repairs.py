@@ -277,6 +277,29 @@ def owner_letters(engine) -> list[AgentMessage]:
         ]
 
 
+def director_reports(engine) -> list[AgentMessage]:
+    """Her repairs' reports: information in her own thread, closed as written, never a letter
+    to the Owner (2026-10-12: «nu trebuie să ajungă la mine, este la Director»)."""
+    with Session(engine) as session:
+        return [
+            m
+            for m in session.scalars(select(AgentMessage).where(AgentMessage.intent == "STATUS"))
+            if (m.body_json or {}).get("kind") == "director_repair"
+        ]
+
+
+def assert_a_report_not_a_letter(engine, words: str) -> AgentMessage:
+    """One report whose subject says ``words``, read as information: closed as written, in her
+    own thread, and no letter waiting for the Owner."""
+    assert owner_letters(engine) == [], "a report is not a letter waiting for the Owner"
+    (report,) = director_reports(engine)
+    assert words in report.subject
+    assert report.status == "RESOLVED" and report.resolution.startswith("De citit")
+    assert report.to_agent_id == report.from_agent_id, "her own thread"
+    assert (report.body_json or {}).get("to") != "Owner"
+    return report
+
+
 def cards(engine, prefix="") -> list[OwnerDecision]:
     with Session(engine) as session:
         return list(
@@ -421,8 +444,8 @@ def test_the_167_runs_left_unpriced_are_priced_at_the_active_price_once(engine, 
         decision = session.get(DirectorDecision, done["queued"]["decision_id"])
         assert decision.state == "REVIEWED" and "169" in decision.outcome
         assert decision.owner_role == "Director"
-    (letter,) = owner_letters(engine)
-    assert letter.intent == "STATUS" and "169" in letter.subject
+    # Reported, as information in her own thread: nothing here asks the Owner anything.
+    assert_a_report_not_a_letter(engine, "169")
     assert not letters_to(engine, agent_of(engine, "Accountant").id)
 
     # Once is once: the same case is not offered again, and a second repair finds nothing.
@@ -644,8 +667,7 @@ def test_a_model_failing_now_is_switched_once_with_a_probe_and_what_to_revert_to
     assert changed["revert"]["model_id"] == cloud["models"]["broken-model"]
     assert changed["home_model_id"] == cloud["models"]["broken-model"]
     assert [p["run_id"] for p in changed["probes"]] == [own.id, probe.id]
-    (letter,) = owner_letters(engine)
-    assert letter.intent == "STATUS" and "working-model" in letter.subject
+    assert_a_report_not_a_letter(engine, "working-model")
 
     # The same day her new model fails too: not a second switch, one card for the Owner.
     fake.refusing.add("working-model")
@@ -1123,34 +1145,44 @@ def test_the_owners_own_conversation_is_never_closed_by_the_director(engine, stu
         assert session.get(AgentMessage, his_id).status == "OPEN"
 
 
-def test_a_film_cost_asked_of_a_department_is_computed_not_written(engine, studio, settings):
-    """Her model may still name the Accountant for the review: the work is one the studio
-    computes, so it is done by the desk and nobody is written to (`ACTION_REPAIRS`)."""
+def choosing(choice: dict[str, Any]) -> type:
+    """Her model, faked: it chooses ``choice`` and nothing else."""
     import json as json_module
+
+    class Chooses(Models):
+        async def generate(self, model, prompt, **kwargs):
+            self.asked.append(prompt)
+            return GenerateResult(json_module.dumps({"choices": [choice]}), 50, 20, None)
+
+    return Chooses
+
+
+def test_a_film_cost_asked_of_a_department_is_computed_not_written(engine, studio, settings):
+    """Her model may still name the Accountant for the review of a decision that asked what
+    a film cost: the work is one the studio computes, so it is done by the desk and nobody is
+    written to (`ACTION_REPAIRS`); and the report is hers to read, not the Owner's letter."""
+    from app.agents.repairs.film_cost import film_report, report_words
+    from app.wording import owner_text_problems
 
     a_published_film(engine, studio["channel_id"])
     nadia = agent_of(engine, "Accountant")
     reviewed = an_open_decision(
         engine,
         matter_key="growth_reach_12345678",
-        action="improve the first frame and the thumbnail moment",
-        role="VideoEditor",
+        # her model's own words for it (2026-10-11)
+        action="Report what a film cost against what it returned for the 3 measured films",
+        role="Accountant",
     )
-
-    class Chooses(Models):
-        async def generate(self, model, prompt, **kwargs):
-            self.asked.append(prompt)
-            choice = {
-                "matter_key": "review_growth_reach_12345678",
-                "decision": "CONTINUE",
-                "interpretation": "one film",
-                "confidence": "LOW",
-                "action": "report what a film cost against what it returned",
-                "owner_role": "Accountant",
-            }
-            return GenerateResult(json_module.dumps({"choices": [choice]}), 50, 20, None)
-
-    model = Chooses(refusing=set())
+    model = choosing(
+        {
+            "matter_key": "review_growth_reach_12345678",
+            "decision": "CONTINUE",
+            "interpretation": "one film",
+            "confidence": "LOW",
+            "action": "report what a film cost against what it returned",
+            "owner_role": "Accountant",
+        }
+    )(refusing=set())
     registry = ProviderRegistry()
     registry.register(studio["local_provider"], model)
     result = direct_company(engine, registry, settings)
@@ -1162,6 +1194,174 @@ def test_a_film_cost_asked_of_a_department_is_computed_not_written(engine, studi
         pass
     with Session(engine) as session:
         assert "The Higgs Boson" in session.get(DirectorDecision, reviewed).outcome
+    report = assert_a_report_not_a_letter(engine, "Costul filmelor")
+    assert report.body_text == report_words(film_report(engine))
+    assert owner_text_problems(report.body_text) == [], report.body_text
+
+
+def test_a_review_asks_what_its_decision_asked_and_the_prompts_go_to_the_video_editor(
+    engine, studio, settings
+):
+    """2026-10-12, 17:20 UTC: the decision to «review the shot prompts of the two failed
+    renders… rewrite the prompt pattern» (63acf8ef, renders_failed) was closed with the cost
+    report as its outcome, the prompts were never reviewed, and the same cost letter went to
+    the Owner again. Every review was a cost question by its ``review_`` key alone. A review
+    asks what the decision it reviews asked: this one is Kael's prompt work, even when her
+    model asks the cost report for it, and nobody is written to about a film's cost."""
+    from app.agents.command import _repair_spec
+    from app.agents.repairs.film_cost import asks_film_cost
+
+    a_published_film(engine, studio["channel_id"])
+    kael, nadia = agent_of(engine, "VideoEditor"), agent_of(engine, "Accountant")
+    prompts = (
+        "Review the shot prompts of the two failed renders against what the film actually "
+        "looked like and rewrite the prompt pattern"
+    )
+    reviewed = an_open_decision(
+        engine,
+        matter_key="renders_failed",
+        action=prompts,
+        role="VideoEditor",
+        decision="ITERATE",
+        review_after_videos=1,
+    )
+    assert not asks_film_cost("review_renders_failed", prompts)
+    review = next(
+        m
+        for m in findings(engine, settings, _state(engine, settings))
+        if m["matter_key"] == "review_renders_failed"
+    )
+    assert "repair" not in review
+    assert review["owner_role"] == "VideoEditor" and review["action"] == prompts[:200]
+    assert review["evidence"]["decision_id"] == reviewed
+    # Whatever words her choice uses, a review that offers no repair is not the cost report.
+    from app.agents.command import Choice
+
+    asked_cost = Choice(
+        matter_key="review_renders_failed",
+        decision="CONTINUE",
+        action="Report what a film cost against what it returned",
+        repair_action="film_cost_report",
+    )
+    assert _repair_spec(review, asked_cost) is None
+
+    model = choosing(
+        {
+            "matter_key": "review_renders_failed",
+            "decision": "CONTINUE",
+            "interpretation": "two renders failed",
+            "confidence": "MEDIUM",
+            "action": "report what a film cost against what it returned",
+            "owner_role": "Accountant",
+            "repair_action": "film_cost_report",
+        }
+    )(refusing=set())
+    registry = ProviderRegistry()
+    registry.register(studio["local_provider"], model)
+    result = direct_company(engine, registry, settings)
+    assert "review_renders_failed" not in {r["matter_key"] for r in result["repairs"]}
+    (assigned,) = [a for a in result["assignments"] if a["matter_key"] == "review_renders_failed"]
+    assert assigned["owner_role"] == "VideoEditor" and assigned["action"] == prompts[:200]
+    assert not letters_to(engine, nadia.id), "no cost question to the Accountant"
+    (handoff,) = letters_to(engine, kael.id)
+    assert handoff.intent == "HANDOFF" and "Review the shot prompts" in handoff.body_text
+
+    handlers = build_task_handlers(engine, settings, None, None, registry)
+    while work_once(engine, handlers) is not None:
+        pass
+    assert not any(e.payload["repair"] == "film_cost_report" for e in events(engine, APPLIED_EVENT))
+    with Session(engine) as session:
+        row = session.get(DirectorDecision, reviewed)
+        assert row.state == "OPEN" and "USD" not in str(row.outcome or "")
+        (own,) = session.scalars(
+            select(DirectorDecision).where(DirectorDecision.matter_key == "review_renders_failed")
+        ).all()
+        assert own.state == "OPEN" and own.owner_role == "VideoEditor"
+    assert owner_letters(engine) == []
+
+
+def test_a_review_sent_on_as_work_never_becomes_a_letter_to_the_owner(engine, studio, settings):
+    """The review of 2026-10-12 tried to break the routing. Until then a review was her cost
+    report and never reached the Owner. Sent on as a department's work, it met the rules for
+    a department's matter: three decisions under its key went to him as «Decizia ta», and a
+    department the studio no longer has did too. A key like ``review_renders_failed`` is
+    shared by every review its matter ever had (live on 2026-10-12, review_bottleneck_research
+    had two cost reports already), so a matter's third review would have been his letter. A
+    review is counted against the decision it reviews, and one with no department is not
+    handed on; neither is it his."""
+    import json as json_module
+
+    a_published_film(engine, studio["channel_id"])
+    kael = agent_of(engine, "VideoEditor")
+    # Three earlier reviews of earlier renders_failed decisions, under the same key.
+    for _ in range(3):
+        earlier = an_open_decision(
+            engine,
+            matter_key="renders_failed",
+            action="review the shot prompts",
+            role="VideoEditor",
+            state="REVIEWED",
+            outcome="făcut",
+        )
+        done = an_open_decision(
+            engine,
+            matter_key="review_renders_failed",
+            action="review the shot prompts",
+            role="VideoEditor",
+            state="REVIEWED",
+            outcome="făcut",
+        )
+        with Session(engine) as session, session.begin():
+            session.get(DirectorDecision, done).evidence_json = {"decision_id": earlier}
+    # 63acf8ef's own words, 226 characters: its last order lay past the 200 a review kept.
+    prompts = (
+        "Review the shot prompts of the two failed renders against what the film actually "
+        "looked like; identify which prompt elements failed and rewrite the prompt pattern for "
+        "the next renders. Report which element caused each failure."
+    )
+    reviewed = an_open_decision(
+        engine, matter_key="renders_failed", action=prompts, role="VideoEditor"
+    )
+    # A decision of a department the studio no longer has, its review due too.
+    an_open_decision(
+        engine, matter_key="bottleneck_lighting", action="relight the set", role="Gaffer"
+    )
+    due = {
+        m["matter_key"]: m
+        for m in findings(engine, settings, _state(engine, settings))
+        if m["matter_key"].startswith("review_")
+    }
+    assert due["review_bottleneck_lighting"]["owner_role"] is None
+
+    class Chooses(Models):
+        async def generate(self, model, prompt, **kwargs):
+            self.asked.append(prompt)
+            choices = [
+                {
+                    "matter_key": key,
+                    "decision": "CONTINUE",
+                    "interpretation": "due",
+                    "confidence": "MEDIUM",
+                    "action": "",
+                    "owner_role": "",
+                }
+                for key in ("review_renders_failed", "review_bottleneck_lighting")
+            ]
+            return GenerateResult(json_module.dumps({"choices": choices}), 50, 20, None)
+
+    registry = ProviderRegistry()
+    registry.register(studio["local_provider"], Chooses(refusing=set()))
+    result = direct_company(engine, registry, settings)
+    assert result["escalated"] == []
+    (assigned,) = result["assignments"]
+    assert assigned["matter_key"] == "review_renders_failed"
+    assert assigned["owner_role"] == "VideoEditor" and assigned["action"] == prompts
+    (handoff,) = letters_to(engine, kael.id)
+    assert handoff.intent == "HANDOFF"
+    assert "Report which element caused each failure." in handoff.body_text, "the whole work"
+    assert owner_letters(engine) == [], "a review is hers: nothing of it is his letter"
+    with Session(engine) as session:
+        assert session.get(DirectorDecision, reviewed).state == "OPEN"
 
 
 # ------------------------------------------------------------- 6. decisions whose work is over
@@ -1380,7 +1580,7 @@ def test_the_owners_stop_refuses_every_repair_and_a_queued_one_is_declined(
     assert again["status"] == "ALREADY_CLOSED"
 
 
-def test_the_loop_queues_free_repairs_and_the_worker_does_them_with_one_letter_each(
+def test_the_loop_queues_free_repairs_and_the_worker_does_them_with_one_report_each(
     engine, studio, settings
 ):
     cloud = a_connection(engine, models=("kimi-k3",))
@@ -1405,8 +1605,8 @@ def test_the_loop_queues_free_repairs_and_the_worker_does_them_with_one_letter_e
     while (done := work_once(engine, handlers)) is not None:
         outcomes.append(done)
     assert [o["outcome"]["status"] for o in outcomes] == ["APPLIED"]
-    letters = [m for m in owner_letters(engine) if m.intent == "STATUS"]
-    assert len(letters) == 1
+    assert len(director_reports(engine)) == 1
+    assert owner_letters(engine) == []
 
 
 def test_an_assignment_by_the_directors_repair_is_not_read_as_the_owners_choice(engine, studio):

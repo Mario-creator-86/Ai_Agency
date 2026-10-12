@@ -17,9 +17,15 @@ So the report is computed here, with no model and no letter:
   likes, comments, shares, subscribers;
 - and the agents' cost stated as «neatribuit»: no run carries the film's id yet.
 
-It closes the review it answers (a ``review_<matter>`` decision's subject, and that matter's
-thread when the letter asked for this report, `asks_film_cost`), and a published film the
-performance page shows with no cost raises it once.
+It answers only a decision that asked what a film cost (`asks_film_cost`): the review of such
+a decision is closed with it, and that decision's thread when its letter asked for this report.
+A published film the performance page shows with no cost raises it once.
+
+2026-10-12: every review was a cost question by its ``review_`` key alone, so a decision to
+review and rewrite the failed renders' prompt pattern (63acf8ef, renders_failed) was closed
+with this report as its outcome and the prompts were never reviewed, and the same report went
+out again at every review. A review now goes to the work of the decision it reviews
+(`command.findings`); this report answers only the one that asked it.
 """
 
 from __future__ import annotations
@@ -48,10 +54,9 @@ from app.wording import count, decimal
 
 #: The agents' share of a film's cost, until film-stage runs carry the board's id.
 AGENT_COST_RO = "neatribuit"
-#: The action the reviews were given, which this report answers (`command.ACTION_REPAIRS`).
+#: The action that asks for this report (`command.ACTION_REPAIRS`), however it is worded after.
 FILM_COST_ACTION = "report what a film cost against what it returned"
-#: Besides every review (``review_<matter>``: its action was hard-wired to this report until
-#: 2026-10-11), the matter whose decision asked a department for it whatever words it used.
+#: The matter whose decision asked a department for it whatever words it used.
 FILM_COST_MATTERS = ("idle_costs_unread",)
 
 
@@ -59,9 +64,12 @@ def asks_film_cost(matter_key: str | None, action: str | None = "") -> bool:
     """Whether a decision asked what a film cost: known by its matter, or by how its action
     begins. Never by the action's whole text: her model writes it in its own words («Report
     what a film cost against what it returned for the 3 measured films to …»), and three such
-    decisions of 2026-10-11 were missed by an equality."""
-    key = str(matter_key or "")
-    if key.startswith("review_") or key in FILM_COST_MATTERS:
+    decisions of 2026-10-11 were missed by an equality.
+
+    Never by a ``review_`` key alone (2026-10-12): a review asks what the decision it reviews
+    asked. Read that way, the review of «review the shot prompts of the failed renders» was a
+    cost question, and was closed with the cost report instead of being done."""
+    if str(matter_key or "") in FILM_COST_MATTERS:
         return True
     return " ".join(str(action or "").casefold().split()).startswith(FILM_COST_ACTION)
 

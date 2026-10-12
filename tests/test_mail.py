@@ -1053,3 +1053,237 @@ def test_his_accounts_and_what_only_he_authorises_still_reach_him(engine, staffe
     assert letter["thread_id"] == hold and letter["for_owner"] is True
     with Session(engine) as session:
         assert session.get(AgentMessage, hold).status == "ANSWERED"
+
+
+# --------------------------------------------------------------- a letter to him, said once
+
+
+def _owner_rows(engine) -> list[AgentMessage]:
+    with Session(engine) as session:
+        return [
+            m
+            for m in session.scalars(select(AgentMessage).order_by(AgentMessage.created_at))
+            if (m.body_json or {}).get("to") == "Owner"
+        ]
+
+
+def _posted(engine, message_id: str) -> list[DomainEvent]:
+    return [
+        e for e in session_events(engine, "agent.message_posted") if e.aggregate_id == message_id
+    ]
+
+
+def test_a_report_he_closed_is_not_sent_again_with_the_same_words_within_a_week(engine, staffed):
+    """2026-10-12: «Costul filmelor față de ce au adus» reached the Owner three times in 26
+    hours, the same words each time: the open-subject rule let it back in as soon as he
+    closed it. The Owner: «nu trebuie să se repete»."""
+    from app.agents.messages import OWNER_REPEAT_DAYS, resolve_message
+
+    sarah = staffed["agents"]["Director"]
+
+    def write(text: str) -> str:
+        with Session(engine) as session, session.begin():
+            return post_message(
+                session,
+                intent="STATUS",
+                subject="Ce au costat filmele și ce au adus",
+                body={"kind": "director_repair"},
+                body_text=text,
+                from_agent_id=sarah.id,
+                to_owner=True,
+            ).id
+
+    first = write("Cheltuit pe filme până azi: 43,27 USD.\nNu ai nimic de decis.")
+    with Session(engine) as session, session.begin():
+        resolve_message(session, first, resolution="Am citit.", resolved_by="Owner")
+    # The same words again, closed or not: the letter he already read, nothing new written.
+    assert write("Cheltuit pe filme până azi:  43,27 USD.\nNu ai nimic de decis.") == first
+    assert [m.id for m in _owner_rows(engine)] == [first]
+    assert len(_posted(engine, first)) == 1
+
+    # A week on, the same words are news again; and other words are news at once.
+    with Session(engine) as session, session.begin():
+        stale = datetime.now(UTC) - timedelta(days=OWNER_REPEAT_DAYS, minutes=1)
+        session.get(AgentMessage, first).created_at = stale.isoformat()
+    again = write("Cheltuit pe filme până azi: 43,27 USD.\nNu ai nimic de decis.")
+    assert again != first
+    with Session(engine) as session, session.begin():
+        resolve_message(session, again, resolution="Am citit.", resolved_by="Owner")
+    other = write("Cheltuit pe filme până azi: 44,10 USD.\nNu ai nimic de decis.")
+    assert other not in (first, again)
+    assert len(_owner_rows(engine)) == 3
+
+
+def test_a_question_about_his_account_that_he_closed_reaches_him_again_when_it_comes_back(
+    engine, staffed
+):
+    """The week's rule holds reports, never his own matters (the Owner, 2026-10-12: letters
+    reach him for his accounts, his authorisations and the studio's security). He signs in
+    again and closes the letter; two days on the same sign-in expires with the same words:
+    folded into the closed letter, the studio would wait on him without his knowing. Nor
+    does the RunPod GPU that again did not confirm its stop: money still running."""
+    from app.agents.messages import OWNER_ASKING_INTENTS, resolve_message
+    from app.decisions.services import ASKING_INTENTS
+
+    assert set(ASKING_INTENTS) == OWNER_ASKING_INTENTS, "one meaning of a letter that asks"
+    sarah = staffed["agents"]["Director"]
+
+    def write(subject: str, text: str, kind: str) -> str:
+        with Session(engine) as session, session.begin():
+            return post_message(
+                session,
+                intent="ESCALATE",
+                subject=subject,
+                body={"kind": kind},
+                body_text=text,
+                from_agent_id=sarah.id,
+                to_owner=True,
+            ).id
+
+    for subject, text, kind in (
+        (
+            "Contul YouTube cere o nouă autentificare",
+            "Conectarea canalului B a expirat; autentifică-te din nou din Setări.",
+            "account",
+        ),
+        (
+            "GPU-ul RunPod nu a confirmat oprirea",
+            "Oprirea GPU-ului nu este confirmată; verifică în consola RunPod.",
+            "runpod_gpu_off_unverified",
+        ),
+    ):
+        first = write(subject, text, kind)
+        assert write(subject, text, kind) == first, "still open: the same letter"
+        with Session(engine) as session, session.begin():
+            resolve_message(session, first, resolution="Rezolvat.", resolved_by="Owner")
+        again = write(subject, text, kind)
+        assert again != first, f"{kind}: the matter came back, so does the letter"
+        with Session(engine) as session:
+            assert session.get(AgentMessage, again).status == "OPEN"
+    assert len(_owner_rows(engine)) == 4
+
+
+def test_newer_figures_on_a_question_still_open_keep_it_a_question(engine, staffed):
+    """A report's words over a letter that asks him leave it asking: the card stays in his
+    Decisions window until he has answered (`OWNER_ASKING_INTENTS`)."""
+    sarah = staffed["agents"]["Director"]
+    subject = "Cheile salvate nu pot fi citite"
+    with Session(engine) as session, session.begin():
+        first = post_message(
+            session,
+            intent="ESCALATE",
+            subject=subject,
+            body={"kind": "credentials"},
+            body_text="2 conexiuni nu pot fi citite.",
+            from_agent_id=sarah.id,
+            to_owner=True,
+        ).id
+        same = post_message(
+            session,
+            intent="STATUS",
+            subject=subject,
+            body={"kind": "credentials"},
+            body_text="3 conexiuni nu pot fi citite.",
+            from_agent_id=sarah.id,
+            to_owner=True,
+        ).id
+    assert same == first
+    with Session(engine) as session:
+        row = session.get(AgentMessage, first)
+        assert row.intent == "ESCALATE" and row.body_text.startswith("3 conexiuni")
+
+
+def test_newer_words_replace_the_open_letters_words_and_the_change_is_an_event(engine, staffed):
+    """Before 2026-10-12 a newer letter on a subject still open was dropped: he read the old
+    figures until he closed the letter. Now the open letter says the new words, the register
+    gets them as an event, and the old words stay in that event's record."""
+    sarah = staffed["agents"]["Director"]
+
+    def write(text: str, figure: int) -> str:
+        with Session(engine) as session, session.begin():
+            return post_message(
+                session,
+                intent="ESCALATE",
+                subject="Ziua s-a oprit: lipsește cheia furnizorului de voce",
+                body={"kind": "credentials", "figure": figure},
+                body_text=text,
+                from_agent_id=sarah.id,
+                to_owner=True,
+            ).id
+
+    first = write("Cheia ElevenLabs lipsește; 2 filme așteaptă vocea.", 2)
+    assert write("Cheia ElevenLabs lipsește; 3 filme așteaptă vocea.", 3) == first
+    with Session(engine) as session:
+        row = session.get(AgentMessage, first)
+        assert row.status == "OPEN" and row.body_text.startswith("Cheia ElevenLabs lipsește; 3")
+        assert row.body_json["figure"] == 3 and row.body_json["to"] == "Owner"
+    posted = _posted(engine, first)
+    assert len(posted) == 2
+    assert posted[-1].payload["revised"] is True and posted[-1].payload["for_owner"] is True
+    assert "3 filme" in posted[-1].payload["excerpt"]
+    assert "2 filme" in posted[-1].payload["previous_excerpt"]
+    # The same newer words once more: nothing changes, nothing is recorded again.
+    assert write("Cheia ElevenLabs lipsește; 3 filme așteaptă vocea.", 3) == first
+    assert len(_posted(engine, first)) == 2
+    assert len(_owner_rows(engine)) == 1
+
+
+def test_a_letter_to_him_that_breaks_his_rule_for_text_is_logged_never_refused(
+    engine, staffed, caplog
+):
+    """His rule (2026-10-12): short, exact, no code, no repetition. A letter about his account
+    must reach him whatever its words, so the rule is a warning in the log, with what broke
+    it; the composers' tests hold each one to it (`wording.owner_text_problems`)."""
+    import logging
+
+    sarah = staffed["agents"]["Director"]
+    with caplog.at_level(logging.WARNING, logger="studio.messages"):
+        with Session(engine) as session, session.begin():
+            sent = post_message(
+                session,
+                intent="STATUS",
+                subject="Costul filmelor",
+                body={"kind": "director_repair"},
+                body_text="Cost 4,584453 USD în cărți.",
+                from_agent_id=sarah.id,
+                to_owner=True,
+            ).id
+            post_message(
+                session,
+                intent="STATUS",
+                subject="Notă internă",
+                body_text="Cost 4,584453 USD în cărți.",
+                from_agent_id=sarah.id,
+            )
+    assert [m.id for m in _owner_rows(engine)] == [sent], "logged, never refused"
+    (warned,) = [r for r in caplog.records if r.getMessage() == "owner_letter_words"]
+    assert warned.kind == "director_repair"
+    assert {"money_precision", "internal_word"} <= set(warned.problems)
+
+
+def test_a_letter_about_money_that_went_out_is_written_each_time(engine, staffed):
+    """A booking the books refused is money that went out: the accountant writes one letter
+    each time («none may be folded into another»), so the week's rule does not fold a second
+    refusal with the same words into the first one he closed."""
+    from app.agents.messages import OWNER_LETTERS_EACH_TIME, resolve_message
+
+    assert "booking_refused" in OWNER_LETTERS_EACH_TIME
+    nadia = staffed["agents"]["Accountant"]
+
+    def write() -> str:
+        with Session(engine) as session, session.begin():
+            return post_message(
+                session,
+                intent="ESCALATE",
+                subject="O cheltuială nu a putut fi trecută în registru",
+                body={"kind": "booking_refused"},
+                body_text="O cumpărare de 0,25 USD nu a putut fi trecută în registru.",
+                from_agent_id=nadia.id,
+                to_owner=True,
+            ).id
+
+    first = write()
+    with Session(engine) as session, session.begin():
+        resolve_message(session, first, resolution="Am trecut-o de mână.", resolved_by="Owner")
+    assert write() != first
+    assert len(_owner_rows(engine)) == 2
