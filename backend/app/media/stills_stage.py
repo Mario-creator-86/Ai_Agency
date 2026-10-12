@@ -42,7 +42,11 @@ What this step does, in order, and what stops it:
    refused candidates the bible's hard limits did not stop (`_settle_round`): a candidate her
    look lets stand is approved by her and nothing more is bought; and a still that shows its
    corrected words and the corrected mistake again ends the scene for her ladder at once —
-   never re-rolled on the words that did not correct it. A vendor refusal follows its kind
+   never re-rolled on the words that did not correct it. Since the review of 5fc7468 (that
+   night) a refusal of the WORDS she confirms goes to her ladder too, not to a blind re-roll
+   (only a technical one is re-rolled), every refused take of such a round begins with the
+   content phrase the ladder reads, and collected candidates are settled the same way. A
+   vendor refusal follows its kind
    (`production_policy.classify_failure`): SAFETY is never resubmitted with the same words
    and the scene goes to the Owner; a transient failure is tried once more; an account
    problem or a second refused request in a row stops the step.
@@ -168,13 +172,17 @@ from app.media.still_gate import (
     ALL_CHECKS,
     COLOUR_WORDS,
     MAX_REROLLS,
+    REWRITE_PHRASE,
     StillPlan,
     StillReport,
     choose_best,
+    content_refusal,
     decide,
     local_checks,
     may_be_overturned,
+    measured_refusal,
     positive_instruction,
+    rewrite_step,
     round_step,
 )
 from app.providers.media_http import MediaProviderError, TaskStillOpen
@@ -998,6 +1006,9 @@ class _RoundEnd:
     #: Her look, when hers approved the take; her reasons, when she confirmed the refusal.
     look: dict[str, Any] | None = None
     confirmed: list[str] = field(default_factory=list)
+    #: She confirmed a refusal that says the WORDS ask for the wrong picture
+    #: (`still_gate.content_refusal`): another seed on them is not bought.
+    confirmed_content: bool = False
 
     def approved(self) -> dict[str, Any]:
         """The scene's outcome for the approved take, with what was accepted on it."""
@@ -1052,6 +1063,7 @@ def _director_looks(
         key=lambda pair: (len(pair[1].violations), len(pair[1].reasons_ro)),
     )
     confirmed: list[str] = []
+    confirmed_content = False
     for take_id, report in offered:
         look = fix_check.director_second_look(
             engine,
@@ -1064,17 +1076,21 @@ def _director_looks(
             correlation_id=correlation_id,
             take_ids=[take_id],
         )
-        if fix_check.look_accepts(look):
+        # A floor the gate measured is kept only as «not in the picture» (defence in depth).
+        if fix_check.look_accepts(look, measured=measured_refusal(report)):
             return _RoundEnd(
                 take_id=take_id,
                 report=report,
                 approved_by=fix_check.DIRECTOR_LOOK_APPROVER,
                 look=look,
                 confirmed=confirmed,
+                confirmed_content=confirmed_content,
             )
-        if look.get("verdict") == fix_check.CONFIRMED and look.get("reason_ro"):
-            confirmed.append(str(look["reason_ro"]))
-    return _RoundEnd(confirmed=confirmed)
+        if look.get("verdict") == fix_check.CONFIRMED:
+            confirmed_content = confirmed_content or content_refusal(report)
+            if look.get("reason_ro"):
+                confirmed.append(str(look["reason_ro"]))
+    return _RoundEnd(confirmed=confirmed, confirmed_content=confirmed_content)
 
 
 def _after_approval(
@@ -1084,12 +1100,15 @@ def _after_approval(
     end: _RoundEnd,
     correlation_id: str,
 ) -> None:
-    """What the approved take carries (`fix_check.record_take_note`: the minor traces, her
-    look) and what it teaches the rewrite's lessons: every item gone confirms them."""
+    """What the approved take carries (`fix_check.record_take_note`: the minor traces and the
+    review runs they belong to, her look) and what it teaches the rewrite's lessons, run by run
+    (`fix_check.confirm_lessons`): a run is confirmed only when every one of its items this
+    still answered is gone and none of its items is open on the clip's layer any more."""
     report = end.report
     if report is None or end.take_id is None:
         return
     with Session(engine) as session, session.begin():
+        lock_for_write(session)  # reads the open items, then writes the note and the lessons
         fix_check.record_take_note(
             session,
             storyboard_id=storyboard_id,
@@ -1100,11 +1119,33 @@ def _after_approval(
             minor=report.minor,
             look=end.look,
             correlation_id=correlation_id,
+            answers=report.fixes,
         )
         if scene.must_fix:
-            fix_check.settle_lessons(
-                session, scene.must_fix, report.fixes, approved=True, persisted=False
+            fix_check.confirm_lessons(
+                session, report.fixes, storyboard_id=storyboard_id, scene_index=scene.index
             )
+
+
+def _mark_for_rewrite(engine: Engine, verdicts: list[tuple[str, StillReport]]) -> None:
+    """Every refused take of a round whose words go back to the Director's ladder begins with
+    the content phrase (`still_gate.REWRITE_PHRASE`). 2026-10-12 (the review of 5fc7468,
+    finding 3): the ladder reads the scene's NEWEST refused take (`scene_rewrite.serial_refusal`
+    for the serial); a sibling refused for a blur read TECHNICAL and the serial re-rolled the
+    very words her rewrite decision had sent back."""
+    with Session(engine) as session, session.begin():
+        lock_for_write(session)
+        for take_id, _report in verdicts:
+            row = session.get(SceneTake, take_id)
+            if row is None or row.status != "REJECTED":
+                continue
+            detail = " ".join(str(row.failure_detail or "").split())
+            if detail.startswith(REWRITE_PHRASE):
+                continue
+            row.failure_detail = (
+                f"{REWRITE_PHRASE}: runda nu se mai cumpără pe aceleași cuvinte, Directoarea "
+                f"le rescrie; {detail or 'respinsă'}"
+            )[:500]
 
 
 def _settle_round(
@@ -1147,16 +1188,27 @@ def _settle_round(
             _after_approval(engine, storyboard_id, scene, looked, correlation_id)
             return looked
         confirmed = looked.confirmed
+        if step.action == "reroll" and looked.confirmed_content:
+            # 2026-10-12 (the review of 5fc7468, finding 4): she looked and confirmed that the
+            # picture is not what the words should give; a re-roll on the same words was up to
+            # four paid stills of the same mistake, bought blind. The words go back to her
+            # ladder (free); only a technical refusal is re-rolled.
+            step = rewrite_step(
+                scene.index,
+                "Directoarea a privit și confirmă că imaginea nu arată ce cere scena; o altă "
+                "sămânță pe aceleași cuvinte ar cumpăra aceeași greșeală.",
+            )
+    if step.action == "rewrite":
+        _mark_for_rewrite(engine, verdicts)
     if scene.must_fix and step.action != "reroll":
-        # The words end here with the mistake seen again: the review's lessons did not correct
-        # it. Not before a re-roll (a pair that also missed its plan is drawn once more): a
-        # lesson withdrawn there could not be confirmed by the re-roll that fixes it.
-        persisted = any("finding_persists" in report.violations for report in reports)
-        if persisted:
-            with Session(engine) as session, session.begin():
-                fix_check.settle_lessons(
-                    session, scene.must_fix, None, approved=False, persisted=True
-                )
+        # The words end here: a review run whose item a candidate showed again and none
+        # corrected did not correct the mistake, and its lessons are withdrawn — run by run
+        # (`fix_check.withdraw_lessons`). Not before a re-roll (a pair that also missed its
+        # plan is drawn once more): a lesson withdrawn there could not be confirmed by the
+        # re-roll that fixes it.
+        with Session(engine) as session, session.begin():
+            lock_for_write(session)  # the lessons are read before they are withdrawn
+            fix_check.withdraw_lessons(session, [list(report.fixes) for report in reports])
     her_words = (
         " Directoarea a privit și confirmă refuzul: " + " | ".join(confirmed) if confirmed else ""
     )
@@ -1245,27 +1297,22 @@ def _settle_pending(
             )
             for take in unjudged
         ]
-        best = choose_best([report for _take, report in verdicts])
-        _set_verdicts(engine, verdicts, best)
-        end: _RoundEnd | None = None
-        if best is not None:
-            end = _RoundEnd(take_id=next(t for t, r in verdicts if r is best), report=best)
-        else:
-            # Refused whole, the scene would be planned and bought again: she looks first.
-            looked = _director_looks(
-                engine, registry, storyboard_id, scene, verdicts, correlation_id
-            )
-            if looked.take_id is not None and looked.look is not None:
-                _approve_by_look(engine, looked.take_id, looked.look)
-                end = looked
-        if end is not None and end.report is not None:
-            _after_approval(engine, storyboard_id, scene, end, correlation_id)
+        # Judged as every round is (`_settle_round`): the gate's best, else her look before the
+        # scene is planned and bought again, else the next step — and a round whose words did
+        # not correct the mistake goes back to her ladder, never planned again on them (the
+        # review of 5fc7468, finding 12). Nothing is bought here: a re-roll is the sheet's.
+        end = _settle_round(
+            engine, registry, storyboard_id, scene, verdicts, correlation_id, rerolls=0
+        )
+        if end.report is not None:
             return {
                 **end.approved(),
                 "credits": 0,
                 "judged_collected": len(verdicts),
                 "path": str(end.report.path),
             }
+        if end.outcome is not None and end.outcome.get("rewrite"):
+            return {**end.outcome, "judged_collected": len(verdicts)}
         return {
             "status": "NOT_BOUGHT",
             "judged_collected": len(verdicts),
@@ -1316,6 +1363,10 @@ def settle_stills(
             kinds=("still",),
             storage_root=storage_root,
         )
+    # Her reading of an older brief's words before its candidates are checked (free).
+    fix_check.read_film_reasons(
+        engine, registry, storyboard_id=storyboard_id, correlation_id=correlation_id
+    )
     bible, scenes = _read_scenes(engine, storyboard_id)
     results: list[dict[str, Any]] = []
     for scene in scenes:
@@ -1823,6 +1874,8 @@ class _StillRounds:
                         "identity": identity_key(state.scene.identity),
                         "holds": not free,
                         **({"redo": True} if self.redo else {}),
+                        # Her ladder rewrites the words (the review of 5fc7468, finding 3).
+                        **({"rewrite": True} if state.outcome.get("rewrite") else {}),
                         **runpod_hold_items(state.refused),
                     },
                     self.correlation_id,
@@ -1920,6 +1973,12 @@ def run_stills_stage(
         storyboard_id=storyboard_id,
         kinds=("still",),
         storage_root=storage_root,
+    )
+    # What quality control SAW in an older brief's words, read by the Director (free), before
+    # the stills are checked for it (`fix_check.read_film_reasons`; the review of 5fc7468,
+    # finding 11: the patterns let process notes and her prescriptions through as sights).
+    fix_check.read_film_reasons(
+        engine, registry, storyboard_id=storyboard_id, correlation_id=correlation_id
     )
     bible, scenes = _read_scenes(engine, storyboard_id)
     live = [scene for scene in scenes if scene.kind == LIVE_KIND]
@@ -2413,6 +2472,8 @@ def run_stills_stage(
                     "failure_kind": entry.get("failure_kind"),
                     "identity": identity_key(scene.identity),
                     "holds": not free,
+                    # Her ladder rewrites the words (the review of 5fc7468, finding 3).
+                    **({"rewrite": True} if outcome.get("rewrite") else {}),
                 },
                 correlation_id,
             )

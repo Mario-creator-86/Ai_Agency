@@ -10264,6 +10264,8 @@ def _check_shot(
     clip_judge: Callable[[int, list[Path]], Any] | None = None,
     face_counter: Callable[..., Any] | None = None,
     clip_check: Callable[..., Any] | None = None,
+    retry_deferred: Callable[[], bool] | None = None,
+    earlier_answers: Sequence[Sequence[Mapping[str, Any]]] = (),
 ) -> dict[str, Any]:
     """Clip QC on one bought shot (`qc.qc_clip_with_retry` with `qc.check_clip`, judged by
     `picture_qc.judge_clip`), with at most one retry on the same model, seed + 1 and a firmer
@@ -10280,11 +10282,21 @@ def _check_shot(
     Director looks at the refused clip (`fix_check.shot_second_look`) — a clip her look keeps
     is PAID as hers (ACCEPTED_BY_LOOK, its record PASSED with her reason) and nothing more is
     bought; what was accepted on the clip kept is written on it (`fix_check.clip_settled`).
+
+    ``retry_deferred()`` says, after clip QC, that the retry was not bought here but deferred
+    to the next RunPod round (`_ShotRounds._check`): clip QC's word on the scene is not its
+    last, so nothing is settled (the review of 5fc7468, finding 6: the rewrite's lessons were
+    withdrawn before the retry that could prove them was bought). ``earlier_answers``: the
+    first clip's answers to the motion items, when this is its retry in a later round.
     """
     from app.media import fix_check, picture_qc  # noqa: PLC0415
     from app.media import qc as clip_qc  # noqa: PLC0415 - qc reads the media models
 
     index = int(scene["scene_index"])
+    # Her reading of an older brief's words before the clip is checked for them (free).
+    fix_check.read_film_reasons(
+        engine, registry, storyboard_id=storyboard_id, correlation_id=correlation_id
+    )
     # 2026-10-12, late evening: what the scene's movement was rewritten to fix is checked on
     # the clip (never on a still, which cannot show it).
     with Session(engine) as session:
@@ -10363,11 +10375,13 @@ def _check_shot(
     for attempt, report in enumerate(outcome.reports):
         record = clip_report_record(report)
         if kept_by_her and attempt == len(outcome.reports) - 1:
-            # Clip QC refused it and her look kept it: the clip passes as hers, its blocks
-            # kept on the record beside her reason.
+            # Clip QC refused it and her look kept it: the clip passes as hers (``passed`` too:
+            # the review of 5fc7468, finding 10 — a record PASSED but passed False reads as a
+            # refusal to whoever reads ``passed``), its blocks kept beside her reason.
             record = {
                 **record,
                 "verdict": "PASSED",
+                "passed": True,
                 "accepted_by": fix_check.DIRECTOR_LOOK_APPROVER,
                 "director_look": fix_check.look_record(outcome.look),
             }
@@ -10386,18 +10400,21 @@ def _check_shot(
         records.append({**record, "take_id": checked, "seed": used_seed})
     surviving = [record for record in records if record["verdict"] != "FAILED"]
     final = surviving[-1] if surviving else None
-    if outcome.reports:
+    kept = final is not None and final["verdict"] == "PASSED"
+    if outcome.reports and not (retry_deferred is not None and retry_deferred()):
         with Session(engine) as session, session.begin():
+            lock_for_write(session)  # the open items are read before the note and lessons
             fix_check.clip_settled(
                 session,
                 storyboard_id=storyboard_id,
                 scene_number=index,
                 take_id=final["take_id"] if final is not None else None,
                 must_fix=plan.must_fix,
-                report=outcome.reports[-1],
-                kept=final is not None and final["verdict"] == "PASSED",
+                reports=list(outcome.reports),
+                kept=kept,
                 look=outcome.look if kept_by_her else None,
                 correlation_id=correlation_id,
+                earlier=earlier_answers,
             )
     clip_record: dict[str, Any] = {
         "status": outcome.status,
@@ -10410,6 +10427,16 @@ def _check_shot(
         "take_id": final["take_id"] if final is not None else None,
         "reports": records,
     }
+    accepted_traces = (
+        fix_check.minor_traces(getattr(outcome.reports[-1], "fixes", ()) or ())
+        if kept and outcome.reports
+        else []
+    )
+    if accepted_traces:
+        # On the scene's entry too, beside the note on the take (`fix_check.accepted_on_takes`):
+        # what clip QC accepted as a minor trace is not a defect to refuse again after the
+        # money (the review of 5fc7468, finding 9).
+        clip_record["minor_defects"] = accepted_traces
     cap_stop: str | None = None
     if (
         final is None
@@ -11209,6 +11236,8 @@ class _ShotRounds:
     def _check(self, state: _ShotRound, clip: Path, take_id: str, seed: int) -> None:
         """Clip QC on a landed clip. The first clip's one retry is not bought here: it is
         remembered and bought in the next round (a batch), still inside the cap."""
+        from app.media import fix_check  # noqa: PLC0415
+
         asked: list[tuple[int, str]] = []
         first = state.qc_retry is None and state.first_qc is None
 
@@ -11238,6 +11267,10 @@ class _ShotRounds:
             clip_judge=self.clip_judge,
             face_counter=self.face_counter,
             clip_check=self.clip_check,
+            # The retry bought in the next round: nothing is settled before it is checked,
+            # and its check reads the first clip's answers beside its own.
+            retry_deferred=lambda: bool(asked),
+            earlier_answers=fix_check.recorded_answers(state.first_qc),
         )
         if asked:
             state.qc_retry = asked[0]
@@ -15920,6 +15953,11 @@ def _redo_still(
     # RunPod Serverless buys only in rounds inside a GPU session (2026-10-09): the redo is
     # bought as the stills step buys, one scene in one GPU round (`_redo_still_rounds`).
     batching = supports_batch(image_adapter)
+    # Her reading of an older brief's words before the redo's stills are checked for them
+    # (free; `fix_check.read_film_reasons`, the review of 5fc7468, finding 11).
+    from app.media.fix_check import read_film_reasons  # noqa: PLC0415
+
+    read_film_reasons(engine, registry, storyboard_id=storyboard_id, correlation_id=correlation_id)
     bible, scenes = stills._read_scenes(engine, storyboard_id)
     scene = next(s for s in scenes if s.index == index)
     live = [s for s in scenes if s.kind == LIVE_KIND]
@@ -16603,6 +16641,8 @@ class _StillRedoBuyer:
                     "identity": identity_key(scene.identity),
                     # A redo the balance stopped waits for his top-up, not for his decision.
                     "holds": outcome.get("failure_kind") != LOW_BALANCE,
+                    # Her ladder rewrites the words (the review of 5fc7468, finding 3).
+                    **({"rewrite": True} if outcome.get("rewrite") else {}),
                 },
                 c["correlation_id"],
             )

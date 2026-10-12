@@ -2001,8 +2001,10 @@ def _persists_words(fix: Mapping[str, Any]) -> str:
         else "cuvintele rescrise nu au corectat-o"
     )
     seen = _cut_words(fix.get("seen"), 120)
+    # An item of the picture (still, or both layers) is the still's (`_still_must_change`).
+    which = "rescrierea mișcării" if fix.get("layer") in (None, "motion") else "rescrierea imaginii"
     return (
-        f"repetă greșeala pe care rescrierea mișcării trebuia să o corecteze: "
+        f"repetă greșeala pe care {which} trebuia să o corecteze: "
         f"«{_cut_words(fix.get('finding'), 160)}»; {words}"
         + (f" (se vede: {seen})" if seen else "")
     )
@@ -2179,22 +2181,30 @@ def _panels_check(
     return ClipCheck("panels", "PASSED", False, widest, detail)
 
 
-def _still_must_change(measured: dict[str, Any], judgement: Any, *, persists: bool = False) -> bool:
+def _still_must_change(
+    measured: dict[str, Any], judgement: Any, *, fixes: Sequence[Mapping[str, Any]] = ()
+) -> bool:
     """Whether the clip's fault is its still's: the first frame (the still the clip was made
     from) is split by a flat band, or the look saw more than one picture or asked for the
-    still to change. Another seed on the same still buys the same fault (2026-10-09: scene 5
-    was a triptych, and its clip animated the triptych). A clip that repeats a mistake its
-    MOVEMENT was rewritten to correct (``persists``) goes back to the motion's words, not to
-    the still, unless the picture itself is split (2026-10-12, the review of 9ac0195)."""
+    still to change, or an item checked on the clip that lives in the PICTURE (layer still,
+    or both: no still was approved since it was found) is there again. Another seed on the
+    same still buys the same fault (2026-10-09: scene 5 was a triptych, and its clip animated
+    the triptych). A clip that repeats a mistake its MOVEMENT was rewritten to correct (layer
+    motion) goes back to the motion's words, unless the look itself says the still must change.
+
+    2026-10-12 (the review of 5fc7468, finding 5): a persisting item silenced the look's own
+    ``back_to_still``, and seed + 1 was bought from a still that had to change."""
     frames = (measured.get("panels") or {}).get("frames") or []
     if any(entry.get("at") == "first" and entry.get("splits_the_picture") for entry in frames):
         return True
     verdict = getattr(judgement, "verdict", None)
     if getattr(judgement, "status", None) != "MEASURED" or verdict is None:
         return False
-    if persists:
-        return not verdict.one_picture
-    return not verdict.one_picture or verdict.verdict == "back_to_still"
+    if not verdict.one_picture or verdict.verdict == "back_to_still":
+        return True
+    return any(
+        fix.get("status") == "persists" and fix.get("layer") in ("still", "both") for fix in fixes
+    )
 
 
 def check_clip(
@@ -2326,12 +2336,7 @@ def check_clip(
         warnings_ro=tuple(warnings),
         unmeasured=tuple(item.code for item in blocking if item.status == "NOT_RUN"),
         measured=measured,
-        back_to_still=bool(blocking)
-        and _still_must_change(
-            measured,
-            judgement,
-            persists=any(fix.get("status") == "persists" for fix in fixes),
-        ),
+        back_to_still=bool(blocking) and _still_must_change(measured, judgement, fixes=fixes),
         fixes=tuple(fixes),
     )
 
@@ -2587,13 +2592,49 @@ class ClipQCOutcome:
 ACCEPTED_BY_LOOK = "ACCEPTED_BY_LOOK"
 
 
+def sent_back_by_reading(report: ClipReport) -> bool:
+    """Whether a clip sent back to its still (``back_to_still``) was sent back only by a
+    reading — the look's own «back_to_still», or a picture item it says is there again — and
+    not by a flat band measured on the first frame nor by the look seeing more than one
+    picture (panels: a hard limit of the bible)."""
+    if not report.back_to_still:
+        return False
+    frames = ((report.measured or {}).get("panels") or {}).get("frames") or []
+    if any(entry.get("at") == "first" and entry.get("splits_the_picture") for entry in frames):
+        return False
+    picture = (report.measured or {}).get("picture") or {}
+    flags = picture.get("verdict") if isinstance(picture, dict) else None
+    return isinstance(flags, dict) and flags.get("one_picture") is not False
+
+
+#: The clip checks that MEASURE (YDIF against the move's floor, a hard cut): a clip they
+#: refused is kept by her look only as «not in the clip» (`fix_check.look_accepts`, measured;
+#: the shared contract of 2026-10-12, night — a frozen clip is serious whatever is written).
+MEASURED_CLIP_CHECKS = frozenset({"motion", "cuts"})
+
+
+def measured_refusal(report: ClipReport) -> bool:
+    """Whether a measured clip check (`MEASURED_CLIP_CHECKS`) refused the clip."""
+    return any(
+        item.blocking and item.status == "FAILED" and item.code in MEASURED_CLIP_CHECKS
+        for item in report.checks
+    )
+
+
 def look_may_overturn(report: ClipReport) -> bool:
     """Whether the Director may be asked to look again at a refused clip before anything more
-    is bought for it: a refusal measured whole (nothing unmeasured, not the still's fault) on
-    a reading — the motion floor, a cut, the plan, the look, a deformation, a corrected mistake
-    seen again — and none of the bible's hard limits (a face where faces are forbidden,
-    writing, panels), which stay the code's (the Owner, 2026-10-12)."""
-    if report.passed or report.unmeasured or report.back_to_still:
+    is bought for it: a refusal measured whole (nothing unmeasured) on a reading — the motion
+    floor, a cut, the plan, the look, a deformation, a corrected mistake seen again, the still
+    sent back by the look's own reading (`sent_back_by_reading`) — and none of the bible's
+    hard limits (a face where faces are forbidden, writing, panels), which stay the code's
+    (the Owner, 2026-10-12).
+
+    2026-10-12 (the review of 5fc7468, finding 8): a clip the look's reading sent back to its
+    still bought a new still and new motion with nobody looking whether the reading was right.
+    """
+    if report.passed or report.unmeasured:
+        return False
+    if report.back_to_still and not sent_back_by_reading(report):
         return False
     failed = {item.code for item in report.checks if item.blocking and item.status == "FAILED"}
     if not failed or failed & {"faces", "panels"}:
@@ -2651,7 +2692,9 @@ def qc_clip_with_retry(
     bought and before a refusal goes on to a rewrite, wherever she may overturn it
     (`look_may_overturn`): a look that lets the clip stand (`fix_check.look_accepts`) buys
     nothing more — ACCEPTED_BY_LOOK, the clip kept as hers; a confirmation goes with the retry
-    in its reason; no answer leaves everything as before."""
+    in its reason; no answer leaves everything as before. A clip sent back to its still only by
+    a reading (`sent_back_by_reading`) is shown to her too before a new still is bought; a
+    refusal clip QC measured (`measured_refusal`) is kept only as «not in the clip»."""
     from app.media.fix_check import look_accepts  # noqa: PLC0415 - a small module
 
     first = check(clip)
@@ -2665,12 +2708,23 @@ def qc_clip_with_retry(
     )
     if decision.action == "ACCEPT":
         return ClipQCOutcome("PASSED", clip, 1, (seed,), (first,), 0.0, decision.reason_ro, "")
-    if decision.action == "BACK_TO_STILL":
-        return ClipQCOutcome(
-            "BACK_TO_STILL", None, 1, (seed,), (first,), 0.0, decision.reason_ro, ""
-        )
+    # Before a retry, a rewrite or a new still is bought for it, she looks — where she may.
     seen = _looked(look, first)
-    if look_accepts(seen):
+    if decision.action == "BACK_TO_STILL" and not look_accepts(
+        seen, measured=measured_refusal(first)
+    ):
+        return ClipQCOutcome(
+            "BACK_TO_STILL",
+            None,
+            1,
+            (seed,),
+            (first,),
+            0.0,
+            decision.reason_ro + _her_words(seen),
+            "",
+            look=seen,
+        )
+    if look_accepts(seen, measured=measured_refusal(first)):
         return ClipQCOutcome(
             ACCEPTED_BY_LOOK,
             clip,
@@ -2733,25 +2787,24 @@ def qc_clip_with_retry(
         price_credits=price_credits,
         cap_credits=cap_credits,
     )
-    if final.action != "BACK_TO_STILL":
-        # The retry failed too: before the scene goes on to a rewrite (and a purchase), she
-        # looks at the clip bought last.
-        last_look = _looked(look, second)
-        if look_accepts(last_look):
-            return ClipQCOutcome(
-                ACCEPTED_BY_LOOK,
-                Path(again),
-                2,
-                seeds,
-                (first, second),
-                float(price_credits),
-                f"Scena {first.scene}: Directoarea a privit reluarea refuzată și o păstrează: "
-                f"{(last_look or {}).get('reason_ro') or 'defectul e mic'}. Nu se cumpără "
-                "nimic.",
-                prompt,
-                look=last_look,
-            )
-        seen = last_look or seen
+    # The retry failed too: before the scene goes on to a rewrite or a new still (and a
+    # purchase), she looks at the clip bought last, where she may (`look_may_overturn`).
+    last_look = _looked(look, second)
+    if look_accepts(last_look, measured=measured_refusal(second)):
+        return ClipQCOutcome(
+            ACCEPTED_BY_LOOK,
+            Path(again),
+            2,
+            seeds,
+            (first, second),
+            float(price_credits),
+            f"Scena {first.scene}: Directoarea a privit reluarea refuzată și o păstrează: "
+            f"{(last_look or {}).get('reason_ro') or 'defectul e mic'}. Nu se cumpără "
+            "nimic.",
+            prompt,
+            look=last_look,
+        )
+    seen = last_look or seen
     return ClipQCOutcome(
         "BACK_TO_STILL" if final.action == "BACK_TO_STILL" else "ESCALATED",
         None,

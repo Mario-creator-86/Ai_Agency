@@ -69,9 +69,11 @@ from app.media.scene_rewrite import (
 )
 from app.media.still_gate import (
     POSITIVE_WORDS,
+    REWRITE_PHRASE,
     StillPlan,
     choose_best,
     decide,
+    fix_answers,
     may_be_overturned,
     next_step,
     round_step,
@@ -587,8 +589,10 @@ def test_a_still_that_repeats_the_mistake_on_its_plan_goes_back_to_her_words():
 
     assert persists.decision == "BLOCKED"
     first = persists.reasons_ro[0]
+    # The content phrase FIRST (round 3, finding 2): it must survive the take's 500 characters.
     assert first.startswith(
-        f"Imaginea repetă greșeala pe care rescrierea trebuia să o corecteze: «{NADIA}»"
+        "Nu arată ce cere scena după rescriere: imaginea repetă greșeala pe care rescrierea "
+        f"trebuia să o corecteze «{NADIA}»"
     )
     assert "cuvintele «Medium close-up single at eye level on Nadia" in first
     assert "nu au corectat-o" in first and seen in first
@@ -1006,7 +1010,8 @@ def test_a_still_that_repeats_the_mistake_on_its_plan_is_not_bought_again(
     assert "nu au corectat-o" in entry["reason"] and "Directoarea le rescrie" in entry["reason"]
     rows = [t for t in takes(engine, storyboard_id) if t.scene_number == 2]
     assert len(rows) == 2 and all(t.status == "REJECTED" for t in rows)
-    assert all("Imaginea repetă greșeala" in t.failure_detail for t in rows)
+    assert all(t.failure_detail.startswith(REWRITE_PHRASE) for t in rows)
+    assert all("imaginea repetă greșeala" in t.failure_detail for t in rows)
     assert all(refusal_kind(t.failure_code, t.failure_detail) == CONTENT_REFUSAL for t in rows)
     assert lessons["withdrawn"] and lessons["withdrawn"][0][0] == [review_run]
     assert lessons["confirmed"] == []
@@ -1022,9 +1027,17 @@ def test_a_still_that_also_missed_its_plan_is_bought_once_more_and_then_fixed(
 ):
     """Finding 3, the other side, and finding 9: a pair that missed its plan as well gets the
     one re-roll; the re-roll that shows every item gone is approved, and the review's lessons
-    are confirmed."""
+    are confirmed — the finding lives on the still's layer, so the still closes it on both
+    (round 3, finding 7: a finding the clip must also show is confirmed only by the clip)."""
     storyboard_id = a_film(engine, tmp_path)
-    review_run = rewritten(engine, storyboard_id, 2, findings=[(NADIA, NADIA_FIX)])
+    review_run = rewritten(
+        engine,
+        storyboard_id,
+        2,
+        findings=[
+            {"finding": NADIA, "treated": True, "by": NADIA_FIX, "why_not": "", "layer": "still"}
+        ],
+    )
     judge = FixJudge(
         status=lambda look, plan: "persists" if look <= 2 else "gone",
         on_plan=lambda look, plan: look > 2,
@@ -1124,7 +1137,21 @@ def test_the_runpod_rounds_check_the_rewritten_scene_and_stop_on_words_that_fail
     assert all(plan.must_fix == () for plan in judge.plans if plan.scene != 2)
     rows = [t for t in takes(engine, storyboard_id) if t.scene_number == 2]
     assert rows and all(t.status == "REJECTED" for t in rows)
-    assert all("Imaginea repetă greșeala" in (t.failure_detail or "") for t in rows)
+    assert all((t.failure_detail or "").startswith(REWRITE_PHRASE) for t in rows)
+    assert all("imaginea repetă greșeala" in (t.failure_detail or "") for t in rows)
+    # The scene's hold says her ladder rewrites the words (round 3, finding 3).
+    with Session(engine) as session:
+        holds = [
+            event.payload
+            for event in session.scalars(
+                select(DomainEvent).where(
+                    DomainEvent.event_type == "media.still_needs_owner",
+                    DomainEvent.aggregate_id == storyboard_id,
+                )
+            )
+            if event.payload.get("scene_number") == 2
+        ]
+    assert holds and holds[-1]["rewrite"] is True
 
 
 @pytest.mark.parametrize("status", ["persists", "gone"], ids=["repeats-the-mistake", "fixed-it"])
@@ -1176,7 +1203,8 @@ def test_a_still_redo_is_checked_for_what_its_rewrite_answered(engine, tmp_path,
     assert result["still"]["status"] == "NEEDS_OWNER" and result["still"]["rewrite"] is True
     assert len(images.asked) == 1, "one pair, no re-roll on the words that did not correct it"
     assert len(new) == 2 and all(t.status == "REJECTED" for t in new)
-    assert all("Imaginea repetă greșeala" in (t.failure_detail or "") for t in new)
+    assert all((t.failure_detail or "").startswith(REWRITE_PHRASE) for t in new)
+    assert all("imaginea repetă greșeala" in (t.failure_detail or "") for t in new)
     # No clip was bought on a still that repeats the mistake.
     assert not [t for t in takes(engine, storyboard_id) if t.kind in ("motion", "test_shot")]
 
@@ -1297,7 +1325,9 @@ def test_no_open_finding_is_read_for_a_film_without_events(engine, tmp_path):
 # --------------------------------------------- 6. the movement's findings, on the clip
 
 
-def _clip_judgement(scene: int, fixes=(), *, matches_plan: bool = True) -> ClipJudgement:
+def _clip_judgement(
+    scene: int, fixes=(), *, matches_plan: bool = True, said: str | None = None
+) -> ClipJudgement:
     return ClipJudgement(
         status="MEASURED",
         verdict=ClipVerdict(
@@ -1310,7 +1340,7 @@ def _clip_judgement(scene: int, fixes=(), *, matches_plan: bool = True) -> ClipJ
             same_shot=True,
             one_picture=True,
             bible_violations="none",
-            verdict="keep" if matches_plan else "regenerate_motion",
+            verdict=said or ("keep" if matches_plan else "regenerate_motion"),
             reason="Marcus and Sarah at the desk",
             fixes=list(fixes),
         ),
@@ -1541,10 +1571,12 @@ HER = {
 
 class OffPlanFirst:
     """The vision model, faked: the first pair of scene 2 does not match its plan (a reading her
-    look may overturn), or shows lettering (a hard limit); everything else is right."""
+    look may overturn), or shows lettering (a hard limit), or has warped artefacts (a technical
+    fault, ``technical``); everything else is right."""
 
-    def __init__(self, *, lettering: bool = False):
+    def __init__(self, *, lettering: bool = False, technical: bool = False):
         self.lettering = lettering
+        self.technical = technical
         self.looked: dict[int, int] = {}
 
     def __call__(self, engine, registry, path, plan, correlation_id, *, ffmpeg_path=None):
@@ -1552,8 +1584,9 @@ class OffPlanFirst:
         wrong = plan.scene == 2 and look <= 2
         return verdict(
             plan.scene,
-            matches_plan=not wrong or self.lettering,
+            matches_plan=not wrong or self.lettering or self.technical,
             readable_text=wrong and self.lettering,
+            technical_ok=not (wrong and self.technical),
             verdict="regenerate_still" if wrong else "buy_motion",
             reason="another valley" if wrong else "the scene as planned",
         )
@@ -1593,25 +1626,59 @@ def test_the_director_looks_before_a_still_is_bought_again(engine, tmp_path, mon
         assert note["approved_by"] == "director_look"
         assert note["director_look"]["verdict"] == "OVERTURNED"
         return
-    assert len(scene_2) == 2, "the re-roll was bought"
     assert len(looks.asked) == 2, "she looked at both refused candidates"
-    assert entry["status"] == "APPROVED" and entry.get("approved_by") is None
     if her == "CONFIRMED":
+        # Round 3, finding 4: she confirmed that the picture is not what the words should give
+        # (its plan): no seed is bought blind on them, the words go back to her ladder.
+        assert len(scene_2) == 1, "no re-roll on words she confirmed give the wrong picture"
+        assert entry["status"] == "NEEDS_OWNER" and entry["rewrite"] is True
         assert entry["director_confirmed"] == [HER[her]["reason_ro"]] * 2
-    else:
-        assert "director_confirmed" not in entry
+        assert REWRITE_PHRASE.lower() in entry["reason"].lower()
+        assert all(t.status == "REJECTED" for t in rows)
+        assert all(t.failure_detail.startswith(REWRITE_PHRASE) for t in rows)
+        assert all(refusal_kind(t.failure_code, t.failure_detail) == CONTENT_REFUSAL for t in rows)
+        return
+    assert len(scene_2) == 2, "the re-roll was bought"
+    assert entry["status"] == "APPROVED" and entry.get("approved_by") is None
+    assert "director_confirmed" not in entry
 
 
-@pytest.mark.parametrize("her", ["OVERTURNED", "CONFIRMED"])
+def test_a_confirmed_technical_refusal_is_rerolled_with_her_reason(engine, tmp_path, monkeypatch):
+    """Round 3, finding 4, the other side: a refusal of one picture's technique (warped hands,
+    artefacts) that she confirms is another seed's to answer — the re-roll is bought, her reason
+    kept with it; the words are not sent back."""
+    looks = Looks(HER["CONFIRMED"])
+    monkeypatch.setattr(fix_check, "director_second_look", looks)
+    storyboard_id = a_film(engine, tmp_path)
+    adapter = SpyStills(pictures=new_pictures_for(2))
+
+    result = approved_run(engine, storyboard_id, tmp_path, adapter, OffPlanFirst(technical=True))
+
+    scene_2 = [call for call in adapter.asked if SUBJECTS[2] in call["prompt"]]
+    entry = next(e for e in result["scenes"] if e["scene_index"] == 2)
+    assert len(looks.asked) == 2 and len(scene_2) == 2, "the re-roll was bought"
+    assert entry["status"] == "APPROVED" and entry["rerolls"] == 1
+    assert entry["director_confirmed"] == [HER["CONFIRMED"]["reason_ro"]] * 2
+    assert "rewrite" not in entry
+
+
+@pytest.mark.parametrize(
+    ("her", "technical"),
+    [("OVERTURNED", False), ("CONFIRMED", False), ("CONFIRMED", True)],
+    ids=["overturned", "confirmed-content", "confirmed-technical"],
+)
 def test_the_director_looks_before_a_runpod_round_is_bought_again(
     engine,
     tmp_path,
     monkeypatch,
     fake_session,  # noqa: F811
     her,
+    technical,
 ):
     """The same look in the RunPod rounds (`_StillRounds`): OVERTURNED, scene 2's second
-    round is never sent; CONFIRMED, it is, with her reason kept on the scene."""
+    round is never sent; CONFIRMED on its plan (content), neither — the words go back to her
+    ladder (round 3, finding 4); CONFIRMED on a technical fault, it is, with her reason kept on
+    the scene."""
     from app.media.stills_stage import StillsStageRefused, run_stills_stage, stills_plan
     from test_approvals import answer
     from test_runpod_batch import PictureCloud, adapter, stills_table
@@ -1628,7 +1695,7 @@ def test_the_director_looks_before_a_runpod_round_is_bought_again(
 
     made = adapter(engine, tmp_path, PictureCloud(picture))
     table = stills_table()
-    judge = OffPlanFirst()
+    judge = OffPlanFirst(technical=technical)
 
     def go():
         return run_stills_stage(
@@ -1658,6 +1725,11 @@ def test_the_director_looks_before_a_runpod_round_is_bought_again(
         assert scene_2_pictures == 2, "one round of two: her look kept a picture"
         assert by_scene[2]["status"] == "APPROVED"
         assert by_scene[2]["approved_by"] == "director_look" and by_scene[2]["rerolls"] == 0
+        return
+    if not technical:
+        assert scene_2_pictures == 2, "no round bought on words she confirmed are wrong"
+        assert by_scene[2]["status"] == "NEEDS_OWNER" and by_scene[2]["rewrite"] is True
+        assert by_scene[2]["director_confirmed"] == [HER[her]["reason_ro"]] * 2
         return
     assert scene_2_pictures == 4, "the re-roll round was bought"
     assert by_scene[2]["status"] == "APPROVED" and by_scene[2]["rerolls"] == 1
@@ -1693,10 +1765,12 @@ def test_who_may_be_overturned():
     assert not may_be_overturned(unseen)
 
 
-@pytest.mark.parametrize("her", ["OVERTURNED", "CONFIRMED", "UNAVAILABLE"])
+@pytest.mark.parametrize("her", ["NOT_THERE", "OVERTURNED", "CONFIRMED", "UNAVAILABLE"])
 def test_the_director_looks_before_a_clip_retry_is_bought(engine, tmp_path, monkeypatch, her):
-    """Finding 10, for the clip: before seed + 1 is bought, she looks at the refused clip.
-    OVERTURNED: the clip is kept as hers and nothing more is bought; CONFIRMED: the retry is
+    """Finding 10, for the clip: before seed + 1 is bought, she looks at the refused clip, which
+    clip QC measured as barely moving. OVERTURNED with the defect not in the clip (severity
+    none): the clip is kept as hers and nothing more is bought; OVERTURNED as «minor» does not
+    keep a measured refusal (round 3 contract) — the retry is bought; CONFIRMED: the retry is
     bought, her reason in its words; UNAVAILABLE: as before."""
     from app.media import fix_check as checks
     from test_clip_qc_wiring import ScriptedCheck, approved, events, shots
@@ -1707,6 +1781,8 @@ def test_the_director_looks_before_a_clip_retry_is_bought(engine, tmp_path, monk
 
     def look(engine_, registry, **kwargs):
         asked.append(kwargs)
+        if her == "NOT_THERE":
+            return {**HER["OVERTURNED"], "severity": "none"}
         return dict(HER[her])
 
     monkeypatch.setattr(checks, "shot_second_look", look)
@@ -1728,15 +1804,17 @@ def test_the_director_looks_before_a_clip_retry_is_bought(engine, tmp_path, monk
     (first_ask,) = asked
     assert first_ask["scene_index"] == 1 and first_ask["storyboard_id"] == storyboard_id
     assert any("nu se mișcă" in text for text in first_ask["refusal"])
-    if her == "OVERTURNED":
+    if her == "NOT_THERE":
         assert models.posts() == 1, "her look kept the clip: no retry was bought"
         assert entry["status"] == "PAID" and entry["clip_qc"]["status"] == "ACCEPTED_BY_LOOK"
         (take,) = shots(engine, storyboard_id)
         assert take.status == "PAID" and entry["take_id"] == take.id
         (kept,) = events(engine, CLIP_QC_EVENT, take.id)
         assert kept.payload["verdict"] == "PASSED"
+        # Round 3, finding 10: kept by her look, the record says passed too.
+        assert kept.payload["passed"] is True
         assert kept.payload["accepted_by"] == "director_look"
-        assert kept.payload["director_look"]["reason_ro"] == HER[her]["reason_ro"]
+        assert kept.payload["director_look"]["reason_ro"] == HER["OVERTURNED"]["reason_ro"]
         with Session(engine) as session:
             note = fix_check.take_note(session, take.id)
         assert note["approved_by"] == "director_look" and note["kind"] == "motion"
@@ -1801,15 +1879,28 @@ def test_the_second_look_never_raises_and_says_her_verdict_in_the_contracts_word
         ({"verdict": "OVERTURNED", "severity": "none", "redo": False}, True),
         ({"verdict": "OVERTURNED", "severity": "minor", "redo": False}, True),
         ({"verdict": "OVERTURNED", "severity": "serious", "redo": True}, False),
-        ({"verdict": "CONFIRMED", "severity": "minor", "redo": False}, True),
+        # The shared contract of round 3: a minor defect is never CONFIRMED, and a CONFIRMED
+        # look never keeps the picture, whatever severity it carries (defence in depth).
+        ({"verdict": "CONFIRMED", "severity": "minor", "redo": False}, False),
         ({"verdict": "CONFIRMED", "severity": "minor", "redo": True}, False),
         ({"verdict": "CONFIRMED", "severity": "serious", "redo": True}, False),
+        ({"verdict": "OVERTURNED", "severity": "minor", "redo": True}, False),
         ({"verdict": "UNAVAILABLE", "severity": "none", "redo": True}, False),
         (None, False),
     ],
 )
 def test_which_of_her_looks_lets_the_picture_stand(look, accepts):
     assert fix_check.look_accepts(look) is accepts
+
+
+def test_a_measured_refusal_is_kept_only_as_not_in_the_picture():
+    """Round 3 contract: what quality control measured (a floor) is dropped only on OVERTURNED
+    with severity none — she may say the measure was wrong, never that the defect is small."""
+    none = {"verdict": "OVERTURNED", "severity": "none", "redo": False}
+    minor = {"verdict": "OVERTURNED", "severity": "minor", "redo": False}
+    assert fix_check.look_accepts(none, measured=True)
+    assert not fix_check.look_accepts(minor, measured=True)
+    assert fix_check.look_accepts(minor, measured=False)
 
 
 def test_a_rewrite_recorded_now_reads_as_one_event_per_brief(engine, tmp_path):
@@ -1825,3 +1916,593 @@ def test_a_rewrite_recorded_now_reads_as_one_event_per_brief(engine, tmp_path):
             if event.event_type in (SCENE_PROMPTS_REWRITTEN_EVENT, BRIEF_EVENT)
         ]
     assert kinds == [SCENE_PROMPTS_REWRITTEN_EVENT, BRIEF_EVENT]
+
+
+# ------------------------------------------------- 9. round 3: the review of 5fc7468
+#
+# 2026-10-12, night: 19.50 USD of RunPod that day, 11.05 on redos; the Owner: «DIRECTOAREA
+# ACCEPTĂ DEFECTELE MICI!», «Nu putem permite loopuri pe bani», «Nu să facă aceeași greșeală
+# la nesfârșit!». The thirteen confirmed findings of the review of 5fc7468.
+
+
+def review_entry(qc_text: str, *, treated: bool, severity: str, **more) -> dict:
+    """One of her review's findings as the contract keeps it (`scene_rewrite._kept_findings`)."""
+    return {
+        "qc_text": qc_text,
+        "finding": qc_text,
+        "treated": treated,
+        "by": NADIA_FIX if treated else "",
+        "why_not": "" if treated else "a small thing, left as it is",
+        "severity": severity,
+        "layer": "still",
+        **more,
+    }
+
+
+LEDGER = "the ledger on the desk reads as a laptop"
+
+
+def test_a_minor_finding_she_left_untreated_is_never_checked_and_a_treated_minor_one_only_warns(
+    engine, tmp_path
+):
+    """Finding 1 [high]: an untreated MINOR finding is one she accepted — no item, nothing
+    refused or bought for it; an untreated SERIOUS one is checked; a treated minor one seen
+    again is a minor trace (a warning), never ``finding_persists``, and withdraws no lesson."""
+    storyboard_id = a_film(engine, tmp_path)
+    rewritten(
+        engine,
+        storyboard_id,
+        2,
+        findings=[
+            review_entry(
+                "a small sketched mark on the whiteboard", treated=False, severity="minor"
+            ),
+            review_entry("a stray cup on the desk", treated=False, severity="minor", accepted=True),
+            review_entry(NADIA, treated=True, severity="minor"),
+            review_entry(LEDGER, treated=False, severity="serious"),
+        ],
+    )
+
+    items = open_for(engine, storyboard_id, 2)
+
+    assert [i["finding"] for i in items] == [NADIA, LEDGER]
+    assert [i["severity"] for i in items] == ["minor", "serious"]
+    seen_again = decide(
+        NO_FACE[0],
+        plan_for(2, must_fix=items),
+        [],
+        verdict(2, fixes=[fix(1, "persists", "two women"), fix(2, "gone")]),
+        environment="TEST",
+    )
+    assert seen_again.decision == "PASSED" and "finding_persists" not in seen_again.violations
+    assert seen_again.fixes[0]["status"] == "minor"
+    assert seen_again.minor == ({"finding": NADIA, "seen": "two women"},)
+    with Session(engine) as session:
+        assert fix_check.withdraw_lessons(session, [list(seen_again.fixes)]) == []
+    # The serious one seen again still refuses.
+    ledger = decide(
+        NO_FACE[0],
+        plan_for(2, must_fix=items),
+        [],
+        verdict(2, fixes=[fix(1, "gone"), fix(2, "persists", "a laptop")]),
+        environment="TEST",
+    )
+    assert ledger.decision == "BLOCKED" and "finding_persists" in ledger.violations
+
+
+def test_the_content_phrase_comes_first_whatever_else_refused_the_still():
+    """Finding 2: the fix check's refusal, then the look's readings, then the local checks: the
+    content phrase survives the take's 500 characters, so the ladder rewrites the words."""
+    from app.media.still_gate import CheckResult
+
+    long_finding = "two women face to face across the ledger, " * 6
+    blur = CheckResult(
+        "sharpness", "FAILED", True, 12.0, "Imaginea e neclară: 12 sub pragul de 30 " + "x" * 300
+    )
+    report = decide(
+        NO_FACE[0],
+        plan_for(must_fix=[item(long_finding, NADIA_FIX * 2)]),
+        [blur],
+        verdict(
+            fixes=[fix(1, "persists", "two women " * 20)],
+            matches_plan=False,
+            look_ok=False,
+            technical_ok=False,
+            reason="r" * 200,
+        ),
+        environment="TEST",
+    )
+
+    assert report.reasons_ro[0].startswith(REWRITE_PHRASE)
+    plan_at = next(n for n, r in enumerate(report.reasons_ro) if "ce cere planul" in r)
+    assert report.reasons_ro.index(blur.detail_ro) > plan_at
+    detail = "; ".join(report.reasons_ro)[:500]
+    assert refusal_kind("LOCAL.STILL_GATE", detail) == CONTENT_REFUSAL
+
+
+class MixedFirst:
+    """The vision model, faked: scene 2's first candidate misses its plan (content), the second
+    has warped artefacts (technical); everything after is right."""
+
+    def __init__(self):
+        self.looked: dict[int, int] = {}
+
+    def __call__(self, engine, registry, path, plan, correlation_id, *, ffmpeg_path=None):
+        look = self.looked[plan.scene] = self.looked.get(plan.scene, 0) + 1
+        first, second = plan.scene == 2 and look == 1, plan.scene == 2 and look == 2
+        return verdict(
+            plan.scene,
+            matches_plan=not first,
+            technical_ok=not second,
+            verdict="regenerate_still" if first or second else "buy_motion",
+            reason="another valley" if first else "warped" if second else "as planned",
+        )
+
+
+def test_every_refused_take_of_a_round_sent_back_reads_as_content(engine, tmp_path, monkeypatch):
+    """Findings 3 and 4: she confirms the round's refusal; one candidate missed its plan (the
+    words), its sibling was warped (one picture). Nothing more is bought on those words, and
+    EVERY refused take of the round begins with the content phrase: whichever the ladder reads
+    as the scene's newest, it reads CONTENT — never the serial's re-roll of the same words."""
+    from app.media.scene_rewrite import serial_refusal
+
+    looks = Looks(HER["CONFIRMED"])
+    monkeypatch.setattr(fix_check, "director_second_look", looks)
+    storyboard_id = a_film(engine, tmp_path)
+    adapter = SpyStills(pictures=new_pictures_for(2))
+
+    result = approved_run(engine, storyboard_id, tmp_path, adapter, MixedFirst())
+
+    entry = next(e for e in result["scenes"] if e["scene_index"] == 2)
+    assert len([c for c in adapter.asked if SUBJECTS[2] in c["prompt"]]) == 1
+    assert entry["status"] == "NEEDS_OWNER" and entry["rewrite"] is True
+    rows = [t for t in takes(engine, storyboard_id) if t.scene_number == 2]
+    assert len(rows) == 2 and all(t.failure_detail.startswith(REWRITE_PHRASE) for t in rows)
+    assert all(refusal_kind(t.failure_code, t.failure_detail) == CONTENT_REFUSAL for t in rows)
+    with Session(engine) as session:
+        assert serial_refusal(session, storyboard_id, 2)[1] == CONTENT_REFUSAL
+
+
+@needs_ffmpeg
+@pytest.mark.parametrize(
+    ("layer", "said", "back"),
+    [
+        ("motion", "back_to_still", True),
+        ("both", "regenerate_motion", True),
+        ("still", "regenerate_motion", True),
+        ("motion", "regenerate_motion", False),
+    ],
+    ids=["look-says-still", "both-layers", "still-layer", "motion-layer"],
+)
+def test_a_persisting_picture_item_or_the_looks_own_word_sends_the_clip_to_its_still(
+    static_clip, tmp_path, layer, said, back
+):
+    """Finding 5: a persisting item no longer silences the look's own «back_to_still», and an
+    item that lives in the picture (still, or both: no still was approved since it was found)
+    goes back to the still — seed + 1 on a still that must change buys the same mistake. Only a
+    movement's item goes back to the motion."""
+    from app.media import qc
+
+    report = qc.check_clip(
+        static_clip,
+        scene=1,
+        camera_move="static",
+        faces_forbidden=False,
+        environment="TEST",
+        judge=lambda frames: _clip_judgement(
+            1, [FixAnswer(item=1, finding=ENDING, status="persists", seen="x")], said=said
+        ),
+        work_dir=tmp_path / "frames",
+        must_fix=[item(ENDING, ENDING_FIX, layer=layer)],
+    )
+
+    assert report.back_to_still is back
+    decision = qc.clip_retry_decision(
+        report, seed=7, retries_done=0, committed_credits=0, price_credits=10, cap_credits=100
+    )
+    assert decision.action == ("BACK_TO_STILL" if back else "ESCALATE")
+    picture = report.check("picture").detail_ro
+    assert ("rescrierea imaginii" in picture) is (layer != "motion")
+
+
+class FixClipCheck:
+    """qc.check_clip, faked: answers each clip's motion items with the next status; one that
+    persists fails the picture (the plan not matched, so the one retry is bought)."""
+
+    def __init__(self, *statuses: str):
+        self.statuses = list(statuses)
+        self.asked: list[tuple] = []
+
+    def __call__(self, clip, **kwargs):
+        from app.media.qc import ClipCheck, ClipReport
+
+        status = self.statuses.pop(0)
+        asked = tuple(kwargs.get("must_fix") or ())
+        self.asked.append(asked)
+        fixes = tuple(
+            {**dict(it), "status": status, "fixed": status == "gone", "seen": "profile"}
+            for it in asked
+        )
+        failed = status == "persists"
+        checks = (
+            ClipCheck("motion", "PASSED", False, 1.4, "YDIF mediu 1,40 peste prag"),
+            ClipCheck(
+                "picture",
+                "FAILED" if failed else "PASSED",
+                failed,
+                None,
+                "privit la 1080 px: repetă greșeala" if failed else "privit la 1080 px",
+            ),
+        )
+        scene = int(kwargs["scene"])
+        return ClipReport(
+            scene=scene,
+            path=str(clip),
+            checks=checks,
+            passed=not failed,
+            blocks_ro=tuple(f"Scena {scene}: {c.detail_ro}" for c in checks if c.blocking),
+            warnings_ro=(),
+            unmeasured=(),
+            measured={"motion": {"mean_ydif": 1.4}},
+            fixes=fixes,
+        )
+
+
+def test_a_runpod_clip_retry_deferred_to_the_next_round_settles_nothing_before_it_is_checked(
+    engine,
+    tmp_path,
+    fake_session,  # noqa: F811
+    lessons,
+):
+    """Finding 6: on RunPod the first clip's retry is bought in the NEXT round; the review's
+    lessons were withdrawn when the first clip showed the mistake, before the retry that
+    corrected it was even bought. Now nothing is settled until clip QC's last word: the retry
+    shows the movement's item gone, and the lessons are confirmed — never withdrawn."""
+    from app.media.assembler import MotionStepRefused, motion_plan, run_motion_step
+    from test_approvals import answer
+    from test_film_costing import a_film as costed_film
+    from test_runpod_batch import (
+        Cloud,
+        RunPodVideoAdapter,
+        finishing_video,
+        motion_table,
+        runpod_capability,
+        serverless,
+    )
+
+    storyboard_id = costed_film(engine, tmp_path, scenes=1)
+    review_run = rewritten(
+        engine, storyboard_id, 1, findings=[(ENDING, ENDING_FIX)], layer="motion"
+    )
+    cloud = finishing_video(Cloud())
+    made = RunPodVideoAdapter(serverless(), engine, model="LTX-2.5", storage_root=tmp_path)
+    made.core.transport = made.core.client.transport = cloud
+    capability = runpod_capability()
+    table = motion_table()
+    check = FixClipCheck("persists", "gone")
+
+    def go():
+        plan = motion_plan(engine, storyboard_id, capabilities=[capability], table=table)
+        return run_motion_step(
+            engine,
+            storyboard_id,
+            str(uuid4()),
+            step="test_shot",
+            plan_hash=plan["plan_hash"],
+            adapter_for_model=lambda model: made if model == "LTX-2.5" else None,
+            capabilities=[capability],
+            table=table,
+            storage_root=tmp_path / "media",
+            clip_check=check,
+        )
+
+    with pytest.raises(MotionStepRefused) as asked:
+        go()
+    answer(engine, asked.value.approval_id, "APPROVED", note="Da.")
+    result = go()
+
+    (entry,) = result["scenes"]
+    assert entry["status"] == "PAID" and entry["clip_qc"]["attempts"] == 2
+    assert [said(asked_items) for asked_items in check.asked] == [[(ENDING, ENDING_FIX)]] * 2
+    assert lessons["withdrawn"] == []
+    assert lessons["confirmed"] == [[review_run]]
+
+
+def test_lessons_are_settled_review_run_by_review_run(engine, tmp_path, lessons):
+    """Finding 7: a run whose item lives on the motion layer is not confirmed by a still that
+    cannot show it; a run is withdrawn only for ITS own item, never a neighbour's."""
+    storyboard_id = a_film(engine, tmp_path)
+    picture_run = rewritten(
+        engine,
+        storyboard_id,
+        2,
+        findings=[
+            {"qc_text": NADIA, "by": NADIA_FIX, "treated": True, "layer": "still"},
+            {"qc_text": ENDING, "by": ENDING_FIX, "treated": True, "layer": "motion"},
+        ],
+    )
+    approved_still(engine, storyboard_id, 2, "2999-01-01T00:00:00+00:00")
+    still_answers = [
+        {"finding": NADIA, "status": "gone", "source": "review", "source_id": picture_run}
+    ]
+    with Session(engine) as session, session.begin():
+        confirmed = fix_check.confirm_lessons(
+            session, still_answers, storyboard_id=storyboard_id, scene_index=2
+        )
+    assert confirmed == [] and lessons["confirmed"] == [], "the ending is the clip's to show"
+    passed_clip(engine, storyboard_id, 2, "2999-01-01T00:00:01+00:00")
+    clip_answers = [
+        {"finding": ENDING, "status": "gone", "source": "review", "source_id": picture_run}
+    ]
+    with Session(engine) as session, session.begin():
+        confirmed = fix_check.confirm_lessons(
+            session, clip_answers, storyboard_id=storyboard_id, scene_index=2
+        )
+    assert confirmed == [picture_run] and lessons["confirmed"] == [[picture_run]]
+
+    # Two runs on one candidate: only the run whose item persists is withdrawn.
+    looks = [
+        [
+            {"status": "persists", "source": "review", "source_id": "run-a"},
+            {"status": "gone", "source": "review", "source_id": "run-b"},
+        ]
+    ]
+    with Session(engine) as session, session.begin():
+        assert fix_check.withdraw_lessons(session, looks) == ["run-a"]
+    assert lessons["withdrawn"][-1][0] == ["run-a"]
+
+
+def _reading_report(scene: int, clip, *, band: bool = False):
+    """A clip the look sent back to its still (``back_to_still``): by its own reading, or by a
+    flat band measured on its first frame (``band``)."""
+    from app.media.qc import ClipCheck, ClipReport
+
+    checks = (
+        ClipCheck("motion", "PASSED", False, 1.4, "YDIF mediu 1,40 peste prag"),
+        ClipCheck(
+            "picture",
+            "FAILED",
+            True,
+            None,
+            "privit la 1080 px: nu arată ce cere planul («the desk holds a laptop»)",
+        ),
+    )
+    measured: dict = {
+        "motion": {"mean_ydif": 1.4},
+        "picture": {"verdict": {"one_picture": True, "matches_plan": False}},
+    }
+    if band:
+        measured["panels"] = {"frames": [{"at": "first", "splits_the_picture": True}]}
+    return ClipReport(
+        scene=scene,
+        path=str(clip),
+        checks=checks,
+        passed=False,
+        blocks_ro=tuple(f"Scena {scene}: {c.detail_ro}" for c in checks if c.blocking),
+        warnings_ro=(),
+        unmeasured=(),
+        measured=measured,
+        back_to_still=True,
+    )
+
+
+@pytest.mark.parametrize("her", ["OVERTURNED", "CONFIRMED", "BAND"])
+def test_a_clip_sent_back_to_its_still_by_a_reading_is_shown_to_her_first(tmp_path, her):
+    """Finding 8: a clip the look's reading sent back to its still bought a new still and new
+    motion with nobody looking. Now she looks first (free): OVERTURNED keeps the clip, nothing
+    is bought; CONFIRMED sends it back with her reason; a band measured on the first frame
+    (panels, a hard limit) is never offered to her."""
+    from app.media import qc
+
+    asked: list = []
+    bought: list = []
+
+    def look(report):
+        asked.append(report)
+        return dict(HER["CONFIRMED" if her == "BAND" else her])
+
+    outcome = qc.qc_clip_with_retry(
+        tmp_path / "clip.mp4",
+        check=lambda path: _reading_report(1, path, band=her == "BAND"),
+        buy=lambda seed, prompt: bought.append(seed),
+        seed=7,
+        motion_prompt="Slow push-in.",
+        camera_move="slow push-in",
+        model_id="seedance2_5",
+        price_credits=10,
+        committed_credits=0,
+        cap_credits=100,
+        look=look,
+    )
+
+    assert bought == [], "nothing is animated again from a still sent back"
+    if her == "BAND":
+        assert asked == [] and outcome.status == "BACK_TO_STILL"
+        return
+    assert len(asked) == 1
+    if her == "OVERTURNED":
+        assert outcome.status == qc.ACCEPTED_BY_LOOK and outcome.clip is not None
+        return
+    assert outcome.status == "BACK_TO_STILL" and HER[her]["reason_ro"] in outcome.reason_ro
+
+
+def test_what_was_accepted_on_a_take_is_read_back_for_the_films_qc(engine, tmp_path, lessons):
+    """Finding 9: the note of an accepted minor trace has a reader (`accepted_on_takes`), for
+    the film's QC context, so the trace is not refused again after the money."""
+    storyboard_id = a_film(engine, tmp_path)
+    review_run = rewritten(engine, storyboard_id, 2, findings=[(NADIA, NADIA_FIX)])
+    judge = FixJudge(status=lambda look, plan: "minor")
+
+    result = approved_run(
+        engine, storyboard_id, tmp_path, SpyStills(pictures=new_pictures_for(2)), judge
+    )
+
+    entry = next(e for e in result["scenes"] if e["scene_index"] == 2)
+    with Session(engine) as session:
+        accepted = fix_check.accepted_on_takes(session, [entry["take_id"], None, "nothing"])
+        note = fix_check.take_note(session, entry["take_id"])
+    assert list(accepted) == [entry["take_id"]]
+    assert accepted[entry["take_id"]]["minor"] == entry["minor_defects"]
+    assert accepted[entry["take_id"]]["approved_by"] == "still_gate"
+    # The trace names its review run: it never confirms that run's lessons.
+    assert note["minor_sources"] == [review_run]
+    assert lessons["confirmed"] == [] and lessons["withdrawn"] == []
+
+
+def test_her_reading_of_an_older_briefs_words_replaces_the_patterns(engine, tmp_path, staffed):
+    """Finding 11: a brief recorded before her review kept findings carries the film's words
+    mixed with the studio's process notes and her own prescriptions. The patterns keep only
+    the sight (and now leave out «test_shot, not approved», «drop '…'», «no negations»); when
+    she has read the brief (free), her reading is what the still is checked for."""
+    from test_picture_qc import registry_with
+
+    storyboard_id = a_film(engine, tmp_path)
+    words = [
+        "The motion take is a test_shot, not approved; two women face to face across the ledger.",
+        "drop 'sensors and electronics' which invited instrument markings; no negations, no "
+        "'text'.",
+    ]
+    rewritten(engine, storyboard_id, 2, findings=[], film=words)
+    assert [i["finding"] for i in open_for(engine, storyboard_id, 2)] == [
+        "two women face to face across the ledger."
+    ]
+    sight = "Two women stand face to face across the ledger instead of Nadia alone."
+    registry, model = registry_with(staffed, lambda prompt: json.dumps({"seen": [sight]}))
+
+    read = fix_check.read_film_reasons(
+        engine, registry, storyboard_id=storyboard_id, correlation_id=str(uuid4())
+    )
+
+    assert read == 1 and len(model.calls) == 1
+    assert "test_shot" in model.calls[0]["prompt"]
+    assert [i["finding"] for i in open_for(engine, storyboard_id, 2)] == [sight]
+    assert [i["finding"] for i in open_for(engine, storyboard_id, 2, layer="motion")] == [sight]
+    # Read once: nothing is asked again.
+    again = fix_check.read_film_reasons(
+        engine, registry, storyboard_id=storyboard_id, correlation_id=str(uuid4())
+    )
+    assert again == 0 and len(model.calls) == 1
+    # No registry: nothing is asked, nothing changes.
+    unasked = fix_check.read_film_reasons(
+        engine, None, storyboard_id=storyboard_id, correlation_id="c"
+    )
+    assert unasked == 0
+
+
+def test_collected_candidates_that_repeat_the_mistake_go_back_to_her_words(
+    engine, tmp_path, lessons
+):
+    """Finding 12: candidates collected after their step, judged by the day, that show their
+    plan and the corrected mistake again were left NOT_BOUGHT — planned and bought again on the
+    same words. Now the round goes to her ladder, as a bought round does."""
+    import hashlib
+
+    from app.media.assembler import UNJUDGED_FAILURE_CODE, record_take, still_fields, take_hash
+    from app.media.stills_stage import STILL_RATIO, settle_stills
+    from test_stills_stage import SpyJudge, faces_in
+
+    storyboard_id = a_film(engine, tmp_path)
+    approved_run(engine, storyboard_id, tmp_path, SpyStills(), SpyJudge())
+    with Session(engine) as session, session.begin():
+        for row in session.scalars(
+            select(SceneTake).where(
+                SceneTake.storyboard_id == storyboard_id, SceneTake.scene_number == 2
+            )
+        ):
+            row.status = "REJECTED"
+            row.failure_code = "REDO.OWNER"
+        visual = (
+            session.scalars(
+                select(StoryboardScene).where(
+                    StoryboardScene.storyboard_id == storyboard_id,
+                    StoryboardScene.scene_index == 2,
+                )
+            )
+            .one()
+            .visual_prompt
+        )
+    review_run = rewritten(engine, storyboard_id, 2, findings=[(NADIA, NADIA_FIX)])
+    folder = tmp_path / "collected"
+    folder.mkdir()
+    for n, source in enumerate(NO_FACE, start=1):
+        path = folder / f"scene_02_collected_c{n}.jpg"
+        path.write_bytes(source.read_bytes() + b"collected")
+        record_take(
+            engine,
+            storyboard_id=storyboard_id,
+            scene_number=2,
+            kind="still",
+            prompt_hash=take_hash(still_fields(visual, None), "seedream5_pro"),
+            model_id="seedream5_pro",
+            resolution=STILL_RATIO,
+            status="PAID",
+            correlation_id="watchdog",
+            credits_quoted=9.0,
+            path=path,
+            sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
+            failure_code=UNJUDGED_FAILURE_CODE,
+            remote_task_id="img-task-late",
+        )
+    adapter = SpyStills()
+
+    settled = settle_stills(
+        engine,
+        storyboard_id,
+        str(uuid4()),
+        image_adapter=adapter,
+        registry=None,
+        judge=FixJudge(status=lambda look, plan: "persists"),
+        face_counter=faces_in(),
+        measure=("faces",),
+        storage_root=tmp_path / "media",
+    )
+
+    assert adapter.asked == []
+    (entry,) = [e for e in settled["scenes"] if e["scene_index"] == 2]
+    assert entry["status"] == "NEEDS_OWNER" and entry["rewrite"] is True
+    rows = [
+        t
+        for t in takes(engine, storyboard_id)
+        if t.scene_number == 2 and t.remote_task_id == "img-task-late"
+    ]
+    assert len(rows) == 2 and all(t.failure_detail.startswith(REWRITE_PHRASE) for t in rows)
+    assert lessons["withdrawn"] and lessons["withdrawn"][0][0] == [review_run]
+
+
+def test_a_sibling_that_shows_the_mistake_gone_keeps_the_words(engine):
+    """Finding 13: one candidate shows its plan and the mistake again, its sibling (refused for
+    its technique) shows the mistake gone: the words CAN correct it, so the round is re-rolled
+    on them — not sent back — and no lesson is withdrawn."""
+    plan = plan_for(must_fix=[item()])
+    repeats = decide(
+        NO_FACE[0], plan, [], verdict(fixes=[fix(1, "persists", "two women")]), environment="TEST"
+    )
+    corrected = decide(
+        NO_FACE[1],
+        plan,
+        [],
+        verdict(fixes=[fix(1, "gone")], technical_ok=False),
+        environment="TEST",
+    )
+
+    assert round_step([repeats], rerolls_done=0).action == "rewrite"
+    step = round_step([repeats, corrected], rerolls_done=0)
+    assert step.action == "reroll" and POSITIVE_WORDS["finding_persists"] in step.instruction
+    with Session(engine) as session:
+        looks = [list(repeats.fixes), list(corrected.fixes)]
+        assert fix_check.withdraw_lessons(session, looks) == []
+    # The answers carry their item's review run (`fix_answers`), so runs are settled one by one.
+    assert repeats.fixes[0]["source_id"] == "review-run" and repeats.fixes[0]["layer"] == "still"
+    assert fix_answers([item(severity="minor")], verdict().verdict) == [
+        {
+            "finding": NADIA,
+            "expected": NADIA_FIX,
+            "status": None,
+            "fixed": None,
+            "seen": "",
+            "layer": "still",
+            "source": "review",
+            "source_id": "review-run",
+            "severity": "minor",
+        }
+    ]

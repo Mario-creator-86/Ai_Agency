@@ -40,21 +40,45 @@ passed after it, was checked: its layer is closed.
 Two more things live here because every buyer needs them the same way: the Director's second
 look at a refusal before a re-roll or a retry is bought (`director_second_look`; the Owner's
 rule of 2026-10-12: «LLM-ul este pe abonament! NU COSTĂ BANI SĂ TRECEM PE LA EI! GENERAREA DE
-IMAGINI ȘI MIȘCĂRI COSTĂ!»), and what a look teaches the rewrite's lessons (`settle_lessons`).
+IMAGINI ȘI MIȘCĂRI COSTĂ!»), and what a look teaches the rewrite's lessons (`confirm_lessons`,
+`withdraw_lessons`).
+
+The review of 5fc7468 (2026-10-12, night) kept these rules here:
+
+- a finding her review left UNTREATED and called MINOR is one she accepted («DIRECTOAREA ACCEPTĂ
+  DEFECTELE MICI!»): it is never an item, so no still or clip is refused, and nothing bought,
+  for it; an item she called minor that the look says persists is a minor trace, a warning;
+- lessons are settled per review run (``source_id``): a run's lessons are withdrawn only when
+  ITS item persists on a candidate and no candidate of the round shows it corrected, and
+  confirmed only when every one of its items, on both layers, is closed and was answered gone;
+  a clip retry merely deferred to the next RunPod round settles nothing;
+- the brief's film words of a rewrite recorded before her review kept findings are read by
+  her (`read_film_reasons`, free) — what quality control SAW, never what to buy — and only
+  without her reading by the patterns of `PROPOSAL_SENTENCE`;
+- her look keeps a picture only OVERTURNED, never redone, at most minor; a refusal quality
+  control measured (a floor, beside the hard limits never offered to her) only as «not in the
+  picture» (`look_accepts`, the shared contract);
+- what was accepted on a take is read back for the film's QC by `accepted_on_takes`.
 """
 
 from __future__ import annotations
 
+import json
+import logging
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime
 from typing import Any
+from uuid import uuid4
 
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.media.models import SceneTake
 from app.models import DomainEvent
+
+logger = logging.getLogger("studio.fix_check")
 
 #: At most this many items are checked on one picture or clip, each at most this long: the
 #: look stays one look, and the refusal's words stay inside a take's failure detail.
@@ -89,12 +113,18 @@ PROCESS_NOTES: tuple[re.Pattern[str], ...] = (
 #: (`runbook.stages._correct_before_redo`). Read on the 2026-10-12 database copy, f06808c9:
 #: «After the new still is bought and approved, the motion must be redone on the new still
 #: with a prompt that specifies …», «Rewrite the motion prompt to state the final framing
-#: explicitly …», «redo the motion on the new still with the same tilt-down …».
+#: explicitly …», «redo the motion on the new still with the same tilt-down …». Only the
+#: fallback since the review of 5fc7468: her own reading comes first (`read_film_reasons`).
+#: Its patterns of that review, read on the database copy (aa170155 scene 1, 1c038a99 scene
+#: 3): «The motion take is a test_shot, not approved;», «drop 'sensors and electronics' which
+#: invited instrument markings;», «no negations, no 'text'.», «… was rejected
+#: (REDO.STILL_REPLACED) because …» — the studio's process and her prescriptions, not a sight.
 PROPOSAL_SENTENCE = re.compile(
     r"\b(?:must be (?:re)?done|must be redone|must change|re-?do|redone|rewrit\w*"
     r"|paid redo|credits?|buy\w*|bought|purchas\w*|join the|approved still|new still"
     r"|the prompt|motion prompt|still prompt|refac\w*|rescri\w*|cumpăr\w*|credite"
-    r"|plătit\w*|alătur\w*)\b",
+    r"|plătit\w*|alătur\w*|test_shot|test shot|not approved|drop\s+(?:the\s+)?['\"‘«]"
+    r"|no negations?|rejected \(|re-?animat\w*|is required|is needed|needs? to be)\b",
     re.IGNORECASE,
 )
 _SENTENCE_END = re.compile(r"(?<=[.;!?])\s+")
@@ -130,6 +160,16 @@ DIRECTOR_LOOK_APPROVER = "director_look"
 HARD_LIMITS = frozenset({"faces", "readable_text", "panels", "degenerate"})
 #: Her second look's verdicts (`app.media.second_look.second_look`, the shared contract).
 CONFIRMED, OVERTURNED, UNAVAILABLE = "CONFIRMED", "OVERTURNED", "UNAVAILABLE"
+#: How serious her review (or her QC verdict) called a finding; an item without a word is
+#: serious (it is checked).
+MINOR_SEVERITY, SERIOUS_SEVERITY = "minor", "serious"
+#: Her reading of a pre-contract brief's film words (`read_film_reasons`): what quality control
+#: SAW, per brief (aggregate: the storyboard; ``brief_event_id`` names the brief).
+FILM_READ_EVENT = "media.film_reasons_read"
+FILM_READ_TASK = "director_film_reasons_read"
+FILM_READ_TEMPLATE_VERSION = "director-film-reasons-v1"
+#: At most this many briefs are read in one call: a slow model never holds a step for long.
+FILM_READ_PER_CALL = 6
 
 
 def _said(value: Any) -> str:
@@ -298,6 +338,8 @@ def _item(
     source_id: Any = None,
     cause: Any = "",
     at: Any = None,
+    severity: Any = SERIOUS_SEVERITY,
+    treated: bool = True,
 ) -> dict[str, Any]:
     return {
         "finding": _cut(_said(finding)),
@@ -306,8 +348,28 @@ def _item(
         "source": source,
         "source_id": str(source_id) if source_id else None,
         "cause": _cut(_said(cause)),
+        "severity": _severity(severity),
+        "treated": bool(treated),
         "at": str(at or ""),
     }
+
+
+def _severity(value: Any) -> str:
+    """minor or serious; anything else (no word, an unknown one) is serious: it is checked."""
+    said = str(value or "").strip().lower()
+    return MINOR_SEVERITY if said == MINOR_SEVERITY else SERIOUS_SEVERITY
+
+
+def accepted_by_her(entry: Mapping[str, Any]) -> bool:
+    """Whether her review accepted a finding instead of treating it: marked ``accepted`` (the
+    contract of the review of 5fc7468), or left untreated and called minor. 2026-10-12, the
+    Owner: «DIRECTOAREA ACCEPTĂ DEFECTELE MICI!» — until then such a finding became a must_fix
+    item, every still that showed the small trace again was refused ``finding_persists`` and
+    bought again: a paid loop on a defect she had accepted."""
+    if entry.get("accepted") is True:
+        return True
+    treated = entry.get("treated") is not False  # an old (finding, by) pair was treated
+    return not treated and _severity(entry.get("severity")) == MINOR_SEVERITY
 
 
 def _rewrite_items(session: Session, storyboard_id: str, scene: int) -> list[dict[str, Any]]:
@@ -353,6 +415,10 @@ def _rewrite_items(session: Session, storyboard_id: str, scene: int) -> list[dic
             entry for entry in (review or {}).get("findings") or [] if isinstance(entry, dict)
         ]
         for entry in entries:
+            if accepted_by_her(entry):
+                # She accepted it (untreated and minor): nothing is checked, refused or bought
+                # for it (the review of 5fc7468, finding 1).
+                continue
             layer = _review_layer(entry, payload)
             if layer not in (*layers, BOTH_LAYERS):
                 continue
@@ -364,31 +430,75 @@ def _rewrite_items(session: Session, storyboard_id: str, scene: int) -> list[dic
                     FROM_REVIEW,
                     source_id=(review or {}).get("run_id"),
                     at=rewrite.timestamp,
+                    severity=entry.get("severity"),
+                    treated=entry.get("treated") is not False,
                 )
             )
         if entries:
             continue
         # A rewrite recorded before her review kept its findings: the film's own words on her
-        # brief, the sentences that say what was seen. Recorded right after the rewrite it
-        # asked for (`scene_rewrite._rung`): the brief naming its run, else the first after.
+        # brief, what quality control saw. Recorded right after the rewrite it asked for
+        # (`scene_rewrite._rung`): the brief naming its run, else the first after.
         run_id = payload.get("run_id")
-        after = [event for event in briefs if int(event.sequence) > int(rewrite.sequence)]
-        brief = next(
-            (e for e in after if run_id and (e.payload or {}).get("rewrite_run_id") == run_id),
-            after[-1] if after else None,
-        )
-        said = brief.payload if brief is not None and isinstance(brief.payload, dict) else {}
+        brief = _brief_of(rewrite, briefs, run_id)
         layer = MOTION_LAYER if layers == (MOTION_LAYER,) else STILL_LAYER
-        for failure in said.get("failures") or []:
-            if isinstance(failure, dict) and failure.get("kind") == "film":
-                for reason in failure.get("reasons") or []:
-                    seen = observed(reason)
-                    if seen:
-                        # A film reason names no layer: the picture's rewrite checks it on
-                        # the still and on the clip after it, the movement's on the clip.
-                        on = BOTH_LAYERS if layer == STILL_LAYER else MOTION_LAYER
-                        items.append(_item(seen, "", on, FROM_FILM, at=rewrite.timestamp))
+        # A film reason names no layer: the picture's rewrite checks it on the still and on
+        # the clip after it, the movement's on the clip.
+        on = BOTH_LAYERS if layer == STILL_LAYER else MOTION_LAYER
+        for seen in _film_seen(session, storyboard_id, brief):
+            items.append(_item(seen, "", on, FROM_FILM, at=rewrite.timestamp))
     return items
+
+
+def _brief_of(
+    rewrite: DomainEvent, briefs: Sequence[DomainEvent], run_id: Any
+) -> DomainEvent | None:
+    """The brief recorded right after ``rewrite`` (``briefs`` newest first): the one naming its
+    run, else the first after it."""
+    after = [event for event in briefs if int(event.sequence) > int(rewrite.sequence)]
+    return next(
+        (e for e in after if run_id and (e.payload or {}).get("rewrite_run_id") == run_id),
+        after[-1] if after else None,
+    )
+
+
+def _film_reasons(brief: DomainEvent | None) -> list[str]:
+    """The film's own words on a brief (its failures of kind film), as written."""
+    said = brief.payload if brief is not None and isinstance(brief.payload, dict) else {}
+    return [
+        _said(reason)
+        for failure in said.get("failures") or []
+        if isinstance(failure, dict) and failure.get("kind") == "film"
+        for reason in failure.get("reasons") or []
+        if _said(reason)
+    ]
+
+
+def _film_read(session: Session, storyboard_id: str, brief_event_id: str) -> list[str] | None:
+    """Her reading of one brief's film words (`read_film_reasons`), or None when she has not
+    read it."""
+    for event in session.scalars(
+        select(DomainEvent)
+        .where(DomainEvent.event_type == FILM_READ_EVENT, DomainEvent.aggregate_id == storyboard_id)
+        .order_by(DomainEvent.sequence.desc())
+    ):
+        payload = event.payload if isinstance(event.payload, dict) else {}
+        if payload.get("brief_event_id") == brief_event_id:
+            return [_said(text) for text in payload.get("seen") or [] if _said(text)]
+    return None
+
+
+def _film_seen(session: Session, storyboard_id: str, brief: DomainEvent | None) -> list[str]:
+    """What quality control saw, from a pre-contract brief: her reading when she made one (the
+    review of 5fc7468, finding 11 — a semantic question, hers to answer, free), else the
+    sentences `observed` keeps."""
+    reasons = _film_reasons(brief)
+    if not reasons or brief is None:
+        return []
+    read = _film_read(session, storyboard_id, str(brief.event_id))
+    if read is not None:
+        return read
+    return [seen for seen in (observed(reason) for reason in reasons) if seen]
 
 
 def _director_qc_items(session: Session, storyboard_id: str, scene: int) -> list[dict[str, Any]]:
@@ -425,6 +535,7 @@ def _director_qc_items(session: Session, storyboard_id: str, scene: int) -> list
                     source_id=payload.get("run_id"),
                     cause=verdict.get("cause"),
                     at=event.timestamp,
+                    severity=verdict.get("severity"),
                 )
             )
         return items
@@ -449,9 +560,12 @@ def _ranked(items: list[dict[str, Any]], layer: str) -> list[dict[str, Any]]:
 
 def open_items(session: Session, storyboard_id: str, scene_index: int) -> list[dict[str, Any]]:
     """Every open item of the scene, both layers, without paraphrases said twice: each
-    {"finding", "expected", "layer", "source", "source_id", "cause", "at"} (``layer``: still,
-    motion or both; ``expected`` the sentence her review said treats it, guidance, empty when
-    none; ``source_id`` the review run whose lessons the look confirms or withdraws)."""
+    {"finding", "expected", "layer", "source", "source_id", "cause", "severity", "treated",
+    "at"} (``layer``: still, motion or both; ``expected`` the sentence her review said treats
+    it, guidance, empty when none; ``source_id`` the review run whose lessons the look confirms
+    or withdraws; ``severity`` minor or serious — a minor one that persists is a warning,
+    `still_gate.fix_answers`). A finding her review left untreated as minor is no item
+    (`accepted_by_her`)."""
     found = _rewrite_items(session, storyboard_id, scene_index) + _director_qc_items(
         session, storyboard_id, scene_index
     )
@@ -533,42 +647,101 @@ def review_sources(items: Iterable[Mapping[str, Any]]) -> list[str]:
     )
 
 
-def settle_lessons(
-    session: Session,
-    items: Sequence[Mapping[str, Any]],
-    fixes: Sequence[Mapping[str, Any]] | None,
-    *,
-    approved: bool,
-    persisted: bool,
-) -> str | None:
-    """What a look teaches the rewrite's lessons (stored provisional with the review's run as
-    their source, `prompt_agent.record_prompt_lesson`): a take approved with every item GONE
-    confirms them (`confirm_prompt_lessons`); a take refused because an item persists, with no
-    take of the round approved clean, withdraws them (`withdraw_prompt_lessons`). Returns
-    "confirmed", "withdrawn" or None. 2026-10-12, the Owner: «la viitoarele prompturi să se
-    asigure că nu mai sunt» — a lesson that did not correct the mistake must not teach it."""
-    sources = review_sources(items)
-    if not sources:
-        return None
-    from app.media import prompt_agent  # noqa: PLC0415 - a large module
+#: Why a review run's lessons are withdrawn (`withdraw_prompt_lessons`).
+WITHDRAWN_REASON = "imaginea făcută pe cuvintele corectate repetă greșeala: lecția nu a corectat-o"
 
-    every_gone = bool(fixes) and all(fix.get("status") == GONE for fix in fixes or ())
-    if approved and every_gone:
+
+def _by_source(answers: Iterable[Mapping[str, Any]]) -> dict[str, list[str | None]]:
+    """Per review run (an answer's ``source_id``, carried from its item by
+    `still_gate.fix_answers`), the statuses one look gave its items."""
+    by: dict[str, list[str | None]] = {}
+    for answer in answers or ():
+        if answer.get("source") == FROM_REVIEW and answer.get("source_id"):
+            by.setdefault(str(answer["source_id"]), []).append(fix_status(answer))
+    return by
+
+
+def _traced_sources(session: Session, storyboard_id: str, scene_index: int) -> set[str]:
+    """The review runs one of whose items a take of the scene carries as an accepted minor
+    trace (`record_take_note`): answered, but not gone."""
+    traced: set[str] = set()
+    notes = select(DomainEvent).where(DomainEvent.event_type == TAKE_NOTE_EVENT)
+    for event in session.scalars(notes):
+        payload = event.payload if isinstance(event.payload, dict) else {}
+        if payload.get("storyboard_id") != storyboard_id:
+            continue
+        if _scene_of({"scene_index": payload.get("scene_number")}) != int(scene_index):
+            continue
+        traced |= {str(source) for source in payload.get("minor_sources") or [] if source}
+    return traced
+
+
+def confirm_lessons(
+    session: Session,
+    answers: Sequence[Mapping[str, Any]],
+    *,
+    storyboard_id: str,
+    scene_index: int,
+) -> list[str]:
+    """The review runs whose provisional lessons (`prompt_agent.record_prompt_lesson`, source the
+    review's run) an approved still or a kept clip proves: every item of the run this look
+    answered is GONE, none of its items is open on either layer any more (`open_items`, read
+    after the take was approved), and no take of the scene carries a minor trace of one. Those
+    are confirmed (`confirm_prompt_lessons`) and returned.
+
+    2026-10-12 (the review of 5fc7468, finding 7): the first version confirmed every run the
+    plan named on any clean approval — a run whose item lives on the motion layer was confirmed
+    by a still that could not show it."""
+    by = _by_source(answers)
+    if not by:
+        return []
+    still_open = {
+        str(item.get("source_id"))
+        for item in open_items(session, storyboard_id, scene_index)
+        if item.get("source_id")
+    }
+    traced = _traced_sources(session, storyboard_id, scene_index)
+    proven = [
+        source
+        for source, statuses in by.items()
+        if statuses
+        and all(status == GONE for status in statuses)
+        and source not in still_open
+        and source not in traced
+    ]
+    if proven:
+        from app.media import prompt_agent  # noqa: PLC0415 - a large module
+
         confirm = getattr(prompt_agent, "confirm_prompt_lessons", None)
         if callable(confirm):
-            confirm(session, sources)
-            return "confirmed"
-        return None
-    if persisted:
+            confirm(session, proven)
+    return proven
+
+
+def withdraw_lessons(session: Session, looks: Sequence[Sequence[Mapping[str, Any]]]) -> list[str]:
+    """The review runs whose provisional lessons a round's looks (``looks``: each candidate's
+    answers) disprove: an item of the run PERSISTS on a candidate (an item she called minor
+    never does: `still_gate.fix_answers` reads its «persists» as minor) and no candidate of the
+    round shows every item of the run corrected (gone or a minor trace). Those are withdrawn
+    (`withdraw_prompt_lessons`) and returned. 2026-10-12, the Owner: «la viitoarele prompturi
+    să se asigure că nu mai sunt» — a lesson that did not correct the mistake must not teach
+    it; one that did, on a sibling, did (the review of 5fc7468, findings 7 and 13)."""
+    persisted: set[str] = set()
+    corrected: set[str] = set()
+    for answers in looks:
+        for source, statuses in _by_source(answers).items():
+            if PERSISTS in statuses:
+                persisted.add(source)
+            elif statuses and all(status in (GONE, MINOR) for status in statuses):
+                corrected.add(source)
+    disproven = sorted(persisted - corrected)
+    if disproven:
+        from app.media import prompt_agent  # noqa: PLC0415 - a large module
+
         withdraw = getattr(prompt_agent, "withdraw_prompt_lessons", None)
         if callable(withdraw):
-            withdraw(
-                session,
-                sources,
-                "imaginea făcută pe cuvintele corectate repetă greșeala: lecția nu a corectat-o",
-            )
-            return "withdrawn"
-    return None
+            withdraw(session, disproven, WITHDRAWN_REASON)
+    return disproven
 
 
 def record_take_note(
@@ -582,13 +755,21 @@ def record_take_note(
     minor: Sequence[Mapping[str, Any]] = (),
     look: Mapping[str, Any] | None = None,
     correlation_id: str,
+    answers: Sequence[Mapping[str, Any]] = (),
 ) -> None:
     """Write on the take (`TAKE_NOTE_EVENT`) what was accepted on it: the minor traces the look
-    saw, and her look's verdict and reason when hers approved it."""
+    saw (``minor_sources``: the review runs of their items, so a trace never confirms a lesson,
+    `confirm_lessons`), and her look's verdict and reason when hers approved it. Read back by
+    `take_note` and, for the film's QC and the Director's reading of it, `accepted_on_takes`."""
     from app.services import append_event  # noqa: PLC0415 - services imports media
 
     if not minor and look is None:
         return
+    traced = [
+        str(answer.get("source_id"))
+        for answer in answers
+        if answer.get("status") == MINOR and answer.get("source_id")
+    ]
     append_event(
         session,
         TAKE_NOTE_EVENT,
@@ -602,6 +783,7 @@ def record_take_note(
             "kind": kind,
             "approved_by": approved_by,
             "minor": [dict(item) for item in minor],
+            "minor_sources": list(dict.fromkeys(traced)),
             "director_look": (
                 {
                     key: look.get(key)
@@ -687,20 +869,26 @@ def director_second_look(
         "redo": bool(said.get("redo", verdict != OVERTURNED)),
         "reason_ro": _cut(_said(said.get("reason_ro")), 500),
         "run_id": said.get("run_id"),
+        # Why the defect appears and on which layer (the shared contract's extra keys).
+        **{key: said.get(key) for key in ("cause", "lesson", "layer") if said.get(key)},
     }
 
 
-def look_accepts(look: Mapping[str, Any] | None) -> bool:
-    """Whether her look lets the take stand, so nothing is bought for it: the refusal was wrong
-    and what is there is at most minor (OVERTURNED, none or minor), or it was right about a
-    defect she calls minor and says need not be redone (CONFIRMED, minor, redo false — the
-    Owner: «DIRECTOAREA ACCEPTĂ DEFECTELE MICI!»)."""
-    if not look:
+def look_accepts(look: Mapping[str, Any] | None, *, measured: bool = False) -> bool:
+    """Whether her look lets the take stand, so nothing is bought for it: OVERTURNED, no redo,
+    and what is there is at most minor («DIRECTOAREA ACCEPTĂ DEFECTELE MICI!»). The shared
+    contract of the review of 5fc7468 ties verdict and severity — CONFIRMED is serious and
+    redoes, OVERTURNED is none or minor and never redoes — and is kept here as well (defence in
+    depth): a CONFIRMED look never keeps a picture, whatever severity it carries.
+
+    ``measured``: the refusal is one quality control MEASURED (a sharpness or a smear floor, a
+    clip's motion floor or a cut, beside the bible's hard limits, which are never offered to
+    her look): such a defect is serious whatever is written, so her look keeps the picture
+    only by saying the defect is not in it (severity none), never by calling it minor."""
+    if not look or look.get("verdict") != OVERTURNED or look.get("redo") is True:
         return False
-    verdict, severity = look.get("verdict"), look.get("severity")
-    if verdict == OVERTURNED:
-        return severity in ("none", "minor")
-    return verdict == CONFIRMED and severity == "minor" and look.get("redo") is False
+    severity = look.get("severity")
+    return severity == "none" if measured else severity in ("none", "minor")
 
 
 def look_record(look: Mapping[str, Any] | None) -> dict[str, Any] | None:
@@ -761,16 +949,24 @@ def clip_settled(
     scene_number: int,
     take_id: str | None,
     must_fix: Sequence[Mapping[str, Any]],
-    report: Any,
+    reports: Sequence[Any],
     kept: bool,
     look: Mapping[str, Any] | None,
     correlation_id: str,
+    earlier: Sequence[Sequence[Mapping[str, Any]]] = (),
 ) -> None:
     """What clip QC's last word on a scene's clip leaves: on the clip kept, its minor traces
     and her look when hers kept it (`record_take_note`); for the movement's rewrite, its
-    lessons confirmed by a clip kept with every item gone, withdrawn by one that showed a
-    mistake again (`settle_lessons`)."""
-    fixes = [dict(fix) for fix in getattr(report, "fixes", ()) or ()]
+    lessons confirmed by the clip kept with every item of a run gone (`confirm_lessons`), or,
+    when no clip was kept, withdrawn for a run whose item persisted on a clip of the scene's
+    QC and was corrected on none (``reports``: the first clip and its retry; ``earlier``: the
+    answers of a first clip checked in an earlier round, when its retry was bought in a
+    batch; `withdraw_lessons`). Called only for clip QC's LAST word: a retry merely deferred
+    to the next RunPod round settles nothing (the review of 5fc7468, finding 6)."""
+    looks = [[dict(fix) for fix in answers] for answers in earlier] + [
+        [dict(fix) for fix in getattr(report, "fixes", ()) or ()] for report in reports
+    ]
+    fixes = looks[-1] if looks else []
     if kept and take_id:
         record_take_note(
             session,
@@ -782,12 +978,199 @@ def clip_settled(
             minor=minor_traces(fixes),
             look=look,
             correlation_id=correlation_id,
+            answers=fixes,
         )
-    if must_fix:
-        settle_lessons(
-            session,
-            must_fix,
-            fixes,
-            approved=kept,
-            persisted=not kept and any(fix.get("status") == PERSISTS for fix in fixes),
+    if not must_fix:
+        return
+    if kept:
+        confirm_lessons(session, fixes, storyboard_id=storyboard_id, scene_index=scene_number)
+    else:
+        withdraw_lessons(session, looks)
+
+
+def accepted_on_takes(session: Session, take_ids: Iterable[str | None]) -> dict[str, Any]:
+    """What was accepted on each of these takes, by take id (the newest `take_note` of each,
+    as {"kind", "approved_by", "minor": [{"finding", "seen"}], "director_look"}); a take with
+    no note is left out. The reader the film's QC context needs so that a trace the gate or
+    clip QC accepted, or her look kept, is not refused again after the money (the review of
+    5fc7468, finding 9: the note had no reader)."""
+    accepted: dict[str, Any] = {}
+    for take_id in dict.fromkeys(str(take) for take in take_ids if take):
+        note = take_note(session, take_id)
+        if note is None:
+            continue
+        accepted[take_id] = {
+            key: note.get(key) for key in ("kind", "approved_by", "minor", "director_look")
+        }
+    return accepted
+
+
+def recorded_answers(clip_record: Mapping[str, Any] | None) -> list[list[dict[str, Any]]]:
+    """The look's answers to the motion items on each report of a scene's clip-QC record
+    (`assembler.clip_report_record` keeps them under ``measured.picture.fixes``), oldest
+    first: what a first clip said when its retry is checked in a later RunPod round."""
+    answers: list[list[dict[str, Any]]] = []
+    for report in (clip_record or {}).get("reports") or []:
+        picture = ((report or {}).get("measured") or {}).get("picture") or {}
+        fixes = picture.get("fixes") if isinstance(picture, Mapping) else None
+        answers.append([dict(fix) for fix in fixes or [] if isinstance(fix, Mapping)])
+    return answers
+
+
+# ------------------------------------------------- her reading of a pre-contract brief's words
+
+
+class FilmReasonsSeen(BaseModel):
+    """Her reading of a brief's film words: only what quality control SAW in the picture or
+    the clip, in its own words (shortened at most), one sight per entry; nothing when it
+    names no sight."""
+
+    model_config = ConfigDict(extra="ignore")
+    seen: list[str] = Field(default_factory=list)
+
+    @field_validator("seen", mode="before")
+    @classmethod
+    def _sights(cls, value: Any) -> Any:
+        if not isinstance(value, list):
+            return value
+        # At most what one look checks (`MAX_ITEMS`), each cut as an item is.
+        return [_cut(_said(text)) for text in value if _said(text)][:MAX_ITEMS]
+
+
+_FILM_READ_INSTRUCTIONS = (
+    "You are the Director of a film studio. Quality control refused scene {scene} of a film "
+    "and the brief below carries its words, mixed with the studio's process notes and your "
+    "own earlier prescriptions. List ONLY what quality control SAW in the picture or the clip "
+    "— a defect a viewer can see (two women instead of one, lettering on a ring, a bare-rock "
+    "tunnel instead of a detector) — each in quality control's own words, shortened at most, "
+    "one sight per entry, at most {limit}. Leave out every process note (a take rejected, "
+    "replaced, a test shot, not approved, the motion made from the new still), every "
+    "prescription (rewrite, redo, re-animate, drop a word, no negations, describe…, name…) and "
+    "every price. When it names no sight, answer an empty list. Answer only the JSON object "
+    '{{"seen": ["..."]}}.\n\n'
+)
+
+
+def _unread_briefs(session: Session, storyboard_id: str) -> list[tuple[int, DomainEvent]]:
+    """The briefs whose film words a pre-contract rewrite of the storyboard is checked by
+    (`_rewrite_items`: the newest rewrite per scene and layer, recorded before her review kept
+    findings) and that she has not read: (scene, brief), each once."""
+    from app.media.assembler import SCENE_PROMPTS_REWRITTEN_EVENT  # noqa: PLC0415 - a large module
+    from app.media.scene_rewrite import BRIEF_EVENT, REWRITE_REASON  # noqa: PLC0415
+
+    events = list(
+        session.scalars(
+            select(DomainEvent)
+            .where(
+                DomainEvent.aggregate_id == storyboard_id,
+                DomainEvent.event_type.in_((SCENE_PROMPTS_REWRITTEN_EVENT, BRIEF_EVENT)),
+            )
+            .order_by(DomainEvent.sequence.desc())
         )
+    )
+    briefs: dict[int, list[DomainEvent]] = {}
+    newest: dict[tuple[int, bool], DomainEvent] = {}
+    for event in events:
+        payload = event.payload if isinstance(event.payload, dict) else {}
+        scene = _scene_of(payload)
+        if scene is None:
+            continue
+        if event.event_type == BRIEF_EVENT:
+            briefs.setdefault(scene, []).append(event)
+        elif payload.get("reason") == REWRITE_REASON:
+            newest.setdefault((scene, False), event)
+            if _rewrote_picture(payload):
+                newest.setdefault((scene, True), event)
+    wanted: dict[str, tuple[int, DomainEvent]] = {}
+    for (scene, _picture), rewrite in newest.items():
+        payload = rewrite.payload if isinstance(rewrite.payload, dict) else {}
+        review = payload.get("review") if isinstance(payload.get("review"), dict) else {}
+        if (review or {}).get("findings"):
+            continue
+        brief = _brief_of(rewrite, briefs.get(scene, []), payload.get("run_id"))
+        if brief is None or not _film_reasons(brief):
+            continue
+        if _film_read(session, storyboard_id, str(brief.event_id)) is None:
+            wanted[str(brief.event_id)] = (scene, brief)
+    return list(wanted.values())
+
+
+def read_film_reasons(
+    engine: Any, registry: Any, *, storyboard_id: str, correlation_id: str
+) -> int:
+    """The Director reads the film words of the storyboard's pre-contract briefs that the fix
+    check reads (`_unread_briefs`) and says what quality control SAW (`FilmReasonsSeen`); each
+    reading is recorded (`FILM_READ_EVENT`) and read by `_rewrite_items` instead of the patterns
+    of `observed`. Free: a model call, no purchase (the Owner, 2026-10-12: «LLM-ul este pe
+    abonament!»). Returns how many briefs she read; never raises — with no registry, no Director
+    or an answer that does not validate twice nothing is recorded and the patterns stand.
+
+    2026-10-12 (the review of 5fc7468, finding 11): «The motion take is a test_shot, not
+    approved;», «drop 'sensors and electronics' which invited instrument markings;» and «no
+    negations, no 'text'.» went through the patterns as things a still must not show again —
+    process notes and her own prescriptions, asked of every picture as if quality control had
+    seen them."""
+    if registry is None or not storyboard_id:
+        return 0
+    try:
+        from app.agents.memory import agent_for_role  # noqa: PLC0415 - agents import media
+        from app.agents.structured import structured_run  # noqa: PLC0415 - it imports services
+        from app.db import lock_for_write  # noqa: PLC0415
+        from app.factual.sanitizer import wrap_in_inert_boundary  # noqa: PLC0415
+        from app.services import append_event  # noqa: PLC0415 - services imports media
+
+        with Session(engine) as session:
+            unread = _unread_briefs(session, storyboard_id)[:FILM_READ_PER_CALL]
+            director = agent_for_role(session, "Director") if unread else None
+            director_id = str(director.id) if director is not None else None
+        if not unread or director_id is None:
+            return 0
+        read = 0
+        for scene, brief in unread:
+            reasons = _film_reasons(brief)
+            prompt = _FILM_READ_INSTRUCTIONS.format(
+                scene=scene, limit=MAX_ITEMS
+            ) + wrap_in_inert_boundary(
+                json.dumps({"film_reasons": reasons}, ensure_ascii=False)[:6000], "film-reasons"
+            )
+            parsed, first, second = structured_run(
+                engine,
+                registry,
+                director_id,
+                FILM_READ_TASK,
+                prompt,
+                FILM_READ_TEMPLATE_VERSION,
+                correlation_id or str(uuid4()),
+                FilmReasonsSeen,
+                "",
+                summary=f"Directoarea citește ce a văzut controlul în scena {scene}",
+                max_tokens=1200,
+            )
+            if parsed is None:
+                continue
+            last = second or first
+            with Session(engine) as session, session.begin():
+                lock_for_write(session)
+                if _film_read(session, storyboard_id, str(brief.event_id)) is not None:
+                    continue  # read meanwhile by another step: one reading per brief
+                append_event(
+                    session,
+                    FILM_READ_EVENT,
+                    "storyboard",
+                    storyboard_id,
+                    1,
+                    {
+                        "storyboard_id": storyboard_id,
+                        "scene_index": scene,
+                        "brief_event_id": str(brief.event_id),
+                        "seen": list(parsed.seen),
+                        "reasons": reasons,
+                        "run_id": str(last.get("id")) if last.get("id") else None,
+                    },
+                    correlation_id or str(uuid4()),
+                )
+            read += 1
+        return read
+    except Exception as exc:  # noqa: BLE001 - her silence leaves the patterns standing
+        logger.warning("film_reasons_read_failed", extra={"error": type(exc).__name__})
+        return 0

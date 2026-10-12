@@ -129,6 +129,10 @@ up to 68 credits a second. So the still is checked first, twice, at no credit co
    same words twice more were up to four paid stills of the same mistake), the scene ends at
    once as a content refusal for the Director's ladder, which rewrites them; a still that also
    missed its plan gets one re-roll at most (`next_step`, action ``rewrite``).
+   That night (the review of 5fc7468): an item she called minor that persists is a warning,
+   never ``finding_persists`` (`fix_answers`); the content phrase (`REWRITE_PHRASE`) leads the
+   refusal so it survives the take's 500 characters; and a round whose sibling shows every
+   item corrected keeps its words (`round_step`): they can correct it.
 
 Everything fails closed. A check that could not run is NOT_RUN, and a NOT_RUN of a
 required check blocks in PRODUCTION and warns in TEST — except the vision checklist, whose
@@ -162,7 +166,16 @@ from typing import Any
 from sqlalchemy import Engine
 
 from app.media.faces import FaceCount, FaceCounter, count_faces
-from app.media.fix_check import GONE, HARD_LIMITS, MINOR, PERSISTS, fix_status, minor_traces
+from app.media.fix_check import (
+    GONE,
+    HARD_LIMITS,
+    MINOR,
+    MINOR_SEVERITY,
+    PERSISTS,
+    SERIOUS_SEVERITY,
+    fix_status,
+    minor_traces,
+)
 from app.media.picture_qc import StillJudgement, judge_still
 from app.media.qc import PANEL_BAND_SHARE, flat_band, still_is_degenerate
 from app.media.toolchain import find_ffmpeg
@@ -197,6 +210,23 @@ MAX_REROLLS = 2
 #: How many times a still that repeats a corrected mistake is bought again on the same words,
 #: when it also missed its plan (one that showed its plan is never: its words are rewritten).
 PERSISTS_REROLLS = 1
+#: The gate's content phrase (`scene_rewrite.CONTENT_REFUSAL_PHRASES` reads «nu arată ce cere
+#: scena»): a refusal that begins with it is read as CONTENT by the Director's ladder, which
+#: rewrites the words instead of buying them again. It goes FIRST in such a refusal: a take's
+#: failure detail keeps 500 characters, and on 2026-10-12 (the review of 5fc7468, finding 2)
+#: the longer «persists» refusal pushed it past them, so the serial read the refusal as
+#: TECHNICAL and re-rolled the very words that had not corrected the mistake.
+REWRITE_PHRASE = "Nu arată ce cere scena după rescriere"
+#: The gate's violations that say the WORDS ask for the wrong picture (what the ladder reads as
+#: a content refusal): another seed on them buys the same mistake. The others (blur, a smear,
+#: a technical defect, panels, a blank field) are one picture's fault, which a re-roll answers.
+CONTENT_VIOLATIONS = frozenset(
+    {"plan", "scene", "look", "bible", "faces", "readable_text", "finding_persists"}
+)
+#: The local checks' measured floors her look may be asked about (the bible's hard limits
+#: never are): a still they refused is kept by her look only when she says the defect is not
+#: in it (`fix_check.look_accepts`, ``measured``) — the shared contract of 2026-10-12, night.
+MEASURED_VIOLATIONS = frozenset({"sharpness", "motion_blur"})
 
 ALL_CHECKS = ("degenerate", "panels", "sharpness", "motion_blur", "palette", "faces")
 
@@ -854,9 +884,19 @@ _STATUS_RANK = {GONE: 0, MINOR: 1, PERSISTS: 2}
 
 def fix_answers(must_fix: Sequence[Any], verdict: Any) -> list[dict[str, Any]]:
     """The look's answer to each ``must_fix`` item, by its number (1-based), as {"finding",
-    "expected", "status", "fixed", "seen"}: ``status`` the worst of the item's answers (gone,
-    minor, persists), None when the item was not answered; ``fixed`` whether it is gone.
-    Empty when nothing was asked. Read by the gate and by clip QC (`qc.check_clip`)."""
+    "expected", "status", "fixed", "seen", "layer", "source", "source_id", "severity"}:
+    ``status`` the worst of the item's answers (gone, minor, persists), None when the item was
+    not answered; ``fixed`` whether it is gone; the item's own layer, source, review run and
+    severity carried beside, so the lessons are settled per review run
+    (`fix_check.confirm_lessons`, `fix_check.withdraw_lessons`) and clip QC knows which layer a
+    persisting item lives on. Empty when nothing was asked. Read by the gate and by clip QC
+    (`qc.check_clip`).
+
+    An item the Director called MINOR (her review's ``severity``) that the look says persists
+    reads as minor: a trace she accepts, a warning — never ``finding_persists``, never a
+    withdrawn lesson. 2026-10-12, the Owner: «DIRECTOAREA ACCEPTĂ DEFECTELE MICI!» (the review
+    of 5fc7468, finding 1: such an item refused every still that showed it again, and each was
+    bought again)."""
     asked = tuple(must_fix or ())
     if not asked:
         return []
@@ -866,6 +906,12 @@ def fix_answers(must_fix: Sequence[Any], verdict: Any) -> list[dict[str, Any]]:
     answers: list[dict[str, Any]] = []
     for number, item in enumerate(asked, start=1):
         said_item = dict(item or {})
+        carried = {
+            "layer": said_item.get("layer"),
+            "source": said_item.get("source"),
+            "source_id": said_item.get("source_id"),
+            "severity": said_item.get("severity") or SERIOUS_SEVERITY,
+        }
         finding = str(said_item.get("finding") or "")
         expected = str(said_item.get("expected") or "")
         said = [fix for fix in given.get(number) or [] if fix_status(fix) is not None]
@@ -877,11 +923,14 @@ def fix_answers(must_fix: Sequence[Any], verdict: Any) -> list[dict[str, Any]]:
                     "status": None,
                     "fixed": None,
                     "seen": "",
+                    **carried,
                 }
             )
             continue
         worst = max(said, key=lambda fix: _STATUS_RANK[str(fix_status(fix))])
         status = str(fix_status(worst))
+        if status == PERSISTS and carried["severity"] == MINOR_SEVERITY:
+            status = MINOR
         answers.append(
             {
                 "finding": finding,
@@ -889,9 +938,27 @@ def fix_answers(must_fix: Sequence[Any], verdict: Any) -> list[dict[str, Any]]:
                 "status": status,
                 "fixed": status == GONE,
                 "seen": str(worst.seen or ""),
+                **carried,
             }
         )
     return answers
+
+
+def corrected_everything(report: StillReport) -> bool:
+    """Whether the look answered every item of the still corrected: gone, or a minor trace
+    she accepts. Such a still proves the corrected words CAN correct the mistake."""
+    return bool(report.fixes) and all(fix.get("status") in (GONE, MINOR) for fix in report.fixes)
+
+
+def content_refusal(report: StillReport) -> bool:
+    """Whether a refused still says its WORDS ask for the wrong picture (`CONTENT_VIOLATIONS`),
+    not one picture's technical fault."""
+    return bool(set(report.violations) & CONTENT_VIOLATIONS)
+
+
+def measured_refusal(report: StillReport) -> bool:
+    """Whether a refused still was refused by a measured floor (`MEASURED_VIOLATIONS`)."""
+    return bool(set(report.violations) & MEASURED_VIOLATIONS)
 
 
 def _fix_answers(plan: StillPlan, verdict: Any) -> list[dict[str, Any]]:
@@ -899,11 +966,11 @@ def _fix_answers(plan: StillPlan, verdict: Any) -> list[dict[str, Any]]:
 
 
 def persists_reason(fix: Mapping[str, Any]) -> str:
-    """The refusal of a picture that shows a corrected mistake again, in the gate's words:
-    what quality control saw, that the corrected words did not correct it (the sentence that
-    failed), and what the look sees. «nu arată ce cere scena» is the gate's content phrase
-    (`scene_rewrite.CONTENT_REFUSAL_PHRASES`): the Director's ladder reads it as a content
-    refusal and rewrites the words, never a re-roll of the same ones."""
+    """The refusal of a picture that shows a corrected mistake again, in the gate's words: the
+    content phrase FIRST (`REWRITE_PHRASE`, read by the Director's ladder as a content refusal,
+    so the words are rewritten, never re-rolled — it must survive the take's 500 characters),
+    then what quality control saw, that the corrected words did not correct it (the sentence
+    that failed), and what the look sees."""
     expected = _excerpt(fix.get("expected"), 120)
     words = (
         f"cuvintele «{expected}» nu au corectat-o"
@@ -911,8 +978,8 @@ def persists_reason(fix: Mapping[str, Any]) -> str:
         else "cuvintele rescrise nu au corectat-o"
     )
     return (
-        "Imaginea repetă greșeala pe care rescrierea trebuia să o corecteze: "
-        f"«{_excerpt(fix.get('finding'), 160)}»; {words}; nu arată ce cere scena după rescriere"
+        f"{REWRITE_PHRASE}: imaginea repetă greșeala pe care rescrierea trebuia să o corecteze "
+        f"«{_excerpt(fix.get('finding'), 160)}»; {words}"
         + (f" (se vede: {_excerpt(fix.get('seen'), 120)})" if fix.get("seen") else "")
     )
 
@@ -933,8 +1000,17 @@ def decide(
     *,
     environment: str,
 ) -> StillReport:
-    """Fold the local checks and the vision verdict into one decision. Fail closed."""
+    """Fold the local checks and the vision verdict into one decision. Fail closed.
+
+    The reasons are ordered for the take's failure detail, which keeps 500 characters and is
+    read back by the Director's ladder by its phrases: what the fix check found first (a
+    corrected mistake seen again, an item nobody could check — the content phrase), then the
+    look's other readings, then the local checks, then «nu a fost privită» (the review of
+    5fc7468, finding 2: the content phrase was pushed past the cut)."""
     reasons: list[str] = []
+    fix_reasons: list[str] = []
+    vision_reasons: list[str] = []
+    unseen_reasons: list[str] = []
     warnings: list[str] = []
     violations: list[str] = []
     unmeasured: list[str] = []
@@ -969,14 +1045,14 @@ def decide(
             if judgement is not None and judgement.detail_ro
             else "nu a fost privită: modelul de vedere nu a fost întrebat"
         )
-        reasons.append(f"Imaginea {detail}")
+        unseen_reasons.append(f"Imaginea {detail}")
         unmeasured.append("vision")
         if plan.must_fix:
             # A still bought on corrected words that nobody could check for the mistake: the
             # serial's ladder read the bare «nu a fost privită» as TECHNICAL and bought the
             # same words again (the review of 9ac0195, finding 8). With what it had to show
             # unknown, the refusal is about the content: the content phrase sends it to her.
-            reasons.append(
+            fix_reasons.append(
                 "Nu s-a putut verifica dacă greșeala «"
                 + _excerpt(plan.must_fix[0].get("finding"), 120)
                 + "» a dispărut: până se vede, se socotește că nu arată ce cere scena după "
@@ -984,14 +1060,14 @@ def decide(
             )
     else:
         said = f"«{verdict.reason}»"
-        # First among the model's answers: the refusal's words land on the take's failure
-        # detail (500 characters), which the Director's ladder reads back by its phrases.
+        # First among all the reasons (`fix_reasons`): the refusal's words land on the take's
+        # failure detail (500 characters), which the Director's ladder reads back by phrase.
         fixes = _fix_answers(plan, verdict)
         for fix in fixes:
             if fix["status"] is None:
                 # Only a verdict built in code can leave an item out: the report a model's
                 # answer is read into refuses it (`picture_qc.still_report_schema`).
-                reasons.append(
+                fix_reasons.append(
                     "Modelul de vedere nu a spus dacă imaginea corectează greșeala "
                     f"«{_excerpt(fix['finding'], 160)}»"
                 )
@@ -999,7 +1075,7 @@ def decide(
             elif fix["status"] == PERSISTS:
                 # The content phrase sends the scene to her brief at the ladder, never to the
                 # serial's re-roll of the same words (`scene_rewrite.refusal_kind`).
-                reasons.append(persists_reason(fix))
+                fix_reasons.append(persists_reason(fix))
                 violations.append("finding_persists")
             elif fix["status"] == MINOR:
                 # A small trace, accepted: said on the take, never a refusal.
@@ -1007,43 +1083,46 @@ def decide(
         if verdict.faces_visible:
             faces_found = True
             if plan.faces_forbidden:
-                reasons.append(
+                vision_reasons.append(
                     f"Modelul de vedere a văzut o față; biblia vizuală interzice fețele {said}"
                 )
                 violations.append("faces")
         if verdict.readable_text:
-            reasons.append(f"Modelul de vedere a văzut text lizibil în imagine {said}")
+            vision_reasons.append(f"Modelul de vedere a văzut text lizibil în imagine {said}")
             violations.append("readable_text")
         if not verdict.one_picture:
             # 2026-10-09: scene 5's triptych of three similar tunnels had no flat band to
             # measure; the model's eye is its net. A measured violation: re-rolled.
-            reasons.append(
+            vision_reasons.append(
                 "Modelul de vedere nu vede o singură fotografie (panouri, colaj, ecran împărțit "
                 f"sau o bandă goală) {said}"
             )
             violations.append("panels")
         if not verdict.matches_plan:
-            reasons.append(f"Imaginea nu arată ce cere planul scenei {said}")
+            vision_reasons.append(f"Imaginea nu arată ce cere planul scenei {said}")
             violations.append("plan")
         if not verdict.shows_scene:
             # The same question the film's picture QC asks after the money is spent, asked
             # here for 7 credits: the scene's written picture and narration, not the prompt.
-            reasons.append(
+            vision_reasons.append(
                 f"Imaginea nu arată ce cere scena (imaginea ei scrisă și narațiunea) {said}"
             )
             violations.append("scene")
         if not verdict.look_ok:
-            reasons.append(f"Imaginea nu are aspectul filmului {said}")
+            vision_reasons.append(f"Imaginea nu are aspectul filmului {said}")
             violations.append("look")
         if not verdict.technical_ok:
-            reasons.append(f"Imaginea are defecte tehnice {said}")
+            vision_reasons.append(f"Imaginea are defecte tehnice {said}")
             violations.append("technical")
         if not _is_none(verdict.bible_violations):
-            reasons.append(f"Imaginea încalcă biblia vizuală: «{verdict.bible_violations}»")
+            vision_reasons.append(f"Imaginea încalcă biblia vizuală: «{verdict.bible_violations}»")
             violations.append("bible")
         if verdict.verdict != "buy_motion":
-            reasons.append(f"Verdictul modelului de vedere: {verdict.verdict} {said}")
+            vision_reasons.append(f"Verdictul modelului de vedere: {verdict.verdict} {said}")
 
+    # What the fix check found first, the look's readings next, the local checks, then
+    # «nu a fost privită»: the content phrase must survive the take's 500 characters.
+    reasons = fix_reasons + vision_reasons + reasons + unseen_reasons
     blocked = bool(reasons)
     if not blocked:
         outcome = "buy_motion"
@@ -1136,8 +1215,25 @@ def positive_instruction(violations: Iterable[str]) -> str:
     return "; ".join(words)
 
 
-def next_step(report: StillReport, *, rerolls_done: int) -> NextStep:
-    """What the stills step does with this candidate. It never pushes a failing still on."""
+def rewrite_step(scene: int, why: str) -> NextStep:
+    """The scene's words go back to the Director's ladder (`NextStep` action ``rewrite``): its
+    reason begins with the content phrase (`REWRITE_PHRASE`), so whatever take of the round
+    the ladder reads, it reads a content refusal."""
+    return NextStep(
+        "rewrite",
+        "",
+        f"Scena {scene}: {REWRITE_PHRASE[:1].lower()}{REWRITE_PHRASE[1:]} — {why} Nu se "
+        "cumpără altă imagine pe aceleași cuvinte; Directoarea le rescrie.",
+    )
+
+
+def next_step(report: StillReport, *, rerolls_done: int, words_correct: bool = False) -> NextStep:
+    """What the stills step does with this candidate. It never pushes a failing still on.
+
+    ``words_correct``: another candidate of the same round showed every item corrected
+    (`corrected_everything`), so the corrected words CAN correct the mistake and this one's
+    repeat of it is one picture's fault — re-rolled like any other, its words not sent back
+    (2026-10-12, the review of 5fc7468, finding 13)."""
     if report.decision == "PASSED":
         return NextStep(
             "buy_motion", "", "Imaginea a trecut verificările; se poate cumpăra mișcarea."
@@ -1157,8 +1253,10 @@ def next_step(report: StillReport, *, rerolls_done: int) -> NextStep:
             f"Scena {report.scene}: verificările nu au putut rula ({first}). "
             "Nu se cumpără altă imagine până nu decide Proprietarul.",
         )
-    if "finding_persists" in report.violations and (
-        report.matched_plan or rerolls_done >= PERSISTS_REROLLS
+    if (
+        "finding_persists" in report.violations
+        and not words_correct
+        and (report.matched_plan or rerolls_done >= PERSISTS_REROLLS)
     ):
         # 2026-10-12 (the review of 9ac0195, finding 3): the picture shows its corrected words
         # and the mistake is there again, so those words do not correct it; two more re-rolls
@@ -1174,12 +1272,10 @@ def next_step(report: StillReport, *, rerolls_done: int) -> NextStep:
             if report.matched_plan
             else "repetă greșeala și după o refacere"
         )
-        return NextStep(
-            "rewrite",
-            "",
-            f"Scena {report.scene}: imaginea {how} "
-            f"«{_excerpt(persisted.get('finding'), 120)}»: {words} nu au corectat-o. Nu se "
-            "cumpără altă imagine pe aceleași cuvinte; Directoarea le rescrie.",
+        return rewrite_step(
+            report.scene,
+            f"imaginea {how} «{_excerpt(persisted.get('finding'), 120)}»: {words} nu au "
+            "corectat-o.",
         )
     if rerolls_done < MAX_REROLLS:
         return NextStep(
@@ -1199,15 +1295,21 @@ def round_step(reports: Sequence[StillReport], *, rerolls_done: int) -> NextStep
     """What one round of refused candidates leads to (`next_step` of the candidate that
     decides it): a candidate that shows its corrected words and repeats the mistake decides —
     its words are rewritten, nothing more is bought on them —, else the first that was measured
-    wrong, else the first. None when the round has no candidate at all."""
+    wrong, else the first. None when the round has no candidate at all.
+
+    The words are sent back only when no candidate of the round showed every item corrected
+    (`corrected_everything`): a sibling refused for something else (a blur, its plan) that
+    shows the mistake gone proves the words can correct it, and the round is re-rolled
+    (2026-10-12, the review of 5fc7468, finding 13)."""
     if not reports:
         return None
+    words_correct = any(corrected_everything(report) for report in reports)
     deciding = next(
         (
             report
             for report in reports
-            if "finding_persists" in report.violations and report.matched_plan
+            if "finding_persists" in report.violations and report.matched_plan and not words_correct
         ),
         next((report for report in reports if report.violations), reports[0]),
     )
-    return next_step(deciding, rerolls_done=rerolls_done)
+    return next_step(deciding, rerolls_done=rerolls_done, words_correct=words_correct)
