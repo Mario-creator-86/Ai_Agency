@@ -4079,8 +4079,18 @@ def director_decides_failed_film(
                 outcome["passed_asset"] = str(repair["new_asset"])
                 break
             if repair.get("requalified") == "FAILED" and repair.get("requalified_report_id"):
-                # The film her repair made failed too: she reads its report next.
-                report, asset = str(repair["requalified_report_id"]), str(repair["new_asset"])
+                # The film her repair made failed too: she reads its report next — in a walk
+                # of its own when another film waits on the one worker (2026-10-12: the
+                # cyclotron's rounds held the worker an hour while the serial's walk waited).
+                new_report, new_asset = (
+                    str(repair["requalified_report_id"]),
+                    str(repair["new_asset"]),
+                )
+                yielded = _yield_next_round(engine, asset, new_report)
+                if yielded:
+                    outcome["yielded"] = yielded
+                    break
+                report, asset = new_report, new_asset
                 continue
             break
         if kind == "NOTHING_DONE" and not read_again:
@@ -4090,6 +4100,44 @@ def director_decides_failed_film(
             continue
         break
     return outcome
+
+
+def _yield_next_round(engine: Engine, asset_id: str, new_report: str) -> str | None:
+    """Queue her next round (the repaired film's new report) as a continuation of its own,
+    when another film's continuation waits in the queue; None when nobody waits (the round
+    runs here, as before) or the continuation could not be queued (TEST). The key is the
+    review pass's for that report (`passes.director_qc_review`), so the two never queue it
+    twice; the worker then serves the films in turn."""
+    from app.services import FILM_CONTINUE_TASK  # noqa: PLC0415
+    from app.workflows.models import TaskQueueItem  # noqa: PLC0415 - workflows import runbook
+
+    storyboard_id = str(_film_of(engine, asset_id).get("storyboard_id") or "")
+    if not storyboard_id:
+        return None
+    try:
+        with Session(engine) as session, session.begin():
+            others = [
+                task
+                for task in session.scalars(
+                    select(TaskQueueItem).where(
+                        TaskQueueItem.task_type == FILM_CONTINUE_TASK,
+                        TaskQueueItem.status == "QUEUED",
+                    )
+                )
+                if str((task.payload or {}).get("storyboard_id") or "") != storyboard_id
+            ]
+            if not others:
+                return None
+            lock_for_write(session)
+            return queue_film_continue(
+                session,
+                storyboard_id,
+                key=f"film-continue-{storyboard_id}-director-qc-{new_report}-0",
+                payload={"cause": f"director_qc:{new_report}", "report_id": new_report},
+            )
+    except SQLAlchemyError:
+        logger.warning("director_qc_round_not_yielded", extra={"storyboard_id": storyboard_id})
+        return None
 
 
 def _film_of(engine: Engine, asset_id: str) -> dict[str, Any]:

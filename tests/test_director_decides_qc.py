@@ -1097,6 +1097,65 @@ def test_the_redo_path_itself_refuses_a_plan_that_would_retire_his_final_take(
     assert result["bought"] == [] and result["new_asset"] is None
 
 
+def test_her_next_round_yields_the_worker_when_another_film_waits(
+    engine, settings, studio, monkeypatch
+):
+    """2026-10-12: the cyclotron's rounds (repair, render, QC, read again, up to four) held the
+    one worker an hour while the serial's walk waited in the queue. When another film's
+    continuation is QUEUED, the repaired film's new report is queued as a continuation of its
+    own (the review pass's key) and this walk ends; nobody waiting, the round runs here."""
+    from app.runbook import stages
+
+    film = failed_film(engine)
+    with Session(engine) as session, session.begin():
+        policy = session.get(OwnerPolicy, 1)
+        policy.environment = "PRODUCTION"
+        policy.autonomy_mode = "AUTONOMOUS_CEO"
+        session.add(
+            TaskQueueItem(
+                id=str(uuid4()),
+                workflow_id=None,
+                step_id=None,
+                task_type=FILM_CONTINUE_TASK,
+                payload={"storyboard_id": "another-film", "cause": "serial_unfilmed_after_start"},
+                priority=4,
+                status="QUEUED",
+                attempts=0,
+                max_attempts=1,
+                backoff_seconds=60,
+                next_attempt_at=utc_now(),
+                idempotency_key="film-continue-another-film-serial-after-start-x",
+                created_at=utc_now(),
+                updated_at=utc_now(),
+            )
+        )
+    repairs = [{"scene_index": 5, "redo": "still", "reason": "three stacked panels"}]
+    first = answer(verdicts_for(film), "REPAIR", repairs)
+    second = answer([{"finding": 1, "verdict": "ACCEPTED", "reason": "good enough"}], "ACCEPT")
+    first_report = f'"report_id": "{film["report"]}", "status"'
+    registry, model = director_says(
+        studio, lambda prompt: first if first_report in prompt else second
+    )
+    redo = FakeRedoPath(engine, monkeypatch, verdict="FAILED")
+
+    outcome = stages.director_decides_failed_film(
+        engine, settings, None, registry, film["report"], film["asset"]
+    )
+
+    (repair,) = outcome["repairs"]
+    assert len(model.asked) == 1, "she read the new report in the same walk"
+    assert [round_["outcome"] for round_ in outcome["rounds"]] == ["REPAIRED"]
+    assert outcome["yielded"]
+    with Session(engine) as session:
+        task = session.get(TaskQueueItem, outcome["yielded"])
+        assert task is not None and task.status == "QUEUED"
+        assert task.payload["storyboard_id"] == film["board"]
+        assert task.payload["cause"] == f"director_qc:{repair['requalified_report_id']}"
+        assert task.idempotency_key.endswith(f"-director-qc-{repair['requalified_report_id']}-0")
+    # One paid redo (and the rejoin that completes it): the second round did not run here.
+    assert [call for call in redo.calls if call[0] == "still"] == [("still", 5, True)]
+
+
 def test_a_repaired_film_that_fails_again_is_read_by_her_again(
     engine, settings, studio, monkeypatch
 ):
