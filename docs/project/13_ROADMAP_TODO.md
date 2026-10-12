@@ -1902,3 +1902,12 @@ No provider was called, no run was queued, no credit was spent, and
 - Found and closed the same night: the two `tests/test_autonomous_day.py` failures since
   3c30bc6 were the serial's two episodes (today's and tomorrow's) reaching the paid steps
   beside the factual film, not a double purchase; the tests tell the films apart now.
+- Morning: a paid motion redo priced with the raw tariff (no RunPod row) held the cyclotron's
+  scenes 4–5 NEEDS_OWNER every hour and the walk said «cumpărată» over nothing — fixed
+  (`_motion_state` prices as the sheet; a redo that bought nothing is a refusal).
+- Done the same morning: a motion rewrite that returned the same prompt («Rescrierea a dat
+  același prompt», scene 5 of the cyclotron, every hour) turns the redo to the picture — in the
+  QC repair (`_correct_before_redo` tries the still layer) and in the ladder (`open_layers`
+  counts the attempt).
+- Next: a RunPod job queued with no worker for longer than the cold start (06:15 → 07:38,
+  today's film) should be given up earlier or the Owner told at once.

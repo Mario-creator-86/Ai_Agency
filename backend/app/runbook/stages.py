@@ -4592,6 +4592,12 @@ def _decisions_words(decisions: list[dict[str, Any]]) -> str:
 
 #: A paid redo whose prompt could not be corrected first: the same words are not bought again.
 PROMPT_NOT_CORRECTED = "PROMPT_NOT_CORRECTED"
+#: Told to the Director with the report's words when the movement's rewrite changed nothing
+#: and the picture is rewritten instead.
+SAME_PROMPT_NOTE = (
+    "The movement of this scene was rewritten before and came back with the same words; the "
+    "picture itself must change now."
+)
 
 
 def _correct_before_redo(
@@ -4623,6 +4629,25 @@ def _correct_before_redo(
     ]
     try:
         done = rewrite_for_redo(engine, registry, storyboard_id, scene, layer, reasons, correlation)
+        if layer == "motion" and done.get("same_prompt") and "still" not in kinds:
+            # The movement's words came back unchanged on a picture that stays: the picture's
+            # turn (MOTION_REWRITES_BEFORE_STILL). 2026-10-12, the cyclotron's scene 5: the
+            # same motion brief was asked every hour and refused PROMPT_NOT_CORRECTED each
+            # time. The redo then buys the new still and its motion (``kinds`` is the caller's).
+            escalated = rewrite_for_redo(
+                engine,
+                registry,
+                storyboard_id,
+                scene,
+                "still",
+                [*reasons, SAME_PROMPT_NOTE],
+                correlation,
+            )
+            if escalated.get("rewritten"):
+                kinds.insert(0, "still")
+                return None
+            if escalated.get("rewritable", True):
+                done = escalated
     except Exception as exc:  # noqa: BLE001 - nothing is bought on words nobody corrected
         logger.warning(
             "redo_prompt_not_corrected",
@@ -4846,6 +4871,35 @@ def _apply_repairs(
                 bought_here = True
                 result["refused"].append(
                     {"what": f"scena {scene}: {PAID_REDO_WORDS[kind]}", "reason": exc.reason_ro}
+                )
+                break
+            summary = done.get("motion") if kind == "motion" else None
+            if isinstance(summary, dict) and not summary.get("bought_shots"):
+                # The step bought nothing for the scene (held NEEDS_OWNER, stopped, not bought):
+                # said as a refusal in the step's own words, never as a purchase. 2026-10-12,
+                # the cyclotron (aa170155): a motion redo held «Profilul RunPod selectat nu
+                # poate filma această scenă» was told to the Owner as «s-a cumpărat (1 refacere
+                # cumpărată)» five times through the night.
+                held: dict[str, Any] = next(
+                    (
+                        s
+                        for s in summary.get("scenes") or []
+                        if int(s.get("scene_index") or 0) == scene
+                    ),
+                    {},
+                )
+                result["refused"].append(
+                    {
+                        "what": f"scena {scene}: {PAID_REDO_WORDS[kind]}",
+                        "redo": kind,
+                        "scene_index": scene,
+                        "status": str(held.get("status") or summary.get("stopped") or "NOT_BOUGHT"),
+                        "reason": str(
+                            held.get("reason")
+                            or summary.get("stopped")
+                            or "mișcarea nu a fost cumpărată"
+                        )[:300],
+                    }
                 )
                 break
             bought_here = True

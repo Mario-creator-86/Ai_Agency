@@ -423,10 +423,14 @@ class FakeRedoPath:
         replaces=None,
         still_status: str = "APPROVED",
         refuse=None,
+        motion_unbought=(),
     ):
         from app.runbook import stages
 
         self.engine = engine
+        #: Scenes whose motion redo the step held NEEDS_OWNER and bought nothing for (the
+        #: cyclotron's unpriced RunPod profile, 2026-10-12): the redo returns the step's summary.
+        self.motion_unbought = set(motion_unbought)
         self.calls: list[tuple[str, int | None, bool]] = []
         #: Per paid redo, whether it was her confirmed repair (``director_repair``).
         self.confirmed: list[bool] = []
@@ -474,6 +478,27 @@ class FakeRedoPath:
                 "next_ro": (
                     f"Scena {scene_index} așteaptă decizia Proprietarului pe foaia de filmare."
                 ),
+            }
+        if scene_index in self.motion_unbought:
+            return {
+                "motion": {
+                    "bought_shots": 0,
+                    "needs_owner": [scene_index],
+                    "stopped": None,
+                    "scenes": [
+                        {
+                            "scene_index": scene_index,
+                            "status": "NEEDS_OWNER",
+                            "reason": (
+                                "Profilul RunPod selectat nu poate filma această scenă: nu are "
+                                "preț publicat la 1080p"
+                            ),
+                        }
+                    ],
+                },
+                "film": None,
+                "credits": 0,
+                "next_ro": "",
             }
         return {"film": {"output_asset_id": self._film(storyboard_id)}, "credits": 6}
 
@@ -2584,3 +2609,92 @@ def test_candidates_the_gate_turned_down_wait_for_her_look_then_the_film_is_hers
     monkeypatch.setattr("app.media.director_qc.utc_now", lambda: _in(days=BOUGHT_WAIT_DAYS + 1))
     state = decision_state(engine, film["report"])
     assert state["lapsed"] and not state["final"] and not state["pending"]
+
+
+def test_a_motion_redo_the_step_held_is_a_refusal_in_its_words_never_a_purchase(
+    engine, settings, studio, monkeypatch
+):
+    """2026-10-12, the cyclotron (aa170155): the motion step held the Director's redo of scenes
+    4 and 5 NEEDS_OWNER (an unpriced RunPod profile) and bought nothing, yet the walk told the
+    Owner «s-a cumpărat (1 refacere cumpărată); preluarea nouă așteaptă aprobarea» five times
+    through the night. A redo that bought nothing is a refusal, in the step's own words."""
+    from app.runbook import stages
+
+    film = failed_film(engine, local_move=False)
+    repairs = [{"scene_index": 5, "redo": "motion", "reason": "the glow replaced the drawing"}]
+    registry, _model = director_says(studio, answer(verdicts_for(film), "REPAIR", repairs))
+    redo = FakeRedoPath(engine, monkeypatch, motion_unbought={5})
+
+    outcome = stages.director_decides_failed_film(
+        engine, settings, None, registry, film["report"], film["asset"]
+    )
+
+    # Nothing of her list could be bought: she reads the report once more, knowing why, and
+    # the second round is refused the same way (one re-read, by design).
+    assert redo.calls == [("motion", 5, True), ("motion", 5, True)]
+    assert outcome["outcome"] == "NOTHING_DONE"
+    for decided in events(engine, DECISION_EVENT):
+        done = decided.payload["done"]
+        assert done["bought"] == []
+        (refused,) = [item for item in done["refused"] if item["scene_index"] == 5]
+        assert refused["redo"] == "motion" and refused["status"] == "NEEDS_OWNER"
+        assert "Profilul RunPod selectat" in refused["reason"]
+    assert events(engine, "runbook.qc_paid_redo") == []
+    for letter in letters(engine, LETTER_KIND):
+        assert "refacere cumpărată" not in letter.body_text
+
+
+def test_a_motion_rewrite_that_changed_nothing_turns_the_redo_to_the_picture(engine, monkeypatch):
+    """2026-10-12, the cyclotron's scene 5: every hour the Director's brief rewrote the movement
+    and the Video Editor's words came back the same, so the paid redo was refused
+    PROMPT_NOT_CORRECTED and asked again the next hour. A movement that cannot be said
+    differently on a picture that stays is the picture's turn (MOTION_REWRITES_BEFORE_STILL):
+    the redo then buys the new still and its motion."""
+    from app.media import scene_rewrite
+    from app.runbook import stages
+
+    asked: list[tuple[str, list[str]]] = []
+
+    def fake_rewrite(engine_, registry, storyboard_id, scene, layer, reasons, correlation):
+        asked.append((layer, list(reasons)))
+        if layer == "motion":
+            return {
+                "rewritten": False,
+                "rewritable": True,
+                "same_prompt": True,
+                "reason": "Rescrierea a dat același prompt; nimic nou de cumpărat.",
+            }
+        return {"rewritten": True, "rewritable": True, "layer": "still", "reason": ""}
+
+    monkeypatch.setattr(scene_rewrite, "rewrite_for_redo", fake_rewrite)
+    kinds = ["motion"]
+
+    refusal = stages._correct_before_redo(
+        engine, None, "board-1", 5, kinds, [], {"findings": []}, "c-1"
+    )
+
+    assert refusal is None
+    assert kinds == ["still", "motion"], kinds
+    assert [layer for layer, _ in asked] == ["motion", "still"]
+    assert stages.SAME_PROMPT_NOTE in asked[1][1]
+
+
+def test_a_picture_that_cannot_be_rewritten_either_keeps_the_refusal(engine, monkeypatch):
+    from app.media import scene_rewrite
+    from app.runbook import stages
+
+    def fake_rewrite(engine_, registry, storyboard_id, scene, layer, reasons, correlation):
+        if layer == "motion":
+            return {"rewritten": False, "rewritable": True, "same_prompt": True, "reason": "la fel"}
+        # His approved still: not the studio's to rewrite.
+        return {"rewritten": False, "rewritable": False, "reason": ""}
+
+    monkeypatch.setattr(scene_rewrite, "rewrite_for_redo", fake_rewrite)
+    kinds = ["motion"]
+
+    refusal = stages._correct_before_redo(
+        engine, None, "board-1", 5, kinds, [], {"findings": []}, "c-2"
+    )
+
+    assert refusal is not None and refusal["status"] == stages.PROMPT_NOT_CORRECTED
+    assert "la fel" in refusal["reason"] and kinds == ["motion"]

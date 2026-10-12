@@ -429,3 +429,73 @@ def test_a_walk_whose_rewrite_did_not_land_says_the_studio_retries_not_the_owner
     assert film["reason"].startswith("Directoarea nu a putut încă rescrie scena 1")
     assert "Director" in film["reason"] and "reia singur" in film["reason"]
     assert "decizia Proprietarului" not in film["reason"]
+
+
+def test_a_motion_rewrite_that_came_back_the_same_is_the_movements_turn_taken(
+    engine, tmp_path, studio
+):
+    """2026-10-12, the cyclotron's scene 5: the Director's brief rewrote the movement every hour
+    and the words came back the same, so nothing was recorded as rewritten and the ladder kept
+    the movement open. A motion attempt that changed nothing on a picture that stays counts
+    like one that landed: the picture's turn (the words on the attempts recorded before the
+    flag, the flag since)."""
+    from app.services import append_event
+
+    storyboard_id = a_planned_film(engine, tmp_path, still_by="still_gate")
+    with Session(engine) as session:
+        assert open_layers(session, storyboard_id, 1, last_code="QC.CLIP") == (MOTION, STILL)
+    with Session(engine) as session, session.begin():
+        append_event(
+            session,
+            BRIEF_EVENT,
+            "storyboard",
+            storyboard_id,
+            1,
+            {
+                "scene_index": 1,
+                "layer": "motion",
+                "asked_layer": "motion",
+                "rewritten": False,
+                "reason": "Rescrierea a dat același prompt; nimic nou de cumpărat.",
+            },
+            str(uuid4()),
+        )
+    with Session(engine) as session:
+        assert open_layers(session, storyboard_id, 1, last_code="QC.CLIP") == (STILL,)
+        # A brief refused for another reason (his rewrite blocked by the lint) is no attempt.
+    with Session(engine) as session, session.begin():
+        append_event(
+            session,
+            BRIEF_EVENT,
+            "storyboard",
+            storyboard_id,
+            1,
+            {
+                "scene_index": 1,
+                "layer": "still",
+                "asked_layer": "still",
+                "rewritten": True,
+                "same_prompt": False,
+                "reason": "",
+            },
+            str(uuid4()),
+        )
+        append_event(
+            session,
+            BRIEF_EVENT,
+            "storyboard",
+            storyboard_id,
+            1,
+            {
+                "scene_index": 1,
+                "layer": "motion",
+                "asked_layer": "motion",
+                "rewritten": False,
+                "same_prompt": False,
+                "reason": "Verificarea promptului a blocat rescrierea: STILL_LENGTH",
+            },
+            str(uuid4()),
+        )
+    with Session(engine) as session:
+        # The still rewrite started the count again; the blocked attempt did not count.
+        assert open_layers(session, storyboard_id, 1, last_code="QC.CLIP") == (MOTION, STILL)

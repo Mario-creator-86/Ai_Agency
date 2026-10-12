@@ -346,10 +346,14 @@ def earlier_briefs(session: Session, storyboard_id: str, scene_index: int) -> li
         payload = _payload(event)
         if payload.get("scene_index") != scene_index:
             continue
+        reason = str(payload.get("reason") or "")
         brief = {
             "at": str(event.timestamp)[:16],
             "layer": payload.get("layer"),
             "rewritten": payload.get("rewritten"),
+            # The rewrite came back with the same words (the flag since 2026-10-12; the words
+            # for the attempts recorded before it).
+            "same_prompt": bool(payload.get("same_prompt")) or "același prompt" in reason,
             "diagnosis": payload.get("diagnosis"),
             "avoid": payload.get("avoid") or [],
             "change": payload.get("change") or [],
@@ -357,7 +361,7 @@ def earlier_briefs(session: Session, storyboard_id: str, scene_index: int) -> li
         if not payload.get("rewritten"):
             # An attempt that rewrote nothing (her brief refused, his rewrite blocked): she is
             # told why, so she does not write the same brief again (2026-10-11).
-            brief["reason"] = payload.get("reason") or ""
+            brief["reason"] = reason
         briefs.append(brief)
     return briefs
 
@@ -374,8 +378,11 @@ def open_layers(
         return (STILL,)
     motions = 0
     for brief in earlier_briefs(session, storyboard_id, scene_index):
-        if not brief.get("rewritten"):
+        if not brief.get("rewritten") and not brief.get("same_prompt"):
             continue
+        # A motion rewrite that landed, or one that came back with the same words (the
+        # cyclotron's scene 5, 2026-10-12: asked the same every hour), is a motion attempt on
+        # this picture; a still rewrite starts the count again.
         motions = motions + 1 if brief.get("layer") == MOTION else 0
     if motions >= MOTION_REWRITES_BEFORE_STILL:
         return (STILL,)
@@ -717,6 +724,9 @@ def rewrite_scene(
     still_changed = " ".join(visual.split()) != " ".join(context["visual_prompt"].split())
     if not still_changed and not _motion_changed(stored, package):
         outcome["reason"] = "Rescrierea a dat același prompt; nimic nou de cumpărat."
+        # The caller may try the other layer: a motion rewrite that changed nothing on a
+        # picture that stays is the picture's turn (MOTION_REWRITES_BEFORE_STILL).
+        outcome["same_prompt"] = True
         return outcome
     layer_done = STILL if still_changed else MOTION
     with Session(engine) as session, session.begin():
@@ -872,6 +882,9 @@ def _record_brief(
                 "layer": done.get("layer") or brief.get("layer"),
                 "asked_layer": brief.get("layer"),
                 "rewritten": bool(done.get("rewritten")),
+                # A rewrite that came back with the same words: counted as a motion attempt
+                # by `open_layers`, so the picture's turn comes (2026-10-12, the cyclotron).
+                "same_prompt": bool(done.get("same_prompt")),
                 "reason": done.get("reason") or "",
                 "diagnosis": brief.get("diagnosis"),
                 "avoid": brief.get("avoid") or [],

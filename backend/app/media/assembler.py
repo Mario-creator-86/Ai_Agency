@@ -9100,8 +9100,15 @@ def _motion_state(
     With ``redo`` (a scene the Owner is having redone) that scene's shot is planned again and
     a third step, ``scene_redo``, buys it alone."""
     from app.media.prompt_agent import motion_prompt_for  # noqa: PLC0415
+    from app.media.shooting_sheet import price_table_for  # noqa: PLC0415 - it imports us
 
-    prices = table or load_price_table()
+    # The table the sheet prices with — the local selection's models at 0 credits and the
+    # RunPod profile's estimated rows laid over the published tariff — never the raw published
+    # table: priced raw, the Director's motion redo of the cyclotron (aa170155, 2026-10-11
+    # 20:17 UTC) found no row for LTX-2.5 at 1080p, held NEEDS_OWNER «Profilul RunPod selectat
+    # nu poate filma această scenă: nu are preț publicat la 1080p», and was asked again every
+    # hour; the sheet's own motion step priced the same model on the same day.
+    prices = table if table is not None else price_table_for(engine, None)
     _title, scenes = _storyboard_scenes(engine, storyboard_id)
     with Session(engine) as session:
         board = session.get(Storyboard, storyboard_id)
@@ -11262,6 +11269,12 @@ def run_motion_step(
     margin = margin_of(settings)
     caps = _capabilities(engine, capabilities, integration_id)
     environment = environment or studio_environment(engine)
+    if table is None:
+        # A redo reaches this step with no table of its own (`_paid_redo`): priced as the
+        # sheet prices, with this connection's measured rows and the RunPod profile's estimates.
+        from app.media.shooting_sheet import price_table_for  # noqa: PLC0415 - it imports us
+
+        table = price_table_for(engine, integration_id)
     state = _motion_state(
         engine,
         storyboard_id,
