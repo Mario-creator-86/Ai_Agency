@@ -4306,32 +4306,41 @@ def test_her_reading_keeps_the_carry_key_and_never_settles_a_detector(engine):
     assert "_settle_keys" not in json.loads(_director_payload(context))
 
 
-def test_no_audio_stream_after_the_free_fix_goes_to_his_card_and_nothing_is_done(
+def test_no_audio_stream_after_every_free_fix_is_the_developers_never_a_card_to_him(
     engine, settings, studio, monkeypatch
 ):
     """Finding 7: «The film has no audio stream» is measured serious, never ACCEPTED; its only
-    fix, the audio redo, was the free fix already made for the film, and the refusal told her
-    to decide ACCEPT, which could not validate either. Her REPAIR of it validates now: nothing
-    is done, and the Owner's card asks him (publish as it is, close, or wait); she is not asked
-    again while it waits."""
+    fix, the audio redo, is free. The Owner, 2026-10-12 22:50: «Dacă "decide Proprietarul"
+    înseamnă că nu este o agenție autonomă!» — a free fix costs nothing, so it is made again,
+    up to FREE_FIXES_PER_FILM times; when every free fix is made and the defect stays, her
+    REPAIR validates, nothing is done, NO card reaches the Owner, and one note goes to the
+    developer; she is not asked again about the same report."""
+    from app.agents.director import DEVELOPER_DEFECT_KIND
+    from app.agents.models import AgentMessage
     from app.agents.reviews import decision_schema
     from app.decisions.models import OwnerDecision
     from app.runbook import stages
-    from app.runbook.stages import QC_REPAIR_EVENT
+    from app.runbook.stages import FREE_FIXES_PER_FILM, QC_REPAIR_EVENT
     from pydantic import ValidationError
 
     film = failed_film(engine, panels=False, extra_failures=[SILENT])
     with Session(engine) as session, session.begin():
-        # The film's line already had its one free fix.
-        append_event(
-            session,
-            QC_REPAIR_EVENT,
-            "storyboard",
-            film["board"],
-            1,
-            {"of_asset": str(uuid4()), "made": [film["asset"]], "new_asset": film["asset"]},
-            "c",
-        )
+        # The film already had every free fix it may have.
+        for _round in range(FREE_FIXES_PER_FILM):
+            append_event(
+                session,
+                QC_REPAIR_EVENT,
+                "storyboard",
+                film["board"],
+                1,
+                {
+                    "of_asset": str(uuid4()),
+                    "made": [film["asset"]],
+                    "new_asset": film["asset"],
+                    "applied": [{"what": "audio", "redo": "audio"}],
+                },
+                "c",
+            )
     real = {len(film["failures"])}
     audio = [{"redo": "audio", "reason": "the film has no sound"}]
     registry, model = director_says(studio, answer(verdicts_for(film, real), "REPAIR", audio))
@@ -4344,12 +4353,16 @@ def test_no_audio_stream_after_the_free_fix_goes_to_his_card_and_nothing_is_done
 
     assert len(model.asked) == 1 and outcome["outcome"] == "NOTHING_DONE"
     (repair,) = outcome["repairs"]
-    assert repair["card_id"]
+    assert not repair.get("card_id") and repair["developer_note"]
     with Session(engine) as session:
-        card = session.get(OwnerDecision, repair["card_id"])
-        assert card.kind == "free_fix_used" and card.subject_id == film["board"]
+        assert list(session.scalars(select(OwnerDecision))) == [] or all(
+            card.kind != "free_fix_used" for card in session.scalars(select(OwnerDecision))
+        ), "a quality stall never reaches the Owner"
+        note = session.get(AgentMessage, repair["developer_note"])
+        assert note.body_json["kind"] == DEVELOPER_DEFECT_KIND
+        assert note.body_json["report_id"] == film["report"] and note.to_agent_id is not None
     nothing_bought(engine)
-    assert _pass(engine, settings) == {"queued": []}, "she is not asked while his card waits"
+    assert _pass(engine, settings) == {"queued": []}, "she is not asked again on the same report"
 
     # A REPAIR nothing can carry out, on a defect not measured as serious: refused, and the
     # refusal no longer steers her to «decide ACCEPT».

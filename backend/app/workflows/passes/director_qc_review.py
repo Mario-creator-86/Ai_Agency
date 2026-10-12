@@ -71,6 +71,26 @@ def _his_card_open(session: Any, storyboard_id: str) -> bool:
     )
 
 
+def _developer_waits(session: Any, report_id: str) -> bool:
+    """Whether this failed report waits on the developer: its only fix, a free one, was made
+    `runbook.stages.FREE_FIXES_PER_FILM` times without curing a measured serious defect, and
+    the Director noted it for the developer (`runbook.stages._free_fix_defect_note`). She is
+    not asked again about the same report every hour; a new report (a new film) reads anew."""
+    from sqlalchemy import select  # noqa: PLC0415
+
+    from app.agents.director import DEVELOPER_DEFECT_KIND  # noqa: PLC0415
+    from app.agents.models import AgentMessage  # noqa: PLC0415
+    from app.runbook.stages import FREE_FIX_NOTE_SUBJECT  # noqa: PLC0415
+
+    for row in session.scalars(
+        select(AgentMessage).where(AgentMessage.subject.like(f"{FREE_FIX_NOTE_SUBJECT}%"))
+    ):
+        body = row.body_json if isinstance(row.body_json, dict) else {}
+        if body.get("kind") == DEVELOPER_DEFECT_KIND and body.get("report_id") == report_id:
+            return True
+    return False
+
+
 @watchdog_pass("director_qc_review", order=160, on_error={"queued": []})
 def queue_director_reviews(context: WatchdogContext) -> dict[str, Any]:
     from sqlalchemy import select  # noqa: PLC0415
@@ -129,6 +149,8 @@ def queue_director_reviews(context: WatchdogContext) -> dict[str, Any]:
                 .limit(1)
             )
             if report is None or report.status != "FAILED" or str(report.verified_at) < since:
+                continue
+            if _developer_waits(session, str(report.id)):
                 continue
             state = decision_state(context.engine, str(report.id))
             if state["final"] and not (state["pending"] and (state["ready"] or state["look"])):

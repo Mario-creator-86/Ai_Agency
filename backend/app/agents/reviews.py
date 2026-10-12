@@ -961,7 +961,11 @@ def redo_refusal(item: DirectorRedo, context: Mapping[str, Any]) -> tuple[str, s
         return "NOT_A_CARD", f"{where}: the scene is filmed, not a card"
     if redo in FILM_LEVEL_REDOS or redo == "card" or kind in CARD_KINDS:
         if context.get("free_fix_already_used"):
-            return "FREE_USED", f"{where}: the free fix was already made once for this film"
+            return (
+                "FREE_USED",
+                f"{where}: the free fixes were already made for this film as many times as "
+                "they may be (runbook.stages.FREE_FIXES_PER_FILM)",
+            )
         return None
     if scene is None:
         return "NO_SCENE", f"{where}: no such scene"
@@ -1013,8 +1017,10 @@ def capped_repair(repairs: list[DirectorRedo], context: Mapping[str, Any]) -> bo
     )
 
 
-#: Why a redo cannot be carried out that no agent can lift, only the Owner: his cap
-#: (`LIMITS`), and the free fix already made once for the film (FREE_USED).
+#: Why a redo cannot be carried out that no agent can lift: his cap (`LIMITS`, money: his
+#: card), and the free fixes already made as many times as they may be (FREE_USED: a tool's
+#: defect, a note for the developer — never a card to him, the Owner, 2026-10-12 22:50:
+#: «Dacă "decide Proprietarul" înseamnă că nu este o agenție autonomă!»).
 OWNER_BOUND = frozenset({LIMITS, "FREE_USED"})
 
 
@@ -1023,12 +1029,13 @@ def owner_bound_repair(
 ) -> bool:
     """Whether a REPAIR is stopped only by what the Owner alone can lift: his cap
     (`capped_repair`), or — for a defect of the whole film quality control measured as serious
-    (``measured``) — the free fix already made once (`OWNER_BOUND`).
+    (``measured``) — the free fixes already made as often as they may be (`OWNER_BOUND`).
 
     The review of 2026-10-12, round 3: «The film has no audio stream» is measured serious, so
     never ACCEPTED; its only fix, the audio redo, was refused FREE_USED; the refusal told her to
     decide ACCEPT, which did not validate either, and the film had no honest answer. Such a
-    REPAIR is carried out: nothing is done, and his card asks him (`runbook.stages`)."""
+    REPAIR is carried out: nothing is done; for his cap his card asks him (money), for the
+    spent free fixes the developer is told (`runbook.stages._free_fix_defect_note`), never him."""
     if capped_repair(repairs, context):
         return True
     if not measured:
@@ -1266,9 +1273,10 @@ def decision_schema(
                     # that could not validate either.
                     raise ValueError(
                         f"no redo of this REPAIR can be carried out now ({why}): list a redo that "
-                        "can be; a serious defect stopped only by the Owner's limits, or by a "
-                        "free fix already made once, is REPAIRed all the same and he is asked on "
-                        "a card; a minor flaw you let through is ACCEPTED, not REAL"
+                        "can be; a serious defect stopped only by the Owner's limits is "
+                        "REPAIRed all the same and he is asked on a card (money); one whose free "
+                        "fixes are all made is REPAIRed all the same and noted for the "
+                        "developer; a minor flaw you let through is ACCEPTED, not REAL"
                     )
             return self
 
@@ -1445,9 +1453,9 @@ def review_film_qc(
             )
             + (
                 # The review of 2026-10-12, round 3: «no audio stream» had no honest answer.
-                "; a defect measured as serious whose only fix is a free fix already made once "
-                "(free_fix_already_used) is REPAIRed all the same: nothing is done, and the "
-                "Owner is asked on a card"
+                "; a defect measured as serious whose only fix is a free fix already made as "
+                "often as it may be (free_fix_already_used) is REPAIRed all the same: nothing "
+                "is done, and it is noted for the developer (never a question to the Owner)"
                 if context.get("free_fix_already_used")
                 else ""
             )

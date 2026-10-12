@@ -3863,6 +3863,34 @@ def _repair_intermediates(engine: Engine) -> set[str]:
     return made
 
 
+#: How many times a film's free fixes (audio, encode, card — 0 credits) may be made in all.
+#: The Owner, 2026-10-12 22:50: «Dacă "decide Proprietarul" înseamnă că nu este o agenție
+#: autonomă!» — a free fix costs nothing, so the Director makes it again (no card to him);
+#: the cap only keeps a fix that cannot work from running forever, and past it the defect is
+#: the developer's (`_free_fix_defect_note`).
+FREE_FIXES_PER_FILM = 3
+
+
+def _free_fix_rounds(session: Session, storyboard_id: str) -> int:
+    """How many of the film's repairs applied a free fix (their ``applied`` list)."""
+    rounds = 0
+    for event in session.scalars(
+        select(DomainEvent).where(
+            DomainEvent.event_type == QC_REPAIR_EVENT,
+            DomainEvent.aggregate_id == storyboard_id,
+        )
+    ):
+        payload = event.payload if isinstance(event.payload, dict) else {}
+        if payload.get("applied"):
+            rounds += 1
+    return rounds
+
+
+def _free_fixes_spent(session: Session, storyboard_id: str) -> bool:
+    """Whether the film has had all its free fixes (`FREE_FIXES_PER_FILM`)."""
+    return bool(storyboard_id) and _free_fix_rounds(session, storyboard_id) >= FREE_FIXES_PER_FILM
+
+
 def _repaired_assets(session: Session) -> set[str]:
     """Every film a repair started from or produced: none is repaired for free again."""
     seen: set[str] = set()
@@ -4145,7 +4173,12 @@ def director_decides_failed_film(
                 report, asset = new_report, new_asset
                 continue
             break
-        if kind == "NOTHING_DONE" and not read_again and not (repair or {}).get("card_id"):
+        if (
+            kind == "NOTHING_DONE"
+            and not read_again
+            and not (repair or {}).get("card_id")
+            and not (repair or {}).get("developer_note")
+        ):
             # Nothing of her list could be done (his approved takes, the limits, a free fix
             # already made, her second look overturning the refusal): she reads the report once
             # more, knowing why. Not when his cap stopped it and his card asks him what becomes
@@ -4213,7 +4246,7 @@ def _redo_allowance(
     with Session(engine) as session:
         spent = _paid_redo_rounds(session, storyboard_id) if storyboard_id else {}
         open_rounds = _open_still_rounds(session, storyboard_id) if storyboard_id else {}
-        free_used = str(reading.get("media_asset_id")) in _repaired_assets(session)
+        free_used = _free_fixes_spent(session, storyboard_id)
     limits = {
         "per_scene": int(getattr(settings, "film_max_paid_redos_per_scene", 1)),
         "per_film": int(getattr(settings, "film_max_paid_redos", 2)),
@@ -4738,7 +4771,7 @@ def _director_repairs(
         return result
     try:
         with Session(engine) as session:
-            free_used = asset_id in _repaired_assets(session)
+            free_used = _free_fixes_spent(session, storyboard_id)
             protected = director_qc.protected_redos(
                 session, storyboard_id, reading.get("production") or {}
             )
@@ -4772,9 +4805,9 @@ def _director_repairs(
         )
         result["refused"].append({"what": "refacerea", "reason": error_words(exc)[:300]})
     if _free_fix_spent_on_measured(result, verdicts or []):
-        card_id = _free_fix_card(engine, reading, result)
-        if card_id:
-            result["card_id"] = card_id
+        note_id = _free_fix_defect_note(engine, reading, result)
+        if note_id:
+            result["developer_note"] = note_id
     # Recorded once something was applied, bought or made: the film's line then had its free
     # fix (`_repaired_assets`); a redo only asked of him leaves the line as it was.
     if result["applied"] or result["bought"] or result["made"]:
@@ -4803,7 +4836,10 @@ def _free_fix_spent_on_measured(result: Mapping[str, Any], verdicts: list[dict[s
     rule as `reviews.owner_bound_repair`)."""
     from app.agents.reviews import measured_serious, scenes_named  # noqa: PLC0415
 
-    if any(result.get(key) for key in ("applied", "bought", "asked", "new_asset", "card_id")):
+    if any(
+        result.get(key)
+        for key in ("applied", "bought", "asked", "new_asset", "card_id", "developer_note")
+    ):
         return False
     if not any(
         isinstance(item, Mapping) and item.get("status") == "FREE_FIX_USED"
@@ -4821,21 +4857,30 @@ def _free_fix_spent_on_measured(result: Mapping[str, Any], verdicts: list[dict[s
     )
 
 
-def _free_fix_card(
+#: The kind of the developer's note when a film's free fixes are spent on a measured defect,
+#: and the start of its subject (the review pass finds it by it).
+FREE_FIX_DEFECT = "free_fix_spent"
+FREE_FIX_NOTE_SUBJECT = "Pentru dezvoltator: reparația gratuită nu ajută filmul"
+
+
+def _free_fix_defect_note(
     engine: Engine, reading: Mapping[str, Any], result: Mapping[str, Any]
 ) -> str | None:
-    """The Owner's card when the only fix of a measured serious defect is the free fix already
-    made once for the film (the review of 2026-10-12, round 3: «The film has no audio stream»
-    could be neither ACCEPTED nor repaired, and her answer could not validate): nothing is
-    redone; he publishes the film as it is, closes it, or waits. Once per film, under the same
-    key as the cap's card (`decisions.producers.redo_cap.dedupe_key`), so she is not asked
-    again while it waits (`workflows.passes.director_qc_review`). Never raises."""
-    from app.decisions.producers import redo_cap  # noqa: PLC0415 - decisions import media
-    from app.decisions.services import propose_owner_decision  # noqa: PLC0415
+    """A note for the developer, never a card to the Owner, when the only fix of a defect
+    quality control measured as serious is a free fix (audio, encode, card) already made
+    `FREE_FIXES_PER_FILM` times for the film (the review of 2026-10-12, round 3: «The film has
+    no audio stream» could be neither ACCEPTED nor repaired). The Owner, 22:50 that day: «Dacă
+    "decide Proprietarul" înseamnă că nu este o agenție autonomă!» — a free fix that does not
+    work three times is a tool's defect, the developer's (his letter rule: tool defects are
+    developer_defect notes). Written in the Director's own thread, resolved at once, ONE per
+    failed report, so the review pass does not ask her again about the same report
+    (`workflows.passes.director_qc_review._developer_waits`). Never raises."""
+    from app.agents.director import DEVELOPER_DEFECT_KIND  # noqa: PLC0415 - agents import runbook
+    from app.agents.messages import post_message, resolve_message  # noqa: PLC0415
+    from app.agents.models import AgentMessage  # noqa: PLC0415
 
     storyboard_id = str(reading.get("storyboard_id") or "")
     report_id = str(reading.get("report_id") or "")
-    asset_id = str(reading.get("media_asset_id") or "")
     if not storyboard_id or not report_id:
         return None
     why_parts = [
@@ -4846,64 +4891,58 @@ def _free_fix_card(
     try:
         with Session(engine) as session, session.begin():
             lock_for_write(session)
+            for row in session.scalars(
+                select(AgentMessage).where(AgentMessage.subject.like(f"{FREE_FIX_NOTE_SUBJECT}%"))
+            ):
+                body = row.body_json if isinstance(row.body_json, dict) else {}
+                if (
+                    body.get("kind") == DEVELOPER_DEFECT_KIND
+                    and body.get("defect") == FREE_FIX_DEFECT
+                    and body.get("report_id") == report_id
+                ):
+                    return str(row.id)
+            director = agent_for_role(session, "Director")
+            if director is None:
+                return None
             board = session.get(Storyboard, storyboard_id)
             title = str(getattr(board, "title", "") or storyboard_id[:8]).strip()[:120]
-            card = propose_owner_decision(
-                session,
-                kind="free_fix_used",
-                dedupe_key=redo_cap.dedupe_key(storyboard_id),
-                source=redo_cap.SOURCE,
-                subject_type="storyboard",
-                subject_id=storyboard_id,
-                title_ro=f"Filmul «{title}»: defectul serios nu se mai poate repara gratuit",
-                why_ro=(
-                    "Controlul calității a măsurat un defect serios pe care Directoarea l-a "
-                    "confirmat, iar singura lui reparație, cea gratuită, s-a făcut deja o dată "
-                    "pentru acest film și nu se repetă singură"
-                    + (f" ({'; '.join(why_parts)[:400]})" if why_parts else "")
-                    + "."
-                ),
-                effect_ro="Nimic nu se reface pentru acest film până nu alegi.",
-                options=[
-                    {
-                        "key": "publish",
-                        "label_ro": "Publică filmul așa cum e",
-                        "effect_ro": (
-                            "Filmul trece controlul de calitate prin decizia ta, cu defectul "
-                            "rămas, și merge la publicare."
-                        ),
-                        "apply": {
-                            "type": redo_cap.FILM_PUBLISH_AS_IS,
-                            "storyboard_id": storyboard_id,
-                            "report_id": report_id,
-                            "media_asset_id": asset_id,
-                        },
-                    },
-                    {
-                        "key": "close",
-                        "label_ro": "Închide filmul",
-                        "effect_ro": (
-                            "Filmul se închide cu registrele lui; nimic nu se mai cumpără."
-                        ),
-                        "apply": {
-                            "type": redo_cap.FILM_CLOSE_CAPPED,
-                            "storyboard_id": storyboard_id,
-                            "report_id": report_id,
-                        },
-                    },
-                    {
-                        "key": "wait",
-                        "label_ro": "Aștept",
-                        "effect_ro": "Filmul rămâne cum e; cardul stă până alegi.",
-                        "apply": {"type": "none"},
-                    },
-                ],
+            note = (
+                f"Filmul «{title}»: un defect serios măsurat de controlul calității se repară "
+                f"doar gratuit, iar reparația gratuită s-a făcut deja de {FREE_FIXES_PER_FILM} ori "
+                "fără să-l elimine"
+                + (f" ({'; '.join(why_parts)[:400]})" if why_parts else "")
+                + ". E un defect al uneltei: filmul așteaptă dezvoltatorul, nu Proprietarul."
             )
-            return str(card.id)
-    except Exception as exc:  # noqa: BLE001 - the repair's own words stand without the card
+            row = post_message(
+                session,
+                intent="STATUS",
+                subject=f"{FREE_FIX_NOTE_SUBJECT} «{title}»"[:200],
+                body={
+                    "kind": DEVELOPER_DEFECT_KIND,
+                    "defect": FREE_FIX_DEFECT,
+                    "storyboard_id": storyboard_id,
+                    "report_id": report_id,
+                    "note": note,
+                },
+                body_text=note,
+                from_agent_id=director.id,
+                to_agent_id=director.id,
+                correlation_id=report_id,
+            )
+            resolve_message(
+                session,
+                row.id,
+                resolution="Notat pentru dezvoltator.",
+                resolved_by=director.display_name,
+                status="RESOLVED",
+                correlation_id=report_id,
+            )
+            return str(row.id)
+    except Exception as exc:  # noqa: BLE001 - the repair's own words stand without the note
         logger.warning(
-            "free_fix_card_not_proposed",
+            "free_fix_note_not_written",
             extra={"storyboard_id": storyboard_id, "error": type(exc).__name__},
+            exc_info=exc,
         )
         return None
 
@@ -5511,7 +5550,7 @@ def _apply_repairs(
     since = since or utc_now()
     result.setdefault("waiting", [])
     with Session(engine) as session:
-        free_already = asset_id in _repaired_assets(session)
+        free_already = _free_fixes_spent(session, storyboard_id)
         # What he approved as final is never retired here; what he approved without marking
         # it final is replaced by her confirmed repair, and he is told (2026-10-11, his card).
         his_final = director_qc.owner_approved_take_ids(session, storyboard_id, final_only=True)
