@@ -52,7 +52,6 @@ from app.providers.registry import ProviderRegistry
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from test_clip_qc_wiring import ScriptedCheck, events, shots
-from test_failed_brief_is_recorded import contract_lessons
 from test_film_costing import SEEDANCE, Account, Models, SpyVideo, a_film, approved
 
 pytestmark = pytest.mark.skipif(find_ffmpeg() is None, reason="ffmpeg not installed")
@@ -125,11 +124,6 @@ MISSED = {
     "cause": "The plan places a figure on the ridge, whose head can turn to the camera.",
     "lesson": "Show people only as small distant figures seen from behind for the whole shot.",
 }
-
-
-@pytest.fixture(autouse=True)
-def lesson_store(monkeypatch):
-    return contract_lessons(monkeypatch)
 
 
 def answer_each(prompt: str, review: dict[str, Any]) -> dict[str, Any]:

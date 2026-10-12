@@ -11,9 +11,7 @@ next time and the watchdog's ladder retry reads. Every provider faked, 0 credits
 
 from __future__ import annotations
 
-import inspect
 import json
-import re
 from typing import Any
 from uuid import uuid4
 
@@ -49,77 +47,6 @@ STILL_BRIEF = {
     "change": ["hands and tools in close-up, no figure"],
     "summary_ro": "Refac imaginea fără chip.",
 }
-
-
-_SCENE_NAMED = re.compile(r"\b(?:scene|scenes|scena|scenele|scenei|shot)\s*#?\d+", re.I)
-
-
-def contract_lessons(monkeypatch) -> list[dict[str, Any]] | None:
-    """The studio's lesson store as the four groups of 2026-10-12 agreed it
-    (`prompt_agent.record_prompt_lesson` with ``scope`` and ``provisional``, `prompt_lessons`
-    by scope with « (unverified)» on a provisional lesson, `confirm_prompt_lessons`,
-    `withdraw_prompt_lessons`), kept in memory for these tests while `prompt_agent` does not
-    carry it yet; once it does, the real store is used and this returns None. Returns the
-    in-memory rows otherwise."""
-    from app.media import prompt_agent
-
-    if "scope" in inspect.signature(prompt_agent.record_prompt_lesson).parameters:
-        return None
-    rows: list[dict[str, Any]] = []
-
-    def record(session, lesson, *, source_id=None, scope="all", provisional=False) -> bool:
-        text = " ".join(str(lesson or "").split())
-        if not text or len(text) > 400 or _SCENE_NAMED.search(text):
-            return False
-        for row in rows:
-            if row["live"] and row["text"].casefold() == text.casefold():
-                row["live"] = False
-        rows.append(
-            {
-                "text": text,
-                "source_id": source_id,
-                "scope": scope,
-                "provisional": provisional,
-                "live": True,
-            }
-        )
-        return True
-
-    def lessons(session, limit=12, *, scope=None) -> list[str]:
-        live = [
-            row
-            for row in reversed(rows)
-            if row["live"] and (scope is None or row["scope"] in (scope, "all"))
-        ]
-        ordered = [row for row in live if not row["provisional"]] + [
-            row for row in live if row["provisional"]
-        ]
-        return [
-            row["text"] + (" (unverified)" if row["provisional"] else "") for row in ordered[:limit]
-        ]
-
-    def confirm(session, source_ids) -> int:
-        found = [r for r in rows if r["live"] and r["provisional"] and r["source_id"] in source_ids]
-        for row in found:
-            row["provisional"] = False
-        return len(found)
-
-    def withdraw(session, source_ids, reason) -> int:
-        found = [r for r in rows if r["live"] and r["source_id"] in source_ids]
-        for row in found:
-            row["live"] = False
-        return len(found)
-
-    monkeypatch.setattr(prompt_agent, "record_prompt_lesson", record)
-    monkeypatch.setattr(prompt_agent, "prompt_lessons", lessons)
-    monkeypatch.setattr(prompt_agent, "confirm_prompt_lessons", confirm, raising=False)
-    monkeypatch.setattr(prompt_agent, "withdraw_prompt_lessons", withdraw, raising=False)
-    return rows
-
-
-@pytest.fixture(autouse=True)
-def lesson_store(monkeypatch):
-    return contract_lessons(monkeypatch)
 
 
 class Director:

@@ -40,14 +40,19 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
-from app.agents.models import ModelRecord
+from app.agents.director import DEVELOPER_DEFECT_KIND
+from app.agents.models import AgentMessage, ModelRecord
 from app.agents.services import seed_initial_workforce
 from app.media import prompt_agent
+from app.media import scene_rewrite as rewrite_module
 from app.media.assembler import SCENE_PROMPTS_REWRITTEN_EVENT
-from app.media.models import StoryboardScene
+from app.media.models import SceneTake, StoryboardScene
 from app.media.prompt_lint import MOTION_CLOSING
 from app.media.scene_rewrite import (
+    ACCEPTED_MINOR,
     BRIEF_EVENT,
+    LOCK_COMPOSER,
+    LOCK_PICTURE,
     MAX_OLDER_BRIEFS,
     MAX_PAYLOAD_CHARS,
     MINOR,
@@ -55,12 +60,15 @@ from app.media.scene_rewrite import (
     MOTION,
     OLDER_DIAGNOSIS_CHARS,
     STILL,
+    STILL_KEPT_WHOLE,
     TREATS,
     director_brief,
     earlier_briefs,
     film_failure,
     layer_terms,
+    lock_texts,
     open_layers,
+    refusal_findings,
     review_findings,
     review_schema,
     rewrite_failed_scene,
@@ -70,13 +78,15 @@ from app.media.scene_rewrite import (
 from app.models import OwnerPolicy
 from app.providers.base import GenerateResult, HealthResult
 from app.providers.registry import ProviderRegistry
-from app.services import append_event
+from app.runbook.stages import LAYER_EXHAUSTED_NOTE, SAME_PROMPT_NOTE
+from app.services import append_event, utc_now
 from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from test_clip_qc_wiring import events
-from test_failed_brief_is_recorded import PLAN, a_refused_scene, contract_lessons
+from test_failed_brief_is_recorded import PLAN, a_refused_scene
 from test_film_costing import a_film
+from test_stills_stage import LOOK
 
 #: Her brief for the motion (the Owner approved the scene's picture, so only motion is open).
 BRIEF = {
@@ -153,8 +163,10 @@ TREATED = {
     "cause": CAUSE,
     "lesson": LESSON,
 }
-#: Her review when the words that invite the finding are the plan's action, which a motion
-#: rewrite keeps word for word (f06808c9's «turning fully toward her», 2026-10-12).
+#: Her review when the words that invite the finding are the picture's, which a motion rewrite
+#: keeps whole (f06808c9's «turning fully toward her», 2026-10-12): quoted as the kept still
+#: says them.
+PICTURE_WORDS = "a far village of stone houses on a terraced slope"
 LOCKED = {
     "findings": [
         {
@@ -162,14 +174,45 @@ LOCKED = {
             "finding": "a face seen in profile",
             "treated": False,
             "severity": "serious",
-            "why_not": "the picture's action keeps the village's people in the frame",
+            "why_not": "the picture keeps the village's people in the frame",
             "locked": True,
-            "locked_words": PLAN["action"],
+            "locked_words": PICTURE_WORDS,
         }
     ],
-    "reason_ro": "Mișcarea nu poate scoate oamenii: acțiunea imaginii îi păstrează.",
-    "cause": "The plan's action keeps people in the picture the clip moves.",
+    "reason_ro": "Mișcarea nu poate scoate oamenii: imaginea îi păstrează.",
+    "cause": "The picture holds a village whose people the clip moves.",
     "lesson": "",
+}
+#: Her review when the words that invite the finding are the composer's own closing sentence,
+#: which no rewrite of the scene changes (`prompt_lint.MOTION_CLOSING`).
+COMPOSER_WORDS = "Continuous, seamless shot"
+COMPOSER_LOCKED = {
+    **LOCKED,
+    "findings": [
+        {
+            **LOCKED["findings"][0],
+            "why_not": "the closing asks for one unbroken shot the model fills with a figure",
+            "locked_words": COMPOSER_WORDS,
+        }
+    ],
+}
+#: Quality control's finding that is no hard limit of the bible: hers to rate minor.
+CLOUDS = "norii stau aproape pe loc"
+#: Her review when the one finding is a small defect she accepts as it is.
+ALL_MINOR = {
+    "findings": [
+        {
+            "id": 1,
+            "finding": "the clouds barely move",
+            "treated": False,
+            "severity": "minor",
+            "why_not": "the cloud moves, but slowly",
+            "field": "motion",
+        }
+    ],
+    "reason_ro": "Norii se mișcă încet, dar clipul e bun; accept defectul mic.",
+    "cause": "The motion asked only for a slow drift.",
+    "lesson": "Give the weather a clear verb and direction across the whole clip.",
 }
 
 
@@ -215,13 +258,8 @@ class Agents:
         return GenerateResult("{}", 10, 40, None)
 
 
-@pytest.fixture(autouse=True)
-def lesson_store(monkeypatch):
-    return contract_lessons(monkeypatch)
-
-
 @pytest.fixture
-def recorded(monkeypatch, lesson_store):
+def recorded(monkeypatch):
     """Every lesson her reviews hand the store, with how (scope, provisional, source)."""
     calls: list[dict[str, Any]] = []
     real = prompt_agent.record_prompt_lesson
@@ -312,22 +350,47 @@ def test_a_refused_rewrite_is_redone_with_her_why_not_and_stored_when_it_treats(
             "field": "motion",
         }
     ]
-    # He is told, both times, what the motion layer lets him change and what it keeps.
+    # He is told, both times, what the motion layer lets him change and what it keeps — once,
+    # in the rewrite's own data: her feedback does not say the layer's terms or the moves'
+    # sentences again (2026-10-12 evening review: the second round ran 16-19 thousand).
     for asked in (first, second):
-        terms = boundary_data(asked, "scene-rewrite")["this_layer"]
+        data = boundary_data(asked, "scene-rewrite")
+        terms = data["this_layer"]
         assert list(terms["fields_he_may_change"]) == ["motion", "camera_move", "ending_frame"]
         assert terms["kept_word_for_word"]["action"] == PLAN["action"]
-    assert MOTION_CLOSING in feedback["this_layer"]["fixed_sentences"]["motion"]
+        assert terms["still_kept_whole"] == STILL_KEPT_WHOLE
+        assert "slow pan left" in data["camera_move_sentences"]
+        assert asked.count('"camera_move_sentences"') == 1
+    assert "this_layer" not in feedback and "camera_move_sentences" not in feedback
     # Her reviews answered quality control's finding by its id, with its own words.
     review_data = boundary_data(agents.reviews[0], "rewrite-review")
     assert review_data["quality_control_findings"] == [
         {"id": 1, "qc_text": QC_WORDS, "source": "test_shot", "code": "QC.CLIP"}
     ]
     assert "fields_he_may_change" in review_data["this_layer"]
+    assert MOTION_CLOSING in review_data["this_layer"]["fixed_sentences"]["motion"]
+    # The chosen move's own sentence is his to change, not a sentence the layer keeps.
+    said_by_move = review_data["this_layer"]["said_by_his_fields"]["camera_move"]
+    assert said_by_move[0].startswith("Slow pan right")
+    assert not any(
+        s.startswith("Slow pan") for s in review_data["this_layer"]["fixed_sentences"]["motion"]
+    )
     assert "slow pan left" in review_data["camera_move_sentences"]
-    # Her second review saw her first, and checked the untreated finding first.
+    # Her second review saw her first, and checked the untreated finding first — by id, with
+    # quality control's words given once, in quality_control_findings.
     assert "your_earlier_review" in agents.reviews[1] and WHY_NOT in agents.reviews[1]
     assert "your_earlier_review" not in agents.reviews[0]
+    earlier = boundary_data(agents.reviews[1], "rewrite-review")["your_earlier_review"]
+    assert earlier["findings"] == [
+        {
+            "id": 1,
+            "treated": False,
+            "severity": "serious",
+            "why_not": WHY_NOT,
+            "field": "motion",
+            "locked": False,
+        }
+    ]
     package = stored(engine, storyboard_id)
     assert "sweeps quickly across the empty ridges" in package["motion_prompt"].lower()
     assert "herder" not in package["motion_prompt"].lower()
@@ -370,8 +433,10 @@ def test_a_refused_rewrite_is_redone_with_her_why_not_and_stored_when_it_treats(
             "why_not": "",
             "severity": "serious",
             "layer": "motion",
+            "accepted": False,
             "field": "",
             "locked": False,
+            "lock": "",
             "source": "test_shot",
         }
     ]
@@ -645,15 +710,33 @@ def test_a_long_history_keeps_every_lesson_whole_and_first(engine, tmp_path, stu
     assert data["older_briefs_in_short"][0]["diagnosis"].startswith("diagnosis 0")
 
 
+#: Where a lock's quote is read for the schema tests (`lock_texts`): the rewritten prompts, the
+#: composer's constants, the picture a motion rewrite keeps, and the sentences his fields chose.
+STILL_SAID = "The village rests below steep ridges under low grey cloud, soft diffuse light."
+MOVE_SAID = (
+    "Slow pan left, smooth and with a clear start and end, sweeping from the right side of "
+    "the scene across to the subject."
+)
+LOCKS = {
+    "said": (STILL_SAID, f"{MOVE_SAID} Dense cloud sweeps the ridges. {MOTION_CLOSING}"),
+    "constants": (MOTION_CLOSING,),
+    "picture": (STILL_SAID,),
+    "fields": {"camera_move": (MOVE_SAID,)},
+}
+
+
 def test_her_review_answers_quality_controls_findings_by_id_and_says_how_serious():
     """The review's schema for one rewrite: quality control gave findings 1 and 2; the motion
-    layer lets him change motion, camera_move and ending_frame and keeps the plan's action."""
-    schema = review_schema((1, 2), ("motion", "camera_move", "ending_frame"), (PLAN["action"],))
+    layer lets him change motion, camera_move and ending_frame and keeps the picture."""
+    schema = review_schema((1, 2), ("motion", "camera_move", "ending_frame"), LOCKS)
     done = {"treated": True, "severity": "serious", "by": TREATED_BY}
     left = {"treated": False, "severity": "serious", "why_not": WHY_NOT, "field": "motion"}
 
     def review(*findings: dict[str, Any], **more: Any) -> dict[str, Any]:
         return {"findings": list(findings), "reason_ro": "…", "cause": CAUSE, **more}
+
+    def locked_on(words: str) -> dict[str, Any]:
+        return review({"id": 1, **done}, {**left, "id": 2, "locked": True, "locked_words": words})
 
     # Every finding answered, by its id: her own diagnoses are observations, not findings.
     for wrong, said in (
@@ -668,20 +751,29 @@ def test_her_review_answers_quality_controls_findings_by_id_and_says_how_serious
         schema.model_validate(review({"id": 1, **done}, {**left, "id": 2, "why_not": ""}))
     with pytest.raises(ValidationError, match="field must be one he may change"):
         schema.model_validate(review({"id": 1, **done}, {**left, "id": 2, "field": "subject"}))
-    with pytest.raises(ValidationError, match="not in the words this layer keeps"):
-        schema.model_validate(
-            review(
-                {"id": 1, **done},
-                {**left, "id": 2, "locked": True, "locked_words": "a herder looking down"},
-            )
-        )
-    locked = schema.model_validate(
-        review(
-            {"id": 1, **done},
-            {**left, "id": 2, "locked": True, "locked_words": "«The village rests … ridges»"},
-        )
+    # A lock quotes three words of meaning the rewritten prompts say (2026-10-12 evening review:
+    # «the», «a» and «toward the subject» were accepted as locks and bought a still).
+    for words, said in (
+        ("the", "words of meaning"),
+        ("toward the subject", "words of meaning"),
+        ("a herder looking down", "not in the rewritten prompts"),
+        # The chosen move's own sentence is said by a field he may change: no lock.
+        ("sweeping from the right side of the scene", "camera_move is his to change"),
+        ("Dense cloud sweeps the ridges", "not in the words this layer keeps"),
+    ):
+        with pytest.raises(ValidationError, match=said):
+            schema.model_validate(locked_on(words))
+    picture = schema.model_validate(locked_on("«The village rests … ridges»"))
+    assert picture.verdict == MISSES and [item.id for item in picture.blocking] == [2]
+    assert picture.findings[1].lock_kind == LOCK_PICTURE
+    composer = schema.model_validate(locked_on(COMPOSER_WORDS))
+    assert composer.findings[1].lock_kind == LOCK_COMPOSER
+    # The lock's kind is the studio's reading of the words, never hers.
+    said_kind = {**left, "id": 2, "locked": True, "locked_words": COMPOSER_WORDS}
+    claimed = schema.model_validate(
+        review({"id": 1, **done}, {**said_kind, "lock_kind": LOCK_PICTURE})
     )
-    assert locked.verdict == MISSES and [item.id for item in locked.blocking] == [2]
+    assert claimed.findings[1].lock_kind == LOCK_COMPOSER
     # A treated finding quotes its sentence; the cause is said; the lesson may be empty.
     with pytest.raises(ValidationError, match="by"):
         schema.model_validate(review({"id": 1, **done, "by": ""}, {"id": 2, **done}))
@@ -698,15 +790,51 @@ def test_her_review_answers_quality_controls_findings_by_id_and_says_how_serious
     assert minor.verdict == TREATS and minor.blocking == []
     serious = schema.model_validate(review({"id": 1, **done}, {**left, "id": 2}))
     assert serious.verdict == MISSES
-    # Words that break a lesson of the studio's refuse it too.
-    broken = schema.model_validate(
-        review(
-            {"id": 1, **done},
-            {"id": 2, **done},
-            broken_lessons=[{"lesson": LESSON, "why_not": "a herder moves", "field": "motion"}],
-        )
+    # Every finding minor: the take is accepted as it is and nothing is bought on a rewrite,
+    # whatever the rewrite treated (2026-10-12 evening review of a50407e).
+    small = {"severity": MINOR}
+    for findings in (
+        ({**left, "id": 1, **small}, {**left, "id": 2, **small}),
+        ({"id": 1, **done, **small}, {**left, "id": 2, **small}),
+    ):
+        assert schema.model_validate(review(*findings)).verdict == ACCEPTED_MINOR
+    # Serious whatever she says: a hard limit of the bible, or what an earlier round of the
+    # rung found serious — her «minor» is not taken.
+    anchored = review_schema(
+        (1, 2), ("motion", "camera_move", "ending_frame"), LOCKS, serious={2}
+    ).model_validate(review({"id": 1, **done}, {**left, "id": 2, **small}))
+    assert anchored.findings[1].severity == "serious" and anchored.verdict == MISSES
+
+
+def test_only_a_confirmed_lesson_refuses_a_rewrite():
+    """2026-10-12 evening review of a50407e: a guess no picture had proven yet could refuse
+    every rewrite after it. A lesson she names is read against the lessons she was given: one
+    marked (unverified) broken is advisory; a confirmed one refuses, and names the field."""
+    done = {"id": 1, "treated": True, "severity": "serious", "by": TREATED_BY}
+    broken = {"lesson": LESSON, "why_not": "a herder moves", "field": "motion"}
+    answer = {"findings": [done], "reason_ro": "…", "cause": CAUSE, "broken_lessons": [broken]}
+    editable = ("motion", "camera_move", "ending_frame")
+
+    unverified = review_schema(
+        (1,), editable, LOCKS, lessons=[f"{LESSON} (unverified)"]
+    ).model_validate(answer)
+    assert unverified.verdict == TREATS and unverified.broken_lessons[0].confirmed is False
+    # Her own say on «confirmed» is not taken.
+    claimed = {**answer, "broken_lessons": [{**broken, "confirmed": True}]}
+    assert (
+        review_schema((1,), editable, LOCKS, lessons=[f"{LESSON} (unverified)"])
+        .model_validate(claimed)
+        .verdict
+        == TREATS
     )
-    assert broken.verdict == MISSES
+    # A lesson she names that she was never given refuses nothing either.
+    assert review_schema((1,), editable, LOCKS, lessons=[]).model_validate(answer).verdict == TREATS
+
+    proven = review_schema((1,), editable, LOCKS, lessons=[LESSON])
+    refused = proven.model_validate(answer)
+    assert refused.verdict == MISSES and refused.broken_lessons[0].confirmed is True
+    with pytest.raises(ValidationError, match="broken lesson names the field"):
+        proven.model_validate({**answer, "broken_lessons": [{**broken, "field": "subject"}]})
 
 
 def test_her_own_diagnoses_are_observations_and_a_minor_finding_does_not_refuse(
@@ -753,6 +881,12 @@ def test_her_own_diagnoses_are_observations_and_a_minor_finding_does_not_refuse(
     assert review["findings"][1]["qc_text"] == "norii stau aproape pe loc"
     assert review["findings"][1]["finding"] == "norii stau aproape pe loc"
     assert review["observations"] == ["the camera path generalises to the subject"]
+    # The minor one she left untreated is accepted: never open, never blocking, never a reason
+    # to withdraw a lesson (the shared contract of 2026-10-12 evening); the treated one is not.
+    assert [f["accepted"] for f in review["findings"]] == [False, True]
+    with Session(engine) as session:
+        (shown,) = earlier_briefs(session, storyboard_id, 1)
+    assert shown["why_not"] == []
 
 
 def test_a_review_naming_a_finding_quality_control_did_not_give_is_asked_again(
@@ -804,25 +938,104 @@ def test_a_motion_rewrite_whose_findings_are_locked_turns_to_the_picture_at_once
     motion, picture = events(engine, BRIEF_EVENT, storyboard_id)
     assert motion.payload["layer"] == MOTION and motion.payload["layer_exhausted"] is True
     assert motion.payload["rewritten"] is False and motion.payload["locked_findings"] == [1]
+    # The quote is the picture's (the still the motion keeps): the picture's turn, no note.
+    assert motion.payload["review_attempts"][0]["lock"] == LOCK_PICTURE
+    assert (
+        motion.payload["composer_locked"] is False and motion.payload["developer_note_id"] is None
+    )
     assert picture.payload["layer"] == STILL and picture.payload["rewritten"] is True
     assert "empty terraced fields" in stored(engine, storyboard_id)["still_prompt"].lower()
     # Her brief for the picture read the exhausted attempt.
     assert '"layer_exhausted": true' in agents.briefs[1]
 
 
+def developer_notes(engine) -> list[AgentMessage]:
+    with Session(engine) as session:
+        return [
+            row
+            for row in session.scalars(select(AgentMessage))
+            if isinstance(row.body_json, dict)
+            and row.body_json.get("kind") == DEVELOPER_DEFECT_KIND
+        ]
+
+
+def refused_again(engine, storyboard_id: str, detail: str = QC_WORDS) -> str:
+    """A newer take of scene 1 refused by clip QC (no vendor, no credits)."""
+    now = utc_now()
+    take_id = str(uuid4())
+    with Session(engine) as session, session.begin():
+        session.add(
+            SceneTake(
+                id=take_id,
+                storyboard_id=storyboard_id,
+                scene_number=1,
+                kind="test_shot",
+                prompt_hash=uuid4().hex,
+                model_id="seedance2_5",
+                resolution="1080:1920",
+                status="REJECTED",
+                failure_code="QC.CLIP",
+                failure_detail=detail,
+                path=None,
+                sha256=uuid4().hex,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+    return take_id
+
+
+def refused_take(engine, storyboard_id: str) -> str:
+    with Session(engine) as session:
+        return session.scalar(
+            select(SceneTake.id).where(
+                SceneTake.storyboard_id == storyboard_id, SceneTake.status == "REJECTED"
+            )
+        )
+
+
 def test_a_locked_finding_on_a_picture_he_approved_waits_and_says_why(engine, tmp_path, studio):
+    """His picture is never rewritten, and the motion cannot treat what is in it: nothing is
+    bought, the developer is told once, the take goes to her second look — and the ladder's
+    retries do not ask her the same brief again until something changes (2026-10-12 evening
+    review of a50407e: it waited silently and was asked again every retry)."""
     storyboard_id = a_refused_scene(engine, tmp_path)  # the Owner approved the still
     before = stored(engine, storyboard_id)
     agents = Agents([SECOND_SHOT], [LOCKED])
+    registry = they_say(studio, agents)
 
-    outcome = rewrite_failed_scene(engine, they_say(studio, agents), storyboard_id, 1, str(uuid4()))
+    outcome = rewrite_failed_scene(engine, registry, storyboard_id, 1, str(uuid4()))
 
     assert outcome["rewritten"] is False and outcome["layer_exhausted"] is True, outcome
     assert outcome["not_treating"] is True and "escalated_from" not in outcome
+    assert outcome["second_look"] is True and outcome["refused_take_id"] == refused_take(
+        engine, storyboard_id
+    )
+    assert (
+        "aprobată de Proprietar" in outcome["reason"]
+        and "e rândul imaginii" not in outcome["reason"]
+    )
     assert len(agents.rewrites) == 1 and len(agents.reviews) == 1
     assert stored(engine, storyboard_id) == before
+    (note,) = developer_notes(engine)
+    assert note.id == outcome["developer_note_id"] and note.status == "RESOLVED"
+    assert note.body_json["scene_index"] == 1 and QC_WORDS in note.body_text
     with Session(engine) as session:
         assert open_layers(session, storyboard_id, 1, last_code="QC.CLIP") == (MOTION,)
+
+    # The retry pass's walk asks again: she is not asked the same brief, nothing is noted twice.
+    again = rewrite_failed_scene(engine, registry, storyboard_id, 1, str(uuid4()))
+    assert again["waiting"] is True and again["rewritten"] is False and again["second_look"] is True
+    assert "nu o mai întreb" in again["reason"]
+    assert len(agents.briefs) == 1 and len(agents.rewrites) == 1
+    assert len(events(engine, BRIEF_EVENT, storyboard_id)) == 1
+    assert len(developer_notes(engine)) == 1
+
+    # Something changed — quality control refused a newer take: she is asked again.
+    refused_again(engine, storyboard_id)
+    rewrite_failed_scene(engine, registry, storyboard_id, 1, str(uuid4()))
+    assert len(agents.briefs) == 2 and len(events(engine, BRIEF_EVENT, storyboard_id)) == 2
+    assert len(developer_notes(engine)) == 1  # one note per scene
 
 
 def test_the_refused_words_again_on_the_motion_layer_exhaust_it_for_the_redo(
@@ -868,24 +1081,43 @@ def test_the_films_findings_reach_the_brief_with_the_cause_she_found(engine, tmp
     """The reasons a redo hands the rewrite carry the Director's verdict's cause (2026-10-12):
     her brief and her review read them as quality control's findings, each with its cause; the
     studio's own notes beside them are no finding."""
+    second_look = "Directoarea a privit din nou scena: profilul e real, se reface mișcarea."
+    proposal = (
+        "After the new still is bought and approved, the motion must be redone on the new "
+        "still with a prompt that names the final framing."
+    )
     reasons: list[Any] = [
         {"text": "ending frame shows the two in profile", "cause": "the action turns him"},
         "Scena 1: mișcarea filmată din imaginea nouă.",
         "the clip barely moved (cauza: the motion asked only for a slow drift)",
         "Cauza: the plan never said where the clip ends",
+        # Her repair proposal, her second look and the studio's notes ride in the same list
+        # (`runbook.stages._correct_before_redo`): context for her brief, never a finding
+        # with an id that decides the review (2026-10-12 evening review of a50407e).
+        proposal,
+        second_look,
+        LAYER_EXHAUSTED_NOTE,
+        SAME_PROMPT_NOTE,
     ]
     failure = film_failure(reasons)
     assert failure["reasons"] == [
         "ending frame shows the two in profile",
-        "Scena 1: mișcarea filmată din imaginea nouă.",
         "the clip barely moved",
     ]
-    assert failure["causes"] == [
-        "the action turns him",
-        "",
-        "the motion asked only for a slow drift",
-    ]
+    assert failure["causes"] == ["the action turns him", "the motion asked only for a slow drift"]
     assert failure["cause"] == "the plan never said where the clip ends"
+    assert failure["context"] == [
+        "Scena 1: mișcarea filmată din imaginea nouă.",
+        proposal,
+        second_look,
+        LAYER_EXHAUSTED_NOTE,
+        SAME_PROMPT_NOTE,
+    ]
+    # A reason that says what was seen and then what to buy keeps only what was seen.
+    mixed = film_failure(
+        ["Both women face each other in profile. Redo the motion on the new still."]
+    )
+    assert mixed["reasons"] == ["Both women face each other in profile."]
     storyboard_id = a_refused_scene(engine, tmp_path)
     treats_all = {
         **TREATED,
@@ -959,5 +1191,376 @@ def test_the_layer_terms_name_what_the_motion_keeps_and_the_composers_sentences(
 
     assert list(motion["fields_he_may_change"]) == ["motion", "camera_move", "ending_frame"]
     assert motion["kept_word_for_word"]["action"] == PLAN["action"]
-    assert motion["fixed_sentences"]["still"] == [" ".join(context["visual_prompt"].split())]
+    # The still is in the prompts beside the terms: it is not said again under them
+    # (2026-10-12 evening review: the payloads ran 16-19 thousand characters).
+    assert motion["still_kept_whole"] == STILL_KEPT_WHOLE
+    assert motion["fixed_sentences"]["still"] == [LOOK, prompt_agent.STILL_EXCLUSIONS]
     assert "subject" in still["fields_he_may_change"] and still["kept_word_for_word"] == {}
+    assert "still_kept_whole" not in still
+    # The people rule is said by the subject he chooses on the still layer — his to change —
+    # and is the picture's on a motion rewrite, where the still is kept whole.
+    assert still["said_by_his_fields"]["subject"] == [prompt_agent.PEOPLE_SENTENCE]
+    assert "subject" not in motion["said_by_his_fields"]
+    on_motion = lock_texts(context, MOTION)
+    assert on_motion["picture"][0] == context["visual_prompt"]
+    assert LOOK in on_motion["constants"]
+    on_still = lock_texts(context, STILL)
+    assert on_still["picture"] == () and LOOK in on_still["constants"]
+    assert prompt_agent.PEOPLE_SENTENCE not in on_still["constants"]
+
+
+# ------------------------------------------------------------------ 2026-10-12 evening review
+
+
+def replies(engine) -> list[AgentMessage]:
+    with Session(engine) as session:
+        return [
+            row
+            for row in session.scalars(select(AgentMessage))
+            if str(row.subject or "").startswith("Re: Rescrie scena")
+        ]
+
+
+def test_every_finding_minor_buys_nothing_and_the_take_goes_to_her_second_look(
+    engine, tmp_path, studio, recorded
+):
+    """2026-10-12 evening review of a50407e: a rewrite that treated nothing was stored and
+    bought because she rated each finding minor. When no finding of quality control's is
+    serious the take is acceptable as it is: nothing is stored or bought, no lesson is drawn
+    from a review that treated nothing, and the caller hands the take to her second look. The
+    Owner: «DIRECTOAREA ACCEPTĂ DEFECTELE MICI!»"""
+    storyboard_id = a_refused_scene(engine, tmp_path, detail=CLOUDS)
+    before = stored(engine, storyboard_id)
+    agents = Agents([SECOND_SHOT], [ALL_MINOR])
+
+    outcome = rewrite_failed_scene(engine, they_say(studio, agents), storyboard_id, 1, str(uuid4()))
+
+    assert outcome["rewritten"] is False and outcome["accepted_minor"] is True, outcome
+    assert outcome["accepted_minor_ids"] == [1] and outcome["second_look"] is True
+    assert outcome["refused_take_id"] == refused_take(engine, storyboard_id)
+    assert outcome["review_verdict"] == ACCEPTED_MINOR and outcome["not_treating"] is False
+    assert outcome["layer_exhausted"] is False and outcome["composer_locked"] is False
+    assert "defecte mici" in outcome["reason"]
+    # Nothing stored, nothing bought, no lesson from a review that treated nothing.
+    assert stored(engine, storyboard_id) == before
+    assert directors_rewrites(engine, storyboard_id) == []
+    assert recorded == [] and lessons_for(engine, None) == []
+    assert len(agents.rewrites) == 1 and len(agents.reviews) == 1
+    (brief,) = events(engine, BRIEF_EVENT, storyboard_id)
+    assert brief.payload["accepted_minor"] is True and brief.payload["accepted_minor_ids"] == [1]
+    assert brief.payload["review_verdict"] == ACCEPTED_MINOR
+    assert brief.payload["review_findings"][0]["accepted"] is True
+    assert brief.payload["second_look"] is True and brief.payload["developer_note_id"] is None
+    (reply,) = replies(engine)
+    assert "nu se cumpără nimic" in reply.body_text
+    # Her next brief reads it as accepted, with nothing left open, and it is no motion attempt.
+    with Session(engine) as session:
+        (shown,) = earlier_briefs(session, storyboard_id, 1)
+        assert shown["accepted_minor"] is True and shown["why_not"] == []
+        assert open_layers(session, storyboard_id, 1, last_code="QC.CLIP") == (MOTION,)
+
+    # The paid redo's correction says the same to its caller (`runbook.stages`).
+    other = a_refused_scene(engine, tmp_path, detail=CLOUDS)
+    redo = rewrite_for_redo(
+        engine,
+        they_say(studio, Agents([SECOND_SHOT], [ALL_MINOR])),
+        other,
+        1,
+        "motion",
+        [CLOUDS],
+        str(uuid4()),
+    )
+    assert redo["rewritable"] is True and redo["rewritten"] is False, redo
+    assert redo["accepted_minor"] is True and redo["second_look"] is True
+    assert directors_rewrites(engine, other) == []
+
+
+def test_a_hard_limit_or_a_finding_found_serious_in_the_rung_stays_serious(
+    engine, tmp_path, studio
+):
+    """2026-10-12 evening review of a50407e: a face where the bible forbids faces could be rated
+    minor and the take accepted; and her second review in the rung could downgrade what her
+    first found serious."""
+    # The bible forbids faces: quality control's «o față» is serious whatever she says.
+    storyboard_id = a_refused_scene(engine, tmp_path)
+    minor_face = {**ALL_MINOR, "findings": [{**ALL_MINOR["findings"][0], "finding": "a face"}]}
+    agents = Agents([FIRST_SHOT, SECOND_SHOT], [minor_face])
+
+    outcome = rewrite_failed_scene(engine, they_say(studio, agents), storyboard_id, 1, str(uuid4()))
+
+    assert outcome["rewritten"] is False and outcome.get("accepted_minor") is False, outcome
+    assert outcome["not_treating"] is True and outcome["review_verdict"] == MISSES
+    (brief,) = events(engine, BRIEF_EVENT, storyboard_id)
+    assert [r["findings"][0]["severity"] for r in brief.payload["review_attempts"]] == [
+        "serious",
+        "serious",
+    ]
+
+    # No hard limit, but serious in her first review: her second may not call it minor.
+    other = a_refused_scene(engine, tmp_path, detail=CLOUDS)
+    serious_first = {**ALL_MINOR, "findings": [{**ALL_MINOR["findings"][0], "severity": "serious"}]}
+    agents = Agents([FIRST_SHOT, SECOND_SHOT], [serious_first, ALL_MINOR])
+
+    again = rewrite_failed_scene(engine, they_say(studio, agents), other, 1, str(uuid4()))
+
+    assert again["accepted_minor"] is False and again["not_treating"] is True, again
+    assert len(agents.reviews) == 2
+    (brief,) = events(engine, BRIEF_EVENT, other)
+    assert [r["verdict"] for r in brief.payload["review_attempts"]] == [MISSES, MISSES]
+    assert brief.payload["review_attempts"][1]["findings"][0]["severity"] == "serious"
+
+
+def with_motion(engine, storyboard_id: str) -> None:
+    """The scene's stored motion prompt as the composer says it (the fixture film stores none)."""
+    with Session(engine) as session, session.begin():
+        row = session.scalar(
+            select(StoryboardScene).where(StoryboardScene.storyboard_id == storyboard_id)
+        )
+        row.prompt_json = {
+            **dict(row.prompt_json or {}),
+            "motion_prompt": f"Low grey cloud drifts slowly over the ridges. {MOTION_CLOSING}",
+        }
+
+
+def test_a_lock_in_the_composers_own_sentences_buys_nothing_and_waits_for_the_developer(
+    engine, tmp_path, studio, monkeypatch
+):
+    """2026-10-12 evening review of a50407e: her lock alone escalated to the picture and bought
+    a new still, although the words were the composer's closing sentence, which no layer of a
+    rewrite changes. Now: no escalation, nothing bought, one note for the developer per scene,
+    the take to her second look — and the ladder does not ask the same brief again until the
+    composer stops saying those words or quality control refuses a newer take."""
+    storyboard_id = a_refused_scene(engine, tmp_path, still_by="still_gate")
+    with_motion(engine, storyboard_id)
+    before = stored(engine, storyboard_id)
+    agents = Agents([SECOND_SHOT], [COMPOSER_LOCKED])
+    registry = they_say(studio, agents)
+
+    outcome = rewrite_failed_scene(engine, registry, storyboard_id, 1, str(uuid4()))
+
+    assert outcome["rewritten"] is False and outcome["composer_locked"] is True, outcome
+    assert outcome["layer_exhausted"] is False and "escalated_from" not in outcome
+    assert outcome["second_look"] is True and outcome["locked_words"] == [COMPOSER_WORDS]
+    assert outcome["refused_take_id"] == refused_take(engine, storyboard_id)
+    # One brief, one rewrite, one review: no second rewrite on words no rewrite can change,
+    # and no still bought for them.
+    assert len(agents.briefs) == 1 and len(agents.rewrites) == 1 and len(agents.reviews) == 1
+    assert stored(engine, storyboard_id) == before
+    assert directors_rewrites(engine, storyboard_id) == []
+    (note,) = developer_notes(engine)
+    assert COMPOSER_WORDS in note.body_text and QC_WORDS in note.body_text
+    assert note.id == outcome["developer_note_id"]
+    (brief,) = events(engine, BRIEF_EVENT, storyboard_id)
+    assert brief.payload["composer_locked"] is True
+    assert brief.payload["locked_words"] == [COMPOSER_WORDS]
+    assert brief.payload["review_attempts"][0]["lock"] == LOCK_COMPOSER
+    with Session(engine) as session:
+        # Not a motion attempt: the picture would not change the composer's words either.
+        assert open_layers(session, storyboard_id, 1, last_code="QC.CLIP") == (MOTION, STILL)
+
+    # The retry asks again: she is not asked the same brief, nothing is noted twice.
+    waiting = rewrite_failed_scene(engine, registry, storyboard_id, 1, str(uuid4()))
+    assert waiting["waiting"] is True and "compozitorului" in waiting["reason"]
+    assert len(agents.briefs) == 1 and len(developer_notes(engine)) == 1
+
+    # Fixed in one closing only, the composer still says the words: the scene still waits.
+    monkeypatch.setattr(rewrite_module.lint, "MOTION_CLOSING", "One unbroken shot of the place.")
+    assert rewrite_failed_scene(engine, registry, storyboard_id, 1, str(uuid4()))["waiting"]
+    # The composer's sentences were fixed: the lock is lifted and she is asked again.
+    monkeypatch.setattr(rewrite_module.lint, "VEO_MOTION_CLOSING", "One unbroken shot.")
+    rewrite_failed_scene(engine, registry, storyboard_id, 1, str(uuid4()))
+    assert len(agents.briefs) == 2
+
+
+def test_a_lock_on_the_still_layer_is_the_composers_and_notes_the_developer(
+    engine, tmp_path, studio
+):
+    """2026-10-12 evening review of a50407e: a lock on the still layer waited silently and was
+    asked again every retry. The still layer rewrites every field of the picture; what it
+    keeps is the composer's — so it is noted for the developer once, and nothing is bought."""
+    storyboard_id = a_refused_scene(engine, tmp_path, still_by="still_gate")
+    locked_still = {
+        **COMPOSER_LOCKED,
+        "findings": [
+            {
+                **COMPOSER_LOCKED["findings"][0],
+                "layer": "still",
+                "locked_words": "main subject in the upper two thirds",
+            }
+        ],
+    }
+    agents = Agents([STILL_SHOT], [locked_still], briefs=[STILL_BRIEF])
+
+    outcome = rewrite_failed_scene(engine, they_say(studio, agents), storyboard_id, 1, str(uuid4()))
+
+    assert outcome["layer"] == STILL and outcome["composer_locked"] is True, outcome
+    assert outcome["rewritten"] is False and outcome["layer_exhausted"] is False
+    assert "still layer" in agents.reviews[0]
+    assert len(developer_notes(engine)) == 1
+
+
+def test_a_motion_rung_refused_twice_is_a_motion_attempt(engine, tmp_path, studio):
+    """2026-10-12 evening review of a50407e: a motion brief whose second rewrite was refused
+    too was not counted, so motion was chosen again without end. It is a motion attempt on
+    this picture now: the picture's turn comes next."""
+    storyboard_id = a_refused_scene(engine, tmp_path, still_by="still_gate")
+    second_miss = {
+        **MISSED,
+        "findings": [
+            {
+                **MISSED["findings"][0],
+                "why_not": "the ending still holds a silhouette",
+                "field": "ending_frame",
+            }
+        ],
+    }
+    agents = Agents([FIRST_SHOT, SECOND_SHOT], [MISSED, second_miss])
+
+    outcome = rewrite_failed_scene(engine, they_say(studio, agents), storyboard_id, 1, str(uuid4()))
+
+    assert outcome["not_treating"] is True and outcome["layer_exhausted"] is False, outcome
+    with Session(engine) as session:
+        (shown,) = earlier_briefs(session, storyboard_id, 1)
+        assert shown["refused_twice"] is True
+        assert open_layers(session, storyboard_id, 1, last_code="QC.CLIP") == (STILL,)
+
+
+def test_quality_controls_refusal_is_split_whole_before_any_cut(engine, tmp_path, studio):
+    """2026-10-12 evening review of a50407e: the refusal was cut at 400 characters first and
+    split after, so a finding ended «Verdictu», the cut verdict line read as a finding, and a
+    «prag 15%)» split off its sentence. Now the whole refusal is split at the gate's «; »,
+    never inside «…» or (…), the verdict line goes, a fragment joins the finding before it,
+    and only then is each finding cut."""
+    first = (
+        "Modelul de vedere nu vede ce cere scena: «two women; facing each other» across the "
+        "ledger (prag 15%; măsurat 40%) " + "and the room behind them is crowded " * 6
+    )
+    second = "Nadia stands in profile at the window, her face turned from the viewer " * 5
+    detail = f"{first}; {second}; în profil; Verdictul modelului de vedere: regenerate_still"
+    assert len(detail) > 2 * 300  # a cut at 400 before the split would have cut a finding
+
+    found = refusal_findings(detail)
+
+    assert len(found) == 2
+    assert (
+        found[0].startswith("Modelul de vedere nu vede") and "(prag 15%; măsurat 40%)" in found[0]
+    )
+    assert "«two women; facing each other»" in found[0]
+    assert found[1].startswith("Nadia stands in profile") and found[1].endswith("în profil")
+    assert all("Verdict" not in text for text in found)
+    assert all(len(text) <= 400 for text in found)
+    # The brief and the review answer exactly these, by id.
+    storyboard_id = a_refused_scene(engine, tmp_path, detail=detail)
+    context = scene_context(engine, storyboard_id, 1)
+    assert [item["qc_text"] for item in review_findings(context)] == found
+
+
+def test_a_still_brief_whose_picture_did_not_change_is_asked_again_not_reviewed_on_the_motion(
+    engine, tmp_path, studio, monkeypatch
+):
+    """2026-10-12 evening review of a50407e: a still brief whose rewrite left the picture's
+    words as they were was reviewed on the motion's terms, as if the brief had asked for the
+    movement. Her review is bound to the brief's layer; a rewrite that did not change the
+    picture is not reviewed at all, and he is asked once more, told the picture's words did not
+    change."""
+    storyboard_id = a_refused_scene(engine, tmp_path, still_by="still_gate")
+    real = rewrite_module.rewritten_package
+    calls: list[int] = []
+
+    def compiler(context, shot, layer, brief):
+        package = real(context, shot, layer, brief)
+        calls.append(1)
+        if len(calls) == 1:  # the first rewrite composes the same picture's words again
+            package["still_prompt"] = context["visual_prompt"]
+        return package
+
+    monkeypatch.setattr(rewrite_module, "rewritten_package", compiler)
+    agents = Agents([STILL_SHOT, STILL_SHOT], [TREATED], briefs=[STILL_BRIEF])
+
+    outcome = rewrite_failed_scene(engine, they_say(studio, agents), storyboard_id, 1, str(uuid4()))
+
+    assert outcome["rewritten"] is True and outcome["layer"] == STILL, outcome
+    assert len(agents.rewrites) == 2 and len(agents.reviews) == 1
+    assert "the picture's words did not" in agents.rewrites[1]
+    assert "on the still layer" in agents.reviews[0]
+    assert boundary_data(agents.reviews[0], "rewrite-review")["this_layer"]["layer"] == STILL
+    (brief,) = events(engine, BRIEF_EVENT, storyboard_id)
+    first, second = brief.payload["review_attempts"]
+    assert first["still_unchanged"] is True and first["review_run_id"] is None
+    assert second["verdict"] == TREATS and second["layer"] == STILL
+
+
+def test_the_second_rewrite_and_its_review_fit_the_budget_with_her_feedback(
+    engine, tmp_path, studio
+):
+    """2026-10-12 evening review of a50407e, measured on that day's runs: the rewrites ran
+    21-24 thousand characters and the second round added 10 thousand more — the moves'
+    sentences and the layer's terms said again, the still repeated under the fixed sentences,
+    her earlier review repeating quality control's words. Now each is said once, the scene's
+    history gives way first, and the second rewrite's data is fitted together with her
+    feedback."""
+    storyboard_id = a_refused_scene(engine, tmp_path)
+    long_tail = " because the ridge line kept a figure that could turn toward the lens" * 10
+    with Session(engine) as session, session.begin():
+        for number in range(1, 15):
+            append_event(
+                session,
+                BRIEF_EVENT,
+                "storyboard",
+                storyboard_id,
+                1,
+                {
+                    "scene_index": 1,
+                    "layer": "motion",
+                    "rewritten": False,
+                    "reason": "Rescrierea nu tratează constatarea: …" + long_tail,
+                    "review_verdict": "MISSES",
+                    "diagnosis": f"diagnosis number {number}{long_tail}",
+                    "avoid": [f"a figure on the ridge {long_tail}"] * 3,
+                    "change": [f"the cloud moves alone {long_tail}"] * 3,
+                    "cause": f"cause number {number}{long_tail}",
+                    "review_attempts": [
+                        {
+                            "verdict": "MISSES",
+                            "findings": [{"finding": f"face {number}", "why_not": long_tail}],
+                        }
+                    ],
+                },
+                str(uuid4()),
+            )
+    for _ in range(4):
+        refused_again(engine, storyboard_id, detail=f"{QC_WORDS}; {long_tail}; {long_tail}")
+    refused_again(engine, storyboard_id)  # the newest: quality control's one finding
+    context = scene_context(engine, storyboard_id, 1)
+    whole = json.dumps(
+        [context["failures"], context["briefs"], context["older_briefs"]], ensure_ascii=False
+    )
+    assert len(whole) > 2 * MAX_PAYLOAD_CHARS
+    agents = Agents([FIRST_SHOT, SECOND_SHOT], [MISSED, TREATED])
+
+    outcome = rewrite_failed_scene(engine, they_say(studio, agents), storyboard_id, 1, str(uuid4()))
+
+    assert outcome["rewritten"] is True, outcome
+
+    def size(data: dict[str, Any]) -> int:
+        return len(
+            json.dumps({k: v for k, v in data.items() if k != "lessons"}, ensure_ascii=False)
+        )
+
+    assert size(boundary_data(agents.briefs[0], "scene-brief")) <= MAX_PAYLOAD_CHARS
+    first, second = agents.rewrites
+    assert size(boundary_data(first, "scene-rewrite")) <= MAX_PAYLOAD_CHARS
+    # The second rewrite's data and her feedback are fitted together.
+    feedback = boundary_data(second, "rewrite-feedback")
+    assert size(boundary_data(second, "scene-rewrite")) + size(feedback) <= MAX_PAYLOAD_CHARS
+    for review in agents.reviews:
+        assert size(boundary_data(review, "rewrite-review")) <= MAX_PAYLOAD_CHARS
+    # Said once: the moves' sentences and the layer's terms are not in her feedback, and her
+    # earlier review gives quality control's words by id, not again.
+    assert "camera_move_sentences" not in feedback and "this_layer" not in feedback
+    earlier = boundary_data(agents.reviews[1], "rewrite-review")["your_earlier_review"]
+    assert all("qc_text" not in item for item in earlier["findings"])
+    # The newest refusal and the findings stay, whatever history gave way.
+    data = boundary_data(second, "scene-rewrite")
+    assert data["quality_control_findings"][0]["qc_text"] == QC_WORDS
+    assert data["director_brief"]["diagnosis"] == BRIEF["diagnosis"]

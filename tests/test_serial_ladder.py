@@ -26,7 +26,6 @@ import re
 from typing import Any
 from uuid import uuid4
 
-import pytest
 from app.agents.models import Agent, ModelRecord
 from app.media.assembler import SCENE_PROMPTS_REWRITTEN_EVENT, _scene_prompt_rewrite
 from app.media.models import SceneTake, StoryboardScene
@@ -48,6 +47,7 @@ from app.media.scene_rewrite import (
     SERIAL_RECOMPOSE_REASON,
     SERIAL_REROLL_REASON,
     STILL,
+    STILL_KEPT_WHOLE,
     TECHNICAL_REFUSAL,
     refusal_kind,
     rewrite_failed_scene,
@@ -62,7 +62,6 @@ from app.providers.registry import ProviderRegistry
 from app.services import utc_now
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-from test_failed_brief_is_recorded import contract_lessons
 from test_serial_look import (  # noqa: F401
     SEQUENCE_SHOT,
     fake_editor,
@@ -394,11 +393,6 @@ class SerialAgents:
             self.reviews.append(prompt)
             return GenerateResult(self._said(self.review, len(self.reviews) - 1), 10, 40, None)
         return GenerateResult("{}", 10, 40, None)
-
-
-@pytest.fixture(autouse=True)
-def lesson_store(monkeypatch):
-    return contract_lessons(monkeypatch)
 
 
 def boundary_data(prompt: str, name: str) -> dict[str, Any]:
@@ -765,12 +759,17 @@ def test_a_serial_motion_rewrite_whose_finding_is_in_the_kept_action_turns_to_th
     assert terms["kept_word_for_word"]["action"] == SCENE_FOUR["action"]
     fixed = terms["fixed_sentences"]["motion"]
     motion_said = review_data["prompts_after"]["motion"]
-    assert fixed[0] == MOVE_SENTENCES[terms["camera_move"]] and fixed[-1] == MOTION_CLOSING
-    assert SERIAL_FACES_SENTENCE in fixed
+    assert fixed[-1] == MOTION_CLOSING and SERIAL_FACES_SENTENCE in fixed
+    # The move's own sentence is said by the camera_move he chose: his to change, never a
+    # sentence the layer keeps (2026-10-12 evening review of a50407e).
+    assert MOVE_SENTENCES[terms["camera_move"]] not in fixed
+    assert terms["said_by_his_fields"]["camera_move"][0] == MOVE_SENTENCES[terms["camera_move"]]
     # Only the composer's sentences the prompt carries: the room's life gave way to the budget.
     assert all(sentence in motion_said for sentence in fixed)
     assert (SERIAL_LIFE_SENTENCE in fixed) == (SERIAL_LIFE_SENTENCE in motion_said)
-    assert terms["fixed_sentences"]["still"] == [review_data["prompts_after"]["still"]]
+    # The still is kept whole and is in the prompts beside the terms: not said again.
+    assert terms["still_kept_whole"] == STILL_KEPT_WHOLE
+    assert review_data["prompts_after"]["still"] not in terms["fixed_sentences"]["still"]
     findings = review_data["quality_control_findings"]
     assert [(f["id"], f["qc_text"]) for f in findings] == [(1, TURNED_AWAY)]
     # Her first brief was told the same, for every open layer; the second opens only the still.
