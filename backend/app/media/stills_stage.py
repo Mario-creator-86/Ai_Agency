@@ -253,6 +253,11 @@ class StillsStageRefused(RuntimeError):
         return 202 if self.status == "NEEDS_APPROVAL" else 409
 
 
+#: A still the scene had made (a picture came back and was judged, kept or lost): what a new
+#: round's re-rolls are seeded past. A request that made nothing is sent again as it was.
+_MADE_STILL_STATUSES: tuple[str, ...] = ("PAID", "APPROVED", "REJECTED", "LOST")
+
+
 @dataclass
 class _Scene:
     """One scene as the step reads it."""
@@ -275,9 +280,9 @@ class _Scene:
     hold_ro: str | None = None
     #: Paid requests for the scene since the Owner last decided about it.
     attempts: int = 0
-    #: Every still the scene ever had bought (any identity, any status): the re-rolls of a
-    #: new round are seeded past them, so the same words make different candidates
-    #: (2026-10-12: a serial scene made again on today's words after a decision).
+    #: Every still the scene ever had made (any identity; `_MADE_STILL_STATUSES`): the
+    #: re-rolls of a new round are seeded past them, so the same words make different
+    #: candidates (2026-10-12: a serial scene made again on today's words after a decision).
     rolls: int = 0
 
 
@@ -375,12 +380,15 @@ def _read_scenes(engine: Engine, storyboard_id: str) -> tuple[dict[str, Any], li
                     scene.reuse = found
                 else:
                     scene.pending = _pending_takes(session, storyboard_id, scene)
+                    # Only the stills that were made: a request that made nothing (unanswered,
+                    # proven never queued, refused) is sent again on its own keys and seeds.
                     scene.rolls = int(
                         session.scalar(
                             select(func.count(SceneTake.id)).where(
                                 SceneTake.storyboard_id == storyboard_id,
                                 SceneTake.scene_number == scene.index,
                                 SceneTake.kind == "still",
+                                SceneTake.status.in_(_MADE_STILL_STATUSES),
                             )
                         )
                         or 0
