@@ -79,7 +79,7 @@ import asyncio
 import hashlib
 import inspect
 import json
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
@@ -185,6 +185,70 @@ STILLS_ACTION = "media.stills_purchase"
 STILLS_STEP = "stills"
 #: The vendor's ratio for a 2K 9:16 still (priced as STILLS_RESOLUTION, "2K").
 STILL_RATIO = "1530:2720"
+#: What a still must not become, said in the image model's negative channel (RunPod's worker
+#: has one: `BatchRequest.negative_prompt` reaches the graph): the stills gate's refusals of
+#: 2026-10-11/12 — the serial's two-shots drawn as stacked panels (scenes 3 and 6, twelve
+#: refusals each), lettering drawn on a ledger — said where a negation belongs and never in
+#: the positive prompt (ADR-POSITIVE-PROMPTS-ONLY). The plan's own `avoid` items join it; a
+#: bible that forbids faces adds them. Not part of the still's identity: the words and the
+#: reference picture are (`still_fields`), so an approved still stays approved.
+STILL_NEGATIVE: tuple[str, ...] = (
+    "split screen",
+    "collage",
+    "panels",
+    "comic strip",
+    "stacked frames",
+    "diptych",
+    "triptych",
+    "grid of pictures",
+    "text",
+    "lettering",
+    "captions",
+    "subtitles",
+    "logo",
+    "watermark",
+)
+STILL_NEGATIVE_FACES: tuple[str, ...] = ("visible faces", "portrait")
+#: The negative prompt is at most this long: a list, not a second prompt.
+NEGATIVE_CHARS = 400
+
+
+def _bible_bans_faces(bible: Mapping[str, Any] | None) -> bool:
+    from app.media.prompt_lint import BIBLE_NO_FACES  # noqa: PLC0415 - lint imports nothing of ours
+
+    texts: list[str] = []
+    for key in ("continuity_rules", "avoid"):
+        value = (bible or {}).get(key)
+        if isinstance(value, list):
+            texts += [str(item) for item in value if item]
+    for key in ("style", "notes", "realism"):
+        value = (bible or {}).get(key)
+        if isinstance(value, str):
+            texts.append(value)
+    return any(BIBLE_NO_FACES.search(text) for text in texts)
+
+
+def still_negative(package: Mapping[str, Any] | None, bible: Mapping[str, Any] | None) -> str:
+    """The negative prompt of one still: `STILL_NEGATIVE`, the faces when the bible forbids
+    them, then the plan's own `avoid` items, each once, within `NEGATIVE_CHARS`."""
+    terms: list[str] = list(STILL_NEGATIVE)
+    if _bible_bans_faces(bible):
+        terms += STILL_NEGATIVE_FACES
+    avoid = (package or {}).get("avoid")
+    if isinstance(avoid, list):
+        for item in avoid:
+            words = " ".join(str(item or "").split()).strip(" .;,").lower()
+            if words and len(words) <= 60 and words not in terms:
+                terms.append(words)
+    said = ""
+    for term in terms:
+        more = term if not said else f"{said}, {term}"
+        if len(more) > NEGATIVE_CHARS:
+            break
+        said = more
+    return said
+
+
 #: The reviewer a still is approved by when the gate, not the Owner, chose it.
 GATE_REVIEWER = "still_gate"
 #: How a later scene is told what scene 1's still is for. English: it is for the model.
@@ -284,6 +348,8 @@ class _Scene:
     #: re-rolls of a new round are seeded past them, so the same words make different
     #: candidates (2026-10-12: a serial scene made again on today's words after a decision).
     rolls: int = 0
+    #: What the still must not become (`still_negative`), for the model's negative channel.
+    negative: str = ""
 
 
 @dataclass
@@ -370,6 +436,7 @@ def _read_scenes(engine: Engine, storyboard_id: str) -> tuple[dict[str, Any], li
                 source=package.get("source") if isinstance(package.get("source"), str) else None,
                 reference=reference,
                 needs_reference=missing,
+                negative=still_negative(package, bible),
             )
             if kind == LIVE_KIND and missing is None:
                 found = usable_take(
@@ -1083,7 +1150,7 @@ class _StillRounds:
                 attempt_number=state.attempt,
                 model=self.model_id,
                 prompt=prompt,
-                negative_prompt=None,
+                negative_prompt=state.scene.negative or None,
                 # Seeded past every still the scene had before this step: a round bought
                 # again on the same words (after the Director's decision) draws new pictures.
                 seed=item_seed(
