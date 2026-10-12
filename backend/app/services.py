@@ -2042,7 +2042,16 @@ def snapshot(
             # The name tags in the headquarters read each employee's last task from here,
             # not only from the events the page happened to replay (W12).
             "last_tasks": last_task_per_agent(session),
+            # The day's goal (the Owner, 2026-10-12: two films a day on each channel), as the
+            # record reads it: published today, in work and where, blocked and whose.
+            "goal": _goal_of(session),
         }
+
+
+def _goal_of(session: Session) -> dict:
+    from app.goal import goal_snapshot  # noqa: PLC0415 - the goal reads models only
+
+    return goal_snapshot(session)
 
 
 def read_instant(value: str) -> str:
