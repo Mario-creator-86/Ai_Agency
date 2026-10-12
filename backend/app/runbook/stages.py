@@ -3883,23 +3883,65 @@ def _round_began(session: Session, event: DomainEvent) -> str:
     return str(first or event.timestamp)
 
 
-def _round_delivered(session: Session, storyboard_id: str, scene: int, since: str) -> bool:
+def _round_delivered(
+    session: Session, storyboard_id: str, scene: int, since: str, until: str | None = None
+) -> bool:
     """Whether a paid round of the scene that began at ``since`` delivered something: a still or
     shot of the scene made after it that came with its file or may still come (the history
     rule of `assembler._delivered_since`: APPROVED, PAID, SUBMITTED, or REJECTED with its
     file), or a candidate written since into an older row (`director_qc.bought_since`) that
-    carries its file."""
+    carries its file. ``until`` is when the scene's next round began: what that round made is
+    its own, never this one's (`_round_windows`)."""
     from app.media import director_qc  # noqa: PLC0415 - media imports runbook
     from app.media.assembler import _delivered_since  # noqa: PLC0415 - media imports runbook
 
-    if _delivered_since(session, storyboard_id, scene, since, []):
+    if _delivered_since(session, storyboard_id, scene, since, [], until=until):
         return True
     return any(
         row.sha256 and row.status in ("APPROVED", "PAID", "REJECTED")
         for row in director_qc.bought_since(
-            session, storyboard_id, scene, director_qc.REJOIN, since
+            session, storyboard_id, scene, director_qc.REJOIN, since, until
         )
     )
+
+
+def _round_windows(
+    session: Session, storyboard_id: str
+) -> dict[int, list[tuple[DomainEvent, str, str | None]]]:
+    """Per scene, its paid redo rounds in the order they began, each with when it began and
+    when the scene's next round began (None for the newest): what a round delivered is read
+    inside that window only. A motion that ``continues`` its still's round is that round, not
+    one of its own, and opens no window.
+
+    2026-10-12, 1c038a99 («The Particle That Shouldn't Exist»), scene 5: five rounds were
+    counted and his cap of five fell, but two of them were stopped by a restart before anything
+    was asked, one was cancelled after a second (14 credits of GPU, no picture), and only the
+    fourth and fifth made anything — read without a window, the fourth round's still and clip
+    «delivered» the three empty rounds before it, since they came after each one began. The
+    Owner: «5 refaceri? Pentru o poză în mișcare? ... Nu ai cum să faci de 5 ori aceeași
+    greșeală!» — those were five events, not five pictures."""
+    began_by_scene: dict[int, list[tuple[DomainEvent, str]]] = {}
+    for event in session.scalars(
+        select(DomainEvent)
+        .where(
+            DomainEvent.event_type == QC_PAID_REDO_EVENT,
+            DomainEvent.aggregate_id == storyboard_id,
+        )
+        .order_by(DomainEvent.sequence)
+    ):
+        payload = event.payload if isinstance(event.payload, dict) else {}
+        scene = payload.get("scene_index")
+        if not isinstance(scene, int) or payload.get("continues"):
+            continue
+        began_by_scene.setdefault(scene, []).append((event, _round_began(session, event)))
+    windows: dict[int, list[tuple[DomainEvent, str, str | None]]] = {}
+    for scene, rounds in began_by_scene.items():
+        rounds.sort(key=lambda item: item[1])
+        windows[scene] = [
+            (event, began, rounds[index + 1][1] if index + 1 < len(rounds) else None)
+            for index, (event, began) in enumerate(rounds)
+        ]
+    return windows
 
 
 def _paid_redo_rounds(session: Session, storyboard_id: str) -> dict[int, int]:
@@ -3912,23 +3954,19 @@ def _paid_redo_rounds(session: Session, storyboard_id: str) -> dict[int, int]:
     A round that delivered nothing is not counted (`_round_delivered`; 2026-10-10, babcf272: the
     mechanical repair's two morning rounds, scenes 1 and 2, ended with every candidate REFUSED,
     the GPU forced off, and spent the film's two paid redos, so the Director's repair of the
-    one real flaw, scene 5's three panels, was refused and she was steered to accept it). What
-    a round may buy is still the Policy Kernel's, the budgets' and the film ceiling's."""
+    one real flaw, scene 5's three panels, was refused and she was steered to accept it), and
+    each round is read inside its own window (`_round_windows`, 2026-10-12: rounds are counted
+    by the pictures they made, not by their events). What a round may buy is still the Policy
+    Kernel's, the budgets' and the film ceiling's."""
     rounds: dict[int, int] = {}
-    for event in session.scalars(
-        select(DomainEvent).where(
-            DomainEvent.event_type == QC_PAID_REDO_EVENT,
-            DomainEvent.aggregate_id == storyboard_id,
+    for scene, windows in _round_windows(session, storyboard_id).items():
+        delivered = sum(
+            1
+            for _event, began, until in windows
+            if _round_delivered(session, storyboard_id, scene, began, until)
         )
-    ):
-        payload = event.payload if isinstance(event.payload, dict) else {}
-        scene = payload.get("scene_index")
-        if (
-            isinstance(scene, int)
-            and not payload.get("continues")
-            and _round_delivered(session, storyboard_id, scene, _round_began(session, event))
-        ):
-            rounds[scene] = rounds.get(scene, 0) + 1
+        if delivered:
+            rounds[scene] = delivered
     return rounds
 
 
@@ -3953,16 +3991,24 @@ def _open_still_rounds(session: Session, storyboard_id: str) -> dict[int, str]:
         for event in events
         if isinstance(payload := event.payload, dict) and payload.get("continues")
     }
+    # Each round is read inside its own window (`_round_windows`): the next round's new still
+    # does not make an empty round «delivered» and open.
+    until_of = {
+        str(event.event_id): (began, until)
+        for windows in _round_windows(session, storyboard_id).values()
+        for event, began, until in windows
+    }
     open_rounds: dict[int, str] = {}
     for event in events:
         payload = event.payload if isinstance(event.payload, dict) else {}
         scene = payload.get("scene_index")
         if not isinstance(scene, int) or payload.get("continues"):
             continue
+        began, until = until_of.get(str(event.event_id), (_round_began(session, event), None))
         if (
             payload.get("open_motion")
             and str(event.event_id) not in closed
-            and _round_delivered(session, storyboard_id, scene, _round_began(session, event))
+            and _round_delivered(session, storyboard_id, scene, began, until)
         ):
             open_rounds[scene] = str(event.event_id)
         else:
@@ -4687,6 +4733,42 @@ SAME_PROMPT_NOTE = (
 )
 
 
+def _still_newer_than_film(session: Session, storyboard_id: str, scene: int, asset_id: str) -> bool:
+    """Whether the scene's approved still is not the one the failed film (``asset_id``) was cut
+    from: a new picture already bought and approved, in no film yet. A motion whose words came
+    back unchanged is then right as it is — the clip is bought from the new still, and nothing
+    turns to the picture (2026-10-12, the cyclotron's scenes 4 and 5: their stills approved
+    the day before and never animated were retired by the «same prompt» escalation and bought
+    again, 269 credits for two scenes that then passed; the Director had written «alătur
+    imaginile aprobate, nu cumpăr nimic»)."""
+    from app.media import director_qc  # noqa: PLC0415 - media imports runbook
+    from app.media.models import SceneTake, VideoRenderJob  # noqa: PLC0415
+
+    production = session.scalar(
+        select(VideoRenderJob.production_json).where(
+            VideoRenderJob.storyboard_id == storyboard_id,
+            VideoRenderJob.output_asset_id == asset_id,
+        )
+    )
+    in_film = (
+        director_qc.film_takes(production).get(scene, {}).get("still")
+        if isinstance(production, dict)
+        else None
+    )
+    approved = session.scalar(
+        select(SceneTake.id)
+        .where(
+            SceneTake.storyboard_id == storyboard_id,
+            SceneTake.scene_number == scene,
+            SceneTake.kind == "still",
+            SceneTake.status == "APPROVED",
+        )
+        .order_by(SceneTake.created_at.desc())
+        .limit(1)
+    )
+    return approved is not None and str(approved) != in_film
+
+
 def _correct_before_redo(
     engine: Engine,
     registry: ProviderRegistry | None,
@@ -4717,6 +4799,15 @@ def _correct_before_redo(
     try:
         done = rewrite_for_redo(engine, registry, storyboard_id, scene, layer, reasons, correlation)
         if layer == "motion" and done.get("same_prompt") and "still" not in kinds:
+            with Session(engine) as session:
+                new_picture = _still_newer_than_film(
+                    session, storyboard_id, scene, str(reading.get("media_asset_id") or "")
+                )
+            if new_picture:
+                # The picture already changed (a still bought for her earlier repair, or his
+                # look's, approved and in no film yet): the movement's words need not, and the
+                # clip is bought from the new still as they are.
+                return None
             # The movement's words came back unchanged on a picture that stays: the picture's
             # turn (MOTION_REWRITES_BEFORE_STILL). 2026-10-12, the cyclotron's scene 5: the
             # same motion brief was asked every hour and refused PROMPT_NOT_CORRECTED each

@@ -210,3 +210,67 @@ def test_the_review_pass_does_not_ask_her_again_while_his_card_waits(engine, set
     _answer(engine, card, "wait")
     assert run_pass() == [ids["board"]]
     assert utc_now() > card.created_at
+
+
+def _delivered_round(engine, ids: dict[str, Any], scene: int) -> None:
+    """One paid round of the scene that made a still (approved, with its file)."""
+    import time
+
+    from app.runbook import stages
+    from test_director_decides_qc import _take
+
+    time.sleep(0.01)
+    began = utc_now()
+    with Session(engine) as session, session.begin():
+        append_event(
+            session,
+            stages.QC_PAID_REDO_EVENT,
+            "storyboard",
+            ids["board"],
+            1,
+            {"scene_index": scene, "of_asset": ids["asset"], "started_at": began},
+            str(uuid4()),
+        )
+        _take(session, ids["board"], scene, "still", None)
+
+
+def test_the_card_is_moot_once_the_rounds_counted_again_fall_below_his_cap(engine, settings):
+    """1c038a99 (2026-10-12): the card said «scena 5: 5 din 5», but two of the five rounds
+    had been stopped by a restart and one cancelled after a second. Counted by what they made,
+    the scene stood at two: the question is not his to answer, and the film goes on under his
+    original limits. A card whose rounds really reached the cap stays."""
+    settings.film_max_paid_redos_per_scene = 2
+    settings.film_max_paid_redos = 20
+    ids = failed_film(engine, local_move=False)
+    _her_decision(engine, ids)
+    card = _card(engine, ids)
+    assert card.clears_when["scenes"] == [5]
+
+    with Session(engine) as session:
+        # No round of scene 5 delivered anything: the cap was never reached.
+        assert condition_reading(session, card, settings) == "MET"
+        # Without the limits to read, the card is kept (fail closed).
+        assert condition_reading(session, card, None) != "MET"
+
+    _delivered_round(engine, ids, 5)
+    with Session(engine) as session:
+        assert condition_reading(session, card, settings) == "MET"  # one of two
+
+    _delivered_round(engine, ids, 5)
+    with Session(engine) as session:
+        assert condition_reading(session, card, settings) != "MET"  # two of two: reached
+
+    # His allowance moves the cap: the recount reads below it again (and the allowance
+    # itself clears the card, as before).
+    with Session(engine) as session, session.begin():
+        append_event(
+            session,
+            ALLOWANCE_EVENT,
+            "storyboard",
+            ids["board"],
+            1,
+            {"storyboard_id": ids["board"], "extra": EXTRA_REDOS, "granted_by": "owner"},
+            str(uuid4()),
+        )
+    with Session(engine) as session:
+        assert condition_reading(session, card, settings) == "MET"

@@ -25,7 +25,7 @@ only moves his cap; the purchase stays behind may_act, the budgets and the film'
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from sqlalchemy import Engine, select
@@ -210,6 +210,9 @@ def propose_redo_cap_card(
                     "type": REDO_CAP_CLEARED,
                     "storyboard_id": storyboard_id,
                     "since": utc_now(),
+                    # The scenes his cap stopped: the card is moot once their count, read
+                    # again, is below it (`redo_cap_cleared`).
+                    "scenes": scenes,
                 },
             )
             return str(card.id)
@@ -373,9 +376,36 @@ def apply_film_close_capped(
 # ------------------------------------------------------------------------- the condition
 
 
+def cap_still_reached(
+    session: Session, storyboard_id: str, scenes: Sequence[int], settings: Any
+) -> bool:
+    """Whether his cap still stops the film's repair, counted now: a scene of ``scenes`` (every
+    scene with rounds, when none are named) at or over the per-scene limit, or the film at or
+    over its own, his allowances included. Without settings the limits cannot be read, and the
+    cap is taken as reached (the card stays).
+
+    2026-10-12, 1c038a99: the card said «scena 5: 5 din 5», but of the five rounds two had been
+    stopped by a restart before anything was asked and one cancelled after a second; counted by
+    what they made (`runbook.stages._paid_redo_rounds`, each round in its own window), the
+    scene stood at two. A card raised on a count that was wrong is moot, not his to answer."""
+    from app.runbook.stages import _paid_redo_rounds  # noqa: PLC0415 - runbook imports us
+
+    if settings is None:
+        return True
+    rounds = _paid_redo_rounds(session, storyboard_id)
+    allowed = redo_allowance(session, storyboard_id)
+    per_scene = int(getattr(settings, "film_max_paid_redos_per_scene", 1)) + allowed
+    per_film = int(getattr(settings, "film_max_paid_redos", 2)) + allowed
+    if sum(rounds.values()) >= per_film:
+        return True
+    named = [int(scene) for scene in scenes if isinstance(scene, int)] or list(rounds)
+    return any(rounds.get(scene, 0) >= per_scene for scene in named)
+
+
 def redo_cap_cleared(session: Session, card: Any, params: Mapping[str, Any], settings: Any) -> bool:
-    """The question went away: the film closed, an allowance granted since the card, a report
-    of the film PASSED since the card (hers or his), or the film published."""
+    """The question went away: the film closed, an allowance granted since the card, the cap no
+    longer reached when its rounds are counted again (`cap_still_reached`), a report of the
+    film PASSED since the card (hers or his), or the film published."""
     from app.media.models import QualityControlReport, Storyboard, VideoRenderJob  # noqa: PLC0415
     from app.models import DomainEvent  # noqa: PLC0415
     from app.publishing.models import PublicationRecord  # noqa: PLC0415
@@ -393,6 +423,9 @@ def redo_cap_cleared(session: Session, card: Any, params: Mapping[str, Any], set
         )
     )
     if granted is not None:
+        return True
+    scenes = params.get("scenes") if isinstance(params.get("scenes"), list) else []
+    if not cap_still_reached(session, storyboard_id, scenes, settings):
         return True
     assets = [
         str(asset_id)

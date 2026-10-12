@@ -2099,10 +2099,11 @@ def test_under_mode_a_first_still_that_never_passes_is_bought_once_not_every_day
     scene_one = next(s for s in sheet["scenes"] if s["scene_index"] == 1)
     assert scene_one["still_hold"]["status"] == "NEEDS_OWNER"
     assert "Proprietar" in scene_one["still_hold"]["reason_ro"]
-    letters = _owner_letters(engine, "owner_shooting_sheet")
-    assert len(letters) == 1
-    assert letters[0].body_json["status"] == "NEEDS_OWNER"
-    assert letters[0].body_json["step"] == "stills"
+    # Quality control's refusal of a scene is the Director's to answer (her ladder in the walk,
+    # the `ladder_retry` pass after it), never a letter to the Owner (2026-10-12, 75f2267: the
+    # sheet's letter reached him while the rung was composing scene 3 again). His letters are
+    # for his matters — the balance, the budget, his look, his answer.
+    assert _owner_letters(engine, "owner_shooting_sheet") == []
 
 
 @requires_ffmpeg
@@ -2131,8 +2132,9 @@ def test_under_mode_a_hero_that_fails_clip_qc_twice_is_bought_once_not_every_day
     films = outcomes[-1]["artefacts"]["films"]
     assert films[0]["status"] == "WAITING" and films[0]["refusal"] == "NEEDS_OWNER"
     assert films[0]["step"] == "test_shot"
-    letters = _owner_letters(engine, "owner_shooting_sheet")
-    assert len(letters) == 1, [letter.body_json for letter in letters]
+    # Clip QC's refusal is the Director's to answer (her ladder), never a letter to the Owner
+    # (2026-10-12, 75f2267); his letters are for his matters only.
+    assert _owner_letters(engine, "owner_shooting_sheet") == []
     # Every purchase is in the books once: the stills and the two shots.
     steps = sorted(cost.attribution_json["step"] for cost in _provider_costs(engine))
     assert steps == ["stills", "test_shot"]

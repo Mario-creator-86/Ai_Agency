@@ -13143,13 +13143,26 @@ def _unreturned_rewrite(
 
 
 def _delivered_since(
-    session: Session, storyboard_id: str, scene_index: int, since: str, retired: Sequence[str]
+    session: Session,
+    storyboard_id: str,
+    scene_index: int,
+    since: str,
+    retired: Sequence[str],
+    *,
+    until: str | None = None,
 ) -> bool:
     """Whether a still or shot of the scene made after ``since`` (a retirement) was delivered,
     or may still be: APPROVED, PAID, SUBMITTED (still at the vendor), or REJECTED with its
     file (turned down by a gate, the clip QC or the Owner after it came: the redo delivered,
     whatever became of it). Only takes that never brought a file (REFUSED, LOST, QUOTED:
-    refused, expired, never sent) leave the redo with nothing delivered."""
+    refused, expired, never sent) leave the redo with nothing delivered.
+
+    ``until`` closes the window: only takes made before it are this redo's. A paid round is
+    read inside its own window (`runbook.stages._paid_redo_rounds`, 2026-10-12: 1c038a99's
+    scene 5 had three rounds that delivered nothing — two stopped by a restart, one cancelled
+    after a second — and the still of the fourth round «delivered» them all, so his cap of five
+    fell on two real redos)."""
+    made_before = (SceneTake.created_at < until,) if until else ()
     return (
         session.scalar(
             select(SceneTake.id)
@@ -13162,6 +13175,7 @@ def _delivered_since(
                     and_(SceneTake.status == "REJECTED", SceneTake.sha256.is_not(None)),
                 ),
                 SceneTake.created_at > since,
+                *made_before,
                 SceneTake.id.not_in(list(retired)),
             )
             .limit(1)

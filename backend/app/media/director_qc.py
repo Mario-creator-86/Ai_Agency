@@ -959,10 +959,13 @@ def _picture_kinds(kind: str) -> tuple[str, ...]:
     return tuple(SHOT_TAKE_KINDS)
 
 
-def _marks_since(session: Session, take_ids: Sequence[str], since: str) -> dict[str, set[str]]:
-    """What happened to these takes at or after ``since``, from their history: a purchase wrote
-    a candidate into the row (``recorded``), a redo that delivered nothing gave the take back
-    as it was (``restored``), the Owner's look approved it (``approved``)."""
+def _marks_since(
+    session: Session, take_ids: Sequence[str], since: str, until: str | None = None
+) -> dict[str, set[str]]:
+    """What happened to these takes at or after ``since`` (and before ``until``, when given),
+    from their history: a purchase wrote a candidate into the row (``recorded``), a redo that
+    delivered nothing gave the take back as it was (``restored``), the Owner's look approved it
+    (``approved``)."""
     from app.media.assembler import (  # noqa: PLC0415 - a large module
         TAKE_DECIDED_EVENT,
         TAKE_RECORDED_EVENT,
@@ -972,6 +975,7 @@ def _marks_since(session: Session, take_ids: Sequence[str], since: str) -> dict[
     marks: dict[str, set[str]] = {"recorded": set(), "restored": set(), "approved": set()}
     if not take_ids:
         return marks
+    before = (DomainEvent.timestamp < until,) if until else ()
     for event in session.scalars(
         select(DomainEvent).where(
             DomainEvent.aggregate_id.in_(list(dict.fromkeys(take_ids))),
@@ -979,6 +983,7 @@ def _marks_since(session: Session, take_ids: Sequence[str], since: str) -> dict[
                 (TAKE_RECORDED_EVENT, TAKE_RESTORED_EVENT, TAKE_DECIDED_EVENT)
             ),
             DomainEvent.timestamp >= since,
+            *before,
         )
     ):
         take_id = str(event.aggregate_id)
@@ -997,14 +1002,20 @@ def _marks_since(session: Session, take_ids: Sequence[str], since: str) -> dict[
 
 
 def bought_since(
-    session: Session, storyboard_id: str, scene: int, kind: str, since: str
+    session: Session,
+    storyboard_id: str,
+    scene: int,
+    kind: str,
+    since: str,
+    until: str | None = None,
 ) -> list[SceneTake]:
     """The takes of the scene (`_picture_kinds` of ``kind``) a purchase wrote since ``since``,
     newest first: a row created since, or the row a candidate was written into since (the same
     file of the same words is one row, `assembler.record_take`: the staircase film's still redo
     wrote its candidates into the rows of the stills they replaced). A take given back since
     (`assembler.give_back_retired_takes`: the redo delivered nothing) is not one of them: it is
-    the old picture, whatever its ``updated_at`` says (2026-10-10 review)."""
+    the old picture, whatever its ``updated_at`` says (2026-10-10 review). ``until`` closes the
+    window: what a later purchase wrote is not this one's (`runbook.stages._round_delivered`)."""
     rows = list(
         session.scalars(
             select(SceneTake)
@@ -1017,18 +1028,24 @@ def bought_since(
             .order_by(SceneTake.updated_at.desc())
         )
     )
-    marks = _marks_since(session, [row.id for row in rows], since)
-    return [row for row in rows if _new_since(row, marks, since, approved=False)]
+    marks = _marks_since(session, [row.id for row in rows], since, until)
+    return [row for row in rows if _new_since(row, marks, since, approved=False, until=until)]
 
 
 def _new_since(
-    row: SceneTake, marks: Mapping[str, set[str]], since: str, *, approved: bool
+    row: SceneTake,
+    marks: Mapping[str, set[str]],
+    since: str,
+    *,
+    approved: bool,
+    until: str | None = None,
 ) -> bool:
-    """Whether a take is new since ``since``: created since; else (an older row) written into
-    by a purchase since, or (``approved``) approved by his look since, and not given back since
-    (a row that existed before and was given back is the old picture)."""
+    """Whether a take is new since ``since`` (and before ``until``, when given): created in the
+    window; else (an older row) written into by a purchase in it, or (``approved``) approved by
+    his look in it, and not given back since (a row that existed before and was given back is
+    the old picture)."""
     if str(row.created_at) >= since:
-        return True
+        return until is None or str(row.created_at) < until
     if row.id in marks["restored"]:
         return False
     return row.id in marks["recorded"] or (approved and row.id in marks["approved"])

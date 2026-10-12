@@ -2321,6 +2321,84 @@ def test_a_paid_round_counts_only_when_it_delivered(engine, status, with_file, c
         assert stages._paid_redo_rounds(session, film["board"]) == ({5: 1} if counted else {})
 
 
+def test_an_empty_round_is_not_delivered_by_the_next_rounds_still(engine):
+    """1c038a99, scene 5 (2026-10-12): five rounds counted, his cap of five fallen — but two
+    rounds were stopped by a restart before anything was asked and one was cancelled after a
+    second; read without a window, the fourth round's still «delivered» each of them, since it
+    came after they began. Each round is read inside its own window: the empty one counts
+    for nothing and opens nothing, the one that made the still counts once."""
+    import time
+
+    from app.runbook import stages
+
+    film = failed_film(engine)
+    first = utc_now()
+    with Session(engine) as session, session.begin():
+        empty = append_event(
+            session,
+            stages.QC_PAID_REDO_EVENT,
+            "storyboard",
+            film["board"],
+            1,
+            {
+                "scene_index": 5,
+                "of_asset": film["asset"],
+                "started_at": first,
+                "open_motion": True,
+            },
+            "c1",
+        )
+        empty_id = str(empty.event_id)
+    time.sleep(0.01)
+    second = utc_now()
+    with Session(engine) as session, session.begin():
+        made = append_event(
+            session,
+            stages.QC_PAID_REDO_EVENT,
+            "storyboard",
+            film["board"],
+            1,
+            {
+                "scene_index": 5,
+                "of_asset": film["asset"],
+                "started_at": second,
+                "open_motion": True,
+            },
+            "c2",
+        )
+        made_id = str(made.event_id)
+        _take(session, film["board"], 5, "still", None)  # the fourth round's still, approved
+
+    with Session(engine) as session:
+        assert stages._paid_redo_rounds(session, film["board"]) == {5: 1}
+        assert stages._open_still_rounds(session, film["board"]) == {5: made_id}
+        assert stages._round_delivered(session, film["board"], 5, first, second) is False
+        assert stages._round_delivered(session, film["board"], 5, second, None) is True
+    assert empty_id != made_id
+
+
+def test_a_motion_with_the_same_words_is_bought_from_a_new_still_without_turning_to_the_picture(
+    engine,
+):
+    """The cyclotron's scenes 4 and 5 (2026-10-12): their stills approved the day before and
+    never animated were retired by the «same prompt» escalation and bought again (269 credits)
+    while the Director had written «alătur imaginile aprobate, nu cumpăr nimic». A scene whose
+    approved still is not the failed film's has a new picture already: the motion's unchanged
+    words are right, and nothing turns to the picture."""
+    from app.runbook import stages
+
+    film = failed_film(engine, local_move=False)
+    with Session(engine) as session:
+        # The film's own still is the approved one: the picture stays, the escalation stands.
+        assert stages._still_newer_than_film(session, film["board"], 5, film["asset"]) is False
+    with Session(engine) as session, session.begin():
+        _take(session, film["board"], 5, "still", None)  # a new still, approved, in no film
+    with Session(engine) as session:
+        assert stages._still_newer_than_film(session, film["board"], 5, film["asset"]) is True
+        # A scene the film has no still for, with no approved still either: nothing new.
+        assert stages._still_newer_than_film(session, film["board"], 9, film["asset"]) is False
+
+
 def test_a_candidate_written_into_the_replaced_stills_row_is_a_new_take(engine):
     """The staircase film's still redo wrote its candidate into the row of the still it
     replaced (the same file of the same words is one row): it is new since the round began,
