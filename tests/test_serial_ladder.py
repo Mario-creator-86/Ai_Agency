@@ -262,6 +262,11 @@ REVIEW_FOUR = {
         {"finding": "garbled text on the ledger", "treated": True, "by": SERIAL_BLANK_SENTENCE},
     ],
     "reason_ro": "Acțiunea nouă o pune pe Sarah la marginea cadrului; paginile rămân goale.",
+    "cause": "The action named both women's first moments, so the picture became a two-shot.",
+    "lesson": (
+        "In a single, the action's first moment names only the person the shot is on; anyone "
+        "else stands at the frame's edge."
+    ),
 }
 #: Scene 3's finding the same day: the clip's ending, which no rewrite could reach before.
 IN_PROFILE = (
@@ -294,6 +299,8 @@ REVIEW_ENDING = {
         }
     ],
     "reason_ro": "Clipul se încheie acum cu amândouă întoarse spre privitor.",
+    "cause": "The motion had no ending frame of its own, so the model ended on a profile.",
+    "lesson": "Give every clip its own ending frame with the people turned to the viewer.",
 }
 
 

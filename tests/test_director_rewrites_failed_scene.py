@@ -99,12 +99,26 @@ REVIEW = {
         }
     ],
     "reason_ro": "Rescrierea tratează constatarea: norii se mișcă clar de la stânga la dreapta.",
+    "cause": "The motion asked only for a slow drift, so the model barely moved the frame.",
+    "lesson": (
+        "Give every shot one clear movement with a direction and a pace across the whole clip."
+    ),
 }
-#: Her review when the rewrite changed words the finding never named.
+#: Her review when the rewrite changed words the finding never named; each untreated finding
+#: says why (2026-10-12).
 MISSED = {
     "verdict": "MISSES",
-    "findings": [{"finding": "a face seen in profile", "treated": False, "by": ""}],
+    "findings": [
+        {
+            "finding": "a face seen in profile",
+            "treated": False,
+            "by": "",
+            "why_not": "the figure on the ridge is still described, and it can turn its head",
+        }
+    ],
     "reason_ro": "Rescrierea schimbă doar norii; fața din profil rămâne posibilă în cadru.",
+    "cause": "The plan places a figure on the ridge, whose head can turn to the camera.",
+    "lesson": "Show people only as small distant figures seen from behind for the whole shot.",
 }
 
 
@@ -545,9 +559,11 @@ def test_a_rewrite_that_does_not_treat_the_finding_is_not_stored_and_nothing_is_
 ):
     """Owner, 2026-10-12, on film 1c038a99's scene 5 redone five times: «Dacă se reface ceva,
     trebuie să ne asigurăm că promptul de regenerare este impecabil. Adică, tratează problema?»
-    Her review of his rewrite says MISSES: nothing is stored, the hold stays, the record carries
-    the verdict for the next brief, his letter says the review refused it, and the paid redo's
-    correction is refused the same way (the brake `_correct_before_redo` reads)."""
+    Her review of his rewrite says MISSES: he is asked once more with her why_not (since
+    2026-10-12, f06808c9 scenes 3, 4, 7), and when he sends the refused words again nothing is
+    stored, the hold stays, the record carries the verdict for the next brief, his letter says
+    the review refused it, and the paid redo's correction is refused the same way (the brake
+    `_correct_before_redo` reads)."""
     storyboard_id = a_planned_film(engine, tmp_path)
     refused_twice(engine, storyboard_id, tmp_path)
     before = scene(engine, storyboard_id)
@@ -561,8 +577,11 @@ def test_a_rewrite_that_does_not_treat_the_finding_is_not_stored_and_nothing_is_
     assert outcome["reason"].startswith("Rescrierea nu tratează constatarea")
     assert outcome["review_verdict"] == "MISSES" and outcome["same_prompt"] is False
     assert scene(engine, storyboard_id).prompt_json == before.prompt_json
-    # He rewrote once; she read the findings, his new words and their difference once.
-    assert len(agents.rewrites) == 1 and len(agents.reviews) == 1
+    # He rewrote twice, the second time with her why_not; his second answer was the refused
+    # words again, so she was not asked to read them twice.
+    assert len(agents.rewrites) == 2 and len(agents.reviews) == 1
+    assert "it can turn its head" in agents.rewrites[1]
+    assert "aceleași cuvinte pe care Directoarea le-a refuzat" in outcome["reason"]
     assert "nu se mișcă" in agents.reviews[0] and "grey cloud rolls steadily" in agents.reviews[0]
     (brief,) = events(engine, BRIEF_EVENT, storyboard_id)
     assert brief.payload["rewritten"] is False and brief.payload["not_treating"] is True
@@ -578,6 +597,11 @@ def test_a_rewrite_that_does_not_treat_the_finding_is_not_stored_and_nothing_is_
     with Session(engine) as session:
         (shown,) = earlier_briefs(session, storyboard_id, 1)
     assert shown["review_verdict"] == "MISSES" and "nu tratează constatarea" in shown["reason"]
+    # ...and why: the words that caused the defect, why the finding stayed, the rule drawn.
+    assert shown["cause"] == MISSED["cause"] and shown["lesson"] == MISSED["lesson"]
+    assert shown["why_not"] == [
+        {"finding": "a face seen in profile", "why_not": MISSED["findings"][0]["why_not"]}
+    ]
     # A refused rewrite is no motion attempt: both layers stay open for her next brief.
     with Session(engine) as session:
         assert open_layers(session, storyboard_id, 1, last_code="QC.CLIP") == (MOTION,)

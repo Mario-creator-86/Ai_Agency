@@ -35,6 +35,19 @@ So, for a scene quality control refused (a clip, QC.CLIP; a still, LOCAL.STILL_G
    place what the scene asks for; a rewrite that misses any finding is not stored and nothing is
    bought on it, and a rewrite nobody could review is not stored either. The next brief is shown
    why (`earlier_briefs`), so the same diagnosis is not written again.
+6. A rewrite her review refused is answered in the same rung, with her words (2026-10-12,
+   16:45, f06808c9 scenes 3, 4 and 7: the motion rewrites were refused again and again —
+   «Rescrierea nu tratează constatarea: …promptul de mișcare păstrează…» — and the next round
+   asked the same brief, so the loop read nothing from the refusal). The Owner: «trebuie să îl
+   citească, să înțeleagă ce a fost greșit și să îl refacă. DAR SĂ REFACĂ CE A FOST GREȘIT».
+   Her review says, for every finding it leaves untreated, why (`FindingReview.why_not`), and
+   the Video Editor rewrites once more with exactly those words (`REWRITES_PER_RUNG`); only a
+   second miss stores nothing. Her review also says what in the old words invited the defect
+   (`cause`) and a general rule for every future prompt (`lesson`): a rewrite she passes
+   records the lesson studio-wide (`learn_from_review`, unless the studio already says it),
+   and every later brief reads the studio's lessons and, for the scene, the earlier briefs with
+   their reviews' causes, why_not and lessons — «la viitoarele prompturi să se asigure că nu
+   mai sunt».
 
 An episode of the serial is composed from the series' look (`compose_serial_prompt`), not
 compiled, and until 2026-10-12 it was not rewritten here: its stale words were said again with
@@ -72,7 +85,8 @@ from app.services import append_event
 logger = logging.getLogger("studio.scene_rewrite")
 
 #: The Director's brief for one scene: {scene_index, layer, diagnosis, avoid, keep, change,
-#: summary_ro, failures, run_id, message_id}.
+#: summary_ro, failures, run_id, message_id}, and how her review of the rewrite ended
+#: (review_verdict, cause, lesson, review_findings, review_attempts; `_record_brief`).
 BRIEF_EVENT = "media.director_scene_brief"
 #: The reason a `SCENE_PROMPTS_REWRITTEN_EVENT` carries when her brief rewrote the scene.
 REWRITE_REASON = "director_brief"
@@ -86,6 +100,16 @@ REWRITE_TEMPLATE = "scene-prompt-rewrite-v1"
 REVIEW_TASK = "director_rewrite_review"
 REVIEW_TEMPLATE = "director-rewrite-review-v1"
 TREATS, MISSES = "TREATS", "MISSES"
+#: His rewrites in one rung: the first, and one more with her review's words when it missed a
+#: finding (2026-10-12, f06808c9 scenes 3, 4, 7: a refused rewrite ended the rung, and the next
+#: rung asked the same brief again).
+REWRITES_PER_RUNG = 2
+#: A lesson her review writes is kept for every future prompt only when it is a rule, not a note
+#: on one scene: at most this long, and new — an existing lesson that already says this share of
+#: its words means the studio knows it (`lesson_overlap`).
+LESSON_MAX_CHARS = 240
+LESSON_OVERLAP = 0.6
+LESSONS_COMPARED = 40
 LAYERS: tuple[str, ...] = ("motion", "still")
 MOTION, STILL = LAYERS
 #: The refusals of quality control the Director answers with a rewrite.
@@ -189,8 +213,12 @@ class FindingReview(BaseModel):
     treated: bool
     #: The new sentence that treats it; empty for a finding left untreated.
     by: str = Field(default="", max_length=500)
+    #: For a finding left untreated, why: what in the rewritten prompts still invites it, or
+    #: what is missing. The Video Editor's second rewrite is given exactly these words
+    #: (2026-10-12, f06808c9 scenes 3, 4, 7: a refusal nobody explained was asked again).
+    why_not: str = Field(default="", max_length=400)
 
-    @field_validator("by", mode="before")
+    @field_validator("by", "why_not", mode="before")
     @classmethod
     def _text(cls, value: Any) -> Any:
         return " ".join(str(value).split()) if value is not None else ""
@@ -200,17 +228,28 @@ class RewriteReview(BaseModel):
     """The Director's review of the Video Editor's rewrite against the findings.
 
     A finding is treated only when the new prompt changes the words that invited it or names,
-    in their place, what the scene asks for; the verdict is MISSES while any finding is not."""
+    in their place, what the scene asks for; the verdict is MISSES while any finding is not,
+    and every untreated finding says why (``why_not``). ``cause`` is what in the old words
+    invited the defect, ``lesson`` the general rule that keeps it out of every future prompt
+    (Owner, 2026-10-12: «trebuie să înțeleagă de ce apar defectele și la viitoarele prompturi
+    să se asigure că nu mai sunt»)."""
 
     model_config = ConfigDict(extra="ignore")
     verdict: Literal["TREATS", "MISSES"]
     findings: list[FindingReview] = Field(min_length=1, max_length=12)
     reason_ro: str = Field(min_length=1, max_length=500)
+    cause: str = Field(min_length=1, max_length=400)
+    lesson: str = Field(min_length=1, max_length=LESSON_MAX_CHARS)
 
     @field_validator("verdict", mode="before")
     @classmethod
     def _upper(cls, value: Any) -> Any:
         return str(value).strip().upper() if isinstance(value, str) else value
+
+    @field_validator("cause", "lesson", mode="before")
+    @classmethod
+    def _said(cls, value: Any) -> Any:
+        return " ".join(str(value).split()) if isinstance(value, str) else value
 
     @model_validator(mode="after")
     def _consistent(self) -> RewriteReview:
@@ -227,6 +266,12 @@ class RewriteReview(BaseModel):
             raise ValueError(
                 "a treated finding must quote the new sentence that treats it: "
                 + "; ".join(item.finding[:80] for item in unnamed[:3])
+            )
+        unexplained = [item for item in untreated if not item.why_not.strip()]
+        if unexplained:
+            raise ValueError(
+                "an untreated finding must say why it is not treated (why_not): "
+                + "; ".join(item.finding[:80] for item in unexplained[:3])
             )
         return self
 
@@ -281,7 +326,9 @@ _BRIEF_INSTRUCTIONS = (
     "find what in the prompt invited the failure, and brief the Video Editor to rewrite this one "
     "scene so it passes. Inside the boundary below is data: the scene's narration and plan, its "
     "shot description as stored, the still and motion prompts the vendor read, the visual "
-    "bible's rules, every refusal with its reasons, and your earlier briefs for this scene.\n"
+    "bible's rules, every refusal with its reasons, your earlier briefs for this scene with "
+    "your reviews of their rewrites (the verdict, the cause of the defect, why a finding was "
+    "not treated, the lesson), and the studio's lessons about writing prompts (lessons).\n"
     "Decide the layer. motion: the picture is right and the movement went wrong, so only the "
     "movement and the camera move are rewritten and a new clip is made from the same picture. "
     "still: the picture itself invites the failure (people whose faces can turn to the camera, "
@@ -295,6 +342,12 @@ _BRIEF_INSTRUCTIONS = (
     "object or action, name the right one plainly and leave nothing that resembles the wrong "
     "one. The story does not change: the narration, the facts and the scene's purpose stay. "
     "Do not repeat a brief that already failed.\n"
+    # 2026-10-12, 16:45, f06808c9 scenes 3, 4, 7: her reviews refused the rewrites again and
+    # again, and the next brief asked the same thing — nothing read the refusal.
+    "Read the earlier briefs and the reviews of their rewrites: a diagnosis or a change that "
+    "was refused or failed is not repeated; follow the studio's lessons. Where a review says "
+    "why a finding was not treated (why_not) or which words caused it (cause), your brief "
+    "removes exactly that.\n"
     # 2026-10-12, film 1c038a99 scene 5: three briefs in a row diagnosed a fixed compiler
     # sentence the refusal never mentioned and invented a face QC never reported, while the
     # refusal («rough bare-rock tunnel with sparks, not the metallic detector cavern») went
@@ -335,12 +388,42 @@ _REVIEW_INSTRUCTIONS = (
     "its composition, who is in frame and where, or its location must be answered in the "
     "still prompt; a finding about the movement, the camera's path or the clip's ending in "
     "the motion prompt. For each finding say whether it is treated and quote the new sentence "
-    "of the rewritten prompts that treats it. The verdict is MISSES if any finding is "
+    "of the rewritten prompts that treats it; for a finding left untreated say why (why_not): "
+    "which words of the rewritten prompts still invite it, or what they fail to name — he "
+    "rewrites once more from exactly these words. The verdict is MISSES if any finding is "
     "untreated, TREATS only when every finding is.\n"
+    # Owner, 2026-10-12: «trebuie să înțeleagă de ce apar defectele și la viitoarele prompturi
+    # să se asigure că nu mai sunt».
+    "Then say why the defect appeared (cause): in one sentence, which words of the prompts "
+    "before invited it. And write the lesson: one general rule for writing every future prompt "
+    "so this kind of defect does not appear again — phrased positively (what to write, not what "
+    "to avoid), at most 240 characters, with no film title, no scene number and no person's "
+    "name, unless the rule is about the office serial's recurring characters.\n"
     'Return only JSON: {{"verdict": "TREATS" | "MISSES", "findings": [{{"finding": "the '
     'finding in a few words", "treated": true | false, "by": "the new sentence that treats '
-    'it, or empty"}}], "reason_ro": "one sentence in Romanian for the Owner: what is treated '
-    'and what is not"}}.\n'
+    'it, or empty", "why_not": "for an untreated finding, why it is not treated; empty when '
+    'treated"}}], "cause": "which words of the prompts before invited the defect", "lesson": '
+    '"the general rule for future prompts", "reason_ro": "one sentence in Romanian for the '
+    'Owner: what is treated and what is not"}}.\n'
+)
+#: Added to her review of his second rewrite in the rung (2026-10-12).
+_SECOND_REVIEW_NOTE = (
+    "This is his second rewrite in this round: your review of his first one is in the data "
+    "(your_earlier_review). Check above all that every finding you found untreated there is "
+    "treated now, by the words your why_not named; the verdict's rules are the same.\n"
+)
+#: Added to the Video Editor's second rewrite in the rung, with her review inside a boundary
+#: of its own (2026-10-12, f06808c9 scenes 3, 4, 7: «Rescrierea nu tratează constatarea …» and
+#: the next round asked the same brief — the refusal's words never reached him).
+_SECOND_REWRITE_NOTE = (
+    "The Director reviewed your rewrite of this shot against quality control's findings and "
+    "refused it, so nothing was bought on it. Her review is inside the boundary below: each "
+    "finding your rewrite left untreated and why it is not treated (why_not), which words of "
+    "the old prompts invited the defect (cause), the findings you did treat with the sentence "
+    "that treats them, and your refused prompts. Write the shot once more, following her brief "
+    "and the layer's rule: for every untreated finding change exactly the words her why_not "
+    "names, or name in their place what the scene asks for; keep the sentences that already "
+    "treat a finding; do not send the refused rewrite again.\n"
 )
 _LAYERS_OPEN = {
     (MOTION, STILL): "Both layers are open; choose the one that removes the cause.",
@@ -528,11 +611,47 @@ def earlier_briefs(session: Session, storyboard_id: str, scene_index: int) -> li
             # review of his rewrite MISSES): she is told why, so she does not write the same
             # brief again (2026-10-11; the review since 2026-10-12).
             brief["reason"] = reason
-        if payload.get("review_verdict"):
-            brief["review_verdict"] = payload["review_verdict"]
+        if payload.get("review_verdict") or payload.get("review_attempts"):
+            brief["review_verdict"] = payload.get("review_verdict")
             brief["review_reason_ro"] = str(payload.get("review_reason_ro") or "")
+            # Why the defect appeared, why a finding stayed untreated, and the rule she drew
+            # from it (2026-10-12, f06808c9 scenes 3, 4, 7: the next brief asked the same
+            # thing because none of this reached it).
+            brief["cause"] = str(payload.get("cause") or "")
+            brief["why_not"] = untreated_findings(payload)
+            brief["lesson"] = str(payload.get("lesson") or "")
         briefs.append(brief)
     return briefs
+
+
+def untreated_findings(payload: dict[str, Any]) -> list[dict[str, str]]:
+    """Every finding her reviews of a brief's rewrites left untreated, with why, oldest round
+    first and each finding once: from the rounds (``review_attempts``, since 2026-10-12) or
+    the last review's findings."""
+    rounds = [item for item in payload.get("review_attempts") or [] if isinstance(item, dict)]
+    lists = [item.get("findings") or [] for item in rounds] or [payload.get("review_findings")]
+    seen: set[str] = set()
+    found: list[dict[str, str]] = []
+    for findings in lists:
+        for item in findings or []:
+            if not isinstance(item, dict) or item.get("treated"):
+                continue
+            finding = " ".join(str(item.get("finding") or "").split())
+            if not finding or finding.lower() in seen:
+                continue
+            seen.add(finding.lower())
+            found.append({"finding": finding, "why_not": str(item.get("why_not") or "")})
+    return found[:MAX_FAILURES_SHOWN]
+
+
+def _brief_in_short(brief: dict[str, Any]) -> dict[str, Any]:
+    """An older brief beyond the ones shown whole: its diagnosis and how it ended, so no
+    diagnosis that failed is written again however long the scene's history is."""
+    return {
+        key: brief.get(key)
+        for key in ("at", "layer", "rewritten", "diagnosis", "review_verdict", "cause")
+        if brief.get(key) not in (None, "", [])
+    }
 
 
 def open_layers(
@@ -618,6 +737,7 @@ def scene_context(engine: Engine, storyboard_id: str, scene_index: int) -> dict[
             (s for s in facts["scenes"] if int(s["scene_index"]) == scene_index), {}
         )
         last_code = last_failure_code(session, storyboard_id, scene_index)
+        briefs = earlier_briefs(session, storyboard_id, scene_index)
         context = {
             "storyboard_id": storyboard_id,
             "scene_index": scene_index,
@@ -634,7 +754,8 @@ def scene_context(engine: Engine, storyboard_id: str, scene_index: int) -> dict[
             "previous_moves": moves,
             "previous_ending": previous_ending,
             "failures": scene_failures(session, storyboard_id, scene_index),
-            "briefs": earlier_briefs(session, storyboard_id, scene_index)[-MAX_BRIEFS_SHOWN:],
+            "briefs": briefs[-MAX_BRIEFS_SHOWN:],
+            "older_briefs": [_brief_in_short(brief) for brief in briefs[:-MAX_BRIEFS_SHOWN]],
             "last_code": last_code,
             "layers": open_layers(session, storyboard_id, scene_index, last_code=last_code),
             "local_move": _local_move(session, storyboard_id, scene_index),
@@ -702,6 +823,8 @@ def _data(context: dict[str, Any], **more: Any) -> str:
         "earlier_briefs": context["briefs"],
         **more,
     }
+    if context.get("older_briefs"):
+        data["older_briefs_in_short"] = context["older_briefs"]
     if context.get("serial"):
         data["serial_shot"] = _serial_shot(context)
     fitted, _dropped = trim_payload(data, MAX_PAYLOAD_CHARS)
@@ -717,12 +840,19 @@ def director_brief(
     """The Director's brief for one scene (`SceneBrief`), asked through `structured_run`.
 
     Returns {"brief": dict | None, "run_id", "agent_id", "reason"}: no brief when no Director is
-    active or her answer did not validate twice (the scene then waits, as before)."""
+    active or her answer did not validate twice (the scene then waits, as before).
+
+    She reads the studio's prompt lessons (`prompt_agent.prompt_lessons`) and, in the scene's
+    earlier briefs, the reviews of their rewrites — cause, why_not, lesson — so a diagnosis or
+    a change that was refused or failed is not asked again (2026-10-12, f06808c9 scenes 3, 4,
+    7)."""
     from app.agents.structured import structured_run  # noqa: PLC0415 - it imports services
+    from app.media.prompt_agent import prompt_lessons  # noqa: PLC0415 - it imports us
 
     with Session(engine) as session:
         director = agent_for_role(session, "Director")
         director_id = director.id if director is not None else None
+        lessons = prompt_lessons(session)
     if director_id is None or registry is None:
         return {"brief": None, "run_id": None, "agent_id": None, "reason": "Niciun Director activ."}
     layers = tuple(context["layers"])
@@ -735,7 +865,9 @@ def director_brief(
             layers=str(context.get("layers_note") or _LAYERS_OPEN.get(layers, "")),
         )
         + (_SERIAL_BRIEF_NOTE if context.get("serial") else "")
-        + wrap_in_inert_boundary(_data(context, open_layers=list(layers)), "scene-brief")
+        + wrap_in_inert_boundary(
+            _data(context, open_layers=list(layers), lessons=lessons), "scene-brief"
+        )
     )
     parsed, first, second = structured_run(
         engine,
@@ -941,14 +1073,18 @@ def review_rewrite(
     package: dict[str, Any],
     visual: str,
     correlation_id: str,
+    *,
+    earlier: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """The Director's review of the rewritten prompts against the findings (`RewriteReview`),
     asked through `structured_run` before anything is stored or bought.
 
-    Returns {"verdict": TREATS | MISSES | None, "reason_ro", "findings", "run_id", "reason"}:
-    no verdict when no Director is active or her answer did not validate twice, and the caller
-    fails closed — nothing is bought on words nobody verified (Owner, 2026-10-12: «tratează
-    problema? Promptul trebuie revizuit»)."""
+    Returns {"verdict": TREATS | MISSES | None, "reason_ro", "findings", "cause", "lesson",
+    "run_id", "reason"}: no verdict when no Director is active or her answer did not validate
+    twice, and the caller fails closed — nothing is bought on words nobody verified (Owner,
+    2026-10-12: «tratează problema? Promptul trebuie revizuit»). ``earlier`` is her review of
+    his first rewrite in the rung, when this is his second: she checks the findings it left
+    untreated first."""
     from app.agents.structured import structured_run  # noqa: PLC0415 - it imports services
     from app.media.prompt_agent import trim_payload  # noqa: PLC0415 - it imports us
 
@@ -956,13 +1092,7 @@ def review_rewrite(
         director = agent_for_role(session, "Director")
         director_id = director.id if director is not None else None
     if director_id is None or registry is None:
-        return {
-            "verdict": None,
-            "reason_ro": "",
-            "findings": [],
-            "run_id": None,
-            "reason": "niciun Director activ care să verifice rescrierea",
-        }
+        return _no_review(None, "niciun Director activ care să verifice rescrierea")
     stored = context["package"]
     old_still = str(stored.get("still_prompt") or context["visual_prompt"])
     old_motion = str(stored.get("motion_prompt") or "")
@@ -981,11 +1111,21 @@ def review_rewrite(
     }
     if context.get("serial"):
         data["serial_shot"] = _serial_shot(context)
+    if earlier:
+        data["your_earlier_review"] = {
+            "verdict": earlier.get("verdict"),
+            "findings": earlier.get("findings") or [],
+            "cause": earlier.get("cause") or "",
+        }
     fitted, _dropped = trim_payload(data, MAX_PAYLOAD_CHARS)
-    prompt = _REVIEW_INSTRUCTIONS.format(
-        scene=context["scene_index"], title=context["title"], layer=layer
-    ) + wrap_in_inert_boundary(
-        json.dumps(fitted, ensure_ascii=False, default=str), "rewrite-review"
+    prompt = (
+        _REVIEW_INSTRUCTIONS.format(
+            scene=context["scene_index"], title=context["title"], layer=layer
+        )
+        + (_SECOND_REVIEW_NOTE if earlier else "")
+        + wrap_in_inert_boundary(
+            json.dumps(fitted, ensure_ascii=False, default=str), "rewrite-review"
+        )
     )
     parsed, first, second = structured_run(
         engine,
@@ -1001,27 +1141,115 @@ def review_rewrite(
             f"Verific dacă rescrierea scenei {context['scene_index']} din "
             f"«{context['title'][:60]}» tratează constatările înainte să cumpărăm ceva pe ea."
         ),
-        max_tokens=1200,
+        max_tokens=1600,
     )
     last = second or first
     if parsed is None:
-        return {
-            "verdict": None,
-            "reason_ro": "",
-            "findings": [],
-            "run_id": last.get("id"),
-            "reason": (
-                "verificarea rescrierii nu a respectat forma cerută nici a doua oară "
-                f"({last.get('error_detail') or last.get('status')})"
-            ),
-        }
+        return _no_review(
+            last.get("id"),
+            "verificarea rescrierii nu a respectat forma cerută nici a doua oară "
+            f"({last.get('error_detail') or last.get('status')})",
+        )
     return {
         "verdict": parsed.verdict,
         "reason_ro": parsed.reason_ro,
         "findings": [item.model_dump() for item in parsed.findings],
+        "cause": parsed.cause,
+        "lesson": parsed.lesson,
         "run_id": last.get("id"),
         "reason": "",
     }
+
+
+def _no_review(run_id: str | None, reason: str) -> dict[str, Any]:
+    """A review that could not be made: no verdict, and the reason; the caller fails closed."""
+    return {
+        "verdict": None,
+        "reason_ro": "",
+        "findings": [],
+        "cause": "",
+        "lesson": "",
+        "run_id": run_id,
+        "reason": reason,
+    }
+
+
+# ------------------------------------------------------------------ what a review teaches
+
+#: A scene named by its number: a note on one scene, not a rule for every prompt.
+_SCENE_NUMBER = re.compile(
+    r"\b(?:scene|scenes|scena|scenele|scenei)\s*(?:no\.?\s*)?#?\d+\b", re.IGNORECASE
+)
+#: Words that say nothing of a lesson's content, left out when two lessons are compared.
+_LESSON_STOPWORDS = frozenset(
+    "the and for with that this from into its are was were has have had but not any all each "
+    "them they their there than then when where which who what while will would should must "
+    "can may also more most other such very just every".split()
+)
+
+
+def _lesson_words(text: str) -> set[str]:
+    """A lesson's content words, lower-cased, plurals folded: what `lesson_overlap` compares."""
+    words: set[str] = set()
+    for word in re.findall(r"[^\W\d_]+|\d+", str(text or "").lower()):
+        if len(word) < 3 or word in _LESSON_STOPWORDS:
+            continue
+        if word.endswith("ies") and len(word) > 4:
+            word = word[:-3] + "y"
+        elif word.endswith("s") and not word.endswith("ss") and len(word) > 3:
+            word = word[:-1]
+        words.add(word)
+    return words
+
+
+def lesson_overlap(new: str, known: str) -> float:
+    """The share of ``new``'s content words that ``known`` already says, 0..1: at
+    `LESSON_OVERLAP` or more the studio already has the lesson, and it is not written again."""
+    said = _lesson_words(new)
+    if not said:
+        return 1.0
+    return len(said & _lesson_words(known)) / len(said)
+
+
+def lesson_not_general(lesson: str, context: dict[str, Any]) -> str:
+    """Why ``lesson`` is a note on this film rather than a rule for every prompt (its title, a
+    scene's number), or "" when it is a rule. Names are the review's to leave out (her
+    instructions): a serial's recurring characters may be named, and nothing here can tell a
+    person's name from a word."""
+    said = " ".join(str(lesson or "").split())
+    if not said:
+        return "recenzia nu a scris nicio lecție"
+    title = " ".join(str(context.get("title") or "").split()).lower()
+    if len(title) >= 4 and title in said.lower():
+        return "lecția numește filmul; nu e o regulă pentru orice prompt"
+    if _SCENE_NUMBER.search(said):
+        return "lecția numește o scenă; nu e o regulă pentru orice prompt"
+    return ""
+
+
+def learn_from_review(
+    session: Session, review: dict[str, Any], context: dict[str, Any]
+) -> tuple[bool, str]:
+    """The lesson of a review that passed a rewrite, kept for every future prompt
+    (`prompt_agent.record_prompt_lesson`, read by the shot writer, the rewrites and every
+    brief), unless it is a note on this film or the studio already says it. Returns (recorded,
+    why not). Inside the caller's write transaction. Owner, 2026-10-12: «DIRECTOAREA ACCEPTĂ
+    DEFECTELE MICI! DAR TREBUIE SĂ ÎNȚELEAGĂ DE CE APAR DEFECTELE ȘI LA VIITOARELE PROMPTURI SĂ
+    SE ASIGURE CĂ NU MAI SUNT!»"""
+    from app.media.prompt_agent import (  # noqa: PLC0415 - it imports us
+        prompt_lessons,
+        record_prompt_lesson,
+    )
+
+    lesson = " ".join(str(review.get("lesson") or "").split())[:LESSON_MAX_CHARS]
+    why = lesson_not_general(lesson, context)
+    if why:
+        return False, why
+    for known in prompt_lessons(session, limit=LESSONS_COMPARED):
+        if lesson_overlap(lesson, known) >= LESSON_OVERLAP:
+            return False, f"studioul are deja lecția: «{known[:160]}»"
+    record_prompt_lesson(session, lesson, source_id=review.get("run_id"))
+    return True, ""
 
 
 def _lint_blocks(context: dict[str, Any], package: dict[str, Any], visual: str) -> list[str]:
@@ -1048,6 +1276,204 @@ def _lint_blocks(context: dict[str, Any], package: dict[str, Any], visual: str) 
     return sorted(after - before)
 
 
+def _editor_rewrite(
+    engine: Engine,
+    registry: Any,
+    editor_id: str,
+    context: dict[str, Any],
+    brief: dict[str, Any],
+    prompt: str,
+    correlation_id: str,
+) -> dict[str, Any]:
+    """His rewrite of the shot from ``prompt``, compiled (or said again by the serial
+    composer) and linted, the linter's refusal quoted to him once. Returns {"package",
+    "visual", "run_id", "reason"}: no package when his answer did not validate twice or the
+    linter blocked it twice."""
+    from app.agents.structured import structured_run  # noqa: PLC0415 - it imports services
+
+    index = int(context["scene_index"])
+    layer = str(brief["layer"])
+    serial = bool(context.get("serial"))
+    visual = context["visual_prompt"]
+    refused: list[str] = []
+    run_id = None
+    for _attempt in (0, 1):
+        asked = prompt
+        if refused:
+            asked += (
+                "Your previous rewrite of this shot was refused by the studio's prompt check: "
+                + "; ".join(refused)[:800]
+                + ". Write it again without that.\n"
+            )
+        parsed, first, second = structured_run(
+            engine,
+            registry,
+            editor_id,
+            REWRITE_TASK,
+            asked,
+            REWRITE_TEMPLATE,
+            correlation_id,
+            shot_schema(index, layer, serial=serial),
+            "",
+            summary=(
+                f"Rescriu scena {index} din «{context['title'][:60]}» după brief-ul Directoarei."
+            ),
+            max_tokens=3000,
+            temperature=0.3,
+        )
+        last = second or first
+        run_id = last.get("id")
+        if parsed is None:
+            return {
+                "package": None,
+                "visual": visual,
+                "run_id": run_id,
+                "reason": (
+                    "Rescrierea lui Kael nu a respectat forma cerută nici a doua oară "
+                    f"({last.get('error_detail') or last.get('status')})."
+                ),
+            }
+        rewrite = serial_rewritten_package if serial else rewritten_package
+        candidate = rewrite(context, parsed, layer, brief)
+        candidate_visual = (
+            visual if layer == MOTION else str(candidate.get("still_prompt") or visual)
+        )
+        refused = _lint_blocks(context, candidate, candidate_visual)
+        if not refused:
+            return {
+                "package": candidate,
+                "visual": candidate_visual,
+                "run_id": run_id,
+                "reason": "",
+            }
+    return {
+        "package": None,
+        "visual": visual,
+        "run_id": run_id,
+        "reason": "Verificarea promptului a blocat rescrierea: " + "; ".join(refused)[:600],
+    }
+
+
+def _reviewed(
+    engine: Engine,
+    registry: Any,
+    context: dict[str, Any],
+    brief: dict[str, Any],
+    layer: str,
+    package: dict[str, Any],
+    visual: str,
+    correlation_id: str,
+    earlier: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Her review of one rewrite (`review_rewrite`); a fault is a review that could not be
+    made, and the caller fails closed."""
+    try:
+        return review_rewrite(
+            engine,
+            registry,
+            context,
+            brief,
+            layer,
+            package,
+            visual,
+            correlation_id,
+            earlier=earlier,
+        )
+    except Exception as exc:  # noqa: BLE001 - a fault waits; it never buys
+        logger.warning("rewrite_review_failed", extra={"error": type(exc).__name__})
+        return _no_review(
+            None, f"verificarea rescrierii nu a putut fi făcută ({type(exc).__name__})"
+        )
+
+
+def _kept_findings(findings: Any) -> list[dict[str, Any]]:
+    """Her review's findings as the record keeps them: each with its text (``finding``),
+    whether it is treated, the new sentence that treats it (``by``) and, untreated, why
+    (``why_not``)."""
+    return [
+        {
+            "finding": str(item.get("finding") or ""),
+            "treated": bool(item.get("treated")),
+            "by": str(item.get("by") or ""),
+            "why_not": str(item.get("why_not") or ""),
+        }
+        for item in findings or []
+        if isinstance(item, dict)
+    ]
+
+
+def _round_record(
+    number: int, written: dict[str, Any], layer: str, review: dict[str, Any]
+) -> dict[str, Any]:
+    """One round of the rung as the brief's record keeps it: his words, her verdict and why."""
+    package = written["package"] or {}
+    return {
+        "round": number,
+        "layer": layer,
+        "rewrite_run_id": written.get("run_id"),
+        "review_run_id": review.get("run_id"),
+        "verdict": review.get("verdict"),
+        "reason_ro": str(review.get("reason_ro") or ""),
+        "reason": str(review.get("reason") or ""),
+        "cause": str(review.get("cause") or ""),
+        "lesson": str(review.get("lesson") or ""),
+        "findings": _kept_findings(review.get("findings")),
+        "still_prompt": str(written.get("visual") or ""),
+        "motion_prompt": str(package.get("motion_prompt") or ""),
+    }
+
+
+def _same_words(record: dict[str, Any], visual: str, package: dict[str, Any]) -> bool:
+    """Whether his second rewrite says what the refused one said, word for word."""
+
+    def said(text: Any) -> str:
+        return " ".join(str(text or "").split())
+
+    return said(record.get("still_prompt")) == said(visual) and said(
+        record.get("motion_prompt")
+    ) == said(package.get("motion_prompt"))
+
+
+def _second_rewrite_note(record: dict[str, Any]) -> str:
+    """Her review of his refused rewrite, for his second: each untreated finding with why, the
+    cause, the findings he did treat with their sentence, and his refused prompts — inside a
+    boundary of its own, since the findings quote quality control's words."""
+    untreated = [
+        {"finding": item["finding"], "why_not": item["why_not"]}
+        for item in record["findings"]
+        if not item["treated"]
+    ]
+    treated = [
+        {"finding": item["finding"], "by": item["by"]}
+        for item in record["findings"]
+        if item["treated"]
+    ]
+    data = {
+        "verdict": record["verdict"],
+        "reason_ro": record["reason_ro"],
+        "untreated": untreated,
+        "treated": treated,
+        "cause": record["cause"],
+        "refused_prompts": {"still": record["still_prompt"], "motion": record["motion_prompt"]},
+    }
+    return _SECOND_REWRITE_NOTE + wrap_in_inert_boundary(
+        json.dumps(data, ensure_ascii=False, default=str), "rewrite-feedback"
+    )
+
+
+def _second_rewrite_failed(outcome: dict[str, Any], why: str) -> dict[str, Any]:
+    """His second rewrite came to nothing her review could read (his answer, the linter, the
+    old words or the refused ones again): her refusal of the first stands, and nothing is
+    stored or bought."""
+    outcome["not_treating"] = True
+    outcome["reason"] = (
+        "Rescrierea nu tratează constatarea: "
+        + str(outcome.get("review_reason_ro") or "")
+        + f" A doua rescriere, cu observațiile ei: {why}"
+    )
+    return outcome
+
+
 def rewrite_scene(
     engine: Engine,
     registry: Any,
@@ -1058,11 +1484,16 @@ def rewrite_scene(
     """The Video Editor's rewrite of one scene from the Director's brief, compiled (or, for a
     serial scene, said again by the serial composer), linted, reviewed by her against the
     findings and stored on that scene only. Returns {"rewritten": bool, "layer", "reason",
-    "run_id", "review_run_id", "review_verdict", "review_reason_ro", "old_still_prompt",
-    "still_prompt", "old_motion_prompt", "motion_prompt"}; ``same_prompt`` True when his words
-    came back the same, ``not_treating`` True when her review said MISSES, ``review_unavailable``
-    True when nobody could review it — nothing is stored in the last two cases either."""
-    from app.agents.structured import structured_run  # noqa: PLC0415 - it imports services
+    "run_id", "review_run_id", "review_verdict", "review_reason_ro", "review_findings",
+    "review_cause", "review_lesson", "review_attempts", "old_still_prompt", "still_prompt",
+    "old_motion_prompt", "motion_prompt"}; ``same_prompt`` True when his words came back the
+    same, ``not_treating`` True when her review said MISSES, ``review_unavailable`` True when
+    nobody could review it — nothing is stored in the last two cases either.
+
+    A rewrite her review refused is rewritten once more in the same rung, with her words: each
+    untreated finding and why it is not treated (2026-10-12, f06808c9 scenes 3, 4, 7: the
+    refused rewrites ended the rung and the next one asked the same brief). Only a second miss
+    stores nothing. A rewrite she passes stores the scene and her lesson (`learn_from_review`)."""
     from app.media.prompt_agent import PROMPT_ROLE, prompt_lessons  # noqa: PLC0415
 
     index = int(context["scene_index"])
@@ -1087,88 +1518,71 @@ def rewrite_scene(
         _data(context, director_brief=brief, lessons=lessons), "scene-rewrite"
     )
     stored = context["package"]
-    refused: list[str] = []
-    package: dict[str, Any] | None = None
+    rounds: list[dict[str, Any]] = []
+    review: dict[str, Any] = {}
+    package: dict[str, Any] = {}
     visual = context["visual_prompt"]
-    for _attempt in (0, 1):
-        prompt = base
-        if refused:
-            prompt += (
-                "Your previous rewrite of this shot was refused by the studio's prompt check: "
-                + "; ".join(refused)[:800]
-                + ". Write it again without that.\n"
+    layer_done = layer
+    for number in range(1, REWRITES_PER_RUNG + 1):
+        note = _second_rewrite_note(rounds[-1]) if rounds else ""
+        written = _editor_rewrite(
+            engine, registry, editor_id, context, brief, base + note, correlation_id
+        )
+        outcome["run_id"] = written["run_id"]
+        if written["package"] is None:
+            if rounds:
+                return _second_rewrite_failed(outcome, str(written["reason"]))
+            outcome["reason"] = str(written["reason"])
+            return outcome
+        package, visual = written["package"], str(written["visual"])
+        still_changed = " ".join(visual.split()) != " ".join(context["visual_prompt"].split())
+        if not still_changed and not _motion_changed(stored, package):
+            if rounds:
+                return _second_rewrite_failed(
+                    outcome, "a dat din nou cuvintele de dinainte ale scenei."
+                )
+            outcome["reason"] = "Rescrierea a dat același prompt; nimic nou de cumpărat."
+            # The caller may try the other layer: a motion rewrite that changed nothing on a
+            # picture that stays is the picture's turn (MOTION_REWRITES_BEFORE_STILL).
+            outcome["same_prompt"] = True
+            return outcome
+        if rounds and _same_words(rounds[-1], visual, package):
+            # The words she refused, asked again: they cannot treat what they did not.
+            return _second_rewrite_failed(
+                outcome, "a dat aceleași cuvinte pe care Directoarea le-a refuzat."
             )
-        parsed, first, second = structured_run(
+        layer_done = STILL if still_changed else MOTION
+        # Her review, before anything is stored: does the rewrite treat the finding? (Owner,
+        # 2026-10-12: «Nu ai cum să faci de 5 ori aceeași greșeală!») A review that could not
+        # be made fails closed: nothing is bought on words nobody verified.
+        review = _reviewed(
             engine,
             registry,
-            editor_id,
-            REWRITE_TASK,
-            prompt,
-            REWRITE_TEMPLATE,
+            context,
+            brief,
+            layer_done,
+            package,
+            visual,
             correlation_id,
-            shot_schema(index, layer, serial=serial),
-            "",
-            summary=(
-                f"Rescriu scena {index} din «{context['title'][:60]}» după brief-ul Directoarei."
-            ),
-            max_tokens=3000,
-            temperature=0.3,
+            rounds[-1] if rounds else None,
         )
-        last = second or first
-        outcome["run_id"] = last.get("id")
-        if parsed is None:
-            outcome["reason"] = (
-                "Rescrierea lui Kael nu a respectat forma cerută nici a doua oară "
-                f"({last.get('error_detail') or last.get('status')})."
-            )
-            return outcome
-        rewrite = serial_rewritten_package if serial else rewritten_package
-        candidate = rewrite(context, parsed, layer, brief)
-        candidate_visual = (
-            visual if layer == MOTION else str(candidate.get("still_prompt") or visual)
+        rounds.append(_round_record(number, written, layer_done, review))
+        outcome.update(
+            review_run_id=review.get("run_id"),
+            review_verdict=review.get("verdict"),
+            review_reason_ro=str(review.get("reason_ro") or ""),
+            review_findings=_kept_findings(review.get("findings")),
+            review_cause=str(review.get("cause") or ""),
+            review_lesson=str(review.get("lesson") or ""),
+            review_attempts=rounds,
         )
-        refused = _lint_blocks(context, candidate, candidate_visual)
-        if not refused:
-            package, visual = candidate, candidate_visual
+        if review.get("verdict") != MISSES:
             break
-    if package is None:
-        outcome["reason"] = (
-            "Verificarea promptului a blocat rescrierea: " + "; ".join(refused)[:600]
-        )
-        return outcome
-    still_changed = " ".join(visual.split()) != " ".join(context["visual_prompt"].split())
-    if not still_changed and not _motion_changed(stored, package):
-        outcome["reason"] = "Rescrierea a dat același prompt; nimic nou de cumpărat."
-        # The caller may try the other layer: a motion rewrite that changed nothing on a
-        # picture that stays is the picture's turn (MOTION_REWRITES_BEFORE_STILL).
-        outcome["same_prompt"] = True
-        return outcome
-    layer_done = STILL if still_changed else MOTION
-    # Her review, before anything is stored: does the rewrite treat the finding? (Owner,
-    # 2026-10-12: «Nu ai cum să faci de 5 ori aceeași greșeală!») A review that could not be
-    # made fails closed: nothing is bought on words nobody verified.
-    try:
-        review = review_rewrite(
-            engine, registry, context, brief, layer_done, package, visual, correlation_id
-        )
-    except Exception as exc:  # noqa: BLE001 - a fault waits; it never buys
-        logger.warning("rewrite_review_failed", extra={"error": type(exc).__name__})
-        review = {
-            "verdict": None,
-            "reason_ro": "",
-            "findings": [],
-            "run_id": None,
-            "reason": f"verificarea rescrierii nu a putut fi făcută ({type(exc).__name__})",
-        }
-    outcome.update(
-        review_run_id=review.get("run_id"),
-        review_verdict=review.get("verdict"),
-        review_reason_ro=str(review.get("reason_ro") or ""),
-        review_findings=review.get("findings") or [],
-    )
     if review.get("verdict") == MISSES:
         outcome["not_treating"] = True
         outcome["reason"] = "Rescrierea nu tratează constatarea: " + str(review.get("reason_ro"))
+        if len(rounds) > 1:
+            outcome["reason"] += " (și a doua rescriere, cu observațiile ei, a fost refuzată)"
         return outcome
     if review.get("verdict") != TREATS:
         outcome["review_unavailable"] = True
@@ -1197,6 +1611,7 @@ def rewrite_scene(
         row.prompt_json = package
         row.visual_prompt = visual
         row.story_purpose = package.get("story_purpose") or row.story_purpose
+        learned, unlearned = learn_from_review(session, review, context)
         append_event(
             session,
             SCENE_PROMPTS_REWRITTEN_EVENT,
@@ -1217,11 +1632,30 @@ def rewrite_scene(
                 "old_package": stored,
                 "package": package,
                 "run_id": outcome["run_id"],
+                # Her review of the words stored. CONTRACT (2026-10-12): ``findings`` keeps, for
+                # every finding quality control gave, its text (``finding``) and the new
+                # sentence that treats it (``by``), with ``treated`` and ``why_not``: what the
+                # purchase that follows is checked against — after the new still (and its
+                # clip) is bought, each finding must be gone from the picture. ``cause`` and
+                # ``lesson`` say why the defect appeared and the rule drawn from it;
+                # ``rounds`` counts his rewrites in the rung, ``refused`` the ones she refused
+                # before this one (each with its findings and why_not).
                 "review": {
                     "verdict": review.get("verdict"),
                     "reason_ro": review.get("reason_ro"),
-                    "findings": review.get("findings"),
+                    "findings": _kept_findings(review.get("findings")),
                     "run_id": review.get("run_id"),
+                    "cause": str(review.get("cause") or ""),
+                    "lesson": str(review.get("lesson") or ""),
+                    "lesson_recorded": learned,
+                    "rounds": len(rounds),
+                    "refused": [
+                        {
+                            key: item[key]
+                            for key in ("round", "review_run_id", "reason_ro", "cause", "findings")
+                        }
+                        for item in rounds[:-1]
+                    ],
                 },
             },
             correlation_id,
@@ -1233,6 +1667,8 @@ def rewrite_scene(
         still_prompt=visual,
         old_motion_prompt=stored.get("motion_prompt"),
         motion_prompt=package.get("motion_prompt"),
+        lesson_recorded=learned,
+        lesson_skipped=unlearned,
     )
     return outcome
 
@@ -1277,16 +1713,26 @@ def _letters(
                 body_text="\n".join(lines),
             )
             redone = "imaginea și mișcarea" if done.get("layer") == STILL else "mișcarea"
+            rounds = list(done.get("review_attempts") or [])
             if done.get("rewritten"):
+                again = ""
+                if len(rounds) > 1:
+                    # His second rewrite in the rung, from her review of the first (2026-10-12).
+                    again = (
+                        " a doua oară, după observațiile Directoarei la prima rescriere ("
+                        + str(rounds[0].get("reason_ro") or "")[:200]
+                        + ")"
+                    )
                 answer = (
-                    f"Am rescris scena {index} ({redone}). "
+                    f"Am rescris scena {index} ({redone}){again}. "
                     f"Promptul nou de mișcare: {str(done.get('motion_prompt') or '')[:300]}"
                 )
             elif done.get("not_treating"):
                 # Her review refused his words (2026-10-12): the letter says so, and why, so
                 # the register shows a rewrite that was not bought rather than one that failed.
+                times = " de două ori" if len(rounds) > 1 else ""
                 answer = (
-                    f"Am rescris scena {index}, dar la verificare Directoarea a refuzat "
+                    f"Am rescris scena {index}{times}, dar la verificare Directoarea a refuzat "
                     f"rescrierea și nu se cumpără nimic pe ea. {done.get('reason')}"
                 )
             elif done.get("review_unavailable"):
@@ -1359,6 +1805,16 @@ def _record_brief(
                 "review_reason_ro": done.get("review_reason_ro") or "",
                 "review_run_id": done.get("review_run_id"),
                 "not_treating": bool(done.get("not_treating")),
+                # Why the defect appeared and the rule she drew from it, every finding of her
+                # last review with why_not, and each round of his rewrites with her verdict
+                # (2026-10-12): the next brief reads them (`earlier_briefs`), so a refused
+                # diagnosis or change is not asked again.
+                "cause": done.get("review_cause") or "",
+                "lesson": done.get("review_lesson") or "",
+                "lesson_recorded": bool(done.get("lesson_recorded")),
+                "lesson_skipped": done.get("lesson_skipped") or "",
+                "review_findings": done.get("review_findings") or [],
+                "review_attempts": done.get("review_attempts") or [],
                 "diagnosis": brief.get("diagnosis"),
                 "avoid": brief.get("avoid") or [],
                 "keep": brief.get("keep") or [],
@@ -1860,6 +2316,10 @@ def _rung(
         review_unavailable=bool(done.get("review_unavailable")),
         review_verdict=done.get("review_verdict"),
         review_reason_ro=str(done.get("review_reason_ro") or ""),
+        # His rewrites in the rung (a second one after her review refused the first) and
+        # whether her lesson became the studio's (2026-10-12).
+        review_rounds=len(done.get("review_attempts") or []),
+        lesson_recorded=bool(done.get("lesson_recorded")),
     )
     return outcome
 
