@@ -425,6 +425,24 @@ def test_the_serial_motion_carries_the_ending_frame_and_the_rewrites_feeling():
         {**BEAT, "ending_frame": "with her eyes on the pen"}, {}
     )
     assert "The shot ends with her eyes on the pen." in with_preposition
+    # 2026-10-12, f06808c9 scene 4: the rewrite wrote the lead-in itself and the clip was asked
+    # «The shot ends on the shot ends on …». The writer's lead-in goes, once or twice written.
+    for lead in (
+        "The shot ends on the same medium close-up single on Nadia, eyes on the pen.",
+        "The shot ends on: the shot ends on the same medium close-up single on Nadia, eyes on "
+        "the pen",
+        "Ending on the same medium close-up single on Nadia, eyes on the pen",
+    ):
+        led = compose_serial_motion({**BEAT, "ending_frame": lead}, {})
+        assert led.count("The shot ends") == 1, led
+        assert (
+            "The shot ends on the same medium close-up single on Nadia, eyes on the pen." in led
+        ), led
+    kept_with = compose_serial_motion(
+        {**BEAT, "ending_frame": "The clip ends with her eyes on the pen"}, {}
+    )
+    assert kept_with.count("The shot ends") == 1 and "clip ends" not in kept_with
+    assert "The shot ends on her eyes on the pen." in kept_with
     # An ending that names a camera move of its own is left out: the clip has exactly one.
     moved = compose_serial_motion({**BEAT, "ending_frame": "a slow tilt down to the ledger"}, {})
     assert "The shot ends" not in moved

@@ -3886,9 +3886,32 @@ def _free_fix_rounds(session: Session, storyboard_id: str) -> int:
     return rounds
 
 
-def _free_fixes_spent(session: Session, storyboard_id: str) -> bool:
-    """Whether the film has had all its free fixes (`FREE_FIXES_PER_FILM`)."""
-    return bool(storyboard_id) and _free_fix_rounds(session, storyboard_id) >= FREE_FIXES_PER_FILM
+def _made_by_free_fix(session: Session, storyboard_id: str, asset_id: str) -> bool:
+    """Whether this very film came out of a repair that applied a free fix: the same fix on
+    it gives the same film again (audio, encode and cards are deterministic), so a free fix is
+    made again only after something else changed the film (a paid redo's new take)."""
+    for event in session.scalars(
+        select(DomainEvent).where(
+            DomainEvent.event_type == QC_REPAIR_EVENT,
+            DomainEvent.aggregate_id == storyboard_id,
+        )
+    ):
+        payload = event.payload if isinstance(event.payload, dict) else {}
+        made = {str(a) for a in [payload.get("new_asset"), *(payload.get("made") or [])] if a}
+        if payload.get("applied") and asset_id in made:
+            return True
+    return False
+
+
+def _free_fixes_spent(session: Session, storyboard_id: str, asset_id: str | None = None) -> bool:
+    """Whether no free fix may be made for this film now: all `FREE_FIXES_PER_FILM` were made,
+    or the film in hand is itself what a free fix made (`_made_by_free_fix`: repeating it would
+    repeat the same result, the Owner's «nu să facă aceeași greșeală la nesfârșit»)."""
+    if not storyboard_id:
+        return False
+    if _free_fix_rounds(session, storyboard_id) >= FREE_FIXES_PER_FILM:
+        return True
+    return bool(asset_id) and _made_by_free_fix(session, storyboard_id, str(asset_id))
 
 
 def _repaired_assets(session: Session) -> set[str]:
@@ -4246,7 +4269,9 @@ def _redo_allowance(
     with Session(engine) as session:
         spent = _paid_redo_rounds(session, storyboard_id) if storyboard_id else {}
         open_rounds = _open_still_rounds(session, storyboard_id) if storyboard_id else {}
-        free_used = _free_fixes_spent(session, storyboard_id)
+        free_used = _free_fixes_spent(
+            session, storyboard_id, str(reading.get("media_asset_id") or "")
+        )
     limits = {
         "per_scene": int(getattr(settings, "film_max_paid_redos_per_scene", 1)),
         "per_film": int(getattr(settings, "film_max_paid_redos", 2)),
@@ -4771,7 +4796,7 @@ def _director_repairs(
         return result
     try:
         with Session(engine) as session:
-            free_used = _free_fixes_spent(session, storyboard_id)
+            free_used = _free_fixes_spent(session, storyboard_id, asset_id)
             protected = director_qc.protected_redos(
                 session, storyboard_id, reading.get("production") or {}
             )
@@ -5550,7 +5575,7 @@ def _apply_repairs(
     since = since or utc_now()
     result.setdefault("waiting", [])
     with Session(engine) as session:
-        free_already = _free_fixes_spent(session, storyboard_id)
+        free_already = _free_fixes_spent(session, storyboard_id, asset_id)
         # What he approved as final is never retired here; what he approved without marking
         # it final is replaced by her confirmed repair, and he is told (2026-10-11, his card).
         his_final = director_qc.owner_approved_take_ids(session, storyboard_id, final_only=True)

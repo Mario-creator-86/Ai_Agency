@@ -2099,13 +2099,20 @@ def _incident_limits(engine, film, settings) -> None:
             session.get(
                 SceneTake, _take(session, film["board"], scene, "still", None)
             ).status = "REJECTED"
+        # The film in hand is what its free fix made (the sound remastered): the same fix on it
+        # would only make it again (`stages._made_by_free_fix`).
         append_event(
             session,
             stages.QC_REPAIR_EVENT,
             "storyboard",
             film["board"],
             1,
-            {"of_asset": film["asset"], "made": [], "new_asset": None},
+            {
+                "of_asset": "the-cut-before-its-free-fix",
+                "applied": [{"redo": "audio", "reason": "vârful sunetului"}],
+                "made": [film["asset"]],
+                "new_asset": film["asset"],
+            },
             "c",
         )
 

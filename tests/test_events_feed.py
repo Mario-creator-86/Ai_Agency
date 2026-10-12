@@ -201,6 +201,48 @@ def test_the_gates_and_the_walk_speak_of_the_film_by_its_title(engine):
     )
 
 
+def test_a_walk_that_did_nothing_stood_still_and_names_the_film_once(engine):
+    """2026-10-12 19:50 UTC, f06808c9: the Owner's GPU stop let nothing of her repair be done,
+    and the register read «Filmul «…» a mers până la capăt: Filmul «Storyboard: …»: nimic din ce
+    a cerut Directoarea nu se putea reface acum.» and «n-a putut decide încă» although she had
+    decided. The walk stood still, the film is named once, and the real reason is said."""
+    ids = studio(engine)
+    record(
+        engine,
+        "media.director_qc_waiting",
+        ("quality_control_report", str(uuid4())),
+        {
+            "storyboard_id": ids["board"],
+            "reason": (
+                "nimic din refacerea hotărâtă nu se putea face: Scena 4: mișcarea: Ai oprit "
+                "GPU-ul: niciun cadru nu se cumpără până nu îl pornești din nou."
+            ),
+        },
+    )
+    record(
+        engine,
+        "runbook.film_continued",
+        ("storyboard", ids["board"]),
+        {
+            "status": "COMPLETED",
+            "reason": (
+                f"Filmul «Storyboard: {TITLE}»: nimic din ce a cerut Directoarea nu se putea "
+                "reface acum."
+            ),
+            "cause": "director_qc:c4a5a20e",
+        },
+    )
+    got = page(engine)
+    walk = got["runbook.film_continued"]["words_ro"]
+    assert walk == (
+        f"Filmul «{TITLE}» a stat pe loc: nimic din ce a cerut Directoarea nu se putea reface acum."
+    ), walk
+    assert "până la capăt" not in walk and "Storyboard" not in walk
+    waiting = got["media.director_qc_waiting"]["words_ro"]
+    assert f"a hotărât ce se reface la filmul «{TITLE}», dar acum nu se poate face: " in waiting
+    assert "Ai oprit GPU-ul" in waiting and "n-a putut decide" not in waiting
+
+
 def test_the_directors_decision_and_her_retirement_are_hers(engine):
     ids = studio(engine)
     sarah = ids["agents"]["Director"]

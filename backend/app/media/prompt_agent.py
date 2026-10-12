@@ -2015,6 +2015,15 @@ SERIAL_LIFE_SENTENCE = (
 #: wrote one («with her eyes on the pen»).
 SERIAL_ENDING_SENTENCE = "The shot ends on {ending}."
 _ENDING_PREPOSITION = re.compile(r"^(?:on|with|at|in|as)\b", re.IGNORECASE)
+#: An ending the writer already began with the composer's own words («The shot ends on …»,
+#: «The clip ends with …», «Ending on …»): those words are dropped before the sentence is said,
+#: or the clip is asked «The shot ends on the shot ends on …» (2026-10-12, f06808c9 scene 4:
+#: the rewrite's ending_frame began «The shot ends on the same medium close-up»).
+_ENDING_LEAD = re.compile(
+    r"^(?:(?:the\s+(?:shot|clip|scene|frame)|it)\s+(?:ends|closes|finishes|settles)\b"
+    r"(?:\s+(?:on|with|at|in)\b)?|ending\s+(?:on|with|at|in)\b)[\s:;,.–—-]*",
+    re.IGNORECASE,
+)
 _POSSESSIVE = re.compile(r"['’]s$")
 
 
@@ -2125,6 +2134,13 @@ def serial_motion(package: dict[str, Any], look: dict[str, Any]) -> tuple[str, b
     ending = without_scene_reference(
         strip_on_screen_text(_continuous(package.get("ending_frame")))
     ).strip(" .;,")
+    # Never «The shot ends on the shot ends on …» (`_ENDING_LEAD`): the writer's own lead-in is
+    # dropped, repeatedly if it was written twice.
+    while _ENDING_LEAD.match(ending):
+        shorter = _ENDING_LEAD.sub("", ending, count=1).strip(" .;,")
+        if shorter == ending:
+            break
+        ending = shorter
     ending_sentence = ""
     if ending and not lint.camera_moves(ending):
         names = {

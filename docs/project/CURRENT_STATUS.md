@@ -5,6 +5,47 @@ AGENT_SCENARIO_ACCEPTANCE later used actual Ollama Cloud calls, with normal seri
 acceptance and real GPU/media/upload still pending. Current local UI evidence is reported
 separately below and does not prove those external workflows.
 
+## Active claim — REPAIR_LOOP_ROUND4 (2026-10-12, session «Hartă funcții și LLM backend»)
+
+The Owner, 22:00: «Cum este permis să facă 9 încercări… și el să facă același video? DE CE NU SE
+SCHIMBĂ PROMPTUL! … ÎN PROMPT DE CE APARE SĂ GENEREZE OAMENI! … PROMPTUL TREBUIE INVESTIGAT DE
+FIECARE DATĂ! … CREAZĂ O ARMATĂ DE AGENȚI SĂ REPARE TOT!» Eight read-only investigators
+(`docs/project/REPAIR_LOOP_INVESTIGATION_2026-10-12.md`, every root cause and fix spec by
+file:line): the compiler adds «Any people appear only as small distant figures…» because «finger»
+in «a finger's-width gap» reads as a person; the motion prompt gets «Faces stay turned away»; the
+re-roll and the lint ask for «figures small and distant»; LTX gets no negative and the still
+negative's 400-character cap cut the people term; the stills gate's single 0.6 YuNet reading
+approved still 4be4364e (four people, two partial profiles); 7 clips were bought from it with the
+same motion words (prompt_hash b2a94fcd), each failing for faces in the FIRST frame, because a
+paid-but-refused motion counts as «nothing bought», the still round never closes and the
+`continues` path skips caps, the second look and the rewrite; her «redo still, nothing bought» on
+the stale report 3b8c99f9 became a paid motion each round; NEEDS_OWNER raised no card and REDO_STEP
+is exempt from holds; still redos reused the same two seeds every round. Done here: 7e08086 (goal
+block removed, register portraits as data URLs under the CSP, the GPU bar's key never folds over
+the reading, «Permite GPU din nou» on the same key → POST /api/v1/runpod/gpu/allow), ca3db63
+(Sarah's cost letter short, two decimals, once). In work: phase A in the worktree
+`E:/AI Acency/AMN_round4` (branch round4-prep: forbidden_content.py + prompt_lint, strict faces,
+input_guard.py, fresh seeds at the RunPod door, letters not repeated nor asking the Owner);
+round 4 wires them into prompt_agent, still_gate, stills_stage, qc, assembler, stages,
+director_qc, reviews and scene_rewrite AFTER the session «Calitatea vizuală…» commits its round 3
+(agreed split; it stays off those files during round 4 and reviews the diff). The studio is
+stopped (no process since 21:57); the GPU hold is OFF in the record (lifted 21:00): the single
+restart after round 4 sets the hold ON first, so nothing is generated until the Owner presses
+«Permite GPU din nou».
+
+## 23:15 — rounds 1–3 of the Director's QC judgement merged; the Owner's studio runs with his GPU stop on (2026-10-12, session «Calitatea vizuală…»)
+
+Live (checked 20:10 UTC): the Owner started the studio himself at 22:46 local; his «Oprește GPU acum»
+holds since 22:48:53 local (19:48:53 UTC), so nothing is bought; /health/live HEALTHY; the last
+walk (19:50:45 UTC) was the serial f06808c9: her second look of scene 4 found the motion prompt
+naming Sarah as an actor, her brief asked the rewrite, and the redo could not be bought under his
+stop. Merged and green per suite: rounds 1–3 (CHANGELOG 2026-10-12, ADR-DIRECTOR-JUDGES-QC),
+5eead05 (free fix three times, then a developer note), the register's walk that did nothing («a
+stat pe loc», film named once, her waiting line says the real reason) and the serial motion's
+doubled «The shot ends on the shot ends on» (f06808c9 scene 4) fixed. Round-3 FC3 (gate and clip)
+still in its fixer; the reviewers' open findings went to round 4. Not proven live: no film has
+been bought or published under the new code yet.
+
 ## Active claim — CYCLOTRON_QC_AUTONOMY (2026-10-11)
 
 Codex /root: Owner asks the studio to diagnose the cyclotron film's failed QC itself,

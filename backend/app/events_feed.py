@@ -147,6 +147,14 @@ _WALK_RO = {
     "WAITING": "așteaptă",
     "INTERRUPTED": "a fost întreruptă",
 }
+#: A walk's reason that names the film itself («Filmul «Storyboard: X»: …»,
+#: `media.director_qc.outcome_words`): the row already names it once, by its bare title.
+_FILM_LEAD = re.compile(r"^\s*Filmul\s+«[^»]*»\s*:\s*")
+#: A finished walk whose reason says nothing was done (`director_qc.outcome_words` NOTHING_DONE
+#: and WAITING): the film stood still, it did not «go to the end».
+_NOTHING_MOVED = re.compile(r"\bnimic\b[^.]*\b(?:nu se putea|nu s-a)\s+re(?:face|făcut)", re.I)
+#: The start of the reason `runbook.stages` gives when she decided but nothing could be done.
+_DECIDED_NOT_DONE = "nimic din refacerea hotărâtă nu se putea face:"
 #: Where the day left a film (`runbook.film_state`), in words.
 _FILM_STATE_RO = {
     **_WALK_RO,
@@ -1171,8 +1179,13 @@ def _words(
         return said + (f"; {why}" if why else "") + ".", None
     if kind == "runbook.film_continued":
         status = str(payload.get("status") or "")
+        reason = _FILM_LEAD.sub("", str(payload.get("reason") or "").replace("Oprit: ", ""), 1)
         walk = _WALK_RO.get(status, status.lower())
-        why = _short(str(payload.get("reason") or "").replace("Oprit: ", ""), 150).rstrip(".")
+        if status == "COMPLETED" and _NOTHING_MOVED.search(reason):
+            # 2026-10-12 19:50 UTC: «a mers până la capăt: … nimic … nu se putea reface» — a
+            # walk that ended with nothing done stood still, and the row says so.
+            walk = "a stat pe loc"
+        why = _short(reason, 150).rstrip(".")
         return f"Filmul {named} {walk}" + (f": {why}" if why else "") + ".", None
     if kind == "runbook.film_state":
         status = str(payload.get("status") or "")
@@ -1247,6 +1260,17 @@ def _words(
         said = f"{name} a decis filmul {named}: {verdict}"
         return said + (f" — {outcome}" if outcome else "") + ".", f"Am decis: {verdict}."
     if kind == "media.director_qc_waiting":
+        reason = str(payload.get("reason") or "")
+        if reason.startswith(_DECIDED_NOT_DONE):
+            # She did decide; what she decided could not be done now (the Owner's GPU stop,
+            # 2026-10-12 19:50 UTC). The row says the real reason, never «n-a putut decide».
+            why = _short(reason[len(_DECIDED_NOT_DONE) :].strip(), 170).rstrip(".")
+            return (
+                f"{name} a hotărât ce se reface la filmul {named}, dar acum nu se poate face"
+                + (f": {why}" if why else "")
+                + ".",
+                None,
+            )
         return f"{name} n-a putut decide încă filmul {named}: {_reason(payload, 150)}.", None
     if kind == "editorial.judged":
         return _judged_words(payload, name, title)
