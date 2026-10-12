@@ -1,5 +1,9 @@
 # Architectural / Product Decision Log v5
 
+## Today's duplicate Higgs short is repaired and published; the subject check prevents the next one (2026-10-12)
+
+The Owner, 2026-10-12 08:40 (card): «Îl las: se repară și se publică (al doilea Higgs)» — today's factual film «The Particle That Shouldn't Exist (And Briefly Didn't)» (1c038a99), the same subject as the short published on 10-10, stays in the Director's repair loop and is published when it passes quality control; no second run today. The subject check (research/agent.py, 0bf1a48) keeps the researcher from proposing a subject the studio already made, from the next run on.
+
 ## The Director decides everything but his accounts, authorisations and security; a subject already made is never proposed again; the goal is two shorts and two episodes published alone (2026-10-12)
 
 Decisions (the Owner, 2026-10-12 morning). (a) «Ar trebui să nu ajungă la mine, este la Director!» — the Director decides quality, prompts, tools, schedules and the agents' work; a letter reaches the Owner only for his accounts and sign-ins, what only he authorises (a site, a model) and the studio's security or legal standing; money is asked by the studio's cards, never by a letter; a tool that fails is noted for the developer (`developer_defect`), not sent to him. (b) «Facem două shorturi la fel?» — no: a subject the studio already filmed or published is never proposed again, whatever its new title; the researcher reads what was made and the duplicate check reads the subject, not the title. (c) The goal, set the same morning: two shorts and two serial episodes published end-to-end by the agency alone — subject, accounting, pictures, motion, publication — with no intervention; a publication that needed a hand does not count.
