@@ -416,7 +416,10 @@ NO_FACE_STATED = re.compile(
     r"\bno\s+(?:human\s+|visible\s+)?faces?\b|\bfaces?\s+(?:not\s+visible|hidden|obscured"
     r"|turned\s+away|out\s+of\s+frame|never\s+visible)\b|\bfaceless\b"
     r"|\bwithout\s+(?:visible\s+|human\s+)?faces\b|\bno\s+(?:people|person|figures|humans)\b"
-    r"|\bempty\s+of\s+people\b|\bunpeopled\b",
+    r"|\bempty\s+of\s+people\b|\bunpeopled\b"
+    # The compiler's positive sentence for a scene of objects (2026-10-12,
+    # `prompt_agent.NO_PEOPLE_SENTENCE`): the rule kept without a word for a person.
+    r"|\bholds\s+only\s+the\s+place\s+and\s+the\s+things\s+named\b",
     re.IGNORECASE,
 )
 # A bible rule (continuity rule or avoid item) that forbids faces.

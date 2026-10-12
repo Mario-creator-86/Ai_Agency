@@ -163,6 +163,29 @@ def test_farmer_from_behind_passes_forbidden_faces() -> None:
     assert not _by_code(findings, "BIBLE_RULE_MISSING")
 
 
+def test_a_scene_of_objects_carries_the_face_rule_with_the_compilers_positive_sentence() -> None:
+    """2026-10-12: «There are no people in the frame.» drew people (the Director's briefs
+    asked five times for it to go); the compiler now says what is there, and the linter reads
+    that sentence as the rule kept."""
+    from app.media.prompt_agent import NO_PEOPLE_SENTENCE
+
+    assert "people" not in NO_PEOPLE_SENTENCE.lower()
+    findings = lint_still_prompt(
+        f"A brass ring on a wooden desk under one lamp, 50 mm lens. {NO_PEOPLE_SENTENCE}",
+        scene=1,
+        bible=FACELESS_BIBLE,
+    )
+    assert not _by_code(findings, "BIBLE_RULE_MISSING")
+    assert not _by_code(findings, "FORBIDDEN_FACES")
+    # The older sentence still counts for the prompts written before.
+    old = lint_still_prompt(
+        "A brass ring on a wooden desk under one lamp. There are no people in the frame.",
+        scene=1,
+        bible=FACELESS_BIBLE,
+    )
+    assert not _by_code(old, "BIBLE_RULE_MISSING")
+
+
 def test_farmer_face_visible_fails_forbidden_faces() -> None:
     findings = lint_still_prompt("a farmer, face visible", scene=1, bible=FACELESS_BIBLE)
     faces = _by_code(findings, "FORBIDDEN_FACES")

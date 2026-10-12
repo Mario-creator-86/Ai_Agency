@@ -95,7 +95,9 @@ def test_a_scene_of_objects_is_not_asked_for_people_under_a_face_ban():
     still = objects["still_prompt"]
     assert "seen from behind" not in still and "figures" not in still, still
     # The bible's rule is kept by saying nobody is there, which the linter reads as kept.
-    assert "There are no people in the frame." in still
+    # Said positively (2026-10-12): no word for a person, which an image model would draw.
+    assert "The frame holds only the place and the things named." in still
+    assert "no people" not in still.lower()
     found = lint_film([LintScene(scene=1, still_prompt=still)], bible=bible)
     assert not [item for item in found if item.severity == BLOCK], found
     people = compile_prompts(

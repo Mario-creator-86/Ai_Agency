@@ -2101,8 +2101,12 @@ PEOPLE_SENTENCE = (
     "Any people appear only as small distant figures seen from behind, faces turned away."
 )
 #: The bible's face rule said for a scene that shows nobody: it never asks for figures, and
-#: the linter reads it as the rule kept (`prompt_lint.NO_FACE_STATED`).
-NO_PEOPLE_SENTENCE = "There are no people in the frame."
+#: the linter reads it as the rule kept (`prompt_lint.NO_FACE_STATED`). Said positively, with
+#: no word for a person in it: until 2026-10-12 it was «There are no people in the frame.»,
+#: and five of the Director's briefs that day (Higgs-2 scenes 1, 3, 5; the cyclotron's 4, 5)
+#: diagnosed it — an image model reads past the negation and draws the people it names —
+#: asked for it to be deleted, and the next compile put it back (ADR-POSITIVE-PROMPTS-ONLY).
+NO_PEOPLE_SENTENCE = "The frame holds only the place and the things named."
 FACES_CONSTRAINT = "Faces stay turned away from the camera."
 #: Said when a motion prompt is under its word floor. Until 2026-10-11: "The movement stays
 #: smooth and unhurried." (prompt_lint.LEGACY_STILLNESS).

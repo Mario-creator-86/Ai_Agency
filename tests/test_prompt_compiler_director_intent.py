@@ -35,7 +35,7 @@ def test_corrected_still_retains_the_complete_subject_and_scene_light(scene, req
     assert "as it is today" not in still
     assert "diffuse daylight" not in still
     assert "any people" not in still
-    assert "There are no people in the frame." in compiled["still_prompt"]
+    assert "The frame holds only the place and the things named." in compiled["still_prompt"]
 
 
 def test_corrected_motion_keeps_objects_and_shape_stability_not_only_the_opening_words():
