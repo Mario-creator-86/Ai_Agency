@@ -23,15 +23,20 @@ the stale report 3b8c99f9 became a paid motion each round; NEEDS_OWNER raised no
 is exempt from holds; still redos reused the same two seeds every round. Done here: 7e08086 (goal
 block removed, register portraits as data URLs under the CSP, the GPU bar's key never folds over
 the reading, «Permite GPU din nou» on the same key → POST /api/v1/runpod/gpu/allow), ca3db63
-(Sarah's cost letter short, two decimals, once). In work: phase A in the worktree
+(Sarah's cost letter short, two decimals, once), 674d0bb (that same-key design was a trap:
+19:48:41 UTC his stop, 19:48:48 a press on the same spot lifted the hold, 19:48:52 the refused
+clip bought again; now the stop key never changes, «Permite GPU din nou…» is a separate key with
+a confirmation, disabled 20 s after a stop, and the backend refuses an allow within 20 s; page
+rebuilt live, backend at the next restart). In work: phase A in the worktree
 `E:/AI Acency/AMN_round4` (branch round4-prep: forbidden_content.py + prompt_lint, strict faces,
 input_guard.py, fresh seeds at the RunPod door, letters not repeated nor asking the Owner);
 round 4 wires them into prompt_agent, still_gate, stills_stage, qc, assembler, stages,
 director_qc, reviews and scene_rewrite AFTER the session «Calitatea vizuală…» commits its round 3
-(agreed split; it stays off those files during round 4 and reviews the diff). The studio is
-stopped (no process since 21:57); the GPU hold is OFF in the record (lifted 21:00): the single
-restart after round 4 sets the hold ON first, so nothing is generated until the Owner presses
-«Permite GPU din nou».
+(agreed split; it stays off those files during round 4 and reviews the diff; second_look.py is
+in round 4 too, for the film dossier and binding decisions the Owner asked for at 23:0x). The
+Owner started the studio himself at 22:46 local; his GPU hold has been ON since 22:48:53 local
+(19:48:53 UTC): nothing is generated, the Director's free work goes on. The single restart after
+round 4 keeps the hold ON, so nothing is generated until he presses «Permite GPU din nou…».
 
 ## 23:15 — rounds 1–3 of the Director's QC judgement merged; the Owner's studio runs with his GPU stop on (2026-10-12, session «Calitatea vizuală…»)
 
