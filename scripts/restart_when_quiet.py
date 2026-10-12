@@ -128,12 +128,20 @@ def main() -> int:
         return time.monotonic() + RESTART_MINUTES * 60 < deadline
 
     print("quiet = GPU off verified AND no FILM_CONTINUE claimed; polling every", args.poll, "s")
-    last_gpu = newest_gpu(copy)
-    print("start marker", last_gpu)
+    last_gpu: tuple[int, str] | None = None
+    print("start marker read at the first poll")
     said_busy = False
     while time.monotonic() < deadline:
-        gpu = newest_gpu(copy)
-        busy = worker_busy(copy)
+        try:
+            gpu = newest_gpu(copy)
+            busy = worker_busy(copy)
+        except (OSError, sqlite3.Error) as exc:
+            # A copy taken while SQLite holds a byte-range lock on the live file reads
+            # «Permission denied» on Windows (2026-10-12, 16:46: the watcher died of it). The
+            # next poll reads again; nothing is decided on a copy that could not be made.
+            print(time.strftime("%H:%M:%S"), "copy not readable now:", type(exc).__name__)
+            time.sleep(args.poll)
+            continue
         if gpu and gpu != last_gpu:
             print(time.strftime("%H:%M:%S"), "gpu", gpu)
             last_gpu = gpu
