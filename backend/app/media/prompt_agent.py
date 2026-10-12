@@ -38,6 +38,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import unicodedata
 from collections.abc import Sequence
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
@@ -116,9 +117,34 @@ REQUIRED_SHOT_FIELDS = (
 #: lesson is a studio-wide fact about how a vendor's model reads instructions.
 LESSON_MARKER = "prompt lesson:"
 
+#: The Owner, 2026-10-12, 16:50, after 11.05 USD of the day's 19.50 went on redos and all three
+#: films still failed QC: «DIRECTOAREA ACCEPTĂ DEFECTELE MICI! DAR TREBUIE SĂ ÎNȚELEAGĂ DE CE
+#: APAR DEFECTELE ȘI LA VIITOARELE PROMPTURI SĂ SE ASIGURE CĂ NU MAI SUNT!» A lesson is how the
+#: studio remembers why a defect happened; these numbers decide how it reaches the next prompt.
+#: How many lessons a writer is given, newest first, once near-duplicates are left out.
+LESSONS_GIVEN = 12
+#: How many of the newest lessons a new one is compared with before it is kept.
+LESSONS_COMPARED = 40
+#: A lesson longer than this is a report, not a rule: refused whole, never cut (a cut rule
+#: says half of what it meant and is then obeyed as written).
+LESSON_MAX_CHARS = 400
+#: Two lessons sharing this share of the shorter one's words say the same thing
+#: (`lesson_overlap`): the newer is kept, the older is not given a second time.
+LESSON_OVERLAP = 0.6
+#: What every writer of words a picture is made from is told about the lessons in its data.
+#: The data is inside the inert boundary, so the instructions name the lessons as rules, the
+#: way the serial brief names its series_look (2026-10-12: the lessons were sent as one more
+#: data field nobody named, and the first to be dropped when the payload was too long).
+LESSONS_RULE = (
+    "The studio's lessons from earlier defects are rules: follow every one. They are given "
+    "first in the data below as lessons; each was learned from a picture that failed quality "
+    "control, and words that break one make the same defect again and pay for it twice.\n"
+)
 
-#: What the payload of each call may take, in characters of JSON. Whole claims, lessons and
-#: then scenes are dropped to fit (`trim_payload`); nothing is ever sliced mid-string.
+
+#: What the payload of each call may take, in characters of JSON. Whole claims and then scenes
+#: are dropped to fit (`trim_payload`); nothing is ever sliced mid-string. The studio's lessons
+#: ride whole on top of this budget (`fit_with_lessons`), never trimmed for the film's sake.
 MAX_BIBLE_PAYLOAD_CHARS = 12000
 MAX_SHOTS_PAYLOAD_CHARS = 16000
 
@@ -923,6 +949,26 @@ def trim_payload(data: dict[str, Any], limit: int) -> tuple[dict[str, Any], dict
     return fitted, dropped
 
 
+def fit_with_lessons(data: dict[str, Any], lessons: Sequence[str], limit: int) -> dict[str, Any]:
+    """The payload fitted to ``limit`` with the studio's lessons kept whole, and first.
+
+    The film is fitted as if there were no lessons (`trim_payload`), then the lessons are put
+    in front of it: they never cost a scene, and a scene never costs a lesson. 2026-10-12: the
+    serial's shot-plan payload stood at 14-15 thousand of its 16 thousand characters (the
+    `shot_prompts` runs of f06808c9, 2026-10-11), and `trim_payload` drops lessons before
+    scenes, so any lesson the studio had learned would have been the first thing cut.
+    """
+    rest = {key: value for key, value in data.items() if key != "lessons"}
+    fitted, _dropped = trim_payload(rest, limit)
+    kept = [str(lesson) for lesson in lessons if str(lesson).strip()]
+    return {"lessons": kept, **fitted} if kept else fitted
+
+
+def lessons_rule(lessons: Sequence[str]) -> str:
+    """`LESSONS_RULE` when there are lessons to follow, else nothing (an empty rule is noise)."""
+    return LESSONS_RULE if any(str(lesson).strip() for lesson in lessons) else ""
+
+
 def _parse_bible(text: str) -> VisualBible | None:
     from pydantic import ValidationError  # noqa: PLC0415
 
@@ -958,18 +1004,24 @@ def build_visual_bible(
         facts = _film_facts(session, board)
         editor = agent_for_role(session, PROMPT_ROLE)
         editor_id = editor.id if editor else None
+        # The bible's words open every prompt of the film: a lesson about how a model reads
+        # them (a code in capitals, a hex colour, a light that contradicts the place) is the
+        # bible's to follow too, not only the shot plan's (2026-10-12).
+        lessons = prompt_lessons(session)
 
     bible: VisualBible | None = None
     run_id = None
     if editor_id is not None and registry is not None:
-        fitted, _dropped = trim_payload(facts, MAX_BIBLE_PAYLOAD_CHARS)
+        fitted = fit_with_lessons(facts, lessons, MAX_BIBLE_PAYLOAD_CHARS)
         payload = _dumps(fitted)
         result = _run(
             engine,
             registry,
             editor_id,
             "visual_bible",
-            _BIBLE_INSTRUCTIONS + wrap_in_inert_boundary(payload, "approved-film"),
+            _BIBLE_INSTRUCTIONS
+            + lessons_rule(lessons)
+            + wrap_in_inert_boundary(payload, "approved-film"),
             BIBLE_TEMPLATE,
             correlation,
             f"Stabilesc privirea filmului «{facts['title'][:50]}».",
@@ -1097,16 +1149,23 @@ def write_shot_prompts(
                     "continuity_rules": look.get("continuity_rules") or [],
                 },
                 "episode": facts,
-                "lessons": lessons,
             }
             instructions, template = _SERIAL_SHOTS_INSTRUCTIONS, SERIAL_SHOTS_TEMPLATE
         else:
-            data = {"visual_bible": bible, "film": facts, "lessons": lessons}
+            data = {"visual_bible": bible, "film": facts}
             instructions, template = _SHOTS_INSTRUCTIONS, SHOTS_TEMPLATE
         if repair_context:
             data["repair_context"] = repair_context
-        fitted, _dropped = trim_payload(data, MAX_SHOTS_PAYLOAD_CHARS)
-        prompt = instructions + wrap_in_inert_boundary(_dumps(fitted), "approved-film")
+        # The lessons are rules named in the instructions and kept whole at the head of the
+        # data, for the serial's beats as for a factual film's shots (2026-10-12, the Owner:
+        # «la viitoarele prompturi să se asigure că nu mai sunt»): the serial's payload sat
+        # at its cap, and the lessons were the first thing `trim_payload` dropped.
+        fitted = fit_with_lessons(data, lessons, MAX_SHOTS_PAYLOAD_CHARS)
+        prompt = (
+            instructions
+            + lessons_rule(lessons)
+            + wrap_in_inert_boundary(_dumps(fitted), "approved-film")
+        )
         result = _run(
             engine,
             registry,
@@ -2926,33 +2985,129 @@ def _run(
 # ------------------------------------------------------------------ learning, and the package
 
 
-def prompt_lessons(session: Session, limit: int = 8) -> list[str]:
-    """What the studio has learned about how its video models read instructions.
+#: The words two lessons are compared by: letters and digits, accents taken off, lower case.
+_LESSON_WORD = re.compile(r"[a-z0-9]+")
+#: Words that say nothing about a defect: two lessons do not repeat each other by sharing them.
+_LESSON_FILLER = frozenset(
+    {
+        "the", "and", "for", "with", "that", "this", "are", "was", "were", "not", "but", "its",
+        "his", "her", "their", "from", "into", "onto", "per", "has", "have", "had", "one",
+        "when", "then", "than", "who", "what", "which", "they", "them", "there", "every",
+        "any", "all", "each", "never", "only", "also", "must", "should", "will", "can",
+        "does", "did", "out", "over", "under", "same", "too", "very", "more", "less", "own",
+    }
+)  # fmt: skip
+#: An id in a lesson: a whole UUID, or eight or more hexadecimal characters that may be the
+#: head of one («f06808c9»), as the studio's own notes shorten a storyboard's id. A head is
+#: refused only when a storyboard's id begins with it, so a date («20261012») is not an id.
+_LESSON_UUID = re.compile(
+    r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.IGNORECASE
+)
+_LESSON_HEX = re.compile(r"\b[0-9a-f]{8,32}\b", re.IGNORECASE)
 
-    Written after a render the Director judged: if a wording keeps producing the wrong camera
-    move, that is a fact about the vendor's model, and the next prompt should know it.
-    """
+
+def lesson_words(text: str) -> frozenset[str]:
+    """The words of a lesson that carry its meaning, normalised (accents, case, punctuation
+    and filler words taken out) so a lesson said again in other order still matches."""
+    plain = unicodedata.normalize("NFKD", str(text or "")).encode("ascii", "ignore").decode()
+    return frozenset(
+        word
+        for word in _LESSON_WORD.findall(plain.lower())
+        if len(word) > 2 and word not in _LESSON_FILLER
+    )
+
+
+def lesson_overlap(first: str, second: str) -> float:
+    """How much two lessons say the same thing: the share of the shorter one's words the
+    other has too (1.0 when one is the other said again, 0.0 when they share nothing).
+
+    Two lessons with no meaningful words match only when they are the same text."""
+    ours, theirs = lesson_words(first), lesson_words(second)
+    if not ours or not theirs:
+        same = " ".join(str(first).lower().split()) == " ".join(str(second).lower().split())
+        return 1.0 if same else 0.0
+    return len(ours & theirs) / min(len(ours), len(theirs))
+
+
+def _newest_lessons(session: Session, count: int) -> list[str]:
+    """The newest ``count`` live lessons as written, newest first."""
     from app.agents.models import MemoryRecord  # noqa: PLC0415
 
     rows = session.scalars(
-        select(MemoryRecord)
+        select(MemoryRecord.content)
         .where(
             MemoryRecord.memory_class == "STRATEGY",
             MemoryRecord.content.like(f"{LESSON_MARKER}%"),
             MemoryRecord.invalidated_at.is_(None),
         )
         .order_by(MemoryRecord.created_at.desc())
-        .limit(limit)
+        .limit(count)
     )
-    return [str(row.content)[len(LESSON_MARKER) :].strip() for row in rows]
+    lessons = (str(content)[len(LESSON_MARKER) :].strip() for content in rows)
+    return [lesson for lesson in lessons if lesson]
 
 
-def record_prompt_lesson(session: Session, lesson: str, *, source_id: str | None = None) -> None:
-    """Keep one lesson about prompting, studio-wide, with where it came from."""
-    text = " ".join(str(lesson).split())[:400]
-    if not text:
-        return
-    remember(
+def prompt_lessons(session: Session, limit: int = LESSONS_GIVEN) -> list[str]:
+    """What the studio has learned about how its picture models read instructions: the newest
+    ``limit`` lessons, newest first, each said once.
+
+    Written after a picture failed quality control and the Director understood why: if a
+    wording keeps producing the wrong camera move, a stacked still or lettering on a ledger,
+    that is a fact about the model, and every next prompt must know it (2026-10-12, the Owner:
+    «trebuie să înțeleagă de ce apar defectele și la viitoarele prompturi să se asigure că nu
+    mai sunt»). A lesson that repeats a newer one (`lesson_overlap` at least `LESSON_OVERLAP`)
+    is left out, so twelve places hold twelve different rules, not one rule twelve times.
+    """
+    kept: list[str] = []
+    if limit <= 0:
+        return kept
+    for lesson in _newest_lessons(session, max(limit * 4, LESSONS_COMPARED)):
+        if any(lesson_overlap(lesson, newer) >= LESSON_OVERLAP for newer in kept):
+            continue
+        kept.append(lesson)
+        if len(kept) >= limit:
+            break
+    return kept
+
+
+def _names_an_id(session: Session, text: str) -> bool:
+    """Whether a lesson names a storyboard (or any record) by its id: a whole UUID, or the
+    head of a storyboard's id as the studio's notes shorten it («f06808c9»)."""
+    if _LESSON_UUID.search(text):
+        return True
+    heads = {match.group(0).lower() for match in _LESSON_HEX.finditer(text)}
+    for head in sorted(heads):
+        found = session.scalar(
+            select(Storyboard.id).where(Storyboard.id.startswith(head, autoescape=True)).limit(1)
+        )
+        if found is not None:
+            return True
+    return False
+
+
+def record_prompt_lesson(session: Session, lesson: str, *, source_id: str | None = None) -> bool:
+    """Keep one lesson about prompting, studio-wide, with where it came from.
+
+    Returns True when it was kept. Refused (False): an empty lesson; one longer than
+    `LESSON_MAX_CHARS` once its spaces are trimmed (a report, not a rule, and never cut: a cut
+    rule is obeyed as written); one that names a storyboard by its id (a rule for every next
+    film cannot be about one film, and an id in a prompt is read literally by the picture
+    model, as the Nepal bible's codes were). Skipped (False): a lesson that says again what one
+    of the newest `LESSONS_COMPARED` already says (`lesson_overlap` at least `LESSON_OVERLAP`),
+    so the same defect does not fill the twelve places writers are given.
+    """
+    text = " ".join(str(lesson or "").split())
+    if not text or len(text) > LESSON_MAX_CHARS:
+        logger.info("prompt_lesson_refused", extra={"chars": len(text)})
+        return False
+    if _names_an_id(session, text):
+        logger.info("prompt_lesson_refused", extra={"reason": "names an id"})
+        return False
+    for known in _newest_lessons(session, LESSONS_COMPARED):
+        if lesson_overlap(text, known) >= LESSON_OVERLAP:
+            logger.info("prompt_lesson_known", extra={"source_id": source_id})
+            return False
+    stored = remember(
         session,
         memory_class="STRATEGY",
         content=f"{LESSON_MARKER} {text}",
@@ -2960,6 +3115,7 @@ def record_prompt_lesson(session: Session, lesson: str, *, source_id: str | None
         source_id=source_id,
         agent_id=None,
     )
+    return stored is not None
 
 
 def production_package(engine: Engine, storyboard_id: str) -> dict[str, Any]:

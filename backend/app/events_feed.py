@@ -24,20 +24,33 @@ sentence now, and a kind nobody has words for yet is still said by its name alon
 id, a hash or an endpoint (`_fallback`). The same words travel with the live socket and the
 page's first snapshot (`workflows.publisher`, `services.snapshot`), not only with the paged
 record: the page keeps the first copy of an event it receives, so the live one must carry them.
+
+2026-10-12, the office over the editor's head: «GATA: RESCRIEREA PROMPTULUI UNEI SCENE ✓», and
+the Owner: «LA CE SCENĂ LUCREAZĂ?!». An employee's run of one scene (the Director's brief, the
+editor's rewrite, her review of it, a still or clip check) is said with its scene and its film
+while it works and when it is done — «Gata: rescrierea scenei 3 din «The Zero Script Club» ✓»,
+«Am refuzat rescrierea scenei 4: nu tratează constatarea.» — read from the run's own summary,
+the brief that names the run and the events of its correlation (`_run_places`).
 """
 
 from __future__ import annotations
 
+import json
+import logging
 import re
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
+from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.agents.models import Agent, Role
+from app.agents.models import Agent, AgentRun, Role
 from app.media.models import Storyboard
+from app.models import DomainEvent
 from app.wording import count, decimal, provider_name
+
+logger = logging.getLogger("studio.events_feed")
 
 #: Each role as the register names it beside the employee's name.
 ROLE_WORDS_RO: dict[str, str] = {
@@ -145,6 +158,7 @@ _TASK_RO: dict[str, str] = {
     "director_qc_review": "decizia asupra filmului picat",
     "director_scene_brief": "brief-ul de rescriere a unei scene",
     "scene_prompt_rewrite": "rescrierea promptului unei scene",
+    "director_rewrite_review": "verificarea unei rescrieri",
     "sheet_repair_assignment": "repartizarea remedierii foii",
     "sound_design": "planul de sunet",
     "write_episode": "episodul serialului",
@@ -169,6 +183,40 @@ _TASK_RO: dict[str, str] = {
     "owner_chat": "discuția cu Proprietarul",
     "review_failed_render": "diagnoza randării",
 }
+#: The tasks that work on one scene of a film, said with that scene (and the film, when it is
+#: known), and those that work on a whole film, said with the film. 2026-10-12: the Owner's
+#: office showed «GATA: RESCRIEREA PROMPTULUI UNEI SCENE ✓» over the editor's head, with no
+#: scene and no film, and he asked «LA CE SCENĂ LUCREAZĂ?!». A run's own summary names its
+#: scene («Rescriu scena 3 din «…» după brief-ul Directoarei.»), and the events of its
+#: correlation name the film (`_run_places`).
+_SCENE_TASK_RO: dict[str, str] = {
+    "scene_prompt_rewrite": "rescrierea scenei {scene}",
+    "director_scene_brief": "brief-ul pentru scena {scene}",
+    "director_rewrite_review": "verificarea rescrierii scenei {scene}",
+    "still_qc": "verificarea imaginii scenei {scene}",
+    "clip_qc": "verificarea clipului scenei {scene}",
+}
+_FILM_TASK_RO: dict[str, str] = {
+    "picture_qc": "controlul imaginii filmului",
+    "director_qc_review": "decizia asupra filmului",
+    "shot_prompts": "planul de cadre al filmului",
+}
+#: The scene a run's summary names («scena 3», «scenei 5») and the film in its quotes.
+_SUMMARY_SCENE = re.compile(r"\bscen(?:a|ei|ă)\s+(\d{1,3})\b", re.IGNORECASE)
+_SUMMARY_TITLE = re.compile(r"«([^»]{2,200})»")
+#: Her review's verdict and reason as the run's own answer gives them, read only while the
+#: brief that records them (`media.director_scene_brief`) is not written yet. A verdict that
+#: contradicts its findings is the answer `structured_run` asked again, and is not read.
+_REVIEW_VERDICT = re.compile(r'"verdict"\s*:\s*"(TREATS|MISSES)"', re.IGNORECASE)
+_REVIEW_REASON = re.compile(r'"reason_ro"\s*:\s*"((?:[^"\\]|\\.)*)"')
+_UNTREATED = re.compile(r'"treated"\s*:\s*false', re.IGNORECASE)
+#: The events that record which runs worked on which scene: her brief (her brief's, his
+#: rewrite's and her review's run ids) and the rewrite stored (his run and her review).
+_BRIEF_EVENT = "media.director_scene_brief"
+_REWRITTEN_EVENT = "media.prompts_rewritten"
+#: How far before a run its correlation is read for the film it worked on: the Director's
+#: ladder and a paid redo's wait at RunPod (up to ~83 min) share one correlation.
+_CORRELATION_HOURS = 12
 _RUN_STATUS_RO = {"SUCCEEDED": "reușită", "FAILED": "eșuată", "REFUSED": "refuzată"}
 _DECISION_RO = {
     "ACCEPT": "filmul se publică așa cum este",
@@ -590,15 +638,308 @@ def _repair_words(payload: Mapping[str, Any], name: str, named: str) -> tuple[st
     return said + ".", "Am aplicat refacerea filmului."
 
 
+# ------------------------------------------------------------------ where a run worked
+
+
+def _task_of(payload: Mapping[str, Any]) -> str:
+    return str(payload.get("task_type") or "").split(":")[0]
+
+
+def _run_id(event: Mapping[str, Any]) -> str | None:
+    """The run an employee's event is about, when its task works on one scene or one film:
+    the run that finished (`agent.run_completed`, its aggregate) or the one that starts
+    (`agent.state_changed` THINKING carries its ``run_id``)."""
+    kind = str(event.get("event_type") or "")
+    if kind not in ("agent.run_completed", "agent.state_changed"):
+        return None
+    payload = _payload(event)
+    task = _task_of(payload)
+    if task not in _SCENE_TASK_RO and task not in _FILM_TASK_RO:
+        return None
+    found = payload.get("run_id")
+    if not found and kind == "agent.run_completed":
+        if str(event.get("aggregate_type") or "") == "agent_run":
+            found = event.get("aggregate_id")
+    return str(found) if found else None
+
+
+def _hours_before(stamp: Any, hours: int) -> str | None:
+    """An ISO moment ``hours`` earlier, as the record writes its timestamps; None if unread."""
+    try:
+        moment = datetime.fromisoformat(str(stamp))
+    except ValueError:
+        return None
+    return (moment - timedelta(hours=hours)).isoformat(timespec="microseconds")
+
+
+def _scene_number(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value > 0 else None
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip()) or None
+    return None
+
+
+def _runs_named(kind: str, payload: Mapping[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    """The runs a brief or a stored rewrite names, each with her review's verdict when the run
+    is her review: [(run_id, {"verdict", "reason_ro"} or {})]."""
+    named: list[tuple[str, dict[str, Any]]] = []
+    if kind == _BRIEF_EVENT:
+        for key in ("brief_run_id", "rewrite_run_id"):
+            if payload.get(key):
+                named.append((str(payload[key]), {}))
+        if payload.get("review_run_id"):
+            review = {
+                "verdict": payload.get("review_verdict"),
+                "reason_ro": payload.get("review_reason_ro"),
+            }
+            named.append((str(payload["review_run_id"]), review))
+    elif kind == _REWRITTEN_EVENT:
+        if payload.get("run_id"):
+            named.append((str(payload["run_id"]), {}))
+        review = payload.get("review")
+        if isinstance(review, Mapping) and review.get("run_id"):
+            named.append(
+                (
+                    str(review["run_id"]),
+                    {"verdict": review.get("verdict"), "reason_ro": review.get("reason_ro")},
+                )
+            )
+    return named
+
+
+def _from_correlations(
+    session: Session, runs: list[Any], places: dict[str, dict[str, Any]]
+) -> None:
+    """The film (and, where a brief names the run, the scene and her verdict) from the events
+    of each run's correlation. One correlation can hold several scenes of one film — the
+    Director's ladder rewrites scenes 3, 4 and 7 under one (2026-10-12, f06808c9) — so the
+    scene comes from the run itself, and the film from a correlation that names only one."""
+    correlations = sorted({str(run.correlation_id) for run in runs if run.correlation_id})
+    if not correlations:
+        return
+    query = select(
+        DomainEvent.event_type,
+        DomainEvent.aggregate_type,
+        DomainEvent.aggregate_id,
+        DomainEvent.correlation_id,
+        DomainEvent.payload,
+    ).where(DomainEvent.correlation_id.in_(correlations))
+    since = _hours_before(min(str(run.started_at) for run in runs), _CORRELATION_HOURS)
+    if since:
+        query = query.where(DomainEvent.timestamp >= since)
+    boards: dict[str, set[str]] = {}
+    for row in session.execute(query):
+        payload = row.payload if isinstance(row.payload, Mapping) else {}
+        board = payload.get("storyboard_id") or (
+            row.aggregate_id if row.aggregate_type == "storyboard" else None
+        )
+        if board:
+            boards.setdefault(str(row.correlation_id), set()).add(str(board))
+        for run_id, review in _runs_named(str(row.event_type), payload):
+            place = places.get(run_id)
+            if place is None:
+                continue
+            if board:
+                place["board"] = str(board)
+            scene = _scene_number(payload.get("scene_index"))
+            if scene:
+                place["scene"] = scene
+            if review.get("verdict"):
+                place["verdict"] = str(review["verdict"]).upper()
+                place["reason_ro"] = str(review.get("reason_ro") or "")
+    for run in runs:
+        place = places[str(run.id)]
+        named = boards.get(str(run.correlation_id)) or set()
+        if not place["board"] and len(named) == 1:
+            place["board"] = next(iter(named))
+
+
+def _review_verdicts(session: Session, places: dict[str, dict[str, Any]]) -> None:
+    """Her verdict on a rewrite from her run's own answer, while no brief records it yet."""
+    pending = sorted(
+        run_id
+        for run_id, place in places.items()
+        if place["task"] == "director_rewrite_review" and not place["verdict"]
+    )
+    if not pending:
+        return
+    rows = session.execute(
+        select(AgentRun.id, AgentRun.output_text).where(AgentRun.id.in_(pending))
+    ).all()
+    for run_id, text in rows:
+        answer = str(text or "")
+        found = _REVIEW_VERDICT.search(answer)
+        if not found:
+            continue
+        verdict = found.group(1).upper()
+        untreated = bool(_UNTREATED.search(answer))
+        if (verdict == "MISSES") != untreated:
+            continue
+        reason = ""
+        said = _REVIEW_REASON.search(answer)
+        if said:
+            try:
+                reason = str(json.loads(f'"{said.group(1)}"'))
+            except ValueError:
+                reason = said.group(1)
+        places[str(run_id)]["verdict"] = verdict
+        places[str(run_id)]["reason_ro"] = reason
+
+
+def _place_titles(
+    session: Session, places: dict[str, dict[str, Any]], said_titles: dict[str, str]
+) -> None:
+    """Each run's film by its title: the storyboard found, else the title its summary says
+    (cut at 60 characters there, so completed from the storyboard it begins)."""
+    boards = sorted({str(place["board"]) for place in places.values() if place["board"]})
+    titles: dict[str, str] = {}
+    if boards:
+        rows = session.execute(
+            select(Storyboard.id, Storyboard.title).where(Storyboard.id.in_(boards))
+        ).all()
+        titles = {str(board): _bare_title(title) for board, title in rows}
+    for run_id, place in places.items():
+        title = titles.get(str(place["board"] or ""))
+        said = said_titles.get(run_id, "")
+        if not title and said:
+            whole = {
+                _bare_title(found)
+                for found in session.scalars(
+                    select(Storyboard.title)
+                    .where(Storyboard.title.startswith(said, autoescape=True))
+                    .limit(5)
+                )
+            }
+            title = next(iter(whole)) if len(whole) == 1 else _bare_title(said)
+        place["title"] = title or None
+
+
+def _run_places(session: Session, events: Iterable[Mapping[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Where each run the page's events name worked, when its task is one scene's or one
+    film's: {run_id: {"task", "scene", "title", "verdict", "reason_ro", "board"}}.
+
+    The scene is the run's own (its summary, or the brief that names the run); the film is the
+    storyboard the brief names, else the only one its correlation names, else the title its
+    summary says. Read from the record, never guessed: a run nothing places is said as before.
+    """
+    wanted = sorted({run_id for run_id in (_run_id(event) for event in events) if run_id})
+    if not wanted:
+        return {}
+    runs = list(
+        session.execute(
+            select(
+                AgentRun.id,
+                AgentRun.task_type,
+                AgentRun.correlation_id,
+                AgentRun.started_at,
+                AgentRun.context_json,
+            ).where(AgentRun.id.in_(wanted))
+        ).all()
+    )
+    if not runs:
+        return {}
+    places: dict[str, dict[str, Any]] = {}
+    said_titles: dict[str, str] = {}
+    for run in runs:
+        context = run.context_json if isinstance(run.context_json, Mapping) else {}
+        summary = str(context.get("task_summary") or "")
+        scene = _SUMMARY_SCENE.search(summary)
+        places[str(run.id)] = {
+            "task": str(run.task_type or "").split(":")[0],
+            "scene": int(scene.group(1)) if scene else None,
+            "board": None,
+            "title": None,
+            "verdict": None,
+            "reason_ro": "",
+        }
+        title = _SUMMARY_TITLE.search(summary)
+        if title:
+            said_titles[str(run.id)] = title.group(1).strip()
+    _from_correlations(session, runs, places)
+    _review_verdicts(session, places)
+    _place_titles(session, places, said_titles)
+    return places
+
+
+def _with_film(
+    head: str, joiner: str, title: str | None, tail: str = "", limit: int | None = None
+) -> str:
+    """``head``, the film in its quotes and ``tail``; within ``limit`` the title is shortened
+    inside its quotes — never the scene — and left out when not even a word of it fits."""
+    if not title:
+        return head + tail
+    whole = f"{head}{joiner}«{title}»{tail}"
+    if limit is None or len(whole) <= limit:
+        return whole
+    room = limit - len(f"{head}{joiner}«»{tail}")
+    short = _short(title, room) if room >= 4 else ""
+    if len(short) < 2 or len(short) > room:
+        return head + tail
+    return f"{head}{joiner}«{short}»{tail}"
+
+
+def _placed_task(task: str, place: Mapping[str, Any] | None) -> tuple[str, str, str | None] | None:
+    """(the task said with its scene, how the film follows it, the film's title) for a run
+    whose place is known; None when it is not, and the run is said as before."""
+    if not place:
+        return None
+    title = place.get("title") or None
+    scene = place.get("scene")
+    if task in _SCENE_TASK_RO and scene:
+        return _SCENE_TASK_RO[task].format(scene=scene), " din ", title
+    if task in _FILM_TASK_RO and title:
+        return _FILM_TASK_RO[task], " ", title
+    return None
+
+
+def _placed_run_words(
+    task: str,
+    placed: tuple[str, str, str | None],
+    place: Mapping[str, Any],
+    name: str,
+    status: str,
+    model: str,
+) -> tuple[str, str]:
+    """A finished run of one scene or one film, said with them; her review of a rewrite says
+    whether it treats the finding («Directoarea a refuzat rescrierea scenei 4: nu tratează
+    constatarea»), which is what the office needs to hear before anything is bought."""
+    phrase, joiner, title = placed
+    scene = place.get("scene")
+    if task == "director_rewrite_review" and status == "reușită" and scene:
+        verdict = str(place.get("verdict") or "").upper()
+        if verdict == "MISSES":
+            why = _short(str(place.get("reason_ro") or "").rstrip("."), 120)
+            said = _with_film(f"{name} a refuzat rescrierea scenei {scene}", " din ", title)
+            said += ": nu tratează constatarea" + (f" ({why})" if why else "")
+            return _end(said), f"Am refuzat rescrierea scenei {scene}: nu tratează constatarea."
+        if verdict == "TREATS":
+            said = _with_film(f"{name} a verificat rescrierea scenei {scene}", " din ", title)
+            return (
+                said + ": tratează constatarea, se poate cumpăra.",
+                f"Rescrierea scenei {scene} tratează constatarea ✓",
+            )
+    by = f" (cu {model})" if model else ""
+    said = _with_film(f"{name} a terminat {phrase}", joiner, title) + f": {status}{by}."
+    if status == "reușită":
+        return said, _with_film(f"Gata: {phrase}", joiner, title, " ✓", BUBBLE_MAX)
+    head = phrase[:1].upper() + phrase[1:]
+    return said, _with_film(head, joiner, title, f": {status}", BUBBLE_MAX)
+
+
 def _words(
     event: Mapping[str, Any],
     actor: Mapping[str, Any] | None,
     title: str | None,
     staff: Mapping[str, Mapping[str, Any]] | None = None,
+    places: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> tuple[str | None, str | None]:
     """(words_ro, bubble_ro) for one event; a kind nobody has words for is said by its name
     (`_fallback`), never by its fields. ``staff`` is the register's employee per role, for a
-    sentence that names a second employee (the Director's brief names the editor)."""
+    sentence that names a second employee (the Director's brief names the editor). ``places``
+    is where the page's runs worked (`_run_places`): a run of one scene names it and its film."""
     kind = str(event.get("event_type") or "")
     payload = _payload(event)
     name = str(actor["name"]) if actor else "Studioul"
@@ -843,19 +1184,30 @@ def _words(
         said = f"Cost {status} la {vendor}: {payload.get('vr')} VR$"
         return said + (f" pentru {what}{film}" if what else film) + ".", None
     if kind == "agent.run_completed":
-        task = str(payload.get("task_type") or "").split(":")[0]
+        task = _task_of(payload)
         task_ro = _TASK_RO.get(task, task.replace("_", " "))
         raw_status = str(payload.get("status") or "")
         status = _RUN_STATUS_RO.get(raw_status, raw_status.lower())
         model = str(payload.get("model_name") or "")
+        place = (places or {}).get(_run_id(event) or "")
+        placed = _placed_task(task, place)
+        if placed is not None and place is not None:
+            return _placed_run_words(task, placed, place, name, status, model)
         said = f"{name} a terminat {task_ro}: {status}" + (f" (cu {model})" if model else "")
         bubble = f"Gata: {task_ro} ✓" if status == "reușită" else f"{task_ro}: {status}"
         return said + ".", bubble
     if kind == "agent.state_changed":
         state = str(payload.get("runtime_state") or "").upper()
-        task = str(payload.get("task_type") or "").split(":")[0]
+        task = _task_of(payload)
         task_ro = _TASK_RO.get(task, task.replace("_", " ")) if task else ""
         if state in ("WORKING", "EXECUTING", "RUNNING", "THINKING", "PLANNING"):
+            # «LA CE SCENĂ LUCREAZĂ?!» (the Owner, 2026-10-12): the scene and the film the run
+            # is about, from the run itself, while it works.
+            placed = _placed_task(task, (places or {}).get(_run_id(event) or ""))
+            if placed is not None:
+                phrase, joiner, film_title = placed
+                said = _with_film(f"{name} lucrează la {phrase}", joiner, film_title) + "."
+                return said, _with_film(f"Lucrez la {phrase}", joiner, film_title, ".", BUBBLE_MAX)
             bubble = f"Lucrez la {task_ro}." if task_ro else "Lucrez."
             return f"{name} lucrează" + (f" la {task_ro}" if task_ro else "") + ".", bubble
         if state == "IDLE":
@@ -894,11 +1246,16 @@ def enrich(session: Session, events: list[dict[str, Any]]) -> list[dict[str, Any
         return events
     actors = _Actors(session)
     titles = _titles(session, [dict(event) for event in events])
+    try:
+        places = _run_places(session, events)
+    except Exception as exc:  # noqa: BLE001 - a run's place is an addition; it never costs the page
+        logger.warning("run_places_unavailable", extra={"error": type(exc).__name__})
+        places = {}
     for event in events:
         actor = actors.for_event(event)
         storyboard_id = _storyboard_of(event)
         title = titles.get(storyboard_id) if storyboard_id else None
-        words, bubble = _words(event, actor, title, actors.by_role)
+        words, bubble = _words(event, actor, title, actors.by_role, places)
         if actor is not None:
             event["actor"] = dict(actor)
         if title:

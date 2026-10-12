@@ -549,11 +549,10 @@ def editorial_review(
         # between shots, the next film's prompt agent should know it before it writes.
         picture_note = verdict.notes_for.get("VideoEditor")
         if picture_note:
-            record_prompt_lesson(
-                session,
-                f"{verdict.story or facts['title']}: {picture_note}",
-                source_id=run_id,
-            )
+            # The note alone (2026-10-12): a lesson is a rule for every next film, and a lesson
+            # over 400 characters is refused whole — her story sentence (up to 400 of its own)
+            # in front of it would have cost the note itself.
+            record_prompt_lesson(session, picture_note, source_id=run_id)
         sent = 0
         if verdict.verdict == "REJECT":
             for role_name, note in verdict.notes_for.items():

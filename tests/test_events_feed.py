@@ -14,7 +14,7 @@ from __future__ import annotations
 from typing import Any
 from uuid import uuid4
 
-from app.agents.models import Agent, Role
+from app.agents.models import Agent, AgentRun, Role
 from app.agents.services import seed_initial_workforce
 from app.factual.models import ScriptDraft, TopicIdea
 from app.media.models import Storyboard
@@ -940,3 +940,266 @@ def test_the_snapshot_and_the_live_socket_carry_the_same_words_as_the_record(eng
     with Session(engine) as session:
         row = session.scalars(select(OutboxRecord).order_by(OutboxRecord.sequence.desc())).first()
     assert row is not None and "words_ro" not in row.payload
+
+
+# --------------------------------------------------------------------- the scene a run works on
+#
+# 2026-10-12, the Owner's office: «GATA: RESCRIEREA PROMPTULUI UNEI SCENE ✓» over the editor's
+# head, with no scene and no film, and his question «LA CE SCENĂ LUCREAZĂ?!». The run's own
+# summary names its scene; the events of its correlation name the film.
+
+
+def a_run(
+    engine,
+    agent_id: str,
+    task: str,
+    summary: str,
+    correlation: str,
+    *,
+    output_text: str | None = None,
+) -> str:
+    """One finished run as `run_agent_task` records it, with its one-sentence summary."""
+    run_id = str(uuid4())
+    with Session(engine) as session, session.begin():
+        session.add(
+            AgentRun(
+                id=run_id,
+                agent_id=agent_id,
+                task_type=task,
+                objective="the prompt",
+                prompt_template_version="v1",
+                model_name="kimi-k3",
+                provider_name="fake",
+                status="SUCCEEDED",
+                output_text=output_text,
+                correlation_id=correlation,
+                started_at=utc_now(),
+                finished_at=utc_now(),
+                context_json={"task_summary": summary},
+            )
+        )
+    return run_id
+
+
+def run_events(engine, agent_id: str, run_id: str, task: str, correlation: str) -> None:
+    """The run's THINKING state and its completion, as `run_agent_task` appends them."""
+    with Session(engine) as session, session.begin():
+        append_event(
+            session,
+            "agent.state_changed",
+            "agent",
+            agent_id,
+            1,
+            {"runtime_state": "THINKING", "task_type": task, "run_id": run_id},
+            correlation,
+        )
+        append_event(
+            session,
+            "agent.run_completed",
+            "agent_run",
+            run_id,
+            1,
+            {
+                "agent_id": agent_id,
+                "status": "SUCCEEDED",
+                "task_type": task,
+                "model_name": "kimi-k3",
+            },
+            correlation,
+        )
+
+
+def by_run(engine) -> dict[tuple[str, str], dict[str, Any]]:
+    """The page's employee events by (event type, run id)."""
+    found: dict[tuple[str, str], dict[str, Any]] = {}
+    for event in read_events(engine, 0, 200)["events"]:
+        run_id = event["payload"].get("run_id") or (
+            event["aggregate_id"] if event["aggregate_type"] == "agent_run" else None
+        )
+        if run_id:
+            found[(event["event_type"], str(run_id))] = event
+    return found
+
+
+def test_a_rewrite_names_its_scene_and_its_film_while_it_works_and_when_it_is_done(engine):
+    """The Director's ladder rewrites scenes 3 and 4 of one film under ONE correlation
+    (2026-10-12, f06808c9, 13:47): each run is said with its own scene, both with the film."""
+    ids = studio(engine)
+    kael = ids["agents"]["VideoEditor"]
+    ladder = str(uuid4())
+    with Session(engine) as session, session.begin():
+        append_event(
+            session,
+            "media.director_qc_decision",
+            "quality_control_report",
+            str(uuid4()),
+            1,
+            {"storyboard_id": ids["board"], "decision": "REPAIR", "scenes": [3, 4]},
+            ladder,
+        )
+    runs = {}
+    for scene in (3, 4):
+        runs[scene] = a_run(
+            engine,
+            kael["id"],
+            "scene_prompt_rewrite",
+            f"Rescriu scena {scene} din «Storyboard: {TITLE}» după brief-ul Directoarei.",
+            ladder,
+        )
+        run_events(engine, kael["id"], runs[scene], "scene_prompt_rewrite", ladder)
+
+    got = by_run(engine)
+    for scene, run_id in runs.items():
+        working = got[("agent.state_changed", run_id)]
+        assert working["bubble_ro"] == f"Lucrez la rescrierea scenei {scene} din «{TITLE}»."
+        assert working["words_ro"] == (
+            f"{kael['name']} lucrează la rescrierea scenei {scene} din «{TITLE}»."
+        )
+        done = got[("agent.run_completed", run_id)]
+        assert done["bubble_ro"] == f"Gata: rescrierea scenei {scene} din «{TITLE}» ✓"
+        assert done["words_ro"] == (
+            f"{kael['name']} a terminat rescrierea scenei {scene} din «{TITLE}»: reușită "
+            "(cu kimi-k3)."
+        )
+        assert done["actor"]["agent_id"] == kael["id"]
+
+
+def test_her_review_of_a_rewrite_says_whether_it_treats_the_finding(engine):
+    """Her review refuses a rewrite (MISSES) or lets it be bought (TREATS): the office hears
+    which, for which scene — read from her answer before the brief records it, and from the
+    brief once it does."""
+    ids = studio(engine)
+    sarah = ids["agents"]["Director"]
+    ladder = str(uuid4())
+    refused = a_run(
+        engine,
+        sarah["id"],
+        "director_rewrite_review",
+        f"Verific dacă rescrierea scenei 4 din «Storyboard: {TITLE}» tratează constatările "
+        "înainte să cumpărăm ceva pe ea.",
+        ladder,
+        output_text=(
+            '{"verdict": "MISSES", "findings": [{"finding": "lettering on the ledger", '
+            '"treated": false}], "reason_ro": "Promptul cere tot registrul deschis la cifre."}'
+        ),
+    )
+    run_events(engine, sarah["id"], refused, "director_rewrite_review", ladder)
+    treated = a_run(
+        engine,
+        sarah["id"],
+        "director_rewrite_review",
+        f"Verific dacă rescrierea scenei 3 din «Storyboard: {TITLE}» tratează constatările "
+        "înainte să cumpărăm ceva pe ea.",
+        ladder,
+        output_text="not the answer she gave the second time",
+    )
+    run_events(engine, sarah["id"], treated, "director_rewrite_review", ladder)
+    # Her brief for scene 3 records the review her second answer gave: TREATS.
+    record_in = {
+        "scene_index": 3,
+        "layer": "still",
+        "rewritten": True,
+        "review_verdict": "TREATS",
+        "review_reason_ro": "Registrul e acum închis.",
+        "review_run_id": treated,
+    }
+    with Session(engine) as session, session.begin():
+        append_event(
+            session, "media.director_scene_brief", "storyboard", ids["board"], 1, record_in, ladder
+        )
+
+    got = by_run(engine)
+    no = got[("agent.run_completed", refused)]
+    assert no["bubble_ro"] == "Am refuzat rescrierea scenei 4: nu tratează constatarea."
+    assert no["words_ro"] == (
+        f"{sarah['name']} a refuzat rescrierea scenei 4 din «{TITLE}»: nu tratează constatarea "
+        "(Promptul cere tot registrul deschis la cifre)."
+    )
+    yes = got[("agent.run_completed", treated)]
+    assert yes["bubble_ro"] == "Rescrierea scenei 3 tratează constatarea ✓"
+    assert yes["words_ro"] == (
+        f"{sarah['name']} a verificat rescrierea scenei 3 din «{TITLE}»: tratează constatarea, "
+        "se poate cumpăra."
+    )
+
+
+def test_a_check_names_its_scene_a_long_title_is_shortened_and_an_unplaced_run_keeps_its_words(
+    engine,
+):
+    """A still check names its scene and the film its correlation names; a title too long for
+    the bubble is shortened inside its quotes, never the scene; a correlation naming two films
+    names neither; a run with no summary is said as before."""
+    ids = studio(engine)
+    kael = ids["agents"]["VideoEditor"]
+    long_title = "Why Ernest Lawrence's First Cyclotron Barely Fit on a Desk"
+    with Session(engine) as session, session.begin():
+        script_id = session.get(Storyboard, ids["board"]).script_draft_id
+        long_board = str(uuid4())
+        session.add(
+            Storyboard(
+                id=long_board,
+                script_draft_id=script_id,
+                title=f"Storyboard: {long_title}",
+                status="APPROVED",
+                total_scenes=5,
+                visual_bible_json={},
+                created_at=utc_now(),
+            )
+        )
+    gate = str(uuid4())
+    record_board = {"storyboard_id": long_board, "scene_number": 5, "kind": "still"}
+    with Session(engine) as session, session.begin():
+        append_event(
+            session, "media.scene_take_recorded", "scene_take", str(uuid4()), 1, record_board, gate
+        )
+    still = a_run(
+        engine,
+        kael["id"],
+        "still_qc",
+        "Mă uit la imaginea scenei 5 înainte să se cumpere mișcarea.",
+        gate,
+    )
+    run_events(engine, kael["id"], still, "still_qc", gate)
+
+    two_films = str(uuid4())
+    with Session(engine) as session, session.begin():
+        for board in (ids["board"], long_board):
+            append_event(
+                session,
+                "media.scene_take_recorded",
+                "scene_take",
+                str(uuid4()),
+                1,
+                {"storyboard_id": board, "scene_number": 2, "kind": "motion"},
+                two_films,
+            )
+    clip = a_run(
+        engine,
+        kael["id"],
+        "clip_qc",
+        "Mă uit la clipul scenei 2 înainte să intre în film.",
+        two_films,
+    )
+    run_events(engine, kael["id"], clip, "clip_qc", two_films)
+    unplaced = a_run(engine, kael["id"], "scene_prompt_rewrite", "", str(uuid4()))
+    run_events(engine, kael["id"], unplaced, "scene_prompt_rewrite", str(uuid4()))
+
+    got = by_run(engine)
+    checked = got[("agent.run_completed", still)]
+    assert checked["words_ro"] == (
+        f"{kael['name']} a terminat verificarea imaginii scenei 5 din «{long_title}»: reușită "
+        "(cu kimi-k3)."
+    )
+    bubble = checked["bubble_ro"]
+    assert len(bubble) <= 64
+    assert bubble.startswith("Gata: verificarea imaginii scenei 5 din «Why Ernest")
+    assert bubble.endswith("…» ✓")
+    assert got[("agent.run_completed", clip)]["bubble_ro"] == (
+        "Gata: verificarea clipului scenei 2 ✓"
+    )
+    assert got[("agent.run_completed", unplaced)]["bubble_ro"] == (
+        "Gata: rescrierea promptului unei scene ✓"
+    )
+    assert got[("agent.state_changed", unplaced)]["bubble_ro"] == (
+        "Lucrez la rescrierea promptului unei scene."
+    )
