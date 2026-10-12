@@ -31,7 +31,7 @@ SERIES_LOOK_FILE = ROOT / "config" / "serial_series_look.json"
 
 #: What a serial prompt may be at most, when the file does not say: the style block first,
 #: then the room, the people, the action and the camera. A longer prompt buries the shot.
-DEFAULT_MAX_PROMPT_CHARS = 900
+DEFAULT_MAX_PROMPT_CHARS = 980
 
 #: The shot sizes the serial varies between, when the file does not name them. ``{name}`` is
 #: the character the shot is on.

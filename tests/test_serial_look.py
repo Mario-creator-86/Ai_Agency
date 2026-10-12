@@ -177,7 +177,7 @@ def test_the_shipped_look_is_one_versioned_block_that_asks_for_no_writing():
     assert _TEXT_REQUEST.search(block) is None
     # Room for the room, the people, the action and the camera under the cap.
     assert len(block) <= look["max_prompt_chars"] // 2
-    assert look["max_prompt_chars"] == 900
+    assert look["max_prompt_chars"] == 980
 
 
 def test_a_look_switched_off_is_no_look(monkeypatch, tmp_path):
@@ -208,7 +208,7 @@ def test_every_serial_shot_opens_with_the_look_and_names_its_room(engine, staffe
     assert scenes
     for scene in scenes:
         assert scene.visual_prompt.startswith(block), scene.visual_prompt[:200]
-        assert len(scene.visual_prompt) <= 900
+        assert len(scene.visual_prompt) <= 980
         assert "Location: Content, floor 2" in scene.visual_prompt
         assert _TEXT_REQUEST.search(scene.visual_prompt) is None
         # The people in frame, from their bibles, facing the viewer.
@@ -287,7 +287,7 @@ def test_the_prompt_agent_writes_the_serial_shots_with_the_look_and_the_room(
     assert all(shot["from_model"] for shot in result["shots"])
     for scene in scenes_of(engine, board_id):
         assert scene.visual_prompt.startswith(block)
-        assert len(scene.visual_prompt) <= 900
+        assert len(scene.visual_prompt) <= 980
         assert "Location: Content, floor 2" in scene.visual_prompt
         assert "RENDER 91%" not in scene.visual_prompt
         assert _TEXT_REQUEST.search(scene.visual_prompt) is None
@@ -380,9 +380,37 @@ def test_a_serial_still_is_one_moment_in_a_fixed_frame(engine, staffed, monkeypa
     fine. The still now carries the look's fixed framing for the shot's size, how one picture
     fills the tall frame, and the first moment of each person's action; the path's move and
     the whole chain are the motion prompt's."""
-    from app.media.prompt_agent import SERIAL_FRAME_SENTENCE
+    from app.media.prompt_agent import (
+        SERIAL_BLANK_SENTENCE,
+        SERIAL_FRAME_SENTENCE,
+        _still_moment,
+    )
     from app.media.prompt_lint import CAMERA_MOVES, _panels_in, _sequence_in
     from app.media.serial_storyboard import describe_serial_shots
+
+    # A chain joined by commas alone is a chain (scene 3 of f06808c9, 2026-10-12): each
+    # person's first moment, nothing after the comma that begins the next one.
+    chain = (
+        "Marcus opens both hands as if starting a pitch, the gesture stalls halfway and dies, "
+        "he restarts his sentence with a small head shake; Sarah holds still, then lets one "
+        "dry corner of her mouth move as she answers"
+    )
+    assert _still_moment(chain) == (
+        "Marcus opens both hands as if starting a pitch; Sarah holds still"
+    )
+    assert _still_moment(
+        "Nadia taps the brass pen once against the green ledger, pauses before the number, "
+        "then lays the pen flat; Sarah leans in a fraction as she asks her question"
+    ) == (
+        "Nadia taps the brass pen once against the green ledger; "
+        "Sarah leans in a fraction as she asks her question"
+    )
+    # A descriptive tail of the same moment is not a next moment.
+    for same in (
+        "Kael leaning back, arms crossed, eyes on the monitor",
+        "Sarah stands by the window, hands on hips, a brass pen in hand",
+    ):
+        assert _still_moment(same) == same
 
     board_id = serial_board(engine, monkeypatch)
     pack = {
@@ -405,10 +433,11 @@ def test_a_serial_still_is_one_moment_in_a_fixed_frame(engine, staffed, monkeypa
         assert before_name.strip() in still, (before_name, still)
         for path in ("tilt down", "back up", "ending on", "as she speaks"):
             assert path not in still, (path, still)
-        assert SERIAL_FRAME_SENTENCE in still
-        # The first moment of each person's action, the chain left to the motion.
-        assert "taps the brass pen once against the green ledger, pauses before the number" in still
-        assert "then lays the pen flat" not in still
+        assert SERIAL_FRAME_SENTENCE in still and SERIAL_BLANK_SENTENCE in still, still
+        # The first moment of each person's action, the chain left to the motion — and no
+        # «number» for the model to write on the ledger.
+        assert "taps the brass pen once against the green ledger" in still
+        assert "pauses before the number" not in still and "then lays the pen flat" not in still
         assert "Sarah leans in a fraction as she asks her question" in still
         assert _sequence_in(still) == "" and _panels_in(still) == ""
         # No description cut in the middle of a phrase.

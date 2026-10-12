@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-12 — A serial still keeps one moment per person, before the comma that begins the next, and says its pages and screens are blank
+
+08:01–08:04 (f06808c9, scenes 3 and 4, the stills the serial rung recomposed): the stills gate refused all four candidates again — scene 3 «split into three horizontal panels stacked one above another» / «two stacked panels showing the same office two-shot twice», scene 4 «the ledger shows visible lettering and number grids». The chain of moments was cut at «then» but not at commas («opens both hands as if starting a pitch, the gesture stalls halfway and dies, he restarts his sentence»), and «pauses before the number» had the model write numbers on the ledger. prompt_agent._still_moment now keeps each person's clause up to the comma that begins the next moment (a pronoun, «then», or a verb of motion in its first three words — a descriptive tail like «arms crossed» or «hands on hips» stays), and compose_serial_prompt adds «Pages and screens are blank.» where the beat has paper or glass (ledger, page, screen, monitor, whiteboard …). The look's prompt cap is 980 (config and default; was 900). Tests: tests/test_serial_look.py (the comma chain, the descriptive tails, no «pauses before the number», the sentence), tests/test_topic_dedup.py's publication row completed (the test committed in 0bf1a48 had failed behind a pipe that hid pytest's exit). Scene 4 passed the gate on the second round at 08:08 with the earlier words; scene 3 waits for these, which the rung composes on its next round.
+
 ## 2026-10-12 — Three fixes from the first autonomous morning: the same-prompt cue reaches the repair, letters to the Owner only for what is his, a subject already made is never proposed again
 
 Three fixes from the first autonomous morning (2026-10-12, 07:50–08:10), after the self-restart.

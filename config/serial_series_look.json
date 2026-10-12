@@ -30,5 +30,5 @@
     "single": "Medium close-up single at eye level on {name}, facing the viewer",
     "close": "Close-up at eye level on {name}'s reaction, facing the viewer"
   },
-  "max_prompt_chars": 900
+  "max_prompt_chars": 980
 }

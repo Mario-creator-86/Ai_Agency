@@ -1620,6 +1620,17 @@ def _serial_package(
 SERIAL_FRAME_SENTENCE = (
     "One continuous picture fills the whole tall frame, the people in its upper two thirds."
 )
+#: The paper and the glass in a serial still carry no writing: the look forbids written words,
+#: and the vision gate still read lettering and number grids on a ledger drawn for «pauses
+#: before the number» (2026-10-12, 08:03, scene 4 of f06808c9, twice). Said without the
+#: words the prompt check reads as a request for text («lettering», «digits»).
+SERIAL_BLANK_SENTENCE = "Pages and screens are blank."
+_WRITING_SURFACES = re.compile(
+    r"\b(?:ledger|page|pages|paper|papers|note|notes|notebook|notepad|book|books|screen"
+    r"|screens|monitor|monitors|laptop|phone|tablet|whiteboard|board|sign|poster|label"
+    r"|document|documents|form|forms|invoice|invoices|report|reports|letter|letters)\b",
+    re.IGNORECASE,
+)
 #: A function word left hanging at the end of a cut phrase ("wearing", "with", "in a").
 _DANGLING_TAIL = re.compile(
     r"(?:\s+\b(?:wearing|with|in|a|an|the|and|or|but|over|of|on|at|to|for|under|as|his|her"
@@ -1635,9 +1646,12 @@ def _clean_cut(text: str) -> str:
 
 def _still_moment(action: str) -> str:
     """The first moment of a serial beat's action, for its still: each person's clause up to
-    its first later moment («then», «finally», «eventually», «next,»), a clause that opens
-    with a later moment left out. An image model draws a chain of moments as stacked panels
-    (2026-10-11, f06808c9); the whole chain is the motion prompt's (`compose_serial_motion`)."""
+    its first later moment («then», «finally», «eventually», «next,») and up to its first
+    comma, a clause that opens with a later moment left out. An image model draws a chain of
+    moments as stacked panels (2026-10-11, f06808c9), and a chain joined by commas alone
+    («opens both hands as if starting a pitch, the gesture stalls halfway and dies, he
+    restarts his sentence») is still a chain (2026-10-12, 08:01, scene 3 twice more); the
+    whole chain is the motion prompt's (`compose_serial_motion`)."""
     kept: list[str] = []
     for clause in re.split(r";\s*", " ".join(str(action or "").split()).rstrip(". ")):
         part = clause.strip()
@@ -1650,10 +1664,53 @@ def _still_moment(action: str) -> str:
         ]
         if marks:
             part = _then_head(part, min(marks))
-        part = _clean_cut(part)
+        part = _clean_cut(_first_moment(part))
         if part:
             kept.append(part)
     return "; ".join(kept)
+
+
+#: After a comma, a new moment: a pronoun or «then» opening it, or a verb of motion in its
+#: first three words («pauses before», «the gesture stalls», «restarts his») — never a tail
+#: that only describes the same moment («arms crossed», «eyes on the street», «hands on
+#: hips», «a brass pen in hand»), which stays.
+_MOMENT_OPENER = re.compile(r"^(?:he|she|they|it|we|then|now|next|and then)\b", re.IGNORECASE)
+_MOMENT_VERB = re.compile(
+    r"\b(?:pauses?|stalls?|dies|restarts?|holds?|lets?|waits?|stops?|starts?|begins?|ends?"
+    r"|goes|comes?|says?|answers?|replies|shrugs?|sighs?|freezes?|grins?|frowns?|blinks?"
+    r"|swallows?|exhales?|inhales?|straightens?|settles?|folds?|slides?|flips?|picks?|sets?"
+    r"|places?|puts?|checks?|reads?|clicks?|scrolls?|stares?|squints?|tilts?|hovers?|rests?"
+    r"|lands?|falls?|collapses?|spreads?|counts?|lists?|mouths?|murmurs?|snaps?|slams?|sips?"
+    r"|drinks?|eats?|bites?|chews?|glares?|peers?|flinches|winces?|clears|closes?|opens?"
+    r"|lowers?|raises?|drops?|lifts?|turns?|looks?|leans?|nods?|shakes?|taps?|points?)\b",
+    re.IGNORECASE,
+)
+
+
+def _next_moment(tail: str) -> bool:
+    words = tail.split()
+    if not words:
+        return False
+    if _MOMENT_OPENER.match(tail):
+        return True
+    if words[0].lower().endswith("ing"):
+        # A participle after the name's comma («Kael, leaning back, arms crossed») describes
+        # this moment; a new one has its own finite verb.
+        return False
+    head = " ".join(words[:3])
+    return bool(_MOMENT_VERB.search(head) or lint.SUBJECT_MOTION.search(head))
+
+
+def _first_moment(clause: str) -> str:
+    """One person's clause up to the comma that begins its next moment; the descriptive
+    tails of the same moment («leaning back, arms crossed») stay."""
+    head, sep, rest = clause.partition(",")
+    while sep:
+        if _next_moment(rest.strip()):
+            break
+        more, sep, rest = rest.partition(",")
+        head = f"{head},{more}"
+    return head.strip()
 
 
 def _serial_framing(package: dict[str, Any], look: dict[str, Any], focus: str) -> str:
@@ -1691,13 +1748,19 @@ def compose_serial_prompt(package: dict[str, Any], look: dict[str, Any]) -> str:
     # rubrics the first episode's stills carried (2026-10-11, f06808c9), the prompt check
     # refused them (TEMPLATE_LABEL) on every rewrite, and the Director and the Video Editor
     # went round in circles while the storyboard waited.
+    action = _still_moment(str(package.get("action") or ""))
+    surfaces = " ".join(
+        str(package.get(key) or "") for key in ("action", "location", "background", "subject")
+    )
     head = [
         str(look.get("block") or "").strip(),
         f"Location: {package['location']}." if package.get("location") else "",
         _sentence(framing) if framing else "",
         SERIAL_FRAME_SENTENCE,
+        # Only where there is paper or glass to write on: the sentence costs the people
+        # their description under the cap, and a room without a page needs no blank one.
+        SERIAL_BLANK_SENTENCE if _WRITING_SURFACES.search(surfaces) else "",
     ]
-    action = _still_moment(str(package.get("action") or ""))
     if action and not action.endswith("."):
         action += "."
 

@@ -15,7 +15,7 @@ from __future__ import annotations
 from uuid import uuid4
 
 from app.factual.models import ScriptDraft, TopicIdea
-from app.media.models import Storyboard
+from app.media.models import MediaAsset, Storyboard
 from app.publishing.models import ChannelRecord, PublicationRecord
 from app.research.agent import _keys, _too_similar, existing_subjects
 from app.services import utc_now
@@ -121,14 +121,31 @@ def test_what_the_studio_made_counts_under_any_title(engine):
     assert _too_similar(PARTICLE_AGAIN, HIGGS_TOPIC, records) == PARTICLE_MADE
     # The publication's own title counts too.
     with Session(engine) as session, session.begin():
-        channel = ChannelRecord(id=str(uuid4()), channel_name="Nexus Curiosity")
-        session.add(channel)
+        channel = ChannelRecord(id=str(uuid4()), channel_name="Nexus Curiosity", created_at=now)
+        asset = MediaAsset(
+            id=str(uuid4()),
+            asset_type="RENDERED_VIDEO",
+            uri_or_path="storage/higgs.mp4",
+            file_size_bytes=10,
+            mime_type="video/mp4",
+            width=1080,
+            height=1920,
+            duration_seconds=30.0,
+            provider_name="SCENE_TAKES",
+            license_status="PROPRIETARY_STUDIO",
+            provenance_hash="1" * 64,
+            created_at=now,
+        )
+        session.add_all([channel, asset])
         session.flush()
         session.add(
             PublicationRecord(
                 id=str(uuid4()),
                 channel_id=channel.id,
+                media_asset_id=asset.id,
                 title="The Higgs Boson: The Particle That Explains Why Mass Exists",
+                description="",
+                idempotency_key=str(uuid4()),
                 status="PUBLISHED",
                 created_at=now,
             )
