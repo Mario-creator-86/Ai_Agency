@@ -350,6 +350,11 @@ class _Scene:
     rolls: int = 0
     #: What the still must not become (`still_negative`), for the model's negative channel.
     negative: str = ""
+    #: What the scene asks for beside its prompt — its written picture, the narration over
+    #: it, its purpose — for the gate's `shows_scene` question (`still_gate.StillPlan`).
+    picture: str = ""
+    narration: str = ""
+    purpose: str = ""
 
 
 @dataclass
@@ -437,6 +442,9 @@ def _read_scenes(engine: Engine, storyboard_id: str) -> tuple[dict[str, Any], li
                 reference=reference,
                 needs_reference=missing,
                 negative=still_negative(package, bible),
+                picture=" ".join(visual.split()),
+                narration=" ".join(str(row.voiceover_segment or "").split()),
+                purpose=str(row.story_purpose or ""),
             )
             if kind == LIVE_KIND and missing is None:
                 found = usable_take(
@@ -916,6 +924,9 @@ def _settle_pending(
             bible_rules=rules,
             look_block=scene.look_block,
             palette_words=_palette_words(scene.look_block),
+            scene_picture=scene.picture,
+            narration=scene.narration,
+            purpose=scene.purpose,
         )
         verdicts = [
             (
@@ -1422,6 +1433,9 @@ class _StillRounds:
                     bible_rules=self.rules,
                     look_block=scene.look_block,
                     palette_words=_palette_words(scene.look_block),
+                    scene_picture=scene.picture,
+                    narration=scene.narration,
+                    purpose=scene.purpose,
                 ),
                 identity=take_hash(scene.identity, self.model_id),
                 requests=scene.attempts,
@@ -1817,6 +1831,9 @@ def run_stills_stage(
             bible_rules=rules,
             look_block=scene.look_block,
             palette_words=_palette_words(scene.look_block),
+            scene_picture=scene.picture,
+            narration=scene.narration,
+            purpose=scene.purpose,
         )
         references, with_character, with_figure = _references(
             scene, figure_one, image_adapter, first=scene.index == first_live

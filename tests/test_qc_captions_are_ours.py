@@ -117,6 +117,7 @@ class PixelEye:
                 "faces_visible": False,
                 "readable_text": writing,
                 "matches_plan": True,
+                "shows_scene": True,
                 "look_ok": True,
                 "technical_ok": True,
                 "same_shot": True,

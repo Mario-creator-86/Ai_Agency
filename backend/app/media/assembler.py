@@ -10146,6 +10146,11 @@ def _clip_plan(scene: dict[str, Any], bible: dict[str, Any]) -> Any:
         bible_rules=stills._bible_rules(bible),
         look_block=look,
         palette_words=stills._palette_words(look),
+        scene_picture=" ".join(str(scene.get("visual_prompt") or "").split()),
+        narration=" ".join(
+            str(scene.get("voiceover_segment") or scene.get("narration") or "").split()
+        ),
+        purpose=str(scene.get("story_purpose") or ""),
     )
 
 
@@ -15991,6 +15996,9 @@ def _redo_still(
         bible_rules=stills._bible_rules(bible),
         look_block=scene.look_block,
         palette_words=stills._palette_words(scene.look_block),
+        scene_picture=getattr(scene, "picture", ""),
+        narration=getattr(scene, "narration", ""),
+        purpose=getattr(scene, "purpose", ""),
     )
     work_dir = (storage_root or DEFAULT_STORAGE_ROOT) / storyboard_id / "stills"
     work_dir.mkdir(parents=True, exist_ok=True)

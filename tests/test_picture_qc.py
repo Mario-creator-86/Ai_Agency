@@ -1044,6 +1044,7 @@ def a_still_answer(scene=1, **changes):
         "readable_text": False,
         "one_picture": True,
         "matches_plan": True,
+        "shows_scene": True,
         "look_ok": True,
         "technical_ok": True,
         "bible_violations": "none",
@@ -1103,18 +1104,19 @@ def test_the_still_verdict_has_no_field_that_passes_by_default():
     from app.media.picture_qc import StillJudgeReport, StillVerdict
     from pydantic import ValidationError
 
-    # one_picture is asked of the model like every other field (the report a model's answer is
-    # read into refuses an entry without it, below); only a verdict built in code, the stills
-    # step's fakes written before the question, may leave it out.
+    # one_picture and shows_scene are asked of the model like every other field (the report a
+    # model's answer is read into refuses an entry without them, below); only a verdict built
+    # in code, the stills step's fakes written before the questions, may leave them out.
     assert all(
         field.is_required()
         for name, field in StillVerdict.model_fields.items()
-        if name != "one_picture"
+        if name not in ("one_picture", "shows_scene")
     )
     assert set(StillVerdict.model_fields) >= {
         "faces_visible",
         "readable_text",
         "one_picture",
+        "shows_scene",
         "matches_plan",
         "look_ok",
         "technical_ok",
@@ -1137,6 +1139,11 @@ def test_the_still_verdict_has_no_field_that_passes_by_default():
     with pytest.raises(ValidationError):
         StillJudgeReport.model_validate({"stills": [silent]})
     assert StillJudgeReport.model_validate({"stills": [good]}).stills[0].one_picture is True
+    # ... and whether it shows the scene, not only its prompt (2026-10-12, scene 5's rounds).
+    mute = {key: value for key, value in good.items() if key != "shows_scene"}
+    with pytest.raises(ValidationError):
+        StillJudgeReport.model_validate({"stills": [mute]})
+    assert StillJudgeReport.model_validate({"stills": [good]}).stills[0].shows_scene is True
 
 
 @pytest.mark.skipif(__import__("shutil").which("ffmpeg") is None, reason="ffmpeg is not installed")
@@ -1340,6 +1347,7 @@ def _keep(scene, **changes):
         "faces_visible": False,
         "readable_text": False,
         "matches_plan": True,
+        "shows_scene": True,
         "look_ok": True,
         "technical_ok": True,
         "same_shot": True,

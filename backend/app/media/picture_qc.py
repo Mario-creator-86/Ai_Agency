@@ -1130,6 +1130,10 @@ StillAction = Literal["buy_motion", "regenerate_still", "compose_locally"]
 #: The question added on 2026-10-09, after scene 5 of «The Particle That Shouldn't Exist (But
 #: Does)» came out as three stacked panels and every check passed it.
 ONE_PICTURE = "one_picture"
+#: The question added on 2026-10-12, after scene 5 of «… (And Briefly Didn't)» was bought
+#: five paid rounds: each still matched its prompt and none showed the scene (a rock tunnel
+#: for the detector cavern); only the film's picture QC, after the clip, said so.
+SHOWS_SCENE = "shows_scene"
 
 
 def _every_entry_answers(entries: Any, question: str) -> Any:
@@ -1160,6 +1164,10 @@ class StillVerdict(BaseModel):
     #: stills step's test fakes, written before the question): a model's silence never
     #: reads as one picture.
     one_picture: StrictBool = True
+    #: Does the still show what the SCENE asks for — its written picture and the narration
+    #: over it — not only what the prompt asked (`matches_plan`)? Required of the model like
+    #: `one_picture`; the default is for verdicts built in code.
+    shows_scene: StrictBool = True
     bible_violations: str = Field(min_length=1, max_length=300)
     verdict: StillAction
     reason: str = Field(min_length=1, max_length=300)
@@ -1174,7 +1182,7 @@ class StillJudgeReport(BaseModel):
     @field_validator("stills", mode="before")
     @classmethod
     def _one_picture_answered(cls, value: Any) -> Any:
-        return _every_entry_answers(value, ONE_PICTURE)
+        return _every_entry_answers(_every_entry_answers(value, ONE_PICTURE), SHOWS_SCENE)
 
 
 @dataclass(frozen=True)
@@ -1206,6 +1214,11 @@ _STILL_INSTRUCTIONS = (
     "strip, a picture inside a picture, or a picture with a blank or black band across it "
     "is not one picture.\n"
     "- matches_plan: does it show what the plan asks for, as one moment?\n"
+    "- shows_scene: does it show what the SCENE asks for — the scene's written picture and "
+    "the narration spoken over it, under `scene_picture` and `narration`? The plan is how "
+    "the still was asked for; the scene is what the film needs. A picture that matches the "
+    "plan's words but shows another place, another object or none of the scene's subject "
+    "does not show the scene. When no scene picture is given, judge by the plan.\n"
     "- look_ok: does it match the film's look (light, palette, grain)?\n"
     "- technical_ok: is it sharp where it should be, free of warped anatomy, smears, "
     "stripes or artefacts?\n"
@@ -1214,9 +1227,9 @@ _STILL_INSTRUCTIONS = (
     "false); regenerate_still if a new still could fix it; compose_locally if the plan asks "
     "for a chart, a title, numbers or a black screen, which the studio draws itself.\n"
     'Return only JSON: {{"stills": [{{"scene": {scene}, "faces_visible": false, '
-    '"readable_text": false, "one_picture": true, "matches_plan": true, "look_ok": true, '
-    '"technical_ok": true, "bible_violations": "none", "verdict": "buy_motion", "reason": '
-    '"one short sentence saying what you actually see"}}]}}\n'
+    '"readable_text": false, "one_picture": true, "matches_plan": true, "shows_scene": true, '
+    '"look_ok": true, "technical_ok": true, "bible_violations": "none", "verdict": '
+    '"buy_motion", "reason": "one short sentence saying what you actually see"}}]}}\n'
 )
 
 
@@ -1307,6 +1320,9 @@ def judge_still(
     shown = {
         "scene": plan.scene,
         "plan": plan.still_prompt,
+        "scene_picture": getattr(plan, "scene_picture", "") or "",
+        "narration": getattr(plan, "narration", "") or "",
+        "purpose": getattr(plan, "purpose", "") or "",
         "look": plan.look_block,
         "camera_move": plan.camera_move,
         "faces_forbidden": plan.faces_forbidden,

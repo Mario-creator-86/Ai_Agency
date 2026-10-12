@@ -250,6 +250,16 @@ class StillPlan:
     bible_rules: tuple[str, ...] = ()
     look_block: str = ""
     palette_words: tuple[str, ...] = ()
+    #: What the SCENE asks for, beside the words the still was asked with: its written picture
+    #: (the storyboard scene's `visual_prompt`), the narration spoken over it and its purpose.
+    #: The film's picture QC judges the finished film against these (`picture_qc`, «the
+    #: picture is not what the scene asked for»); until 2026-10-12 the gate judged a still
+    #: only against its prompt, so a still that matched a prompt which had lost the scene's
+    #: subject was bought a clip for, assembled and failed — five paid rounds of scene 5 of
+    #: «The Particle That Shouldn't Exist (And Briefly Didn't)».
+    scene_picture: str = ""
+    narration: str = ""
+    purpose: str = ""
 
 
 @dataclass(frozen=True)
@@ -841,6 +851,13 @@ def decide(
         if not verdict.matches_plan:
             reasons.append(f"Imaginea nu arată ce cere planul scenei {said}")
             violations.append("plan")
+        if not verdict.shows_scene:
+            # The same question the film's picture QC asks after the money is spent, asked
+            # here for 7 credits: the scene's written picture and narration, not the prompt.
+            reasons.append(
+                f"Imaginea nu arată ce cere scena (imaginea ei scrisă și narațiunea) {said}"
+            )
+            violations.append("scene")
         if not verdict.look_ok:
             reasons.append(f"Imaginea nu are aspectul filmului {said}")
             violations.append("look")

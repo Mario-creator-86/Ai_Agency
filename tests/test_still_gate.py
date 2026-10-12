@@ -378,12 +378,33 @@ def test_a_verdict_that_contradicts_its_own_answers_does_not_pass():
         {"readable_text": True},
         {"one_picture": False},
         {"matches_plan": False},
+        {"shows_scene": False},
         {"look_ok": False},
         {"technical_ok": False},
         {"bible_violations": "a woman's face in the lower third"},
     ):
         report = decide(fixture(1), plan(), checks, clean_verdict(**change), environment="TEST")
         assert report.decision == "BLOCKED", change
+
+
+def test_a_still_that_matches_its_prompt_but_not_the_scene_is_refused_before_the_clip():
+    """2026-10-12, scene 5 of «The Particle That Shouldn't Exist (And Briefly Didn't)»: five
+    paid rounds in which each still matched the words it was asked with and none showed the
+    detector cavern the scene asked for; only the film's picture QC, after the clip, said so.
+    The gate now asks the film's question too, for the price of the still."""
+    checks = local_checks(
+        fixture(5), plan(5), environment="TEST", face_counter=no_faces, measure=("faces",)
+    )
+    verdict = clean_verdict(
+        5,
+        shows_scene=False,
+        reason="a rough bare-rock tunnel with orange sparks, not the metallic detector cavern",
+    )
+    report = decide(fixture(5), plan(5), checks, verdict, environment="TEST")
+    assert report.decision == "BLOCKED"
+    assert any("nu arată ce cere scena" in r for r in report.reasons_ro), report.reasons_ro
+    assert any("detector cavern" in r for r in report.reasons_ro)
+    assert "scene" in report.violations
 
 
 def test_compose_locally_is_an_outcome_not_a_pass():
