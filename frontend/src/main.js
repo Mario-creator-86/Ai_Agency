@@ -29,7 +29,6 @@ import { autonomyOverview } from './autonomy_overview.js';
 import { Drawers } from './drawers.js';
 import { OfficeState } from './office_state.js';
 import { Ledger, entryCountLabel, mailIntentLabel, productionStatus, runtimeLabel, taskLabel } from './ledger.js';
-import { renderGoalTally } from './goal_tally.js';
 import { gpuWaitWord, paidWork, paidWorkKey } from './paid_work.js';
 import { budgetRing, budgetRingSvg, channelFilmsHtml, dayTrack, dayTrackFromRun, dayTrackGeometry, dayTrackWords, newerTrack, pipelineSvg } from './hud_charts.js';
 import { Moments } from './moments.js';
@@ -402,18 +401,16 @@ function refreshPaidWork() {
  * the office shows; drawn again once the portrait atlas has arrived. The portraits are painted
  * art, so the face is drawn at the roster's size and brought down smoothly to twice the rail's
  * width (the Owner, 2026-10-12: «De ce așa mică?» — a 32×24 copy had lost it), and handed out
- * as a blob URL: the register writes the URL into every row it draws.
+ * as a JPEG data URL. Not a blob URL: the page's CSP allows `img-src 'self' data:` only
+ * (backend/app/main.py), so every blob portrait was blocked and the rows showed a broken image
+ * (the Owner, 2026-10-12: «Pozele nu se văd la agent sub oră»). JPEG keeps the URL about 7 kB,
+ * which matters because the register writes it into every row it draws; the same face gives the
+ * same string, so the browser's cache keeps it from flickering.
  * @type {Map<string, string|null>}
  */
 const registerPortraits = new Map();
 let portraitAtlasAsked = false;
 const REGISTER_PORTRAIT_PX = { w: 108, h: 81 };
-/**
- * Each employee's face as last drawn and its blob URL. The list is written anew on every render,
- * so the URL stays the same while the face does (no flicker); a changed face lets the old one go.
- * @type {Map<string, {data: string, url: string}>}
- */
-const registerPortraitBlobs = new Map();
 
 /** @param {string} agentId */
 function registerPortrait(agentId) {
@@ -436,15 +433,7 @@ function registerPortrait(agentId) {
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = 'high';
         ctx.drawImage(full, 0, 0, canvas.width, canvas.height);
-        const data = canvas.toDataURL('image/png');
-        const kept = registerPortraitBlobs.get(agentId);
-        if (kept && kept.data === data) url = kept.url;
-        else {
-          if (kept) URL.revokeObjectURL(kept.url);
-          const bytes = Uint8Array.from(atob(data.slice(data.indexOf(',') + 1)), (c) => c.charCodeAt(0));
-          url = URL.createObjectURL(new Blob([bytes], { type: 'image/png' }));
-          registerPortraitBlobs.set(agentId, { data, url });
-        }
+        url = canvas.toDataURL('image/jpeg', 0.85);
       }
     }
   } catch {
@@ -4424,9 +4413,6 @@ function render(data) {
   liveWindows.timezone = data.studio.timezone;
   mailThread.timezone = data.studio.timezone;
   liveWindows.setNames(agentNames);
-  // THE DAY'S GOAL (goal_tally.js): two films per channel, as the snapshot's record counts them;
-  // nothing is drawn while the snapshot carries no goal (an older studio, or an unreadable one).
-  renderGoalTally(element('goal-tally'), data.goal, escapeHtml);
   ledger.add(data.events || []);
   element('ledger-count').textContent = entryCountLabel(ledger.events.size);
   renderDayTrack();

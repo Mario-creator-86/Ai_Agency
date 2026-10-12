@@ -767,8 +767,8 @@ RUNPOD_OFF_WORDS = (
 OWNER_HOLD_EVENT = "runpod.owner_hold"
 OWNER_HOLD = "OWNER_HOLD"
 OWNER_HOLD_WORDS = (
-    "Ai oprit GPU-ul: niciun pas plătit nu-l mai pornește până nu permiți din nou (cardul din "
-    "«Decizii»); nu s-a trimis și nu s-a cheltuit nimic."
+    "Ai oprit GPU-ul: niciun pas plătit nu-l mai pornește până nu permiți din nou («Permite GPU "
+    "din nou», lângă «Oprește GPU acum»); nu s-a trimis și nu s-a cheltuit nimic."
 )
 
 

@@ -27,6 +27,12 @@ from app.providers.runpod.gpu_session import force_off, gpu_status, set_owner_ho
 from app.security import require_owner
 
 COMMAND_TYPE = "RunPodGpuOff"
+ALLOW_COMMAND_TYPE = "RunPodGpuAllow"
+#: What his «Permite GPU din nou» answers: the same promise as the card's «Permite din nou».
+ALLOW_WORDS = (
+    "Ai permis din nou GPU-ul: studioul îl poate porni pentru pașii plătiți, sub regula ta "
+    "pentru pașii plătiți, bugete și plafonul fiecărui film."
+)
 OFF_VERIFIED_WORDS = "GPU-ul RunPod este oprit și verificat."
 OFF_UNVERIFIED_WORDS = (
     "Am trimis oprirea GPU-ului RunPod, dar nu a confirmat încă; paznicul verifică din nou la "
@@ -102,7 +108,7 @@ def create_runpod_router() -> APIRouter:
             "readings": readings,
             "verified": bool(readings) and all(r["off"] for r in readings),
             "words_ro": _off_words(readings)
-            + " GPU-ul rămâne oprit până permiți din nou (cardul din «Decizii»).",
+            + " GPU-ul rămâne oprit până permiți din nou: «Permite GPU din nou», în același loc.",
             "hold": True,
             "card_id": card_id,
         }
@@ -111,6 +117,43 @@ def create_runpod_router() -> APIRouter:
                 remember_command(session, identifier, COMMAND_TYPE, digest, answer)
         except IntegrityError:
             # A double press raced this one: its answer is the answer.
+            with Session(engine) as session:
+                previous = recall_command(session, identifier, digest)
+            if previous is not None:
+                return previous
+        return answer
+
+    @router.post("/gpu/allow")
+    def post_gpu_allow(request: Request, command: GpuOffCommand) -> Any:
+        """«Permite GPU din nou» (2026-10-12, the Owner: «GPU-ul RunPod este oprit, de unde îl
+        pornesc? Ar trebui să o pot face din același loc din care îl opresc!»): his hold lifted
+        from the switch itself, exactly as the card's «Permite din nou» lifts it
+        (`set_owner_hold(False, by="owner")`); the card closes by its own condition. It switches
+        nothing on: the next paid step may start the GPU, under his rule, budgets and caps."""
+        from app.services import (  # noqa: PLC0415 - services imports providers
+            CommandConflict,
+            command_hash,
+            recall_command,
+            remember_command,
+        )
+
+        engine = request.app.state.engine
+        payload = command.model_dump(mode="json")
+        digest = command_hash(payload)
+        identifier = str(command.command_id)
+        try:
+            with Session(engine) as session:
+                previous = recall_command(session, identifier, digest)
+        except CommandConflict as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=409)
+        if previous is not None:
+            return previous
+        set_owner_hold(engine, False, by="owner", command_id=identifier)
+        answer = {"command_id": identifier, "hold": False, "words_ro": ALLOW_WORDS}
+        try:
+            with Session(engine) as session, session.begin():
+                remember_command(session, identifier, ALLOW_COMMAND_TYPE, digest, answer)
+        except IntegrityError:
             with Session(engine) as session:
                 previous = recall_command(session, identifier, digest)
             if previous is not None:

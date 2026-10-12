@@ -60,6 +60,16 @@
 //   run()), the dialog's stop with them, for the whole request. The stop is re-enabled at once.
 // - PHONE INSPECTOR (style.css): the stop among the inspector's header keys pushed the close key
 //   out of the dialog at 375 px.
+//
+// ALLOW FROM THE SAME PLACE (2026-10-12, the Owner: «GPU-ul RunPod este oprit, de unde îl
+// pornesc??? Ar trebui să o pot face din același loc din care îl opresc!»): his stop holds until
+// he allows it again (c529061), and the only way back was a card in «Decizii». While the hold is
+// on and no GPU session is live, the same button reads «Permite GPU din nou» and sends POST
+// /api/v1/runpod/gpu/allow, which lifts the hold exactly as the card does; it switches nothing on.
+// NEVER SQUEEZED (same day, «Scrisul se suprapune!»): the toolbar folds `.cam-worded` keys to a
+// 32 px icon below a 1500 px dock and hides their `.dock-label`; this key has no icon, so its
+// words ran over the reading and «MEDIU». The key is no longer `.cam-worded`; the reading ends in
+// «…» instead (office_scene.css) and says itself whole on hover.
 
 /**
  * @typedef {{purpose: string, endpoint_id: string, state: string, workers_max?: number|null,
@@ -301,8 +311,8 @@ export function gpuWords(status, clock = {}) {
     return { label: `${workers.words} · ${steps}`, tone: workers.tone, detail };
   }
   if (status.owner_hold) {
-    // His «Oprește GPU acum» holds until he allows it again on its card.
-    return { label: 'GPU oprit de tine · nu pornește până permiți din nou (Decizii)', tone: 'off', detail };
+    // His «Oprește GPU acum» holds until he allows it again: the key beside it says how.
+    return { label: 'GPU oprit de tine', tone: 'off', detail };
   }
   if (endpoints.length && endpoints.every((e) => e.state === 'OFF')) {
     return { label: stoppedLabel(last, clock), tone: 'off', detail };
@@ -316,6 +326,21 @@ export function gpuWords(status, clock = {}) {
  */
 export function offCommand(commandId) {
   return { schema_version: 1, command_id: commandId };
+}
+
+/**
+ * Whether the key is «Permite GPU din nou»: his hold is on and nothing is live to stop. A live
+ * session (a round the hold caught) keeps «Oprește GPU acum»: stopping always comes first.
+ * @param {GpuStatus|null|undefined} status
+ */
+export function heldOnly(status) {
+  return Boolean(status && status.configured && !status.mock && status.owner_hold && !gpuLive(status));
+}
+
+/** What the Owner reads after «Permite GPU din nou». @param {{words_ro?: string}|null|undefined} result */
+export function allowAnswer(result) {
+  if (result && result.words_ro) return result.words_ro;
+  return 'Ai permis din nou GPU-ul: studioul îl poate porni pentru pașii plătiți.';
 }
 
 /**
@@ -425,6 +450,8 @@ export function createGpuSwitch({ api, notify, intervalMs = 15000, freshEveryMs 
   let freshFailures = 0;
   /** @type {Promise<void>|null} */
   let pressing = null;
+  /** @type {Promise<void>|null} */
+  let allowing = null;
   /** the command id of the press in flight, the same for every place it was pressed from */
   let commandId = '';
   /**
@@ -470,11 +497,21 @@ export function createGpuSwitch({ api, notify, intervalMs = 15000, freshEveryMs 
     } else {
       mount.container.hidden = !configured;
     }
-    say(mount.label, readFailed && configured ? 'GPU: stare necitită' : words.label);
-    mount.label.title = words.detail;
-    mount.container.title = words.detail;
+    const label = readFailed && configured ? 'GPU: stare necitită' : words.label;
+    say(mount.label, label);
+    // the reading may end in «…» in a narrow toolbar: the hover says it whole, then the detail
+    const whole = [label, words.detail].filter(Boolean).join(' — ');
+    mount.label.title = whole;
+    mount.container.title = whole;
     mount.container.dataset.tone = readFailed ? 'unknown' : words.tone;
-    mount.button.disabled = Boolean(pressing);
+    const allow = !readFailed && !pressing && heldOnly(status);
+    say(mount.button, allow ? 'Permite GPU din nou' : 'Oprește GPU acum');
+    mount.button.dataset.action = allow ? 'allow' : 'off';
+    if (hasClass(mount.button, 'is-allow') !== allow) {
+      const rest = String(mount.button.className).split(/\s+/).filter((c) => c && c !== 'is-allow');
+      mount.button.className = (allow ? [...rest, 'is-allow'] : rest).join(' ');
+    }
+    mount.button.disabled = Boolean(pressing || allowing);
   }
 
   function paint() {
@@ -564,6 +601,28 @@ export function createGpuSwitch({ api, notify, intervalMs = 15000, freshEveryMs 
     return pressing;
   }
 
+  /** «Permite GPU din nou»: one POST, its own command id; his hold lifts as the card lifts it. */
+  function allow() {
+    if (allowing) return allowing;
+    const id = newId();
+    const send = async () => {
+      try {
+        const result = await api('/runpod/gpu/allow', { method: 'POST', body: JSON.stringify(offCommand(id)) });
+        return allowAnswer(result);
+      } catch (failure) {
+        return failure instanceof Error ? failure.message : String(failure);
+      }
+    };
+    allowing = send().then(async (text) => {
+      allowing = null;
+      notify(text);
+      if (reading) await reading;
+      if (!stopped) await refresh();
+    });
+    paint();
+    return allowing;
+  }
+
   /**
    * Shows the switch in ``container``.
    * @param {any} container
@@ -576,9 +635,10 @@ export function createGpuSwitch({ api, notify, intervalMs = 15000, freshEveryMs 
     label.className = dialog ? 'gpu-switch-state' : 'switch-state gpu-switch-state';
     const button = owner.createElement('button');
     button.type = 'button';
-    button.className = dialog ? 'gpu-switch-off' : 'cam-btn cam-worded gpu-switch-off';
+    button.className = dialog ? 'gpu-switch-off' : 'cam-btn gpu-switch-off';
     button.textContent = 'Oprește GPU acum';
-    button.addEventListener('click', () => press());
+    button.dataset.action = 'off';
+    button.addEventListener('click', () => (button.dataset.action === 'allow' ? allow() : press()));
     container.append(label, button);
     let line = null;
     if (dialog) {
@@ -737,6 +797,7 @@ export function createGpuSwitch({ api, notify, intervalMs = 15000, freshEveryMs 
     mount,
     refresh,
     press,
+    allow,
     watch,
     /** @returns {GpuMount[]} */
     mounts: () => [...mounts],

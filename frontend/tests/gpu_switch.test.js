@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {
   FRESH_BACKOFF_MAX_MS, FRESH_EVERY_MS, STALE_READING_MS, focusCandidates, gpuLive, gpuWords, mountGpuSwitch, offAnswer,
-  offCommand, offReadWords, offStateOf, placeInDialog, stopClock, stoppedLabel, workerWords,
+  heldOnly, offCommand, offReadWords, offStateOf, placeInDialog, stopClock, stoppedLabel, workerWords,
 } from '../src/gpu_switch.js';
 
 const MAIN = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
@@ -65,8 +65,53 @@ test('the switch names the film, the scene and the take, and his stop that holds
     "GPU pornit, worker activ · «The Particle That Shouldn't Exist»: refacerea — clipul scenei 5");
   // His «Oprește GPU acum» holds: the switch says so until he allows the GPU again.
   const held = { ...off, owner_hold: true };
-  assert.equal(gpuWords(held).label, 'GPU oprit de tine · nu pornește până permiți din nou (Decizii)');
+  assert.equal(gpuWords(held).label, 'GPU oprit de tine');
   assert.equal(gpuWords(held).tone, 'off');
+});
+
+test('his hold: the same key allows the GPU again, and a live session keeps the stop', async () => {
+  // 2026-10-12, the Owner: «GPU-ul RunPod este oprit, de unde îl pornesc??? Ar trebui să o pot
+  // face din același loc din care îl opresc!»
+  const held = { ...off, owner_hold: true };
+  assert.equal(heldOnly(held), true);
+  assert.equal(heldOnly(off), false);
+  const live = { ...held, endpoints: [{ ...off.endpoints[0], state: 'ON', workers_max: 1, running: 1 }],
+    sessions: [{ id: 's', purpose: 'image', step: 'motion' }] };
+  assert.equal(heldOnly(live), false, 'a live round is stopped first, never allowed past');
+  assert.equal(heldOnly({ ...held, mock: true }), false);
+
+  const calls = [];
+  let status = held;
+  const api = async (/** @type {string} */ path, /** @type {any} */ options = {}) => {
+    calls.push([path, options.method || 'GET', options.body ? JSON.parse(options.body) : null]);
+    if (path.startsWith('/runpod/gpu/allow')) {
+      status = off;
+      return { command_id: 'a-1', hold: false, words_ro: 'Ai permis din nou GPU-ul.' };
+    }
+    return status;
+  };
+  const said = [];
+  const { bar } = fakeWorld();
+  const control = mountGpuSwitch(bar, {
+    api, notify: (m) => said.push(m), intervalMs: 0, uuid: () => 'a-1', dialogs: false, now: () => evening.now, timeZone: 'UTC',
+  });
+  await control.refresh();
+  const [label, button] = bar.children;
+  assert.equal(label.textContent, 'GPU oprit de tine');
+  assert.equal(button.textContent, 'Permite GPU din nou');
+  assert.ok(button.className.split(' ').includes('is-allow'));
+  assert.ok(!button.className.split(' ').includes('cam-worded'), 'the key never folds to an icon');
+  await button.listeners.click();
+  const allows = calls.filter((c) => c[0] === '/runpod/gpu/allow');
+  assert.equal(allows.length, 1);
+  assert.deepEqual(allows[0][2], { schema_version: 1, command_id: 'a-1' });
+  assert.equal(calls.filter((c) => c[0] === '/runpod/gpu/off').length, 0);
+  assert.deepEqual(said, ['Ai permis din nou GPU-ul.']);
+  assert.equal(button.textContent, 'Oprește GPU acum');
+  assert.ok(!button.className.split(' ').includes('is-allow'));
+  // the long reading is said whole on hover, where the toolbar ends it in «…»
+  assert.ok(label.title.startsWith(label.textContent));
+  control.stop();
 });
 
 test('the workers are read from RunPod counts: running or a job in progress bills', () => {

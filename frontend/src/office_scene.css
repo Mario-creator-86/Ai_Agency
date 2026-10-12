@@ -428,6 +428,15 @@
   overflow: hidden;
 }
 #office-scene-container .toolbar-group { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); }
+/* The GPU switch in the toolbar (gpu_switch.js): its reading and its key on one line. The key
+   never folds to an icon (it has none: its words ran over the reading and «MEDIU», 2026-10-12,
+   «Scrisul se suprapune!»); the reading gives way instead, ending in «…» and said whole on
+   hover. While his hold is on, the key is «Permite GPU din nou», in the allowing colour. */
+#office-scene-container .toolbar-scene .gpu-switch { display: inline-flex; align-items: center; gap: var(--s2); min-width: 0; flex: 0 1 auto; }
+#office-scene-container .toolbar-scene .gpu-switch[hidden] { display: none; }
+#office-scene-container .toolbar-scene .gpu-switch-state { min-width: 0; max-width: 52ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#office-scene-container .toolbar-scene .gpu-switch-off { flex: none; width: auto; padding: 0 var(--s3); white-space: nowrap; }
+#office-scene-container .toolbar-scene .gpu-switch-off.is-allow { color: var(--teal); border-color: var(--ok-line); background: var(--ok-bg); }
 /* Tier 1: the two state readouts, the camera, and the way out to fullscreen. */
 #office-scene-container .toolbar-scene {
   flex: 1 1 100%;

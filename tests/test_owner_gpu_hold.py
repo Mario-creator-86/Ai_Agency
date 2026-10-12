@@ -146,6 +146,53 @@ def test_a_simulation_is_never_held(engine):
     precheck(engine, adapter(None, mock=True), purpose="image")  # nothing raised
 
 
+def test_his_allow_on_the_switch_lifts_the_hold_like_the_card(client, headers, engine, monkeypatch):
+    """«De unde îl pornesc? Din același loc din care îl opresc!» (the Owner, 2026-10-12)."""
+    vault, identifier = runpod(engine, monkeypatch, allow=True)
+    fake = Fake(workers_max=1)
+    real = gpu_session.EndpointControl
+
+    def faked(config, endpoint_id, transport=None, **kwargs):
+        return real(config, endpoint_id, fake, **kwargs)
+
+    monkeypatch.setattr(gpu_session, "EndpointControl", faked)
+    off = client.post(
+        "/api/v1/runpod/gpu/off",
+        headers=headers,
+        json={"schema_version": 1, "command_id": str(uuid4())},
+    ).json()
+    assert off["hold"] is True and "Permite GPU din nou" in off["words_ro"]
+    assert owner_hold_active(engine)
+    assert client.get("/api/v1/runpod/gpu", headers=headers).json()["owner_hold"] is True
+
+    command = {"schema_version": 1, "command_id": str(uuid4())}
+    calls = len(fake.calls)
+    allowed = client.post("/api/v1/runpod/gpu/allow", headers=headers, json=command)
+    assert allowed.status_code == 200, allowed.text
+    assert allowed.json()["hold"] is False and "Ai permis din nou" in allowed.json()["words_ro"]
+    assert len(fake.calls) == calls, "allowing switched something on at RunPod"
+    assert not owner_hold_active(engine)
+    assert client.get("/api/v1/runpod/gpu", headers=headers).json()["owner_hold"] is False
+    # the same press again answers the same, and the card closes by its own condition
+    again = client.post("/api/v1/runpod/gpu/allow", headers=headers, json=command)
+    assert again.json() == allowed.json()
+    card = _card(engine)
+    with Session(engine) as session:
+        assert condition_reading(session, card, None) == "MET"
+    # the next paid step may switch the GPU on again
+    session = open_session(
+        engine, adapter(identifier), purpose="video", permit=permit(identifier), transport=fake
+    )
+    assert session.endpoint_id == "ep-motion"
+
+
+def test_allow_needs_the_owner(client, engine):
+    answer = client.post(
+        "/api/v1/runpod/gpu/allow", json={"schema_version": 1, "command_id": str(uuid4())}
+    )
+    assert answer.status_code in (401, 403)
+
+
 def test_a_second_press_keeps_one_card(client, headers, engine, monkeypatch):
     runpod(engine, monkeypatch, allow=True)
     fake = Fake(workers_max=0)
