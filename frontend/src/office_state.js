@@ -176,7 +176,9 @@ export class OfficeState {
       const agent = this.agents.find(a => (a.id || a.agent_id) === payload.agent_id);
       if (agent) {
         // A finished run may overlap newer work. Only the agent's state event/read sets its pose.
-        if (payload.status === 'SUCCEEDED' && live) {
+        // An event the backend gave a word for (`bubble_ro`, events_feed.py) is said in that
+        // word by the page (main.js sayInOffice), not twice (2026-10-12).
+        if (payload.status === 'SUCCEEDED' && live && !(typeof event.bubble_ro === 'string' && event.bubble_ro.trim())) {
           this.addSpeechBubble(agent.id, `${runDoneLine(payload)} ✓`, 4000);
         }
       }

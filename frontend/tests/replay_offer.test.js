@@ -114,6 +114,9 @@ test('the studio rests only with a finished run, no run under way and nobody at 
   assert.equal(restingNow({ run: RUN, live: true, agents: idle }), false);
   assert.equal(restingNow({ run: null, live: false, agents: idle }), false);
   for (const state of ['WORKING', 'THINKING', 'working']) assert.equal(restingNow({ run: RUN, live: false, agents: [...idle, { runtime_state: state }] }), false, state);
+  // a film's paid work at RunPod, or a continuation just ended (paid_work.js): not at rest either
+  assert.equal(restingNow({ run: RUN, live: false, busy: true, agents: idle }), false);
+  assert.equal(restingNow({ run: RUN, live: false, busy: false, agents: idle }), true);
 });
 
 test('the invitation stands under the building, never over its floors of work', () => {

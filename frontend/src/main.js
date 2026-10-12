@@ -29,6 +29,8 @@ import { autonomyOverview } from './autonomy_overview.js';
 import { Drawers } from './drawers.js';
 import { OfficeState } from './office_state.js';
 import { Ledger, entryCountLabel, mailIntentLabel, productionStatus, runtimeLabel, taskLabel } from './ledger.js';
+import { renderGoalTally } from './goal_tally.js';
+import { gpuWaitWord, paidWork, paidWorkKey } from './paid_work.js';
 import { budgetRing, budgetRingSvg, channelFilmsHtml, dayTrack, dayTrackFromRun, dayTrackGeometry, dayTrackWords, newerTrack, pipelineSvg } from './hud_charts.js';
 import { Moments } from './moments.js';
 import { copyCanvas, filmPoster, PosterCache, POSTER_SAMPLES } from './film_poster.js';
@@ -351,6 +353,7 @@ const ledger = new Ledger({
     // so is said as if it had just happened.
     for (const event of events) sayInOffice(event);
     noteWorldEvents(events);
+    refreshPaidWork();
     if (events.some((event) => String(event.event_type || '').startsWith('runbook.'))) scheduleDayTrack();
     // A day that closes is re-read from the runbook's own record.
     if (events.some((event) => event.event_type === 'runbook.daily_run_finished')) loadDayRecord();
@@ -371,6 +374,26 @@ function sayInOffice(event) {
   if (!Number.isFinite(at) || Date.now() - at > BUBBLE_FRESH_MS) return;
   officeState.addSpeechBubble(String(actor.agent_id), said, BUBBLE_HOLD_MS);
   updateOfficeCanvas();
+}
+
+/**
+ * PAID WORK AT RUNPOD (paid_work.js, 2026-10-12): the GPU sessions open now, the takes waiting
+ * for a result, the redo bought and the continuation just ended, read from the register's own
+ * events. The editor's name tag says what he waits for from RunPod while his session is open
+ * («așteaptă imaginile de la RunPod»), instead of «în așteptare»; the register's head line reads
+ * the same events through productionStatus. Read again with every batch of events and once a
+ * minute (a session ages out of its cap without an event to say so).
+ */
+let paidNow = paidWork([], Date.now());
+let paidShownKey = '';
+
+function refreshPaidWork() {
+  paidNow = paidWork(ledger.sorted(), Date.now());
+  const key = paidWorkKey(paidNow);
+  if (key === paidShownKey) return;
+  paidShownKey = key;
+  if (officeEngine) officeEngine.renderRoster();
+  if (readoutTarget) refreshSceneReadout();
 }
 
 /**
@@ -410,6 +433,7 @@ window.setInterval(() => {
   if (ledger.dayTurned()) ledger.render();
   else ledger.renderNow();
   renderDayTrack();
+  refreshPaidWork();
 }, 60000);
 
 /* ---------------------------------------------------------------------------
@@ -445,8 +469,8 @@ let dayRecord = null;
  */
 /** @returns {WorldReads} */
 const freshReads = () => ({ runs: 'pending', episodes: 'pending', figures: 'pending', ledger: 'pending', film: 'none' });
-/** @type {{run: any, track: any, today: string|null, live: boolean, budget: any, episodes: any, topics: {titles: string[], key: string}, film: any, jobs: any[]|null, tasks: {tasks: Record<string, any>, key: string}, nextRun: string, stopped: boolean|null, timeZone: string|undefined, reads: WorldReads, replayOffer: boolean}} */
-const worldFacts = { run: null, track: null, today: null, live: true, budget: null, episodes: null, topics: { titles: [], key: '' }, film: null, jobs: null, tasks: { tasks: {}, key: '' }, nextRun: '', stopped: null, timeZone: undefined, reads: freshReads(), replayOffer: false };
+/** @type {{run: any, track: any, today: string|null, live: boolean, busy: boolean, budget: any, episodes: any, topics: {titles: string[], key: string}, film: any, jobs: any[]|null, tasks: {tasks: Record<string, any>, key: string}, nextRun: string, stopped: boolean|null, timeZone: string|undefined, reads: WorldReads, replayOffer: boolean}} */
+const worldFacts = { run: null, track: null, today: null, live: true, busy: false, budget: null, episodes: null, topics: { titles: [], key: '' }, film: null, jobs: null, tasks: { tasks: {}, key: '' }, nextRun: '', stopped: null, timeZone: undefined, reads: freshReads(), replayOffer: false };
 
 /** A read that failed: 'failed', unless an earlier read of the same list succeeded. @param {keyof WorldReads} list */
 function readFailed(list) {
@@ -515,7 +539,9 @@ function refreshSceneReadout() {
   if (target.kind === 'agent') {
     const agent = agents.find((a) => (a.id || a.agent_id) === target.id) || target.agent;
     const status = String(agent.lifecycle || '').toUpperCase() === 'PAUSED' ? 'PAUSED' : String(agent.runtime_state || 'IDLE');
-    const speech = `${world ? 'Reluare: ' : ''}${agent.display_name || agent.role_name || 'Angajat'} · ${runtimeLabel(status)} · ${lastTaskLine(facts.tasks.tasks[target.id], now)}. Enter deschide fișa.`;
+    // the live glass says what the editor waits for from RunPod while his session is open (paid_work.js)
+    const stateWord = (!world && gpuWaitWord(paidNow, String(target.id), status)) || runtimeLabel(status);
+    const speech = `${world ? 'Reluare: ' : ''}${agent.display_name || agent.role_name || 'Angajat'} · ${stateWord} · ${lastTaskLine(facts.tasks.tasks[target.id], now)}. Enter deschide fișa.`;
     // under the Unreal stream the world's ring is not seen: the glass says who it is (W18)
     faceReadout.show(target, target.covered ? agentReadout(agent, { facts, now }) : null, { speech });
     return;
@@ -678,14 +704,14 @@ function considerInvite() {
   const run = replay.run;
   const known = worldFacts.reads.runs === 'ok' && worldFacts.reads.ledger === 'ok';
   replayInvite.consider({
-    resting: Boolean(ownerToken) && !workspace.hidden && known && restingNow({ run, live: worldFacts.live, agents: officeState.agents }),
+    resting: Boolean(ownerToken) && !workspace.hidden && known && restingNow({ run, live: worldFacts.live, busy: worldFacts.busy, agents: officeState.agents }),
     replaying: replaying() || replay.loading,
     words: inviteWords(run, { timeZone: worldFacts.timeZone }),
   });
 }
 
 function resetWorldFacts() {
-  Object.assign(worldFacts, { run: null, track: null, today: null, live: true, budget: null, episodes: null, topics: { titles: [], key: '' }, film: null, jobs: null, tasks: { tasks: {}, key: '' }, nextRun: '', reads: freshReads() });
+  Object.assign(worldFacts, { run: null, track: null, today: null, live: true, busy: false, budget: null, episodes: null, topics: { titles: [], key: '' }, film: null, jobs: null, tasks: { tasks: {}, key: '' }, nextRun: '', reads: freshReads() });
   filmAsset = '';
   posters.clear();
   pushWorldFacts();
@@ -827,11 +853,14 @@ function studioToday() {
 function renderDayTrack() {
   const events = ledger.sorted();
   const track = newerTrack(dayTrack(events), dayRecord);
-  const live = productionStatus(events, Date.now(), ledger.closedAt).live;
+  const status = productionStatus(events, Date.now(), ledger.closedAt);
+  const live = status.live;
   // the façade sign shows the same day, in the same words (hq_screens.js runSignFace)
   worldFacts.track = track;
   worldFacts.today = studioToday();
   worldFacts.live = live;
+  // a film's paid work at RunPod, or a continuation just ended: the studio is not at rest (paid_work.js)
+  worldFacts.busy = status.busy;
   pushWorldFacts();
   // W14: the slate lies inside the replay's letterbox, beside «reluarea rulării din …»: while the
   // day is replayed it shows the replayed run as the record stood then, as the façade sign does
@@ -1079,6 +1108,9 @@ function buildOfficeEngine() {
     // Explicit scene preference: the Owner wants a living studio even when Windows limits
     // interface motion. Menus/transitions still follow reducedMotion() above.
     reducedMotion: () => !sceneMotion.enabled(),
+    // The name tag of the editor whose GPU session is open says what he waits for from RunPod
+    // (paid_work.js, 2026-10-12); null leaves the tag to the employee's own state.
+    stateWord: (agent) => gpuWaitWord(paidNow, String(agent.id || agent.agent_id), agent.runtime_state),
     // Fresh authenticated presentation policies bridge short socket reconnects;
     // a failed authoritative read or expired policy still freezes the scene.
     dataLive: () => presentationLive(liveSignals,officeEngine?.presentationReceived||0),
@@ -4363,6 +4395,9 @@ function render(data) {
   liveWindows.timezone = data.studio.timezone;
   mailThread.timezone = data.studio.timezone;
   liveWindows.setNames(agentNames);
+  // THE DAY'S GOAL (goal_tally.js): two films per channel, as the snapshot's record counts them;
+  // nothing is drawn while the snapshot carries no goal (an older studio, or an unreadable one).
+  renderGoalTally(element('goal-tally'), data.goal, escapeHtml);
   ledger.add(data.events || []);
   element('ledger-count').textContent = entryCountLabel(ledger.events.size);
   renderDayTrack();
@@ -4616,6 +4651,7 @@ function signOut() {
   input.value = '';
   notify('');
   ledger.clear();
+  refreshPaidWork();
   if (replay) replay.reset();
   if (replayInvite) replayInvite.reset();
   pendingMode = null;

@@ -1,5 +1,6 @@
 import { newestFirst, replaceActivityHtml } from './activity_lists.js';
 import { MODE_LABEL } from './governance.js';
+import { paidWork } from './paid_work.js';
 import { countWords } from './plurals.js';
 
 /**
@@ -31,6 +32,7 @@ const FAMILY_KIND = {
   research: 'production',
   story: 'production',
   runbook: 'production',
+  runpod: 'production',
   publishing: 'production',
   channel: 'production',
   economy: 'money',
@@ -450,6 +452,12 @@ export function describeEvent(event, names = {}) {
         routine = String(payload.workflow_type);
         break;
       }
+      // 2026-10-12: a fire the backend has words for («Ceasul studioului a pornit rularea
+      // zilei.») is said in them; the routine fold above keeps its rows.
+      if (said && type === 'workflow.job_fired') {
+        text = withoutName(said, who, actor);
+        break;
+      }
       label = type === 'workflow.created' ? 'a început o producție' : type === 'workflow.job_fired' ? 'sarcină programată pornită' : 'producție programată';
       text = payload.current_stage ? `etapa: ${stageLabel(payload.current_stage)}` : '';
       break;
@@ -490,6 +498,12 @@ export function describeEvent(event, names = {}) {
       text = payload.title || '';
       break;
     case 'media.video_rendered':
+      // 2026-10-12: the backend names the film and its length («Filmul «…» a fost randat
+      // (42 s).»); the page's own line said only the provider.
+      if (said) {
+        text = withoutName(said, who, actor);
+        break;
+      }
       label = 'video randat';
       text = payload.provider_name || '';
       break;
@@ -498,12 +512,23 @@ export function describeEvent(event, names = {}) {
       text = payload.reason || '';
       break;
     case 'media.qc_evaluated':
+      // 2026-10-12: the backend's verdict names the film and its score; the page's own line
+      // listed the failure codes.
+      if (said) {
+        text = withoutName(said, who, actor);
+        break;
+      }
       label = `controlul calității: ${statusLabel(payload.status)}`;
       text = Array.isArray(payload.failures) ? payload.failures.join('; ') : '';
       break;
     case 'media.sheet_repair_finished':
       // The Director's repair of a blocked shooting sheet (media/blocker_repair.py); it read
-      // "sheet repair finished · status: UNRESOLVED" in the feed (2026-10-03).
+      // "sheet repair finished · status: UNRESOLVED" in the feed (2026-10-03). With the
+      // backend's sentence (2026-10-12) the row names the film: «Foaia «…» e curată: …».
+      if (said) {
+        text = withoutName(said, who, actor);
+        break;
+      }
       label = `remedierea foii: ${SHEET_REPAIR_WORDS[payload.status] || statusLabel(payload.status)}`;
       text = payload.reason || '';
       break;
@@ -667,6 +692,12 @@ export function describeEvent(event, names = {}) {
       text = [payload.subject, payload.risk_tier].filter(Boolean).join(' · ');
       break;
     case 'economy.provider_cost_recorded':
+      // 2026-10-12: the backend says the vendor by name and the film («Cost facturat la RunPod:
+      // 3 VR$ pentru imagini din «…».»); the page's own line showed the provider's id.
+      if (said) {
+        text = withoutName(said, who, actor);
+        break;
+      }
       label = `cost ${payload.status === 'BILLED' ? 'facturat' : 'estimat'}`;
       text = [payload.provider, payload.vr ? `${payload.vr} VR$` : ''].filter(Boolean).join(' · ');
       break;
@@ -859,12 +890,19 @@ export function quietFor(ms) {
  * while the start of one of its stages is still there. A stage that started before the recorded
  * finish is not running, whatever the register lost.
  *
+ * `busy` (2026-10-12, paid_work.js): a film's paid work is at RunPod now, or a continuation of
+ * one ran in the last few minutes, whatever the daily run's stages say. It leads the line («Se
+ * reface scena 5 a filmului «…»: imaginea e la RunPod (de 12 min)»); the head line said «Nicio
+ * producție în lucru.» through a thirty-minute paid step. A busy line has no room for the last
+ * day's outcome; a running stage is still named after it.
+ *
  * @param {Array<{event_type: string, payload?: any, sequence?: number, timestamp?: string}>} events newest first
  * @param {number|null} [now] epoch ms
  * @param {number|null} [closedAt] epoch ms of the newest recorded finished day
- * @returns {{stage: string|null, run: string|null, running: string|null, live: boolean, text: string}}
+ * @returns {{stage: string|null, run: string|null, running: string|null, live: boolean, busy: boolean, text: string}}
  */
 export function productionStatus(events, now = null, closedAt = null) {
+  const paid = paidWork(events, now);
   let stage = null;
   let run = null;
   let running = null;
@@ -906,6 +944,7 @@ export function productionStatus(events, now = null, closedAt = null) {
   }
   const quiet = Boolean(running) && now !== null && newest !== null && now - newest > RUN_QUIET_MS;
   const parts = [];
+  if (paid.busy && paid.text) parts.push(paid.text);
   if (running) {
     parts.push(
       quiet
@@ -913,17 +952,17 @@ export function productionStatus(events, now = null, closedAt = null) {
         : `Acum: ${runStageLabel(running)}`,
     );
   }
-  if (stage) parts.push(`producție: ${stageLabel(stage)}`);
+  if (stage && !paid.busy) parts.push(`producție: ${stageLabel(stage)}`);
   // How many stages made something, beside the status: "completed" alone is what a day that
   // made nothing looked like. An event without the count says only its status.
-  if (run) {
+  if (run && !paid.busy) {
     parts.push(
       `ultima rulare a zilei ${statusLabel(run)}${productive === null ? '' : ` · ${countWords(productive, 'etapă', 'etape')} ${productive === 1 ? 'a' : 'au'} produs ceva`}`,
     );
   }
-  if (!parts.length) return { stage, run, running: null, live: false, text: 'Nicio producție în lucru.' };
+  if (!parts.length) return { stage, run, running: null, live: false, busy: false, text: 'Nicio producție în lucru.' };
   const text = parts.join(' · ');
-  return { stage, run, running: running || null, live: Boolean(running) && !quiet, text: text[0].toUpperCase() + text.slice(1) };
+  return { stage, run, running: running || null, live: Boolean(running) && !quiet, busy: paid.busy, text: text[0].toUpperCase() + text.slice(1) };
 }
 
 /** How many entries the ledger keeps on screen. Older ones are in the events endpoint. */
@@ -1082,8 +1121,9 @@ export class Ledger {
   renderNow(events = this.sorted()) {
     const status = productionStatus(events, Date.now(), this.closedAt);
     this.now.textContent = status.text;
-    // The pulse is the stylesheet's, and it runs only on .is-live.
-    if (this.now.classList) this.now.classList.toggle('is-live', status.live);
+    // The pulse is the stylesheet's, and it runs only on .is-live: a stage under way, or a
+    // film's paid work at RunPod now (2026-10-12).
+    if (this.now.classList) this.now.classList.toggle('is-live', status.live || status.busy);
   }
 
   /** True once midnight has passed since the list was drawn: «Azi» and «Ieri» must be re-read. */

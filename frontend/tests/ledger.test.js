@@ -267,3 +267,37 @@ test('a finished sheet repair reads in Romanian, with its outcome and why', () =
   assert.equal(item.text, 'Scenariul a fost respins.');
   assert.ok(!/sheet repair|UNRESOLVED/.test(`${item.label} ${item.text}`));
 });
+
+test("the backend's sentence wins over the page's own line for the kinds that showed ids (2026-10-12)", () => {
+  const kael = { agent_id: 'a-9', name: 'Kael (Video Editor)', role: 'VideoEditor' };
+  const said = (event_type, payload, words_ro, actor = undefined) => describeEvent({ event_type, payload, words_ro, actor }, { 'a-9': 'Kael (Video Editor)' });
+  const qc = said('media.qc_evaluated', { status: 'FAILED', failures: ['QC.TEXT_ON_SCREEN'] }, 'Controlul calității a picat filmul din «The Zero Script Club» (scor 0.41): text pe ecran.');
+  assert.equal(qc.label, '');
+  assert.equal(qc.text, 'Controlul calității a picat filmul din «The Zero Script Club» (scor 0.41): text pe ecran.');
+  assert.equal(qc.kind, 'production');
+  const rendered = said('media.video_rendered', { provider_name: 'ffmpeg-local' }, 'Filmul «The Zero Script Club» a fost randat (42 s).');
+  assert.equal(rendered.text, 'Filmul «The Zero Script Club» a fost randat (42 s).');
+  assert.equal(rendered.label, '');
+  const cost = said('economy.provider_cost_recorded', { provider: 'prov-7f3a', vr: 3, status: 'BILLED' }, 'Cost facturat la RunPod: 3 VR$ pentru imagini din «The Zero Script Club».');
+  assert.equal(cost.text, 'Cost facturat la RunPod: 3 VR$ pentru imagini din «The Zero Script Club».');
+  assert.ok(!cost.text.includes('prov-7f3a'));
+  assert.equal(cost.kind, 'money');
+  const repair = said('media.sheet_repair_finished', { status: 'RESOLVED' }, 'Foaia «The Zero Script Club» e curată: filmarea merge mai departe.');
+  assert.equal(repair.text, 'Foaia «The Zero Script Club» e curată: filmarea merge mai departe.');
+  const fired = said('workflow.job_fired', { workflow_type: 'DAILY_RUN', job_name: 'daily_run' }, 'Ceasul studioului a pornit rularea zilei.');
+  assert.equal(fired.text, 'Ceasul studioului a pornit rularea zilei.');
+  assert.equal(fired.routine, undefined);
+  // a routine job's fire still folds as the routine row, whatever the backend says of it
+  const routine = said('workflow.job_fired', { workflow_type: 'WATCHDOG' }, 'Ceasul studioului a pornit supraveghetorul.');
+  assert.equal(routine.label, 'sarcină de rutină pornită');
+  assert.equal(routine.routine, 'WATCHDOG');
+  // the GPU's events are production, said by the editor who opened it, without his name twice
+  const gpu = said('runpod.gpu_session_opened', { purpose: 'image', step: 'stills' }, 'Kael (Video Editor) a pornit GPU-ul RunPod pentru imagini din «The Zero Script Club» (imagini); modelul se încarcă (~10 min).', kael);
+  assert.equal(gpu.kind, 'production');
+  assert.equal(gpu.who, 'Kael (Video Editor)');
+  assert.equal(gpu.text, 'a pornit GPU-ul RunPod pentru imagini din «The Zero Script Club» (imagini); modelul se încarcă (~10 min).');
+  assert.equal(gpu.portrait, 'a-9');
+  // without words the page keeps its own lines
+  assert.equal(said('media.video_rendered', { provider_name: 'ffmpeg-local' }, undefined).label, 'video randat');
+  assert.equal(said('media.qc_evaluated', { status: 'PASSED' }, undefined).label, 'controlul calității: trecută');
+});

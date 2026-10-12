@@ -154,3 +154,17 @@ test('autonomy overview reports the current policy and escapes external values',
   assert.ok(!html.includes('<img'));
   assert.ok(html.includes('&lt;img'));
 });
+
+test("a finished run with the backend's own word is said once, in that word, not also in the page's ✓", () => {
+  const state = new OfficeState();
+  state.initFromLayout({ assignments: [{ agent_id: 'kael', pixel_slot: 0, lifecycle: 'ACTIVE', runtime_state: 'IDLE', x: 10, y: 10 }] });
+  const done = { event_type: 'agent.run_completed', aggregate_id: 'run-1', payload: { agent_id: 'kael', task_type: 'gather_sources', status: 'SUCCEEDED' } };
+  // without a word from the backend the page says its own line (main.js sayInOffice has nothing to say)
+  state.handleDomainEvent(done, true);
+  assert.equal(state.speechBubbles.length, 1);
+  assert.equal(state.speechBubbles[0].text, 'Sarcină reușită: căutarea surselor ✓');
+  state.speechBubbles = [];
+  // with one, the page leaves the bubble to that word (sayInOffice): nothing is said twice
+  state.handleDomainEvent({ ...done, bubble_ro: 'Gata: căutarea surselor ✓', actor: { agent_id: 'kael', name: 'Kael (Video Editor)' } }, true);
+  assert.equal(state.speechBubbles.length, 0);
+});

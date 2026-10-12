@@ -310,7 +310,16 @@ def _titles(session: Session, events: list[Mapping[str, Any]]) -> dict[str, str]
     if not ids:
         return {}
     rows = session.scalars(select(Storyboard).where(Storyboard.id.in_(sorted(ids))))
-    return {str(row.id): str(row.title) for row in rows}
+    return {str(row.id): _bare_title(row.title) for row in rows}
+
+
+def _bare_title(title: Any) -> str:
+    """A storyboard's title as the register says it: without the «Storyboard:» prefix the
+    media stage writes on it (2026-10-12: every row read «din «Storyboard: The Zero …»»)."""
+    said = " ".join(str(title or "").split())
+    if said.lower().startswith("storyboard:"):
+        said = said.split(":", 1)[1].strip()
+    return said
 
 
 def _short(text: Any, limit: int) -> str:

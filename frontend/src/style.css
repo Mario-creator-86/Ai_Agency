@@ -1163,6 +1163,31 @@ p { color: var(--ink-2); line-height: 1.6; margin: 0; }
 /* ---------------------------------------------------------------- live ledger -- */
 .ledger-panel { padding: 20px 20px 14px; }
 .ledger-now { margin: 4px 0 10px; font-size: var(--fs-body); font-weight: 600; color: var(--forest); }
+/* THE DAY'S GOAL (goal_tally.js): the record's tally of two films per channel, under the head
+   line and over the filters. One quiet card: the day's sentence in ink, each channel under a
+   hairline with its «publicate N/2» count, the films as titles, the record's words in meta ink,
+   and a small tag for whose the work or the wait is; the Owner's wait takes the warm accent. */
+.goal-tally { margin: 0 0 var(--s3); padding: var(--s2) var(--s3); border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface-sunk); font-size: var(--fs-meta); line-height: var(--lh-snug); color: var(--ink-2); }
+.goal-tally[hidden] { display: none; }
+.goal-line { margin: 0; font-weight: var(--w-semi); color: var(--ink); }
+.goal-channels { display: grid; gap: var(--s2); margin-top: var(--s2); }
+.goal-channel { margin: 0; padding-top: var(--s2); border-top: 1px solid var(--line); }
+.goal-channel-head { display: flex; justify-content: space-between; align-items: baseline; gap: var(--s2); margin: 0 0 var(--s1); font-size: var(--fs-meta); font-weight: var(--w-semi); color: var(--ink); }
+.goal-count { color: var(--ink-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.goal-count.is-done { color: var(--ok-ink); }
+.goal-items { list-style: none; margin: 0; padding: 0; }
+.goal-item { padding: 2px 0; overflow-wrap: anywhere; }
+.goal-title { color: var(--ink); }
+.goal-words { color: var(--ink-3); }
+.goal-group { margin-top: var(--s1); }
+.goal-group-label { font-size: var(--fs-micro); font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-3); }
+.goal-tag { display: inline-block; padding: 0 6px; border-radius: 999px; border: 1px solid var(--line-strong); background: var(--surface-quiet); font-size: var(--fs-micro); font-weight: 600; color: var(--ink-3); white-space: nowrap; vertical-align: 1px; }
+.goal-tag.is-owner { color: var(--gold-ink); border-color: var(--gold-line); background: var(--gold-soft); }
+.goal-tag.is-director { color: var(--info-ink); border-color: var(--info-line); background: var(--info-bg); }
+.goal-link { color: var(--teal); font-weight: 600; text-decoration: none; white-space: nowrap; }
+.goal-link:hover, .goal-link:focus-visible { text-decoration: underline; }
+.goal-next { margin: var(--s1) 0 0; }
+.goal-empty { margin: 0; color: var(--ink-3); }
 .ledger-filters { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
 .ledger-chip { font-size: var(--fs-meta); padding: 4px 9px; border-radius: 20px; border: 1px solid var(--line-strong); background: var(--surface-quiet); color: var(--ink-2); }
 .ledger-chip.is-active { background: var(--forest); border-color: var(--forest); color: var(--ink-on-dark); }
@@ -2456,6 +2481,7 @@ main { max-width: var(--page-max); padding: var(--s5) var(--gutter) var(--s7); }
 .ledger-panel { display: flex; flex-direction: column; min-height: 0; padding: var(--s5) var(--s4) var(--s3); }
 .ledger-panel > .section-heading,
 .ledger-panel > .ledger-now,
+.ledger-panel > .goal-tally,
 .ledger-panel > .ledger-filters { flex: none; }
 .ledger-list { flex: 1 1 auto; min-height: 0; overscroll-behavior: contain; }
 

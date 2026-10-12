@@ -107,11 +107,13 @@ export function inviteWords(run, context = {}) {
 
 /**
  * Whether the studio truly rests, by its own record: a finished run to replay, no run under way,
- * and nobody at work.
- * @param {{run: any, live: boolean, agents: any[]}} facts
+ * no paid work at RunPod or continuation just ended (`busy`, paid_work.js; 2026-10-12: the
+ * invitation said «Studioul se odihnește acum» over a thirty-minute paid step), and nobody at
+ * work.
+ * @param {{run: any, live: boolean, busy?: boolean, agents: any[]}} facts
  */
 export function restingNow(facts) {
-  if (!facts || !facts.run || facts.live) return false;
+  if (!facts || !facts.run || facts.live || facts.busy) return false;
   const agents = Array.isArray(facts.agents) ? facts.agents : [];
   return !agents.some((a) => a && WORK.has(String(a.runtime_state || '').toUpperCase()));
 }

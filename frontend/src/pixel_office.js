@@ -439,10 +439,21 @@ export class OfficeEngine {
     lines.forEach((line, i) => ctx.fillText(line, left + 8, top + 13 + i * 12));
     if (frame.pageCount > 1) { ctx.font = '8px monospace'; ctx.fillStyle = '#c3b9bb'; ctx.fillText(`${frame.pageIndex + 1}/${frame.pageCount}`, left + 151, top + 48); }
   }
+  /**
+   * The state on an employee's name tag: «în pauză» when paused, else what the studio knows of
+   * them beyond their own state (options.stateWord: «așteaptă imaginile de la RunPod» while the
+   * editor's GPU session is open, paid_work.js; 2026-10-12), else the page's word for the state.
+   * @param {any} agent
+   */
+  stateWord(agent) {
+    if (['PAUSED', 'SUSPENDED'].includes(agent.lifecycle)) return 'în pauză';
+    const known = this.options.stateWord?.(agent);
+    return typeof known === 'string' && known ? known : runtimeLabel(agent.runtime_state || 'UNKNOWN');
+  }
   renderRoster() {
     const host = document.getElementById('pixel-roster');
     if (!host) return;
-    const key = JSON.stringify(this.agents.map(a => [a.id || a.agent_id, a.display_name, a.runtime_state, a.lifecycle, this.selected]));
+    const key = JSON.stringify(this.agents.map(a => [a.id || a.agent_id, a.display_name, a.runtime_state, a.lifecycle, this.selected, this.stateWord(a)]));
     if (key === this.rosterKey) return;
     this.rosterKey = key;
     // Reconcile in place so live updates preserve the keyboard focus and scroll position.
@@ -455,10 +466,10 @@ export class OfficeEngine {
         button.addEventListener('click', () => this.select(button.dataset.agent));
         host.append(button);
       }
-      button.textContent = `${p.agent.display_name || p.agent.name || p.id} · ${['PAUSED', 'SUSPENDED'].includes(p.agent.lifecycle) ? 'în pauză' : runtimeLabel(p.agent.runtime_state || 'UNKNOWN')}`;
+      button.textContent = `${p.agent.display_name || p.agent.name || p.id} · ${this.stateWord(p.agent)}`;
       button.setAttribute('aria-pressed', String(p.id === this.selected));
       button.dataset.state = this.motionFor(p.agent).mode;
-      button.title = `Birou personal: ${p.agent.display_name || p.id}. ${runtimeLabel(p.agent.runtime_state || 'UNKNOWN')}`;
+      button.title = `Birou personal: ${p.agent.display_name || p.id}. ${this.stateWord(p.agent)}`;
     }
   }
   select(id) {
@@ -499,7 +510,7 @@ export class OfficeEngine {
       const hit = this.renderer.hits.find(h => p.x >= h.x && p.x <= h.x + h.w && p.y >= h.y && p.y <= h.y + h.h);
       this.hover = hit ? String(hit.agent.id || hit.agent.agent_id) : null;
       this.canvas.style.cursor = hit ? 'pointer' : this.movable ? 'grab' : 'default';
-      this.canvas.title = hit ? `${hit.agent.display_name || hit.agent.id}: ${runtimeLabel(this.motionFor(hit.agent).mode === 'PAUSED' ? 'PAUSED' : hit.agent.runtime_state || 'UNKNOWN')}` : 'Birourile agenților · Ctrl + rotiță: zoom · scena mărită: scroll sau tragere · Încadrează: vedere completă';
+      this.canvas.title = hit ? `${hit.agent.display_name || hit.agent.id}: ${this.motionFor(hit.agent).mode === 'PAUSED' ? runtimeLabel('PAUSED') : this.stateWord(hit.agent)}` : 'Birourile agenților · Ctrl + rotiță: zoom · scena mărită: scroll sau tragere · Încadrează: vedere completă';
       this.draw();
     });
     const endDrag = event => {
@@ -528,7 +539,7 @@ export class OfficeEngine {
         this.hover = this.positions[(index + direction + this.positions.length) % this.positions.length].id;
         const p = this.positions.find(p => p.id === this.hover);
         if (p.page !== this.page) this.showPage(p.page);
-        this.canvas.setAttribute('aria-label', `${p.agent.display_name || p.id}: ${runtimeLabel(p.agent.runtime_state)}. Enter deschide angajatul.`);
+        this.canvas.setAttribute('aria-label', `${p.agent.display_name || p.id}: ${this.stateWord(p.agent)}. Enter deschide angajatul.`);
         this.draw();
       } else if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); this.select(this.hover || this.positions[0].id); }
     });
