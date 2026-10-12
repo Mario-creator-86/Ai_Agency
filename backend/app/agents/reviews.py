@@ -582,9 +582,18 @@ DIRECTOR_QC_TASK = "director_qc_review"
 #: v4 (the same evening): her own looks at the pictures a gate refused, in her history.
 #: v7 (2026-10-11 evening, the Owner's card): a take he approved without marking it final
 #: is redone when its flaw is real, and he is told; what he marked final stands.
-DIRECTOR_QC_TEMPLATE_VERSION = "director-qc-v7"
+#: v8 (2026-10-12, the Owner: «DIRECTOAREA ACCEPTĂ DEFECTELE MICI! DAR TREBUIE SĂ ÎNȚELEAGĂ DE
+#: CE APAR DEFECTELE»): every REAL or ACCEPTED finding names its severity, its cause and the
+#: lesson for future prompts; a minor defect is ACCEPTED; a scene that passed before with the
+#: same takes is never REAL, and only a scene a REAL finding names is redone.
+DIRECTOR_QC_TEMPLATE_VERSION = "director-qc-v8"
 #: Her verdict on one finding of the report.
 QC_VERDICTS = ("REAL", "FALSE", "OWNER_CHOICE", "ACCEPTED")
+#: The longest lesson she writes for future prompts, in characters.
+LESSON_MAX_CHARS = 240
+#: The checks whose finding on a scene that passed before with the same takes is a misreading
+#: of an unchanged picture, never REAL (2026-10-12, aa170155 scene 1).
+PICTURE_FINDING_CHECKS = frozenset({"picture_qc", "picture_spans_qc", "character_drift_qc"})
 #: Her decision on the film.
 FILM_DECISIONS = ("ACCEPT", "REPAIR", "CLOSE")
 #: What she may ask to redo: a scene's still, motion or card, or the film's sound or encode.
@@ -598,11 +607,30 @@ class FindingVerdict(BaseModel):
     finding: int = Field(ge=1)
     verdict: Literal["REAL", "FALSE", "OWNER_CHOICE", "ACCEPTED"]
     reason: str = Field(min_length=1, max_length=400)
+    #: 2026-10-12, the Owner: «DIRECTOAREA ACCEPTĂ DEFECTELE MICI!». Required for REAL and
+    #: ACCEPTED (`DirectorQcDecision._consistent`): a minor defect is ACCEPTED, never REAL, so
+    #: the studio stops buying a new still for a stray mark (19.50 USD that day, 11.05 on redos).
+    severity: Literal["minor", "serious"] | None = None
+    #: Why the defect appeared: which words of the prompt or which step made it. Required for
+    #: REAL and ACCEPTED: «TREBUIE SĂ ÎNȚELEAGĂ DE CE APAR DEFECTELE».
+    cause: str = Field(default="", max_length=400)
+    #: The general rule a future prompt follows so it does not appear again, positive, with no
+    #: title or scene number (stored with `prompt_agent.record_prompt_lesson` once her decision
+    #: is recorded: `media.director_qc.learn_from_decision`). Required for REAL and ACCEPTED.
+    lesson: str = Field(default="", max_length=LESSON_MAX_CHARS)
 
     @field_validator("verdict", mode="before")
     @classmethod
     def _upper(cls, value: Any) -> Any:
         return str(value).strip().upper().replace(" ", "_") if isinstance(value, str) else value
+
+    @field_validator("severity", mode="before")
+    @classmethod
+    def _lower(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            value = value.strip().lower()
+            return value or None
+        return value
 
 
 class DirectorRedo(BaseModel):
@@ -652,6 +680,31 @@ class DirectorQcDecision(BaseModel):
             raise ValueError("a repair lists what to redo")
         if self.decision != "REPAIR" and self.repairs:
             raise ValueError("only a repair lists redos")
+        # 2026-10-12, the Owner: «DIRECTOAREA ACCEPTĂ DEFECTELE MICI! DAR TREBUIE SĂ ÎNȚELEAGĂ DE
+        # CE APAR DEFECTELE ȘI LA VIITOARELE PROMPTURI SĂ SE ASIGURE CĂ NU MAI SUNT!»
+        for item in self.verdicts:
+            if item.verdict not in ("REAL", "ACCEPTED"):
+                continue
+            if item.severity is None:
+                raise ValueError(
+                    f"finding {item.finding}: a {item.verdict} verdict names its severity, "
+                    "minor or serious"
+                )
+            if item.verdict == "REAL" and item.severity == "minor":
+                raise ValueError(f"finding {item.finding}: a minor defect is ACCEPTED, not REAL")
+            if not item.cause.strip():
+                raise ValueError(
+                    f"finding {item.finding}: say why the defect appeared (cause: which words "
+                    "of the prompt or which step made it)"
+                )
+            if not item.lesson.strip():
+                raise ValueError(
+                    f"finding {item.finding}: write the lesson a future prompt follows so the "
+                    "defect does not appear again"
+                )
+        if self.decision == "REPAIR" and not any(item.verdict == "REAL" for item in self.verdicts):
+            # A repair redoes what is wrong; with nothing REAL the film is published as it is.
+            raise ValueError("a repair redoes REAL findings; with none REAL the film is ACCEPTed")
         return self
 
 
@@ -689,6 +742,10 @@ def repair_refusal(repairs: list[DirectorRedo], context: Mapping[str, Any]) -> s
         if scene is None:
             why.append(f"{where}: no such scene")
             continue
+        if scene.get("passed_before_unchanged"):
+            # 2026-10-12: approved stays approved (`passed_scene_refusal`).
+            why.append(f"{where}: it passed an earlier picture check with the same takes")
+            continue
         if (
             scene.get("approved_new_take_not_in_film")
             and redo in ("still", "motion")
@@ -710,6 +767,82 @@ def repair_refusal(repairs: list[DirectorRedo], context: Mapping[str, Any]) -> s
             return None
         why.append(f"{where}: no paid redo left under the Owner's limits")
     return "; ".join(why) or "nothing is listed"
+
+
+def _names_scene(finding: Mapping[str, Any], scene: int) -> bool:
+    """Whether a finding is about ``scene``: its own scene, or the scene's number in its words
+    («Scena 2, Scena 3: imagine fixă …» names both). Generous on purpose: it only decides what
+    may not be bought, never what is."""
+    if finding.get("scene_index") == scene:
+        return True
+    return re.search(rf"(?<!\d){scene}(?!\d)", str(finding.get("text") or "")) is not None
+
+
+def passed_scene_refusal(decision: DirectorQcDecision, context: Mapping[str, Any]) -> str | None:
+    """Why her answer touches a scene it must leave as it is, read from her context; None when
+    it does not (2026-10-12, the Owner: «Nu putem permite loopuri pe bani și picarea QC dacă
+    deja a fost aprobată»).
+
+    - A scene that passed an earlier film's picture checks with exactly the takes it has now
+      (``passed_before_unchanged``; aa170155's scene 1, passed three times and failed the fourth,
+      unchanged) is never REAL on a picture finding, and its still or motion is never redone.
+    - A still or motion is redone only for a scene a REAL finding names (aa170155, 08:18 UTC:
+      scenes 4 and 5 had passed that very report and their still was listed anyway, to join
+      takes bought for an earlier repair; new motion was bought for both)."""
+    findings = {
+        int(item["id"]): item
+        for item in context.get("findings") or []
+        if isinstance(item, Mapping) and isinstance(item.get("id"), int)
+    }
+    kept = {
+        int(scene["scene_index"])
+        for scene in context.get("scenes") or []
+        if isinstance(scene, Mapping)
+        and isinstance(scene.get("scene_index"), int)
+        and scene.get("passed_before_unchanged")
+    }
+    real = [
+        findings[item.finding]
+        for item in decision.verdicts
+        if item.verdict == "REAL" and item.finding in findings
+    ]
+    misread = sorted(
+        int(finding["id"])
+        for finding in real
+        if finding.get("scene_index") in kept
+        and (finding.get("check") in PICTURE_FINDING_CHECKS or finding.get("check") is None)
+    )
+    if misread:
+        return (
+            f"findings {misread} are about scenes that passed an earlier film's picture check "
+            "with the same still and clip (passed_before_unchanged): the picture did not "
+            "change, so they are not REAL (FALSE, or ACCEPTED as minor)"
+        )
+    paid = [item for item in decision.repairs if item.redo in ("still", "motion")]
+    untouchable = sorted({item.scene_index for item in paid if item.scene_index in kept})
+    if untouchable:
+        return (
+            f"scenes {untouchable} passed an earlier film's picture check with the same still "
+            "and clip (passed_before_unchanged): they are not redone"
+        )
+    # Only when her REAL findings are about scenes at all: a REAL finding that names no scene
+    # («Wrong image») cannot say which scene it meant, and nothing is refused for it.
+    if not any(finding.get("scene_index") is not None for finding in real):
+        return None
+    unnamed = sorted(
+        {
+            int(item.scene_index)
+            for item in paid
+            if item.scene_index is not None
+            and not any(_names_scene(finding, int(item.scene_index)) for finding in real)
+        }
+    )
+    if unnamed:
+        return (
+            f"scenes {unnamed} are named by no REAL finding: a still or a motion is redone only "
+            "for what was found wrong in this film"
+        )
+    return None
 
 
 def decision_schema(
@@ -744,6 +877,10 @@ def decision_schema(
             strange = [r.scene_index for r in self.repairs if r.scene_index not in (None, *scenes)]
             if strange:
                 raise ValueError(f"scenes the film does not have: {strange}")
+            if context is not None:
+                why = passed_scene_refusal(self, context)
+                if why is not None:
+                    raise ValueError(why)
             if context is not None and self.decision == "REPAIR":
                 why = repair_refusal(list(self.repairs), context)
                 if why is not None:
@@ -768,9 +905,26 @@ _DIRECTOR_QC_INSTRUCTIONS = (
     "finished film, so on-screen words that are the narration are ours, not a flaw), "
     "OWNER_CHOICE (the Owner chose that take on the sheet, or approved it as final: it "
     "stands), or "
-    "ACCEPTED (a real flaw you accept as it is). Then decide the film: ACCEPT (publishable as "
-    "it is; no finding may stay REAL) or REPAIR (list only what needs work: per scene still, "
-    "motion or card, or the film's audio or encode, each with why; before a still or a motion "
+    "ACCEPTED (a real flaw you accept as it is). Every REAL or ACCEPTED finding also names "
+    "its severity. serious: the picture does not show the scene's subject or what the "
+    "narration says; faces visible where the bible forbids them; readable or garbled writing "
+    "that draws the eye; panels, a collage or a split screen; deformed people or hands; a "
+    "broken or frozen clip; wrong or missing sound. minor: a small mark or stray detail; "
+    "framing a little off the plan that does not change what the scene says; background "
+    "figures a bit larger than asked; an ending pose slightly different; a small colour or "
+    "light drift. A minor defect is never REAL: it is ACCEPTED as it is, and nothing is "
+    "bought for it. Every REAL or ACCEPTED finding also says its cause (why the defect appeared: "
+    "which words of the prompt, or which step, made it) and its lesson (one general rule, at "
+    "most 240 characters, that a future prompt follows so the defect does not appear again: "
+    "positive, about what to write, with no film title and no scene number). A scene marked "
+    "passed_before_unchanged passed an earlier film's picture check with exactly the still "
+    "and clip it has now: the picture did not change, so a finding on it is never REAL "
+    "(FALSE, or ACCEPTED as minor) and it is never redone. Then decide the film: ACCEPT "
+    "(publishable as it is; no finding may stay REAL; a film whose findings are all FALSE, "
+    "OWNER_CHOICE or ACCEPTED is accepted) or REPAIR (list only what a REAL finding names: "
+    "per scene still, motion or card, or the film's audio or encode, each with why; a scene "
+    "no REAL finding names is not redone, even when a take bought for an earlier repair waits "
+    "for it; before a still or a motion "
     "is bought again you read its prompt and have it rewritten, so say in why exactly what was "
     "wrong). A film is never closed for its quality: it is redone until it passes, and only "
     "money stops it. Never list a scene whose take the Owner approved as final "
@@ -793,10 +947,13 @@ _DIRECTOR_QC_INSTRUCTIONS = (
     "is bought only under the Owner's paid-media rule, and above it he is asked.\n"
     "Return only JSON: "
     '{"verdicts": [{"finding": 1, "verdict": "REAL" | "FALSE" | "OWNER_CHOICE" | "ACCEPTED", '
-    '"reason": "..."}], "decision": "ACCEPT" | "REPAIR", '
+    '"reason": "...", "severity": "minor" | "serious", "cause": "...", "lesson": "..."}], '
+    '"decision": "ACCEPT" | "REPAIR", '
     '"repairs": [{"scene_index": 5, "redo": "still" | "motion" | "card" | "audio" | "encode", '
     '"reason": "..."}], "summary": "two sentences in Romanian for the Owner"}. '
-    '"repairs" is empty unless the decision is REPAIR. Every verdict and repair reason is '
+    '"severity", "cause" and "lesson" are required for REAL and ACCEPTED and left out for '
+    'FALSE and OWNER_CHOICE. "repairs" is empty unless the decision is REPAIR. Every verdict '
+    "reason, cause and repair reason is "
     "at most 400 characters; keep the diagnosis and the required change concise. The summary "
     "is at most 800 characters. Judge at most 80 findings and list at most 24 repairs.\n"
 )

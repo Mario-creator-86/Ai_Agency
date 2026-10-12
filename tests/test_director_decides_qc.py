@@ -383,9 +383,13 @@ def failed_film(
     return ids
 
 
+#: Her lesson for the panels (2026-10-12): a general rule, positive, no title, no scene.
+PANELS_LESSON = "Ask for one continuous photograph that fills the frame from edge to edge."
+
+
 def verdicts_for(film: dict[str, Any], real: set[int] | None = None) -> list[dict[str, Any]]:
     """Her verdicts on every finding: the captions FALSE, the tunnel his choice, the panels
-    REAL (and any finding id in ``real`` REAL)."""
+    REAL (and any finding id in ``real`` REAL), serious, with their cause and lesson."""
     out = []
     for number, text in enumerate(film["failures"], start=1):
         if number in (real or set()) or PANELS in text:
@@ -396,13 +400,37 @@ def verdicts_for(film: dict[str, Any], real: set[int] | None = None) -> list[dic
             verdict, why = "FALSE", "the text is our own burned-in narration subtitles"
         else:
             verdict, why = "ACCEPTED", "accepted as it is"
-        out.append({"finding": number, "verdict": verdict, "reason": why})
+        entry: dict[str, Any] = {"finding": number, "verdict": verdict, "reason": why}
+        if verdict == "REAL":
+            entry.update(
+                severity="serious",
+                cause="the still prompt listed three moments, so the model drew three panels",
+                lesson=PANELS_LESSON,
+            )
+        out.append(entry)
     return out
 
 
+#: What `answer` gives a REAL or ACCEPTED verdict a test wrote without them (2026-10-12: the
+#: severity, the cause and the lesson are required): REAL is serious, ACCEPTED minor.
+DEFAULT_CAUSE = "the prompt left the subject unnamed"
+DEFAULT_LESSON = "Name the visible subject first in every still prompt."
+
+
 def answer(verdicts, decision: str, repairs=None, summary: str = "Am citit raportul.") -> str:
+    """Her answer as JSON. A REAL or ACCEPTED verdict without a severity, a cause or a lesson
+    gets the defaults above, so the many scripted answers written before 2026-10-12 still say
+    what they said; a test of those rules writes its verdicts itself."""
+    filled = []
+    for verdict in verdicts:
+        item = dict(verdict)
+        if item.get("verdict") in ("REAL", "ACCEPTED"):
+            item.setdefault("severity", "serious" if item["verdict"] == "REAL" else "minor")
+            item.setdefault("cause", DEFAULT_CAUSE)
+            item.setdefault("lesson", DEFAULT_LESSON)
+        filled.append(item)
     return json.dumps(
-        {"verdicts": verdicts, "decision": decision, "repairs": repairs or [], "summary": summary}
+        {"verdicts": filled, "decision": decision, "repairs": repairs or [], "summary": summary}
     )
 
 
@@ -2859,3 +2887,341 @@ def test_a_picture_that_cannot_be_rewritten_either_keeps_the_refusal(engine, mon
 
     assert refusal is not None and refusal["status"] == stages.PROMPT_NOT_CORRECTED
     assert "la fel" in refusal["reason"] and kinds == ["motion"]
+
+
+# --------------------------------------------- small defects, their causes and their lessons
+#
+# 2026-10-12, 16:50, the Owner stopped the studio: 19.50 USD of RunPod that day, 11.05 on redos,
+# and all three films (f06808c9, 1c038a99, aa170155) still failing QC. «DIRECTOAREA ACCEPTĂ
+# DEFECTELE MICI! DAR TREBUIE SĂ ÎNȚELEAGĂ DE CE APAR DEFECTELE ȘI LA VIITOARELE PROMPTURI SĂ SE
+# ASIGURE CĂ NU MAI SUNT!» and «Nu putem permite loopuri pe bani și picarea QC dacă deja a fost
+# aprobată».
+
+
+def _decision(**verdict: Any) -> dict[str, Any]:
+    return {
+        "verdicts": [{"finding": 1, "verdict": "REAL", "reason": "a stray mark", **verdict}],
+        "decision": "REPAIR",
+        "repairs": [{"scene_index": 2, "redo": "still", "reason": "the stray mark"}],
+        "summary": "Refac imaginea scenei 2.",
+    }
+
+
+def test_a_minor_defect_is_accepted_never_real_and_every_defect_says_why():
+    from app.agents.reviews import DirectorQcDecision
+    from pydantic import ValidationError
+
+    why = {"cause": "the prompt asked for a busy desk", "lesson": "Keep the desk to two objects."}
+    with pytest.raises(ValidationError, match="a minor defect is ACCEPTED"):
+        DirectorQcDecision.model_validate(_decision(severity="minor", **why))
+    with pytest.raises(ValidationError, match="names its severity"):
+        DirectorQcDecision.model_validate(_decision(**why))
+    with pytest.raises(ValidationError, match="lesson"):
+        DirectorQcDecision.model_validate(_decision(severity="serious", cause=why["cause"]))
+    with pytest.raises(ValidationError, match="cause"):
+        DirectorQcDecision.model_validate(_decision(severity="serious", lesson=why["lesson"]))
+    decided = DirectorQcDecision.model_validate(_decision(severity=" Serious", **why))
+    assert decided.verdicts[0].severity == "serious"
+    assert decided.verdicts[0].lesson == why["lesson"]
+
+    # Nothing REAL is nothing to redo: the film is ACCEPTed, not repaired.
+    accepted = {
+        **_decision(severity="minor", **why),
+        "verdicts": [
+            {"finding": 1, "verdict": "ACCEPTED", "reason": "small", "severity": "minor", **why}
+        ],
+    }
+    with pytest.raises(ValidationError, match="none REAL"):
+        DirectorQcDecision.model_validate(accepted)
+    DirectorQcDecision.model_validate({**accepted, "decision": "ACCEPT", "repairs": []})
+    # A finding the control misread, or his choice, needs none of it.
+    DirectorQcDecision.model_validate(
+        {
+            "verdicts": [{"finding": 1, "verdict": "FALSE", "reason": "our own subtitles"}],
+            "decision": "ACCEPT",
+            "repairs": [],
+            "summary": "Publicăm.",
+        }
+    )
+
+
+def _minor_verdicts(film: dict[str, Any]) -> list[dict[str, Any]]:
+    """The captions FALSE; the tunnel a small light drift she accepts, with its cause and lesson."""
+    out = []
+    for number, text in enumerate(film["failures"], start=1):
+        if CAPTIONS in text:
+            out.append({"finding": number, "verdict": "FALSE", "reason": "our own subtitles"})
+        else:
+            out.append(
+                {
+                    "finding": number,
+                    "verdict": "ACCEPTED",
+                    "reason": "the tunnel is a little lighter than the bible's void",
+                    "severity": "minor",
+                    "cause": "the prompt named a tunnel light before the void",
+                    "lesson": "Name the background as near-black before any light source.",
+                }
+            )
+    return out
+
+
+def test_a_film_whose_defects_are_all_minor_is_accepted_and_nothing_is_bought(
+    engine, settings, studio, monkeypatch
+):
+    from app.runbook import stages
+
+    film = failed_film(engine, panels=False)
+    registry, model = director_says(studio, answer(_minor_verdicts(film), "ACCEPT"))
+    no_redo(monkeypatch)
+
+    outcome = stages.director_decides_failed_film(
+        engine, settings, None, registry, film["report"], film["asset"]
+    )
+
+    assert outcome["outcome"] == "ACCEPTED" and outcome["passed_asset"] == film["asset"]
+    nothing_bought(engine)
+    # She was told what minor and serious are, and that a minor defect is never REAL.
+    assert "A minor defect is never REAL" in model.asked[-1]
+    assert "background figures a bit larger than asked" in model.asked[-1]
+    (decided,) = events(engine, DECISION_EVENT)
+    tunnel = [item for item in decided.payload["verdicts"] if TUNNEL in str(item["text"])]
+    assert tunnel and all(item["severity"] == "minor" for item in tunnel)
+    assert all(item["cause"] and item["lesson"] for item in tunnel)
+    (letter,) = letters(engine, LETTER_KIND)
+    assert "defect mic" in letter.body_text
+
+
+def test_her_lessons_are_stored_once_for_the_prompt_writers(engine, settings, studio, monkeypatch):
+    from app.media.director_qc import DIRECTOR, learn_from_decision
+    from app.media.prompt_agent import prompt_lessons
+    from app.runbook import stages
+
+    film = failed_film(engine, panels=False)
+    registry, _model = director_says(studio, answer(_minor_verdicts(film), "ACCEPT"))
+    no_redo(monkeypatch)
+
+    stages.director_decides_failed_film(
+        engine, settings, None, registry, film["report"], film["asset"]
+    )
+
+    lesson = "Name the background as near-black before any light source."
+    with Session(engine) as session:
+        # Two tunnel findings taught the same lesson: it is kept once.
+        assert prompt_lessons(session, limit=40).count(lesson) == 1
+    (decided,) = events(engine, DECISION_EVENT)
+    assert decided.payload["lessons_recorded"] == [lesson]
+
+    payload = {
+        "decided_by": DIRECTOR,
+        "resumed": False,
+        "run_id": str(uuid4()),
+        "verdicts": [
+            # The same rule in other words: already known.
+            {"verdict": "REAL", "lesson": "Name the near-black background before any light."},
+            # His choice teaches nothing.
+            {"verdict": "OWNER_CHOICE", "lesson": "Use warm amber light on brass."},
+            {"verdict": "ACCEPTED", "lesson": "Show people only from behind, small in frame."},
+        ],
+    }
+    with Session(engine) as session, session.begin():
+        assert learn_from_decision(session, payload) == [
+            "Show people only from behind, small in frame."
+        ]
+    with Session(engine) as session, session.begin():
+        # Recorded once: the same decision read again, carried on, or his card teaches nothing.
+        assert learn_from_decision(session, payload) == []
+        fresh = {
+            **payload,
+            "verdicts": [{"verdict": "REAL", "lesson": "Keep every caption off the picture."}],
+        }
+        assert learn_from_decision(session, {**fresh, "resumed": True}) == []
+        assert learn_from_decision(session, {**fresh, "decided_by": "owner"}) == []
+    with Session(engine) as session:
+        known = prompt_lessons(session, limit=40)
+    assert known.count("Show people only from behind, small in frame.") == 1
+    assert "Use warm amber light on brass." not in known
+    assert "Keep every caption off the picture." not in known
+
+
+def test_her_lesson_is_kept_before_her_repair_rewrites_or_buys_anything(
+    engine, settings, studio, monkeypatch
+):
+    """The rewrite of the scenes her REPAIR redoes reads `prompt_lessons`: her lesson about the
+    panels is there before the first step of the repair, and named in her decision's event."""
+    from app.media.prompt_agent import prompt_lessons
+    from app.runbook import stages
+
+    film = failed_film(engine)
+    repairs = [{"scene_index": 5, "redo": "still", "reason": "three stacked panels"}]
+    registry, _model = director_says(studio, answer(verdicts_for(film), "REPAIR", repairs))
+    redo = FakeRedoPath(engine, monkeypatch)
+    seen: list[list[str]] = []
+    carry_out = stages._carry_out
+
+    def carry_out_reading_lessons(engine_, *args, **kwargs):
+        with Session(engine_) as session:
+            seen.append(prompt_lessons(session))
+        return carry_out(engine_, *args, **kwargs)
+
+    monkeypatch.setattr(stages, "_carry_out", carry_out_reading_lessons)
+
+    outcome = stages.director_decides_failed_film(
+        engine, settings, None, registry, film["report"], film["asset"]
+    )
+
+    assert outcome["outcome"] == "REPAIRED" and redo.calls[0] == ("still", 5, True)
+    assert seen and PANELS_LESSON in seen[0]
+    (decided,) = events(engine, DECISION_EVENT)
+    assert decided.payload["lessons_recorded"] == [PANELS_LESSON]
+    (panels,) = [item for item in decided.payload["verdicts"] if item["verdict"] == "REAL"]
+    assert panels["severity"] == "serious" and "three moments" in panels["cause"]
+    with Session(engine) as session:
+        assert prompt_lessons(session, limit=40).count(PANELS_LESSON) == 1
+
+
+def _earlier_passing_film(engine, film: dict[str, Any], passed: set[int], failed: set[int]) -> str:
+    """A film of the same storyboard cut from the same takes, measured before ``film``: its
+    picture checks passed the scenes in ``passed`` and refused those in ``failed``."""
+    ids = {k: str(uuid4()) for k in ("asset", "job", "report")}
+    scenes = sorted(passed | failed)
+    with Session(engine) as session, session.begin():
+        session.add(
+            MediaAsset(
+                id=ids["asset"],
+                asset_type="RENDERED_VIDEO",
+                uri_or_path=f"storage/{ids['asset']}.mp4",
+                file_size_bytes=10,
+                mime_type="video/mp4",
+                width=1080,
+                height=1920,
+                duration_seconds=25.0,
+                provider_name="SCENE_TAKES",
+                license_status="PROPRIETARY_STUDIO",
+                provenance_hash="2" * 64,
+                created_at="2000-01-01T00:00:00+00:00",
+            )
+        )
+        session.flush()
+        made = session.scalars(
+            select(VideoRenderJob).where(VideoRenderJob.output_asset_id == film["asset"])
+        ).one()
+        session.add(
+            VideoRenderJob(
+                id=ids["job"],
+                storyboard_id=film["board"],
+                status="COMPLETED",
+                output_asset_id=ids["asset"],
+                started_at="2000-01-01T00:00:00+00:00",
+                finished_at="2000-01-01T00:00:00+00:00",
+                production_json=dict(made.production_json),
+            )
+        )
+        session.flush()
+        session.add(
+            QualityControlReport(
+                id=ids["report"],
+                media_asset_id=ids["asset"],
+                status="FAILED" if failed else "PASSED",
+                score=1.0,
+                checks_json={
+                    "picture_qc": {
+                        "passed": not failed,
+                        "status": "MEASURED",
+                        "scenes": [
+                            {
+                                "scene": index,
+                                "status": "MEASURED",
+                                "is_a_picture": True,
+                                "one_picture": True,
+                                "shows_the_scene": index in passed,
+                                "reason": "as asked" if index in passed else "something else",
+                            }
+                            for index in scenes
+                        ],
+                    },
+                    "picture_spans_qc": {
+                        "passed": not failed,
+                        "status": "MEASURED",
+                        "scenes": [
+                            {
+                                "scene_index": index,
+                                "status": "PASSED" if index in passed else "FAILED",
+                                "passed": index in passed,
+                            }
+                            for index in scenes
+                        ],
+                    },
+                },
+                failure_reasons_json=[],
+                verified_at="2000-01-01T00:00:00+00:00",
+            )
+        )
+    return ids["report"]
+
+
+def test_a_scene_that_passed_before_with_the_same_takes_is_never_real_nor_redone(engine):
+    """aa170155, 2026-10-12: scene 1 (still 7a0be480, clip 843617b8) passed the film QCs of
+    14:45 and 15:03 (10-11) and 08:15 UTC, failed the one of 10:35 UTC unchanged, and her REPAIR
+    bought a new still and clip for it."""
+    from app.agents.reviews import decision_schema, failed_render_reading
+    from app.media.director_qc import film_qc_context
+    from pydantic import ValidationError
+
+    film = failed_film(engine, local_move=False)
+    earlier = _earlier_passing_film(engine, film, passed={5}, failed={1})
+
+    context = film_qc_context(engine, failed_render_reading(engine, film["report"]))
+
+    scenes = {scene["scene_index"]: scene for scene in context["scenes"]}
+    assert scenes[5]["passed_before_unchanged"] is True
+    assert scenes[5]["passed_before"]["report_id"] == earlier
+    assert "aceleași preluări" in scenes[5]["passed_before"]["note"]
+    # Refused before (scene 1), or never looked at (2-4): judged on what this report says.
+    assert [scenes[index]["passed_before_unchanged"] for index in (1, 2, 3, 4)] == [False] * 4
+    assert "passed_before" not in scenes[1]
+
+    schema = decision_schema({item["id"] for item in context["findings"]}, set(scenes), context)
+    repairs = [{"scene_index": 5, "redo": "still", "reason": "three stacked panels"}]
+    with pytest.raises(ValidationError, match="passed_before_unchanged"):
+        schema.model_validate_json(answer(verdicts_for(film), "REPAIR", repairs))
+    # The same picture read differently is not a defect: accepted as minor, the film is published.
+    calm = [
+        {
+            **verdict,
+            "verdict": "ACCEPTED",
+            "severity": "minor",
+            "cause": "the look read the same picture differently",
+            "lesson": "Describe one continuous photograph in the still prompt.",
+        }
+        if verdict["verdict"] == "REAL"
+        else verdict
+        for verdict in verdicts_for(film)
+    ]
+    assert schema.model_validate_json(answer(calm, "ACCEPT")).decision == "ACCEPT"
+
+
+def test_only_a_scene_a_real_finding_names_is_redone(engine):
+    """aa170155, 08:18 UTC: scenes 4 and 5 had passed that very report; her REPAIR of scene 3
+    listed their stills too (to join takes bought for an earlier repair) and new motion was
+    bought for both."""
+    from app.agents.reviews import decision_schema, failed_render_reading
+    from app.media.director_qc import film_qc_context
+    from pydantic import ValidationError
+
+    film = failed_film(engine, local_move=False)
+    context = film_qc_context(
+        engine,
+        failed_render_reading(engine, film["report"]),
+        limits={"per_scene": 2, "per_film": 4},
+    )
+    schema = decision_schema(
+        {item["id"] for item in context["findings"]},
+        {scene["scene_index"] for scene in context["scenes"]},
+        context,
+    )
+    panels = [{"scene_index": 5, "redo": "still", "reason": "three stacked panels"}]
+    also_4 = panels + [{"scene_index": 4, "redo": "still", "reason": "join the new still"}]
+
+    with pytest.raises(ValidationError, match=r"scenes \[4\] are named by no REAL finding"):
+        schema.model_validate_json(answer(verdicts_for(film), "REPAIR", also_4))
+    assert schema.model_validate_json(answer(verdicts_for(film), "REPAIR", panels)).repairs

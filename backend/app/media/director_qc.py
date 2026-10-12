@@ -51,6 +51,15 @@ decided, then QC again) is `app.runbook.stages.director_decides_failed_film`:
   did not validate twice): nothing is redone then, and the watchdog asks her again later
   (`app.workflows.passes.director_qc_review`).
 
+- 2026-10-12 (19.50 USD of RunPod that day, 11.05 on redos, and all three films still failing;
+  the Owner: «DIRECTOAREA ACCEPTĂ DEFECTELE MICI! DAR TREBUIE SĂ ÎNȚELEAGĂ DE CE APAR DEFECTELE
+  ȘI LA VIITOARELE PROMPTURI SĂ SE ASIGURE CĂ NU MAI SUNT!»): every REAL or ACCEPTED verdict
+  names its severity (a minor defect is ACCEPTED and the film published), its cause and a
+  lesson, and `learn_from_decision` stores each new lesson for the prompt writers once her
+  decision is recorded. A scene that passed an earlier film's picture checks with the same
+  takes is ``passed_before_unchanged`` in her context (`film_qc_context`): never REAL, never
+  redone; the film QC itself no longer judges it again (`picture_qc.earlier_passes`).
+
 Nothing here buys, calls a vendor or answers in the Owner's name: a REPAIR is bought by
 `runbook.stages._apply_repairs`, through `assembler.redo_scene` (unasked, under his rule).
 """
@@ -214,6 +223,43 @@ VERDICT_RO = {
     "OWNER_CHOICE": "alegerea ta, rămâne cum ai aprobat-o",
     "ACCEPTED": "real, dar acceptat așa cum este",
 }
+#: How bad she judged a REAL or ACCEPTED defect (2026-10-12), in the Owner's words.
+SEVERITY_RO = {"minor": "defect mic", "serious": "defect serios"}
+#: A lesson of hers is not stored again when this share of its words is already in one of the
+#: newest `LESSON_COMPARE_LIMIT` lessons (2026-10-12: «să se asigure că nu mai sunt», not the
+#: same sentence forty times over the eight the prompt writers read).
+LESSON_OVERLAP = 0.6
+LESSON_COMPARE_LIMIT = 40
+#: Words that say nothing about a lesson when two are compared.
+_LESSON_STOPWORDS = frozenset(
+    {
+        "the",
+        "and",
+        "for",
+        "with",
+        "that",
+        "this",
+        "from",
+        "into",
+        "its",
+        "are",
+        "each",
+        "every",
+        "one",
+        "not",
+        "but",
+        "than",
+        "then",
+        "when",
+        "only",
+        "own",
+        "their",
+        "they",
+        "them",
+        "you",
+        "your",
+    }
+)
 DECISION_RO = {
     "ACCEPT": "filmul se publică așa cum este",
     "REPAIR": "se refac doar scenele pe care le-a numit",
@@ -691,6 +737,9 @@ def _earlier(session: Session, decisions: list[dict[str, Any]]) -> list[dict[str
                         "text": _short(verdict.get("text"), 140),
                         "verdict": verdict.get("verdict"),
                         "reason": _short(verdict.get("reason"), 160),
+                        **(
+                            {"severity": verdict.get("severity")} if verdict.get("severity") else {}
+                        ),
                     }
                     for verdict in (item.get("verdicts") or [])[:20]
                     if isinstance(verdict, Mapping)
@@ -763,8 +812,17 @@ def film_qc_context(
     new still was bought and whose motion was not yet may still have it, in the same round);
     ``free_used`` whether a free fix was already applied to this film's line (it is done
     once). A scene with an approved take bought for her earlier REPAIR and in no film yet
-    (`bought_not_in_film`) says so (``approved_new_take_not_in_film``)."""
-    from app.media.picture_qc import film_scene_prompts  # noqa: PLC0415 - shared render evidence
+    (`bought_not_in_film`) says so (``approved_new_take_not_in_film``).
+
+    A scene cut from exactly the still and clip of an earlier film of the storyboard whose
+    picture checks passed it, in a report made before this one, is ``passed_before_unchanged``
+    with that report (``passed_before``): 2026-10-12, aa170155's scene 1 passed three film QCs
+    and failed the fourth with nothing changed, and her REPAIR bought a new still and clip for
+    it. Such a scene is never REAL and never redone (`reviews.passed_scene_refusal`)."""
+    from app.media.picture_qc import (  # noqa: PLC0415 - shared render evidence
+        earlier_passes,
+        film_scene_prompts,
+    )
 
     report = reading.get("report") or {}
     report_id = str(reading.get("report_id") or "")
@@ -801,6 +859,20 @@ def film_qc_context(
             else {}
         )
         not_in_film = bought_not_in_film(session, storyboard_id) if storyboard_id else []
+        # Approved stays approved (2026-10-12): what an earlier report passed with these takes.
+        this_report = session.get(QualityControlReport, report_id) if report_id else None
+        passed_before = (
+            earlier_passes(
+                session,
+                storyboard_id,
+                production,
+                None,
+                before=str(this_report.verified_at) if this_report is not None else None,
+                exclude_report_ids=[report_id],
+            )
+            if storyboard_id
+            else {}
+        )
         in_film = film_takes(production)
         ids = [take for takes in in_film.values() for take in takes.values() if take]
         rows = {
@@ -857,6 +929,21 @@ def film_qc_context(
                         item["take_id"] for item in not_in_film if item["scene_index"] == index
                     ]
                     or None,
+                    # Passed an earlier film's picture checks with exactly these takes: never
+                    # REAL, never redone (2026-10-12, the Owner: «picarea QC dacă deja a fost
+                    # aprobată» is not allowed).
+                    "passed_before_unchanged": index in passed_before,
+                    **(
+                        {
+                            "passed_before": {
+                                "report_id": passed_before[index].report_id,
+                                "verified_at": passed_before[index].verified_at,
+                                "note": passed_before[index].note_ro,
+                            }
+                        }
+                        if index in passed_before
+                        else {}
+                    ),
                 }
             )
         earlier = (
@@ -917,7 +1004,8 @@ def annotate_verdicts(
     verdicts: Iterable[Mapping[str, Any]], context: Mapping[str, Any]
 ) -> list[dict[str, Any]]:
     """Her verdicts with the finding each judges, and whether an OWNER_CHOICE rests on his
-    approval of a take in the film or his choice on the sheet (``owner_choice_confirmed``)."""
+    approval of a take in the film or his choice on the sheet (``owner_choice_confirmed``); a
+    REAL or ACCEPTED one keeps its severity, cause and lesson (2026-10-12)."""
     findings = {int(item["id"]): item for item in context.get("findings") or []}
     owner_scenes: set[int] = set()
     for scene in context.get("scenes") or []:
@@ -938,6 +1026,11 @@ def annotate_verdicts(
             "verdict": str(verdict["verdict"]),
             "reason": _short(verdict.get("reason"), 400),
         }
+        if entry["verdict"] in ("REAL", "ACCEPTED"):
+            # How bad, why it appeared, and the rule a future prompt follows (2026-10-12).
+            entry["severity"] = verdict.get("severity")
+            entry["cause"] = _short(verdict.get("cause"), 400)
+            entry["lesson"] = _short(verdict.get("lesson"), 240)
         if entry["verdict"] == "OWNER_CHOICE":
             entry["owner_choice_confirmed"] = finding.get("scene_index") in owner_scenes
         out.append(entry)
@@ -1503,14 +1596,74 @@ def repair_list(
     return run, skipped
 
 
+def _lesson_words(text: str) -> set[str]:
+    """A lesson's words as they are compared: lower case, letters and digits, no short or
+    empty words."""
+    return {
+        word
+        for word in re.findall(r"[^\W_]+", str(text).lower())
+        if len(word) > 2 and word not in _LESSON_STOPWORDS
+    }
+
+
+def learn_from_decision(session: Session, payload: Mapping[str, Any]) -> list[str]:
+    """Store the lesson of every REAL or ACCEPTED verdict of her fresh decision as a prompt
+    lesson (`prompt_agent.record_prompt_lesson`, read by the shot-prompt writer and the scene
+    rewriter); returns the lessons stored.
+
+    2026-10-12, the Owner: «DIRECTOAREA ACCEPTĂ DEFECTELE MICI! DAR TREBUIE SĂ ÎNȚELEAGĂ DE CE
+    APAR DEFECTELE ȘI LA VIITOARELE PROMPTURI SĂ SE ASIGURE CĂ NU MAI SUNT!» Until then a lesson
+    was written only by the editorial review, and the same mistakes were bought again film after
+    film. A lesson whose words are already `LESSON_OVERLAP` in one of the newest
+    `LESSON_COMPARE_LIMIT` lessons is not stored again. Only her own fresh decision teaches: a
+    decision carried on (``resumed``) repeats one already learned, and the Owner's card that
+    publishes a film (``decided_by`` owner) is not her reading."""
+    from app.media.prompt_agent import (  # noqa: PLC0415 - prompt_agent is a large module
+        prompt_lessons,
+        record_prompt_lesson,
+    )
+
+    if str(payload.get("decided_by") or "") != DIRECTOR or payload.get("resumed"):
+        return []
+    known = [_lesson_words(text) for text in prompt_lessons(session, limit=LESSON_COMPARE_LIMIT)]
+    run_id = payload.get("run_id")
+    stored: list[str] = []
+    for verdict in payload.get("verdicts") or []:
+        if not isinstance(verdict, Mapping) or verdict.get("verdict") not in ("REAL", "ACCEPTED"):
+            continue
+        lesson = " ".join(str(verdict.get("lesson") or "").split())
+        words = _lesson_words(lesson)
+        if not words:
+            continue
+        if any(len(words & old) / len(words) >= LESSON_OVERLAP for old in known):
+            continue
+        record_prompt_lesson(session, lesson, source_id=str(run_id) if run_id else None)
+        known.append(words)
+        stored.append(lesson)
+    return stored
+
+
+def record_lessons(engine: Engine, payload: Mapping[str, Any]) -> list[str]:
+    """`learn_from_decision` in its own short transaction: called as soon as her fresh decision
+    is read (`runbook.stages._director_round`), so the rewrite of the very scenes her REPAIR
+    redoes (`scene_rewrite.rewrite_scene` reads `prompt_lessons`) already follows them."""
+    with Session(engine) as session, session.begin():
+        lock_for_write(session)
+        return learn_from_decision(session, payload)
+
+
 def _decision_event(session: Session, payload: Mapping[str, Any], correlation: str) -> DomainEvent:
+    """Her decision on the report, with the lessons it taught stored beside it in the same
+    transaction (`learn_from_decision`; none twice) and named in the event
+    (``lessons_recorded``)."""
+    learned = learn_from_decision(session, payload)
     return append_event(
         session,
         DECISION_EVENT,
         "quality_control_report",
         str(payload["report_id"]),
         1,
-        dict(payload),
+        {**payload, "lessons_recorded": learned} if learned else dict(payload),
         correlation,
     )
 
@@ -2105,6 +2258,8 @@ def _verdict_lines(verdicts: Iterable[Mapping[str, Any]]) -> list[str]:
     lines: list[str] = []
     for item in verdicts:
         words = VERDICT_RO.get(str(item.get("verdict")), str(item.get("verdict")))
+        if item.get("severity") in SEVERITY_RO:
+            words += f", {SEVERITY_RO[str(item.get('severity'))]}"
         if item.get("verdict") == "OWNER_CHOICE" and item.get("owner_choice_confirmed") is False:
             words += " (dar la această scenă nu ai aprobat nimic: rămâne acceptată de ea)"
         if item.get("not_yours"):

@@ -56,6 +56,7 @@ from app.media.models import (
     VideoRenderJob,
 )
 from app.media.picture_qc import (
+    CARRIED_STATUS,
     FRAME_SOURCES,
     MAX_SUBTITLE_LINES,
     CleanShot,
@@ -64,6 +65,7 @@ from app.media.picture_qc import (
     caption_rows,
     clean_shots,
     cut_caption_rows,
+    earlier_passes,
     evaluate_pictures,
     film_captions,
     film_scene_prompts,
@@ -3283,6 +3285,10 @@ def span_picture_qc(
                 "look_block": str(package.get("look_block") or ""),
             }
         film_path = str(asset.uri_or_path or "")
+        # Approved stays approved (2026-10-12, aa170155, `picture_qc.earlier_passes`): a scene
+        # cut from the same still and clip as an earlier film whose span look passed it is not
+        # looked at, counted or read again; its entry passes on that report.
+        carried = earlier_passes(session, job.storyboard_id, production, "picture_spans_qc")
 
     faces_forbidden = bible_face_rule(bible) is not None
     record["faces_forbidden"] = faces_forbidden
@@ -3327,7 +3333,7 @@ def span_picture_qc(
             span["start"], span["end"], fps, span["dissolve_seconds"]
         )
         for span in spans
-        if not span["composed"]
+        if not span["composed"] and span["scene_index"] not in carried
     }
     if face_counter is None:
         from app.media.faces import count_faces  # noqa: PLC0415 - opencv loads lazily
@@ -3378,6 +3384,17 @@ def span_picture_qc(
             record["scenes"].append(entry)
             if span["composed"]:
                 entry["reason"] = "card compus de studio: nu se judecă drept fotografie"
+                continue
+            earlier = carried.get(index)
+            if earlier is not None:
+                entry.update(
+                    status="PASSED",
+                    passed=True,
+                    reason=earlier.note_ro,
+                    frames_from=None,
+                    picture={"status": CARRIED_STATUS, "detail_ro": earlier.note_ro},
+                    carried_from=earlier.as_dict(),
+                )
                 continue
             frames: list[tuple[str, float, Path]] = clean.get(index, [])
             source: FrameSource = "SHOT" if frames else "FILM"
@@ -3514,9 +3531,25 @@ def span_picture_qc(
         record["passed"] = False
     elif filmed and all(entry["passed"] is True for entry in filmed):
         record["passed"] = True
-    record["status"] = "MEASURED" if measured_any else "NOT_RUN" if filmed else "NOT_APPLICABLE"
+    kept = sorted(entry["scene_index"] for entry in filmed if entry.get("carried_from"))
+    record["carried_scenes"] = kept
+    record["status"] = (
+        "MEASURED"
+        if measured_any
+        else CARRIED_STATUS
+        if kept and record["passed"] is True
+        else "NOT_RUN"
+        if filmed
+        else "NOT_APPLICABLE"
+    )
     sources = [entry.get("frames_from") for entry in filmed]
     record["frames_from"] = {name: sources.count(name) for name in FRAME_SOURCES if name in sources}
+    carried_words = (
+        f"; {len(kept)} {'trecută' if len(kept) == 1 else 'trecute'} la un control anterior cu "
+        f"aceleași preluări, {'neprivită' if len(kept) == 1 else 'neprivite'} din nou"
+        if kept
+        else ""
+    )
     if judge is None:
         read = sum(
             1
@@ -3528,9 +3561,14 @@ def span_picture_qc(
             f"plată a fost citită pe {read} din {len(filmed)} scene filmate, pe primul, "
             "mijlocul și ultimul cadru"
             + (", iar fețele au fost numărate de YuNet" if faces_forbidden else "")
+            + carried_words
         )
         return record
-    looked = sum(1 for entry in filmed if entry["status"] in ("PASSED", "FAILED"))
+    looked = sum(
+        1
+        for entry in filmed
+        if entry["status"] in ("PASSED", "FAILED") and not entry.get("carried_from")
+    )
     # Where the frames the look saw came from, in the Owner's words (2026-10-10, babcf272: the
     # look had been shown the studio's own subtitles and nobody could tell from the report).
     where = {
@@ -3545,6 +3583,7 @@ def span_picture_qc(
         f"{looked} din {len(filmed)} scene filmate privite pe primul, mijlocul și ultimul cadru "
         f"la {SPAN_FRAME_WIDTH} px"
         + "".join(f"; {count} {where[name]}" for name, count in record["frames_from"].items())
+        + carried_words
     )
     return record
 

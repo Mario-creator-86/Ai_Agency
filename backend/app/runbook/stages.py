@@ -4340,6 +4340,9 @@ def _director_reads(
         "repairs": review["repairs"],
         "resumed": False,
     }
+    # Her lessons are kept before anything is rewritten or bought (2026-10-12, the Owner: «să
+    # înțeleagă de ce apar defectele»): the rewrite of her REPAIR's scenes already reads them.
+    decided["lessons_recorded"] = director_qc.record_lessons(engine, decided)
     storyboard_id = str(reading.get("storyboard_id") or "")
     if review["decision"] == "REPAIR" and storyboard_id:
         # A take bought for her earlier REPAIR of this film, approved and in no film yet

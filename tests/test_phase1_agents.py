@@ -671,7 +671,16 @@ def test_director_qc_both_attempts_send_doubled_limit_to_ollama(seeded, monkeypa
     # for its content is asked again with thinking off; see tests/test_structured_answers_fitted).
     first = "Let me read the report first. {not the object} Scene 1 shows the wrong image."
     second = {
-        "verdicts": [{"finding": 1, "verdict": "REAL", "reason": "The image is wrong."}],
+        "verdicts": [
+            {
+                "finding": 1,
+                "verdict": "REAL",
+                "reason": "The image is wrong.",
+                "severity": "serious",
+                "cause": "The still prompt named no subject.",
+                "lesson": "Name the visible subject first in every still prompt.",
+            }
+        ],
         "decision": "REPAIR",
         "repairs": [{"scene_index": 1, "redo": "still", "reason": "Remove panels."}],
         "summary": "Refacem scena.",

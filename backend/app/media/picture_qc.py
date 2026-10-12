@@ -94,6 +94,7 @@ from app.media.cards import CAPTION_BAND_TOP, FRAME_HEIGHT
 from app.media.models import (
     CharacterBible,
     MediaAsset,
+    QualityControlReport,
     SceneTake,
     Storyboard,
     StoryboardScene,
@@ -675,6 +676,231 @@ def film_scene_prompts(
     }
 
 
+# ------------------------------------------------------- approved stays approved (2026-10-12)
+#
+# 2026-10-12, film aa170155 («Why Ernest Lawrence's First Cyclotron Barely Fit on a Desk»):
+# scene 1 was cut from the same still 7a0be480 and the same clip 843617b8 in four films. The
+# one-frame look passed it in the reports of 14:45 and 15:03 (10-11) and 08:15 UTC, and failed it
+# at 10:35 UTC («a spherical wire-cage lamp»); the Director's REPAIR bought a new still and a new
+# clip for a picture nothing had changed in. Scene 3 the same at 08:15 UTC (same takes as the two
+# reports of 10-11, which passed it; 18 credits for a new still). The Owner, the same afternoon:
+# «Nu putem permite loopuri pe bani și picarea QC dacă deja a fost aprobată». So a scene whose
+# still take and clip take are exactly those of an earlier film of the same storyboard whose
+# check passed that scene is not judged again: its verdict is carried forward, with the report it
+# came from and the note «trecută la controlul din …, aceleași preluări». A different still or a
+# different clip is a different picture and is judged as before.
+
+#: The film-level picture checks whose per-scene verdict a later film with the same takes keeps.
+CARRIED_CHECKS = ("picture_qc", "picture_spans_qc")
+#: The status of a scene (and of a check that judged no scene) carried forward.
+CARRIED_STATUS = "CARRIED_FORWARD"
+
+
+def scene_takes(production: Mapping[str, Any]) -> dict[int, tuple[str, str | None]]:
+    """Per scene, the (still take, clip take) the film was cut from, as its render recorded
+    them (``scenes[].still_take.take_id``, ``scenes[].motion.take_id``). A scene with no still
+    take of record (a composed card, a render from before the take ledger) is left out: there
+    is nothing it could be the same as."""
+    takes: dict[int, tuple[str, str | None]] = {}
+    for entry in production.get("scenes") or []:
+        if not isinstance(entry, Mapping):
+            continue
+        index = entry.get("scene_index")
+        if isinstance(index, bool) or not isinstance(index, int):
+            continue
+        still = entry.get("still_take")
+        motion = entry.get("motion")
+        still_id = still.get("take_id") if isinstance(still, Mapping) else None
+        clip_id = motion.get("take_id") if isinstance(motion, Mapping) else None
+        if still_id:
+            takes[index] = (str(still_id), str(clip_id) if clip_id else None)
+    return takes
+
+
+def scene_state(checks: Mapping[str, Any], check: str, index: int) -> bool | None:
+    """What one report's ``check`` said about scene ``index``: True passed, False refused, None
+    when it has no measured verdict on it (no entry, not looked at, the check stood down).
+
+    The one-frame look (``picture_qc``) passes a scene that is a picture, one picture and shows
+    the scene, with no stated character of it refused by the bible's description; the span look
+    (``picture_spans_qc``) a scene whose entry passed. A carried verdict reads as it was carried."""
+    record = checks.get(check)
+    if not isinstance(record, Mapping):
+        return None
+    for entry in record.get("scenes") or []:
+        if not isinstance(entry, Mapping):
+            continue
+        if check == "picture_qc":
+            if entry.get("scene") != index:
+                continue
+            if entry.get("status") not in ("MEASURED", CARRIED_STATUS):
+                return None
+            answers = [entry.get(key) for key in ("is_a_picture", "one_picture", "shows_the_scene")]
+            if any(answer is False for answer in answers):
+                return False
+            drift = checks.get("character_drift_qc")
+            people = drift.get("characters") if isinstance(drift, Mapping) else None
+            if any(
+                isinstance(person, Mapping)
+                and person.get("scene") == index
+                and person.get("status") == "MEASURED"
+                and person.get("matches") is False
+                for person in people or []
+            ):
+                return False
+            return True if all(answer is True for answer in answers) else None
+        if entry.get("scene_index") != index:
+            continue
+        passed = entry.get("passed")
+        return passed if isinstance(passed, bool) else None
+    return None
+
+
+@dataclass(frozen=True)
+class EarlierPass:
+    """The newest earlier report that passed a scene cut from the very takes of this film."""
+
+    report_id: str
+    verified_at: str
+    media_asset_id: str
+    still_take: str
+    clip_take: str | None
+
+    @property
+    def note_ro(self) -> str:
+        when = str(self.verified_at)[:16].replace("T", " ")
+        return f"trecută la controlul din {when} UTC, aceleași preluări"
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "report_id": self.report_id,
+            "verified_at": self.verified_at,
+            "media_asset_id": self.media_asset_id,
+            "still_take": self.still_take,
+            "clip_take": self.clip_take,
+        }
+
+
+def earlier_passes(
+    session: Session,
+    storyboard_id: str,
+    production: Mapping[str, Any],
+    check: str | None,
+    *,
+    before: str | None = None,
+    exclude_report_ids: Sequence[str] = (),
+) -> dict[int, EarlierPass]:
+    """Per scene of this film, the newest earlier QC report of a film of the same storyboard,
+    cut from the same still take and the same clip take, that passed the scene.
+
+    ``check`` names the one check whose verdict is carried (`CARRIED_CHECKS`); None asks that
+    every picture check that judged the scene in that report passed it (what the Director is
+    told: `director_qc.film_qc_context`). ``before`` (an ISO time) and ``exclude_report_ids``
+    leave out the report being read and anything after it. Read only; nothing is judged."""
+    takes = scene_takes(production)
+    if not takes or not storyboard_id:
+        return {}
+    same: dict[str, set[int]] = {}
+    for asset_id, recorded in session.execute(
+        select(VideoRenderJob.output_asset_id, VideoRenderJob.production_json).where(
+            VideoRenderJob.storyboard_id == storyboard_id,
+            VideoRenderJob.output_asset_id.is_not(None),
+        )
+    ):
+        theirs = scene_takes(recorded if isinstance(recorded, Mapping) else {})
+        matched = {index for index, pair in takes.items() if theirs.get(index) == pair}
+        if matched:
+            same.setdefault(str(asset_id), set()).update(matched)
+    if not same:
+        return {}
+    excluded = set(exclude_report_ids)
+    found: dict[int, EarlierPass] = {}
+    for report in session.scalars(
+        select(QualityControlReport)
+        .where(QualityControlReport.media_asset_id.in_(list(same)))
+        .order_by(QualityControlReport.verified_at.desc())
+    ):
+        if report.id in excluded or (before is not None and str(report.verified_at) >= before):
+            continue
+        checks = report.checks_json if isinstance(report.checks_json, Mapping) else {}
+        for index in same.get(str(report.media_asset_id), ()):
+            if index in found:
+                continue
+            if check is not None:
+                passed = scene_state(checks, check, index) is True
+            else:
+                states = [scene_state(checks, name, index) for name in CARRIED_CHECKS]
+                passed = True in states and False not in states
+            if passed:
+                still, clip = takes[index]
+                found[index] = EarlierPass(
+                    report_id=str(report.id),
+                    verified_at=str(report.verified_at),
+                    media_asset_id=str(report.media_asset_id),
+                    still_take=still,
+                    clip_take=clip,
+                )
+    return found
+
+
+def _carried_scene(index: int, earlier: EarlierPass) -> dict[str, Any]:
+    """A scene of the one-frame look carried forward: it passed, and from where."""
+    return {
+        "scene": index,
+        "status": CARRIED_STATUS,
+        "is_a_picture": True,
+        "one_picture": True,
+        "shows_the_scene": True,
+        "reason": earlier.note_ro,
+        "carried_from": earlier.as_dict(),
+    }
+
+
+#: Why the character check measured nobody when its people were in carried scenes.
+_CARRIED_CAST_DETAIL = (
+    "the scenes that state who is in them passed an earlier check with the same takes and "
+    "were not looked at again"
+)
+
+
+def _all_carried(
+    scenes: Sequence[Mapping[str, Any]],
+    carried: Mapping[int, EarlierPass],
+    characters_configured: int,
+) -> dict[str, Any]:
+    """Every scene of the film passed an earlier check with the same takes (2026-10-12): the
+    look is not asked, nothing is cut, and the check passes on what it passed before."""
+    stated = any(scene["characters"] for scene in scenes)
+    picture = {
+        "status": CARRIED_STATUS,
+        "passed": True,
+        "detail": "every scene passed an earlier check with the same takes; none was judged again",
+        "frames": 0,
+        "scenes_measured": 0,
+        "scenes_carried": len(carried),
+        "scenes": [_carried_scene(index, earlier) for index, earlier in sorted(carried.items())],
+        "model_used": False,
+        "run_id": None,
+    }
+    drift: dict[str, Any] = {
+        "status": "NOT_IMPLEMENTED" if characters_configured == 0 else "NOT_APPLICABLE",
+        "passed": None,
+        "detail": (
+            "No character is configured in the bible; this check certifies nothing."
+            if characters_configured == 0
+            else _CARRIED_CAST_DETAIL
+            if stated
+            else "no scene in this film lists a character"
+        ),
+        "characters_configured": characters_configured,
+        "characters_measured": 0,
+        "characters_observed": 0,
+        "characters": [],
+        "reference_images": 0,
+    }
+    return {"picture_qc": picture, "character_drift_qc": drift, "failures": []}
+
+
 def evaluate_pictures(
     engine: Engine,
     registry: Any | None,
@@ -689,6 +915,11 @@ def evaluate_pictures(
     quality control to fold into its report. Called before quality control opens its write
     transaction, because the model run writes its own rows and the day's token ceiling is
     read outside one (`app.agents.services.run_agent_task`).
+
+    A scene cut from the same still and clip takes as an earlier film of the storyboard whose
+    look passed it is not looked at again (2026-10-12, aa170155: `earlier_passes`): its entry
+    is CARRIED_FORWARD with the report it came from, it is never sent to the model, and its
+    characters are not asked about. When every scene is carried, nobody is asked at all.
     """
     with Session(engine) as session:
         asset = session.get(MediaAsset, media_asset_id)
@@ -757,6 +988,13 @@ def evaluate_pictures(
                 for cid in record["guessed"].get(str(scene["index"]), [])
                 if cid not in scene["characters"]
             ]
+        # Approved stays approved (2026-10-12, aa170155): the scenes an earlier film with the
+        # same takes passed are not looked at again.
+        indices = {scene["index"] for scene in scenes}
+        passed = earlier_passes(session, board.id, production, "picture_qc")
+        carried = {index: earlier for index, earlier in passed.items() if index in indices}
+        if carried and all(scene["index"] in carried for scene in scenes):
+            return _all_carried(scenes, carried, characters_configured)
         if registry is None or not registry.registered_ids():
             return _not_applicable(
                 "no language-model provider is registered: nobody could look at the pictures",
@@ -804,22 +1042,36 @@ def evaluate_pictures(
     # film's own frames as before, with the model told the subtitles are the studio's.
     burned, headline = film_captions(production)
     shots = clean_shots(production, Path(str(path or "")).parent)
-    wanted = scenes[:MAX_FRAMES]
+    # Only the scenes not carried forward are shown (2026-10-12): a carried scene's frame is
+    # never cut from its shot, and never sent.
+    to_judge = [scene for scene in scenes if scene["index"] not in carried]
+    wanted = to_judge[:MAX_FRAMES]
     source: FrameSource = "FILM"
     frames: list[str] = []
+    framed: list[dict[str, Any]] = []
     if wanted and all(scene["index"] in shots for scene in wanted):
         frames = _shot_middles(
             [shots[scene["index"]] for scene in wanted], ffmpeg_path, _film_fps(production)
         )
         if frames:
             source = "SHOT"
+            framed = wanted[: len(frames)]
     if not frames:
-        frames = frames_for(
+        # The film's frames are found by the scenes' lengths end to end, so every scene is
+        # cut and the carried ones are dropped after.
+        cut = frames_for(
             path,
             ffmpeg_path,
             duration,
             scene_seconds=[scene["seconds"] for scene in scenes],
         )
+        pairs = [
+            (scene, frame)
+            for scene, frame in zip(scenes, cut, strict=False)
+            if scene["index"] not in carried
+        ]
+        framed = [scene for scene, _frame in pairs]
+        frames = [frame for _scene, frame in pairs]
     if not frames:
         return _not_applicable(
             "no frame could be read from the film: there is no encoder, or no file to cut",
@@ -829,8 +1081,9 @@ def evaluate_pictures(
     # One frame per scene, in order. When the encoder returned fewer than the storyboard
     # has (the frame cap, or a cut that failed), the frames are the first scenes and only
     # those are asked about; the scenes past them are named as unlooked-at, never as passed.
-    looked = scenes[: len(frames)]
-    unlooked = [scene["index"] for scene in scenes[len(frames) :]]
+    looked = framed
+    framed_indices = {scene["index"] for scene in framed}
+    unlooked = [scene["index"] for scene in to_judge if scene["index"] not in framed_indices]
 
     #: (scene_index, character_id, basis) triples the model is asked about, and the ones it
     #: cannot be. `basis` is which reading put that name here: "stated" is the film's own
@@ -938,6 +1191,10 @@ def evaluate_pictures(
         stood_down["picture_qc"]["frames"] = len(frames)
         stood_down["picture_qc"]["frames_from"] = source
         stood_down["picture_qc"]["run_id"] = run_id
+        # What an earlier check passed is still recorded; the check itself certifies nothing.
+        stood_down["picture_qc"]["scenes"] = [
+            _carried_scene(index, earlier) for index, earlier in sorted(carried.items())
+        ]
         for entry in not_applicable_characters:
             stood_down["character_drift_qc"]["characters"].append(entry)
         return stood_down
@@ -998,14 +1255,20 @@ def evaluate_pictures(
                 "reason": "no frame was cut for this scene",
             }
         )
+    scene_records += [_carried_scene(index, earlier) for index, earlier in carried.items()]
+    scene_records.sort(key=lambda entry: entry["scene"])
 
     picture: dict[str, Any] = {
+        # The scenes shown this time decide whether it measured anything: a look that answered
+        # none of them certifies nothing, whatever an earlier film passed.
         "status": "MEASURED" if measured_scenes else "NOT_APPLICABLE",
         "passed": (not failures) if measured_scenes else None,
         "frames": len(frames),
         # SHOT: each scene's own shot, before the captions were burnt in; FILM: the film's.
         "frames_from": source,
         "scenes_measured": measured_scenes,
+        # Passed by an earlier film with the same takes, not looked at again (2026-10-12).
+        "scenes_carried": len(carried),
         "scenes": scene_records,
         "model_used": True,
         "looked_by": looker_name,
@@ -1079,7 +1342,16 @@ def evaluate_pictures(
         # Why nothing was measured, in the order the reasons actually rule each other out.
         # The last of them is the one this check used to print for all of them: it now means
         # only what it says — nobody listed anybody, and the board never said why.
-        if observed_characters:
+        carried_cast = sum(
+            1
+            for scene in scenes
+            if scene["index"] in carried
+            for cid in scene["characters"]
+            if cid in described
+        )
+        if carried_cast:
+            detail = _CARRIED_CAST_DETAIL
+        elif observed_characters:
             detail = (
                 f"no scene in this film states who is in it; {observed_characters} name(s) "
                 "its prose spells were looked at and certify nothing"
