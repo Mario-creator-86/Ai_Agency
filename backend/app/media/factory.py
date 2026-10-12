@@ -460,6 +460,18 @@ def connection_of_model(session: Session, model_id: Any, purposes: tuple[str, ..
     return owners[0]
 
 
+def _voice_cache_key(voice: dict) -> tuple:
+    """One adapter per connection, model, voice and character: a character's binding carries
+    its own pronunciation dictionaries, which the first character on a shared voice must not
+    decide for the others."""
+    return (
+        voice.get("integration_id"),
+        voice.get("model_id"),
+        voice.get("voice_id"),
+        voice.get("character_id"),
+    )
+
+
 def tts_provider_for(engine: Engine, vault: CredentialVault, resolved: dict) -> TTSProvider | None:
     """A voice adapter for one resolved selection (see production_policy.resolve_purpose).
 
@@ -489,6 +501,11 @@ def tts_provider_for(engine: Engine, vault: CredentialVault, resolved: dict) -> 
             if isinstance(settings, dict) and settings:
                 adapter.voice_settings = settings
             adapter.pronunciation_locators = locators
+            # The studio's own dictionary (names and acronyms), for every voice of the account;
+            # the adapter sends it only with words that contain one of its terms.
+            from app.providers.elevenlabs_lexicon import studio_dictionaries  # noqa: PLC0415
+
+            adapter.studio_dictionaries = studio_dictionaries()
             return _from_connection(adapter, row.id)
     except MediaProviderNotConfigured:
         return None
@@ -651,7 +668,9 @@ def render_plan(engine: Engine, vault: CredentialVault, storyboard_id: str) -> d
     video_cache: dict[tuple, VideoProvider | None] = {}
     for scene in plan["scenes"]:
         voice = scene["voice"]
-        key = (voice.get("integration_id"), voice.get("model_id"), voice.get("voice_id"))
+        # The character too: its binding's dictionaries travel with its voice, so two characters
+        # sharing one voice are two adapters (2026-10-12 audit).
+        key = _voice_cache_key(voice)
         if key not in cache:
             cache[key] = tts_provider_for(engine, vault, voice)
         adapters[scene["scene_index"]] = cache[key]
@@ -671,7 +690,7 @@ def render_plan(engine: Engine, vault: CredentialVault, storyboard_id: str) -> d
         built = []
         for take in speakers:
             voice = take["voice"]
-            key = (voice.get("integration_id"), voice.get("model_id"), voice.get("voice_id"))
+            key = _voice_cache_key(voice)
             if key not in cache:
                 cache[key] = tts_provider_for(engine, vault, voice)
             built.append(

@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "name": "AMN-AI narration",
+  "description": "How the studio's narrators say names and acronyms (2026-10-12, the Owner's yes). Numbers and units need no rule: ElevenLabs' text normalisation already says them right.",
+  "note": "Phoneme rules work on eleven_flash_v2 (the studio's narration model); a model that cannot read them skips them silently, aliases work on every model. Matching is case-sensitive and on whole words. Evidence for each rule is in its 'why'.",
+  "rules": [
+    {
+      "type": "phoneme",
+      "string_to_replace": "Widerøe",
+      "phoneme": "ˈviːdəɹə",
+      "alphabet": "ipa",
+      "why": "Rolf Widerøe (cyclotron film aa170155, scene 2): the vendor's normalised alignment turned it into «Wideroe»."
+    },
+    {
+      "type": "phoneme",
+      "string_to_replace": "Wideroe",
+      "phoneme": "ˈviːdəɹə",
+      "alphabet": "ipa",
+      "why": "The same name written without ø."
+    },
+    {
+      "type": "phoneme",
+      "string_to_replace": "Englert",
+      "phoneme": "ɑŋˈɡlɛɹ",
+      "alphabet": "ipa",
+      "why": "François Englert (Higgs film 1c038a99, scene 4): Belgian, not «ENG-lert»."
+    },
+    {
+      "type": "alias",
+      "string_to_replace": "CERN",
+      "alias": "Sern",
+      "why": "Said as one word, never spelled (films babcf272, 1c038a99, 63e3da7c)."
+    },
+    {
+      "type": "alias",
+      "string_to_replace": "ATLAS",
+      "alias": "Atlas",
+      "why": "The detector's name, said as a word (Lyra flagged it on 63e3da7c)."
+    },
+    {
+      "type": "alias",
+      "string_to_replace": "GeV",
+      "alias": "giga-electron-volts",
+      "why": "Lyra flagged «125 GeV» (63e3da7c); said in full for a general audience."
+    },
+    {
+      "type": "alias",
+      "string_to_replace": "TeV",
+      "alias": "tera-electron-volts",
+      "why": "The LHC's energies, the same way as GeV."
+    },
+    {
+      "type": "alias",
+      "string_to_replace": "MeV",
+      "alias": "mega-electron-volts",
+      "why": "The cyclotron's energies, the same way as GeV."
+    },
+    {
+      "type": "alias",
+      "string_to_replace": "NEOWISE",
+      "alias": "Neo-wise",
+      "why": "Comet NEOWISE, in two verified scripts not yet made: one word, not spelled."
+    }
+  ]
+}

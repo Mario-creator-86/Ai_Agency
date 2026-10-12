@@ -255,6 +255,10 @@ class ElevenLabsTTSAdapter(TTSProvider):
         #: The binding's pronunciation dictionaries, as the vendor's locators. Creating a
         #: dictionary is the Owner's act in his ElevenLabs account; the studio only names it.
         self.pronunciation_locators: list[dict[str, str]] = []
+        #: The studio's own dictionary (`elevenlabs_lexicon`, synced on the Owner's yes of
+        #: 2026-10-12): [{pronunciation_dictionary_id, version_id, terms}]. Sent only with words
+        #: that contain one of its terms, so every other narration keeps its identity.
+        self.studio_dictionaries: list[dict[str, Any]] = []
         #: Optional fields the vendor refused for this voice (a 400/422 on them): never
         #: offered again by this adapter, so one refusal is not paid in time per scene.
         self.refused_fields: set[str] = set()
@@ -263,19 +267,34 @@ class ElevenLabsTTSAdapter(TTSProvider):
         #: price every synthesis reports what its characters cost, and None without one.
         self.price_lookup = price_lookup
 
-    def request_settings(self) -> dict[str, Any]:
+    def request_settings(self, text: str | None = None) -> dict[str, Any]:
         """What every request of this voice carries besides the words and their context: the
         documented voice settings, text normalisation for the small models, and the
         pronunciation dictionaries. Part of a narration's identity (`assembler.narration_key`):
-        the same words said under other settings are another recording."""
+        the same words said under other settings are another recording.
+
+        The studio's own dictionary joins only when ``text`` names one of its terms: asked
+        without the words (an identity read that does not pass them), the answer is what it
+        always was, so no recording made before the dictionary is bought again for it."""
         settings = dict(DEFAULT_VOICE_SETTINGS)
         settings.update({k: v for k, v in self.voice_settings.items() if k in VOICE_SETTING_KEYS})
         options: dict[str, Any] = {"voice_settings": settings}
         if wants_text_normalisation(self.model):
             options["apply_text_normalization"] = "on"
         locators = checked_locators(self.pronunciation_locators)
+        if text is not None:
+            from app.providers.elevenlabs_lexicon import mentions  # noqa: PLC0415
+
+            for dictionary in self.studio_dictionaries:
+                found = checked_locators([dictionary])
+                if (
+                    found
+                    and found[0] not in locators
+                    and mentions(text, dictionary.get("terms") or [])
+                ):
+                    locators.append(found[0])
         if locators:
-            options["pronunciation_dictionary_locators"] = locators
+            options["pronunciation_dictionary_locators"] = locators[:MAX_LOCATORS]
         return {k: v for k, v in options.items() if k not in self.refused_fields}
 
     def _headers(self, accept: str) -> dict[str, str]:
@@ -399,7 +418,7 @@ class ElevenLabsTTSAdapter(TTSProvider):
                 f"{settings_place('media')}"
             )
 
-        options = self.request_settings()
+        options = self.request_settings(narration)
         fields: dict[str, Any] = {
             "text": narration,
             "model_id": self.model,
