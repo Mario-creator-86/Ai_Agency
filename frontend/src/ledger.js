@@ -1178,12 +1178,13 @@ export class Ledger {
       const mail = item.thread
         ? `${item.forOwner ? ` ledger-owner-mail${answered.has(event.aggregate_id) ? ' is-answered' : ''}` : ''} ledger-mail" data-thread="${this.escape(item.thread)}" title="Deschide firul de corespondență`
         : '';
-      // The employee's portrait beside their name (2026-10-11), drawn by the office itself.
+      // The employee's portrait, drawn by the office itself, stands under the row's time
+      // (Owner 2026-10-12), so the name keeps the whole line.
       const face = item.portrait && this.portraitFor ? this.portraitFor(item.portrait) : null;
-      const portrait = face ? `<img class="ledger-portrait" src="${this.escape(face)}" alt="">` : '';
+      const portrait = face && !item.thread ? `<img class="ledger-portrait" src="${this.escape(face)}" alt="">` : '';
       const route = item.thread
         ? `<strong>${this.escape(item.who)}</strong> <span class="ledger-arrow">→</span> <strong>${this.escape(item.to)}</strong> · ${this.escape(item.label)}`
-        : `${portrait}${item.who ? `<strong>${this.escape(item.who)}</strong> ` : ''}${this.escape(item.label)}`;
+        : `${item.who ? `<strong>${this.escape(item.who)}</strong> ` : ''}${this.escape(item.label)}`;
       const letters = item.thread ? threadLength.get(item.thread) || 1 : 0;
       const body = item.thread
         ? `<div class="ledger-subject">${this.escape(item.subject || item.text)}</div>` +
@@ -1232,7 +1233,7 @@ export class Ledger {
         rows.push({ day: dayLabel(at, now, this.timezone) });
         lastDay = day;
       }
-      rows.push({ key, kind: item.kind, mail, route, body, time, oldest: time, count: 1, id: event.event_id });
+      rows.push({ key, kind: item.kind, mail, route, body, portrait, time, oldest: time, count: 1, id: event.event_id });
       actSince = true;
       if (rows.length >= 150) break;
     }
@@ -1252,7 +1253,9 @@ export class Ledger {
             }
             return (
               `<li class="ledger-item ledger-${row.kind}${row.count > 1 ? ' is-repeat' : ''}${this.arrived.has(row.id) ? ' is-new' : ''}${row.mail}" data-card-key="${this.escape(row.id)}">` +
-              `<time>${this.escape(row.time)}</time><div>` +
+              (row.portrait
+                ? `<div class="ledger-when"><time>${this.escape(row.time)}</time>${row.portrait}</div><div>`
+                : `<time>${this.escape(row.time)}</time><div>`) +
               `<div class="ledger-head">${row.route}${row.count > 1 ? `<span class="ledger-repeat">×${row.count}</span>` : ''}</div>` +
               row.body +
               (row.count > 1 ? `<span class="ledger-span">${this.escape(row.oldest)} – ${this.escape(row.time)}</span>` : '') +

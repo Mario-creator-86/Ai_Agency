@@ -211,3 +211,24 @@ test('every day in the register is named, so an old day never reads as this morn
   ledger.renderedDay = '2000-01-01';
   assert.equal(ledger.dayTurned(), true, 'after midnight the headings are re-read');
 });
+
+test('the employee\'s portrait stands under the row\'s time, not beside the name (Owner 2026-10-12)', () => {
+  const parts = stubDocument();
+  const ledger = ledgerOn(parts);
+  ledger.setPortraits((id) => (id === 'kael' ? 'data:image/png;base64,AAAA' : null));
+  ledger.add([{
+    event_id: 'e-1',
+    sequence: 1,
+    timestamp: '2026-09-12T16:52:35.000+00:00',
+    event_type: 'media.clip_submitted',
+    aggregate_id: 'job-1',
+    words_ro: 'a trimis la RunPod clipul scenei 5',
+    actor: { agent_id: 'kael', name: 'Kael (Video Editor)' },
+    payload: {},
+  }]);
+  const row = rowsOf(parts.list.innerHTML)[0];
+  assert.match(row, /<div class="ledger-when"><time>16:52:35<\/time><img class="ledger-portrait" src="data:image\/png;base64,AAAA" alt=""><\/div>/);
+  const head = row.slice(row.indexOf('<div class="ledger-head">'));
+  assert.doesNotMatch(head, /ledger-portrait/, 'the name keeps its line');
+  assert.match(head, /<strong>Kael \(Video Editor\)<\/strong>/);
+});
