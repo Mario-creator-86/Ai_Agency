@@ -17,7 +17,11 @@ QC!». What is held here, every provider faked, 0 credits:
 - an answer that names a layer not open, or no Director at all, rewrites nothing: the scene
   waits as before;
 - the day's staircase does it by itself: a walk stopped on a refused scene gets her rewrite and
-  walks the film again.
+  walks the film again;
+- before anything is stored she reviews his words against the findings (2026-10-12, the Owner on
+  film 1c038a99's scene 5 redone five times: «tratează problema? Promptul trebuie revizuit»): a
+  rewrite that misses a finding is not stored, the hold stays, the record and his letter say why;
+  a rewrite nobody could review is not stored either.
 """
 
 from __future__ import annotations
@@ -35,8 +39,10 @@ from app.media.scene_rewrite import (
     BRIEF_EVENT,
     MOTION,
     STILL,
+    earlier_briefs,
     open_layers,
     rewrite_failed_scene,
+    rewrite_for_redo,
 )
 from app.media.toolchain import find_ffmpeg
 from app.models import OwnerPolicy
@@ -82,16 +88,37 @@ STILL_SHOT = {
     "motion": "wind sweeps waves through the rice while cloud rolls over the ridges",
     "camera_move": "slow push-in",
 }
+#: Her review of his rewrite: the finding is treated by the new sentence it quotes.
+REVIEW = {
+    "verdict": "TREATS",
+    "findings": [
+        {
+            "finding": "the clip barely moved",
+            "treated": True,
+            "by": "Thick grey cloud rolls steadily across the ridges from left to right.",
+        }
+    ],
+    "reason_ro": "Rescrierea tratează constatarea: norii se mișcă clar de la stânga la dreapta.",
+}
+#: Her review when the rewrite changed words the finding never named.
+MISSED = {
+    "verdict": "MISSES",
+    "findings": [{"finding": "a face seen in profile", "treated": False, "by": ""}],
+    "reason_ro": "Rescrierea schimbă doar norii; fața din profil rămâne posibilă în cadru.",
+}
 
 
 class Agents:
-    """Every agent's model, scripted: the Director's brief, the Video Editor's shot."""
+    """Every agent's model, scripted: the Director's brief, the Video Editor's shot, her
+    review of his rewrite (a string is answered as it is, for a review nobody can read)."""
 
-    def __init__(self, brief: Any = None, shot: Any = None):
+    def __init__(self, brief: Any = None, shot: Any = None, review: Any = None):
         self.brief = dict(BRIEF) if brief is None else brief
         self.shot = dict(SHOT) if shot is None else shot
+        self.review = dict(REVIEW) if review is None else review
         self.briefs: list[str] = []
         self.rewrites: list[str] = []
+        self.reviews: list[str] = []
 
     async def health_check(self):
         return HealthResult("HEALTHY")
@@ -106,6 +133,10 @@ class Agents:
         if '"scene-rewrite"' in prompt:
             self.rewrites.append(prompt)
             return GenerateResult(json.dumps(self.shot), 10, 40, None)
+        if '"rewrite-review"' in prompt:
+            self.reviews.append(prompt)
+            said = json.dumps(self.review) if isinstance(self.review, dict) else str(self.review)
+            return GenerateResult(said, 10, 40, None)
         return GenerateResult("{}", 10, 40, None)
 
 
@@ -204,15 +235,23 @@ def test_her_brief_rewrites_the_motion_and_the_shot_is_bought_again_and_passes(
     assert after.prompt_json["camera_move"] == "slow pan right"
     assert after.prompt_json["motion_intent"] != before.prompt_json["motion_intent"]
     assert "a frozen, almost still frame" in after.prompt_json["avoid"]
+    # She reviewed his words against the finding before anything was stored: the refusal's
+    # words, his new sentence and the difference were put before her.
+    (review,) = agents.reviews
+    assert "nu se mișcă" in review, review
+    assert "grey cloud rolls steadily across the ridges from left to right" in review
+    assert '"added"' in review and '"removed"' in review and "director_brief" in review
     (brief,) = events(engine, BRIEF_EVENT, storyboard_id)
     assert brief.payload["rewritten"] is True and brief.payload["layer"] == MOTION
     assert brief.payload["failures"][0]["code"] == "QC.CLIP"
+    assert brief.payload["review_verdict"] == "TREATS" and brief.payload["review_run_id"]
     (rewritten,) = [
         e
         for e in events(engine, SCENE_PROMPTS_REWRITTEN_EVENT, storyboard_id)
         if e.payload.get("decided_by") == "director"
     ]
     assert rewritten.payload["layer"] == MOTION and rewritten.payload["scene_index"] == 1
+    assert rewritten.payload["review"]["verdict"] == "TREATS"
     # Her brief and his answer are letters between them, settled.
     with Session(engine) as session:
         letters = session.scalars(select(AgentMessage).order_by(AgentMessage.created_at)).all()
@@ -499,6 +538,97 @@ def test_a_motion_rewrite_that_came_back_the_same_is_the_movements_turn_taken(
     with Session(engine) as session:
         # The still rewrite started the count again; the blocked attempt did not count.
         assert open_layers(session, storyboard_id, 1, last_code="QC.CLIP") == (MOTION, STILL)
+
+
+def test_a_rewrite_that_does_not_treat_the_finding_is_not_stored_and_nothing_is_bought(
+    engine, tmp_path, studio
+):
+    """Owner, 2026-10-12, on film 1c038a99's scene 5 redone five times: «Dacă se reface ceva,
+    trebuie să ne asigurăm că promptul de regenerare este impecabil. Adică, tratează problema?»
+    Her review of his rewrite says MISSES: nothing is stored, the hold stays, the record carries
+    the verdict for the next brief, his letter says the review refused it, and the paid redo's
+    correction is refused the same way (the brake `_correct_before_redo` reads)."""
+    storyboard_id = a_planned_film(engine, tmp_path)
+    refused_twice(engine, storyboard_id, tmp_path)
+    before = scene(engine, storyboard_id)
+    agents = Agents(review=MISSED)
+
+    outcome = rewrite_failed_scene(
+        engine, agents_say(studio, agents), storyboard_id, 1, str(uuid4())
+    )
+
+    assert outcome["rewritten"] is False and outcome["not_treating"] is True, outcome
+    assert outcome["reason"].startswith("Rescrierea nu tratează constatarea")
+    assert outcome["review_verdict"] == "MISSES" and outcome["same_prompt"] is False
+    assert scene(engine, storyboard_id).prompt_json == before.prompt_json
+    # He rewrote once; she read the findings, his new words and their difference once.
+    assert len(agents.rewrites) == 1 and len(agents.reviews) == 1
+    assert "nu se mișcă" in agents.reviews[0] and "grey cloud rolls steadily" in agents.reviews[0]
+    (brief,) = events(engine, BRIEF_EVENT, storyboard_id)
+    assert brief.payload["rewritten"] is False and brief.payload["not_treating"] is True
+    assert brief.payload["review_verdict"] == "MISSES" and brief.payload["review_run_id"]
+    assert "fața din profil" in brief.payload["review_reason_ro"]
+    assert brief.payload["same_prompt"] is False
+    assert [
+        e
+        for e in events(engine, SCENE_PROMPTS_REWRITTEN_EVENT, storyboard_id)
+        if e.payload.get("decided_by") == "director"
+    ] == []
+    # The next brief is shown why the last rewrite was refused.
+    with Session(engine) as session:
+        (shown,) = earlier_briefs(session, storyboard_id, 1)
+    assert shown["review_verdict"] == "MISSES" and "nu tratează constatarea" in shown["reason"]
+    # A refused rewrite is no motion attempt: both layers stay open for her next brief.
+    with Session(engine) as session:
+        assert open_layers(session, storyboard_id, 1, last_code="QC.CLIP") == (MOTION,)
+    # The hold stays: nothing is bought on words that do not treat the finding.
+    held = motion_plan(engine, storyboard_id, capabilities=[SEEDANCE])["steps"]["test_shot"]
+    assert held["held"] == [1] and held["to_buy"] == []
+    # His letter back says the review refused it, and why.
+    with Session(engine) as session:
+        letters = session.scalars(select(AgentMessage).order_by(AgentMessage.created_at)).all()
+        reply = next(m for m in letters if m.in_reply_to and "Rescrie scena 1" in m.subject)
+        assert "a refuzat rescrierea" in (reply.body_text or "")
+        assert "fața din profil" in (reply.body_text or "")
+
+    # The redo she decided after the finished film failed: refused the same way, nothing bought.
+    again = rewrite_for_redo(
+        engine,
+        agents_say(studio, Agents(review=MISSED)),
+        storyboard_id,
+        1,
+        "motion",
+        ["the clip barely moved"],
+        str(uuid4()),
+    )
+    assert again["rewritten"] is False and again["rewritable"] is True, again
+    assert again["not_treating"] is True and again["same_prompt"] is False
+    assert scene(engine, storyboard_id).prompt_json == before.prompt_json
+
+
+def test_a_rewrite_nobody_could_review_is_not_stored(engine, tmp_path, studio):
+    """Nothing is bought on words nobody verified: a review that cannot be read twice fails
+    closed, like one that says MISSES, and the record says the review could not be made."""
+    storyboard_id = a_planned_film(engine, tmp_path)
+    refused_twice(engine, storyboard_id, tmp_path)
+    before = scene(engine, storyboard_id)
+    agents = Agents(review="I would rather not say.")
+
+    outcome = rewrite_failed_scene(
+        engine, agents_say(studio, agents), storyboard_id, 1, str(uuid4())
+    )
+
+    assert outcome["rewritten"] is False and outcome["review_unavailable"] is True, outcome
+    assert "nu a putut fi verificată" in outcome["reason"]
+    assert outcome["review_verdict"] is None and "not_treating" in outcome
+    assert scene(engine, storyboard_id).prompt_json == before.prompt_json
+    # Asked twice (no object at all: the thinking retry), then nothing more today.
+    assert len(agents.reviews) == 2
+    (brief,) = events(engine, BRIEF_EVENT, storyboard_id)
+    assert brief.payload["rewritten"] is False and brief.payload["review_verdict"] is None
+    assert "nu a putut fi verificată" in brief.payload["reason"]
+    held = motion_plan(engine, storyboard_id, capabilities=[SEEDANCE])["steps"]["test_shot"]
+    assert held["held"] == [1]
 
 
 def test_a_rewrite_that_comes_back_with_the_same_words_tells_the_redo_so(engine, tmp_path, studio):

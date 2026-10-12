@@ -252,6 +252,14 @@ def test_a_shot_animated_from_panels_is_not_bought_again_on_the_same_still(engin
     + 1 on the same still animates the same panels, so nothing more is bought: the scene goes
     back to its still, rejected, with the reason."""
     storyboard_id = a_film(engine, tmp_path, scenes=1)
+    with Session(engine) as session, session.begin():
+        # The gate's approval, not the Owner's: his look stays his (the test below).
+        (still_row,) = session.scalars(
+            select(SceneTake).where(
+                SceneTake.storyboard_id == storyboard_id, SceneTake.kind == "still"
+            )
+        )
+        still_row.approved_by = "still_gate"
     account = Account(10_000)
     models = Models(SpyVideo("seedance2_5", account))
 
@@ -267,12 +275,48 @@ def test_a_shot_animated_from_panels_is_not_bought_again_on_the_same_still(engin
 
     assert models.posts() == 1, "the same still was animated again"
     (entry,) = summary["scenes"]
-    assert entry["status"] == "NEEDS_OWNER"
+    # The picture is at fault: the scene needs a new still, not the Owner (2026-10-12, the
+    # cyclotron's scene 1: the still stayed APPROVED and the next repair animated it again).
+    assert entry["status"] == "NEEDS_STILL"
     assert entry["clip_qc"]["status"] == "BACK_TO_STILL"
     assert entry["clip_qc"]["verdict"] == "FAILED" and entry["clip_qc"]["retry_credits"] == 0
     assert "imagine nouă" in entry["reason"] and "singură fotografie" in entry["reason"]
     (take,) = shots(engine, storyboard_id)
     assert take.status == "REJECTED" and take.failure_code == "QC.CLIP"
+    # The still went back to the stills gate, refused with the gate's code and the clip's reason.
+    (still,) = takes(engine, storyboard_id, "still")
+    assert still.status == "REJECTED" and still.failure_code == "LOCAL.STILL_GATE"
+    assert "Controlul clipului" in still.failure_detail
+    assert "singură fotografie" in still.failure_detail
+    (sent_back,) = events(engine, "media.still_sent_back", still.id)
+    assert sent_back.payload["failure_kind"] == "CLIP_QC"
+    assert sent_back.payload["scene_number"] == 1
+
+
+def test_a_still_the_owner_approved_is_not_sent_back_by_clip_qc(engine, tmp_path):
+    """His look is his: a still he approved himself (`a_film`'s stills are his) stays APPROVED
+    when its clip's fault is in the picture; the scene waits for him (NEEDS_OWNER) instead of
+    buying a new still."""
+    storyboard_id = a_film(engine, tmp_path, scenes=1)
+    account = Account(10_000)
+    models = Models(SpyVideo("seedance2_5", account))
+
+    summary = approved(
+        engine,
+        storyboard_id,
+        tmp_path,
+        "test_shot",
+        models,
+        account,
+        clip_check=ScriptedCheck("PANELS", "PASSED"),
+    )
+
+    (entry,) = summary["scenes"]
+    assert entry["status"] == "NEEDS_OWNER"
+    assert entry["clip_qc"]["status"] == "BACK_TO_STILL"
+    (still,) = takes(engine, storyboard_id, "still")
+    assert still.status == "APPROVED" and still.approved_by == "owner"
+    assert events(engine, "media.still_sent_back", still.id) == []
 
 
 def test_the_retry_is_not_bought_when_it_would_cross_the_approved_cap(engine, tmp_path):

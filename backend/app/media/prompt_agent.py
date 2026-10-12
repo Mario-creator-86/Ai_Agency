@@ -1830,31 +1830,69 @@ SERIAL_LIFE_SENTENCE = (
     "As they speak their hands gesture, heads turn and shoulders shift, and behind them the "
     "lamp light flickers softly and the plants stir."
 )
+#: Where a serial clip ends, from the plan's ``ending_frame``. 2026-10-12, f06808c9 scene 3:
+#: the film's QC found «ending frame shows Marcus and Sarah in profile facing each other
+#: instead of facing the viewer», and no rewrite could reach the clip's ending — the composer
+#: never read the field. Said right after the action, so it survives the word budget before
+#: the faces and the room do; ``{ending}`` already carries its preposition when the plan
+#: wrote one («with her eyes on the pen»).
+SERIAL_ENDING_SENTENCE = "The shot ends on {ending}."
+_ENDING_PREPOSITION = re.compile(r"^(?:on|with|at|in|as)\b", re.IGNORECASE)
+_POSSESSIVE = re.compile(r"['’]s$")
 
 
 def compose_serial_motion(package: dict[str, Any], look: dict[str, Any]) -> str:
     """The movement of a serial shot: the shot's own camera move (``camera_move``, a held
     camera when none) with its path and tempo, the beat's whole action as movement (its
-    chain of moments included: a still is one moment, a clip is the chain), the people's
-    faces kept, the life of their bodies and of the room, the feeling, a second beat of
-    camera on a beat of TWO_BEAT_SECONDS or more, and the closing every motion prompt
-    carries.
+    chain of moments included: a still is one moment, a clip is the chain), where the shot
+    ends (``ending_frame``, since 2026-10-12), the people's faces kept, the life of their
+    bodies and of the room, the feeling, a second beat of camera on a beat of
+    TWO_BEAT_SECONDS or more, and the closing every motion prompt carries.
+
+    The feeling is ``motion_emotion`` when the Director's motion rewrite gave one
+    (`scene_rewrite`: the still is composed from ``emotion`` too, so a rewrite of the
+    movement alone may not touch it), else the shot's ``emotion``. The ending is left out
+    when it names a camera move of its own (the clip has exactly one, ``camera_move``) and
+    is said without its chain words; a name keeps its capital, anything else is lower-cased
+    after «The shot ends on».
 
     Until 2026-10-11 a serial scene had no motion prompt at all: the motion step sent the
     still's words again (`assembler._motion_prompt`), look block, room and rubrics included.
     """
     del look  # the look is in the picture; the movement is the beat's
     action = _sentence(" ".join(str(package.get("action") or "").split()))
-    feeling = " ".join(str(package.get("emotion") or "").split()).rstrip(". ")
+    feeling = " ".join(
+        str(package.get("motion_emotion") or package.get("emotion") or "").split()
+    ).rstrip(". ")
+    ending = without_scene_reference(
+        strip_on_screen_text(_continuous(package.get("ending_frame")))
+    ).strip(" .;,")
+    ending_sentence = ""
+    if ending and not lint.camera_moves(ending):
+        names = {
+            _short_name(person.get("name"))
+            for key in ("in_frame", "characters")
+            for person in package.get(key) or []
+            if isinstance(person, dict) and person.get("name")
+        }
+        first = _POSSESSIVE.sub("", ending.split()[0].strip(",;:.'’"))
+        if first not in names and not first.isupper():
+            ending = ending[:1].lower() + ending[1:]
+        ending_sentence = _sentence(
+            SERIAL_ENDING_SENTENCE.replace("on {ending}", "{ending}").format(ending=ending)
+            if _ENDING_PREPOSITION.match(ending)
+            else SERIAL_ENDING_SENTENCE.format(ending=ending)
+        )
     move = str(package.get("camera_move") or "static")
     two_beats = move != "static" and _seconds_of(package) >= TWO_BEAT_SECONDS
     items = [
         (0, 0, MOVE_SENTENCES.get(move, MOVE_SENTENCES["static"])),
         (1, 1, action),
-        (2, 2, SERIAL_FACES_SENTENCE),
-        (3, 3, SERIAL_LIFE_SENTENCE),
-        (5, 4, _sentence(feeling) if feeling else ""),
-        (4, 5, END_BEAT if two_beats else ""),
+        (2, 2, ending_sentence),
+        (3, 3, SERIAL_FACES_SENTENCE),
+        (4, 4, SERIAL_LIFE_SENTENCE),
+        (6, 5, _sentence(feeling) if feeling else ""),
+        (5, 6, END_BEAT if two_beats else ""),
         (0, 9, lint.MOTION_CLOSING),
     ]
     prompt = _fit_sentences(items, lint.DEFAULT_PROMPT_MAX_UTF16, MOTION_MAX_WORDS)

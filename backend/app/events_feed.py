@@ -694,6 +694,28 @@ def _words(
         take, _pronoun = _KIND_RO.get(str(payload.get("kind") or ""), ("înregistrarea", "o"))
         why = _RESTORED_RO.get(str(payload.get("cause") or ""), "refacerea n-a livrat nimic")
         return f"{take.capitalize()}{where}{film} a fost pus{_feminine(take)} la loc: {why}.", None
+    if kind == "media.still_sent_back":
+        # The picture goes back to the stills gate: clip QC found the fault in it (2026-10-12,
+        # the cyclotron's scene 1), or the model refused to animate it for safety.
+        if str(payload.get("failure_kind") or "") == "CLIP_QC":
+            why = "controlul clipului a găsit greșeala în ea; nu se mai animă"
+        else:
+            why = "modelul a refuzat să o anime din motive de siguranță"
+        return (
+            f"Imaginea{where}{film} se întoarce la poarta imaginilor: {why}.",
+            f"Scena {scene}: imagine nouă, apoi mișcare." if scene else None,
+        )
+    if kind == "media.motion_needs_owner":
+        # The motion step's hold on a scene (its status word is older than the Director's
+        # loop): the scene needs a new still first, or its movement stopped on a reason.
+        why = _short(str(payload.get("reason") or "").rstrip("."), 150)
+        if str(payload.get("status") or "") == "NEEDS_STILL":
+            said = f"Scena {scene}{film} are nevoie de o imagine nouă înainte de mișcare"
+            return said + (f": {why}" if why else "") + ".", (
+                f"Scena {scene}: imagine nouă, apoi mișcare." if scene else None
+            )
+        said = f"Mișcarea{where}{film} s-a oprit"
+        return said + (f": {why}" if why else "") + ".", None
     if kind == "media.director_qc_decision":
         decision = str(payload.get("decision") or "")
         verdict = _DECISION_RO.get(decision, decision.lower())

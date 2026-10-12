@@ -9569,6 +9569,86 @@ def _send_still_back(
         )
 
 
+def _send_still_back_for_clip(
+    engine: Engine,
+    storyboard_id: str,
+    scene_index: int,
+    still_take_id: str | None,
+    reason: str,
+    correlation_id: str,
+) -> bool:
+    """Clip QC found the fault in the picture the clip was made from (``back_to_still``: faces
+    in its frames, panels, another subject): the still goes back to the stills gate, REJECTED
+    with the gate's code, so the scene's next still is a new one and nobody animates this one
+    again. Returns whether it was sent back. A still the Owner approved himself stays as it is:
+    his look is his (the scene then waits for him).
+
+    2026-10-12, the cyclotron's scene 1: the new still approved by the gate at 10:43 showed two
+    people facing the camera; its clip failed clip QC at 12:56 («greșeala e în imaginea din care
+    s-a făcut clipul … aceeași imagine nu se mai animă»), the clip was rejected — and the still
+    stayed APPROVED, so the Director's next repair joined it again as the scene's new approved
+    take and bought another clip from it (36 credits, the same words, seed + 2)."""
+    from app.media.stills_stage import GATE_FAILURE_CODE  # noqa: PLC0415 - it imports us
+
+    with Session(engine) as session, session.begin():
+        lock_for_write(session)  # read-then-write right after a refused purchase
+        row = session.get(SceneTake, still_take_id) if still_take_id else None
+        if row is None:
+            # The clip was made from the scene's current still (`usable_take`): its newest
+            # approved or paid one.
+            row = session.scalar(
+                select(SceneTake)
+                .where(
+                    SceneTake.storyboard_id == storyboard_id,
+                    SceneTake.scene_number == scene_index,
+                    SceneTake.kind == "still",
+                    SceneTake.status.in_(("APPROVED", "PAID")),
+                )
+                .order_by(SceneTake.created_at.desc())
+                .limit(1)
+            )
+        if row is None or row.kind != "still" or row.status not in ("APPROVED", "PAID"):
+            logger.info(
+                "still_not_sent_back",
+                extra={
+                    "take_id": still_take_id,
+                    "why": "not an approved or paid still",
+                    "status": getattr(row, "status", None),
+                    "kind": getattr(row, "kind", None),
+                },
+            )
+            return False
+        if str(row.approved_by or "").lower() == "owner":
+            logger.info(
+                "still_not_sent_back", extra={"take_id": still_take_id, "why": "his approval"}
+            )
+            return False
+        row.status = "REJECTED"
+        row.failure_code = GATE_FAILURE_CODE
+        row.failure_detail = (
+            "Controlul clipului a găsit greșeala în imagine; imaginea se întoarce la poarta "
+            f"imaginilor și nu se mai animă. {reason}"
+        )[:TAKE_DETAIL_MAX]
+        row.updated_at = utc_now()
+        sync_take_quality(session, row, accepted=False, reason=reason[:400])
+        append_event(
+            session,
+            "media.still_sent_back",
+            "scene_take",
+            row.id,
+            1,
+            {
+                "storyboard_id": row.storyboard_id,
+                "scene_number": row.scene_number,
+                "failure_kind": "CLIP_QC",
+                "failure_code": GATE_FAILURE_CODE,
+                "reason": reason[:400],
+            },
+            correlation_id,
+        )
+    return True
+
+
 def _suggest_move(
     state: dict[str, Any],
     scene_index: int,
@@ -10285,8 +10365,20 @@ def _check_shot(
         )
     if final is None:
         blocks = " ".join(records[-1]["blocks_ro"]) if records else ""
+        status = "NEEDS_OWNER"
+        if outcome.status == "BACK_TO_STILL" and _send_still_back_for_clip(
+            engine,
+            storyboard_id,
+            index,
+            scene.get("still_take_id"),
+            f"{outcome.reason_ro} {blocks}".strip(),
+            correlation_id,
+        ):
+            # The picture is at fault and goes back to the stills gate, refused: the scene
+            # needs a new still before any motion, and nobody animates this one again.
+            status = "NEEDS_STILL"
         return {
-            "status": "NEEDS_OWNER",
+            "status": status,
             "take_id": records[-1]["take_id"] if records else take_id,
             "reason": f"{outcome.reason_ro} {blocks}".strip(),
             "clip_qc": clip_record,

@@ -746,6 +746,58 @@ def test_the_repair_loop_speaks_of_scenes_and_films_never_of_assets(engine):
         assert asset not in row["words_ro"] and report not in row["words_ro"]
 
 
+def test_a_still_sent_back_by_clip_qc_and_the_motions_hold_are_said_in_words(engine):
+    """2026-10-12, the cyclotron's scene 1: clip QC found the fault in the still the clip was
+    made from; the still goes back to the gate and the scene needs a new picture first. The
+    register says it as a sentence, never as a status word with ids."""
+    ids = studio(engine)
+    board = ids["board"]
+    still = str(uuid4())
+    record(
+        engine,
+        "media.still_sent_back",
+        ("scene_take", still),
+        {
+            "storyboard_id": board,
+            "scene_number": 1,
+            "failure_kind": "CLIP_QC",
+            "failure_code": "LOCAL.STILL_GATE",
+            "reason": "Scena 1: greșeala e în imaginea din care s-a făcut clipul (se vede o față).",
+        },
+    )
+    record(
+        engine,
+        "media.motion_needs_owner",
+        ("storyboard", board),
+        {
+            "severity": "WARNING",
+            "scene_number": 1,
+            "status": "NEEDS_STILL",
+            "reason": (
+                "Scena 1: greșeala e în imaginea din care s-a făcut clipul (se vede o față); "
+                "aceeași imagine nu se mai animă."
+            ),
+            "failure_kind": None,
+            "clip_qc": "FAILED",
+            "holds": True,
+        },
+    )
+    got = page(engine)
+    sent_back = got["media.still_sent_back"]
+    assert sent_back["words_ro"] == (
+        f"Imaginea scenei 1 din «{TITLE}» se întoarce la poarta imaginilor: controlul clipului "
+        "a găsit greșeala în ea; nu se mai animă."
+    )
+    assert sent_back["bubble_ro"] == "Scena 1: imagine nouă, apoi mișcare."
+    assert sent_back["actor"]["role"] == "VideoEditor"
+    hold = got["media.motion_needs_owner"]
+    assert hold["words_ro"].startswith(
+        f"Scena 1 din «{TITLE}» are nevoie de o imagine nouă înainte de mișcare: Scena 1: "
+        "greșeala e în imaginea"
+    )
+    assert still not in hold["words_ro"] and "NEEDS" not in hold["words_ro"]
+
+
 def test_a_refused_take_a_lost_one_and_a_sent_one_speak_for_the_editor(engine):
     ids = studio(engine)
     kael = ids["agents"]["VideoEditor"]

@@ -393,6 +393,46 @@ def test_the_serial_motion_moves_its_people_and_keeps_its_faces_and_closing():
     assert held.startswith(MOVE_SENTENCES["static"]) and SERIAL_LIFE_SENTENCE in held
 
 
+def test_the_serial_motion_carries_the_ending_frame_and_the_rewrites_feeling():
+    """2026-10-12, f06808c9 scene 3: the film's QC found the ending frame in profile, and no
+    rewrite could reach the clip's ending — the composer never read ``ending_frame``. It is
+    said right after the action, before the faces and the room, so it survives the word
+    budget; a name keeps its capital, anything else is lower-cased; an ending that names a
+    camera move of its own is left out (the clip has one); the Director's motion rewrite gives
+    its feeling as ``motion_emotion``, so the still's ``emotion`` stays the still's."""
+    ending = "Nadia's hazel eyes steady over the laid-flat pen, Sarah waiting at frame edge."
+    beat = {**BEAT, "ending_frame": ending, "in_frame": [{"name": "Nadia Accountant"}]}
+    prompt = compose_serial_motion(beat, {})
+    assert (
+        "The shot ends on Nadia's hazel eyes steady over the laid-flat pen, Sarah waiting at "
+        "frame edge." in prompt
+    ), prompt
+    assert prompt.index("The shot ends on") < prompt.index(SERIAL_FACES_SENTENCE)
+    assert prompt.index("then lays the pen flat") < prompt.index("The shot ends on")
+    assert [m for m, _ in camera_moves(prompt)] == ["tracking left"]
+    low, high = MOTION_WORDS
+    assert low <= len(prompt.split()) <= high
+    assert not _blocks(lint_motion_prompt(prompt, scene=4, model_id="LTX-2.5"))
+    # A chain word goes, the first letter follows the name rule, a preposition is kept.
+    plain = compose_serial_motion(
+        {**BEAT, "ending_frame": "Both faces turned to the viewer, then the pen laid flat."}, {}
+    )
+    assert "The shot ends on both faces turned to the viewer, the pen laid flat." in plain
+    with_preposition = compose_serial_motion(
+        {**BEAT, "ending_frame": "with her eyes on the pen"}, {}
+    )
+    assert "The shot ends with her eyes on the pen." in with_preposition
+    # An ending that names a camera move of its own is left out: the clip has exactly one.
+    moved = compose_serial_motion({**BEAT, "ending_frame": "a slow tilt down to the ledger"}, {})
+    assert "The shot ends" not in moved
+    assert [m for m, _ in camera_moves(moved)] == ["tracking left"]
+    # No ending frame: the prompt is what it was.
+    assert "The shot ends" not in compose_serial_motion(BEAT, {})
+    # The motion rewrite's feeling, read by the motion alone.
+    felt = compose_serial_motion({**BEAT, "motion_emotion": "Nadia calm, Sarah attentive"}, {})
+    assert "Nadia calm, Sarah attentive." in felt and "Nadia composed, Sarah curious." not in felt
+
+
 # ------------------------------------------------------- 4. the Video Editor's brief
 
 
