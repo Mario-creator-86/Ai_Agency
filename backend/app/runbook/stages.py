@@ -4797,9 +4797,17 @@ def _apply_repairs(
                 free_redo("card", proposal.scene_index, proposal.reason)
 
     # The paid redos, scene by scene: only through `redo_scene` (may_act inside, his rule,
-    # the budgets, the ceiling, the lease), and only within his limits.
-    per_scene = int(getattr(settings, "film_max_paid_redos_per_scene", 1))
-    per_film = int(getattr(settings, "film_max_paid_redos", 2))
+    # the budgets, the ceiling, the lease), and only within his limits — moved by what he
+    # allowed this film on its card (`decisions.producers.redo_cap`, 2026-10-12).
+    from app.decisions.producers.redo_cap import (  # noqa: PLC0415 - decisions import media
+        propose_redo_cap_card,
+        redo_allowance,
+    )
+
+    with Session(engine) as session:
+        allowed_more = redo_allowance(session, storyboard_id)
+    per_scene = int(getattr(settings, "film_max_paid_redos_per_scene", 1)) + allowed_more
+    per_film = int(getattr(settings, "film_max_paid_redos", 2)) + allowed_more
     paid: dict[int, list[str]] = {}
     for proposal in proposals:
         if (
@@ -5002,6 +5010,23 @@ def _apply_repairs(
                     correlation,
                 )
 
+    # His cap stopped what she decided and nothing else of her list could be done: the film
+    # is his question now (money), as a card — once per film, never a loop of her decisions
+    # (2026-10-12, 1c038a99: three REPAIRs in eleven seconds, each stopped by the cap).
+    if result["limited"] and not (result["bought"] or result["asked"] or result["applied"]):
+        with Session(engine) as session:
+            spent_rounds = _paid_redo_rounds(session, storyboard_id)
+        card_id = propose_redo_cap_card(
+            engine,
+            storyboard_id=storyboard_id,
+            report_id=str(reading.get("report_id") or ""),
+            media_asset_id=asset_id,
+            limited=list(result["limited"]),
+            rounds=spent_rounds,
+        )
+        if card_id:
+            result["card_id"] = card_id
+
     # The film rejoined from its takes where her list says so (a new still of a scene he chose
     # to animate locally, a shot bought earlier and approved since): 0 credits, once, and only
     # when a take bought for her list is approved (`director_qc.new_approved_take`: never the
@@ -5191,7 +5216,12 @@ def _repair_lines(result: dict[str, Any]) -> list[str]:
             f"- Scena {item['scene_index']}: nu se mai cumpără automat, s-a atins limita de "
             f"{count(int(item['per_scene']), 'refacere plătită', 'refaceri plătite')} pe scenă"
             f" și {count(int(item['per_film']), 'refacere plătită', 'refaceri plătite')} pe "
-            "film (STUDIO_FILM_MAX_PAID_REDOS_PER_SCENE, STUDIO_FILM_MAX_PAID_REDOS)."
+            "film (STUDIO_FILM_MAX_PAID_REDOS_PER_SCENE, STUDIO_FILM_MAX_PAID_REDOS)"
+            + (
+                "; ai un card: mai cumpăr, public așa cum e, sau închid."
+                if result.get("card_id")
+                else "."
+            )
         )
     for item in result.get("replaced_his") or []:
         what = PAID_REDO_WORDS.get(item["redo"], item["redo"])

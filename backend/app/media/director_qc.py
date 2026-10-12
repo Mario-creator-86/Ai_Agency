@@ -1506,13 +1506,19 @@ def record_decision(engine: Engine, payload: Mapping[str, Any], correlation: str
 
 
 def accept_film(
-    engine: Engine, reading: Mapping[str, Any], payload: Mapping[str, Any], correlation: str
+    engine: Engine,
+    reading: Mapping[str, Any],
+    payload: Mapping[str, Any],
+    correlation: str,
+    *,
+    decided_by: str = DIRECTOR,
 ) -> dict[str, Any]:
     """Her ACCEPT, carried out: a new PASSED report for the film with the original checks
     kept, a ``director_qc`` check listing every verdict (her overrules among them) and the
     original failures, written in one transaction with her decision. The score is the
     publishing gate's minimum unless the measured one was higher: the film passes by her
-    decision, not by a measurement that never said so."""
+    decision, not by a measurement that never said so. ``decided_by`` is the Owner's when his
+    card «Publică filmul așa cum e» carries it out (`decisions.producers.redo_cap`)."""
     from app.publishing.services import QC_MINIMUM_SCORE  # noqa: PLC0415 - it imports media
 
     report = reading.get("report") or {}
@@ -1525,7 +1531,7 @@ def accept_film(
         "passed": True,
         "status": "DECIDED",
         "decision": "ACCEPT",
-        "decided_by": DIRECTOR,
+        "decided_by": decided_by,
         "agent_name": payload.get("agent_name"),
         "run_id": payload.get("run_id"),
         "of_report": report_id,

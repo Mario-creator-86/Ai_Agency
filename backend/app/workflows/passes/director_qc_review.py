@@ -53,6 +53,24 @@ CAUSE_PREFIX = "director_qc:"
 PENDING_TASK_STATES = ("QUEUED", "RETRYING", "CLAIMED", "RUNNING")
 
 
+def _his_card_open(session: Any, storyboard_id: str) -> bool:
+    """Whether the film's paid-redo cap card still waits for the Owner."""
+    from sqlalchemy import select  # noqa: PLC0415
+
+    from app.decisions.models import OwnerDecision  # noqa: PLC0415
+    from app.decisions.producers.redo_cap import dedupe_key  # noqa: PLC0415
+
+    return (
+        session.scalar(
+            select(OwnerDecision.id).where(
+                OwnerDecision.dedupe_key == dedupe_key(storyboard_id),
+                OwnerDecision.status.in_(("PENDING", "WAITING_FOR_OWNER_ACTION")),
+            )
+        )
+        is not None
+    )
+
+
 @watchdog_pass("director_qc_review", order=160, on_error={"queued": []})
 def queue_director_reviews(context: WatchdogContext) -> dict[str, Any]:
     from sqlalchemy import select  # noqa: PLC0415
@@ -97,6 +115,10 @@ def queue_director_reviews(context: WatchdogContext) -> dict[str, Any]:
             board = session.get(Storyboard, storyboard_id)
             if board is None or board.status == "REJECTED":
                 continue  # closed (by her, or a viewing refused): nothing to decide
+            if _his_card_open(session, storyboard_id):
+                # His cap stopped her repair and his card asks what becomes of the film
+                # (`decisions.producers.redo_cap`): she is not asked again until he answers.
+                continue
             report = session.scalar(
                 select(QualityControlReport)
                 .where(
