@@ -4734,13 +4734,22 @@ SAME_PROMPT_NOTE = (
 
 
 def _still_newer_than_film(session: Session, storyboard_id: str, scene: int, asset_id: str) -> bool:
-    """Whether the scene's approved still is not the one the failed film (``asset_id``) was cut
-    from: a new picture already bought and approved, in no film yet. A motion whose words came
-    back unchanged is then right as it is — the clip is bought from the new still, and nothing
-    turns to the picture (2026-10-12, the cyclotron's scenes 4 and 5: their stills approved
-    the day before and never animated were retired by the «same prompt» escalation and bought
-    again, 269 credits for two scenes that then passed; the Director had written «alătur
-    imaginile aprobate, nu cumpăr nimic»)."""
+    """Whether the scene's approved still is newer than the picture the failed film
+    (``asset_id``) shows: a new picture already bought and approved, in no film yet. A motion
+    whose words came back unchanged is then right as it is — the clip is bought from the new
+    still, and nothing turns to the picture (2026-10-12, the cyclotron's scenes 4 and 5: their
+    stills approved the day before and never animated were retired by the «same prompt»
+    escalation and bought again, 269 credits for two scenes that then passed; the Director had
+    written «alătur imaginile aprobate, nu cumpăr nimic»).
+
+    The film's picture of a scene is the still its clip was made from, read by time: a still
+    approved AFTER the film's clip was made is new; one approved before it is the one the clip
+    animated. Never read from the render record's ``still_take``: after a still redo and its
+    motion, the record kept the still the scene had at its first assembly (1c038a99, scene 5,
+    16:29: the record said the original still while the clip in the film was made from the
+    «tower» the gate approved at 11:18, so the tower read as a new picture and its clip was
+    bought a third time, the same words, 27 credits). A scene the film holds no clip for (a
+    still animated locally) is read by the record's still."""
     from app.media import director_qc  # noqa: PLC0415 - media imports runbook
     from app.media.models import SceneTake, VideoRenderJob  # noqa: PLC0415
 
@@ -4751,12 +4760,10 @@ def _still_newer_than_film(session: Session, storyboard_id: str, scene: int, ass
         )
     )
     in_film = (
-        director_qc.film_takes(production).get(scene, {}).get("still")
-        if isinstance(production, dict)
-        else None
+        director_qc.film_takes(production).get(scene, {}) if isinstance(production, dict) else {}
     )
     approved = session.scalar(
-        select(SceneTake.id)
+        select(SceneTake)
         .where(
             SceneTake.storyboard_id == storyboard_id,
             SceneTake.scene_number == scene,
@@ -4766,7 +4773,12 @@ def _still_newer_than_film(session: Session, storyboard_id: str, scene: int, ass
         .order_by(SceneTake.created_at.desc())
         .limit(1)
     )
-    return approved is not None and str(approved) != in_film
+    if approved is None:
+        return False
+    clip = session.get(SceneTake, in_film.get("motion")) if in_film.get("motion") else None
+    if clip is not None:
+        return str(approved.created_at) > str(clip.created_at)
+    return str(approved.id) != in_film.get("still")
 
 
 def _correct_before_redo(

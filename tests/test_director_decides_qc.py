@@ -2385,18 +2385,42 @@ def test_a_motion_with_the_same_words_is_bought_from_a_new_still_without_turning
     while the Director had written «alătur imaginile aprobate, nu cumpăr nimic». A scene whose
     approved still is not the failed film's has a new picture already: the motion's unchanged
     words are right, and nothing turns to the picture."""
+    import time
+
     from app.runbook import stages
 
     film = failed_film(engine, local_move=False)
     with Session(engine) as session:
         # The film's own still is the approved one: the picture stays, the escalation stands.
         assert stages._still_newer_than_film(session, film["board"], 5, film["asset"]) is False
+        # Scene 3's clip was made after its still: the still is the film's picture.
+        assert stages._still_newer_than_film(session, film["board"], 3, film["asset"]) is False
     with Session(engine) as session, session.begin():
         _take(session, film["board"], 5, "still", None)  # a new still, approved, in no film
     with Session(engine) as session:
         assert stages._still_newer_than_film(session, film["board"], 5, film["asset"]) is True
         # A scene the film has no still for, with no approved still either: nothing new.
         assert stages._still_newer_than_film(session, film["board"], 9, film["asset"]) is False
+
+    # 1c038a99, scene 5 (2026-10-12, 16:29): the render record still named the original still
+    # while the clip in the film was made from the still the gate approved later — read by the
+    # record, that still was «new» and its clip was bought a third time. The picture a film
+    # shows is read by time against its clip, whatever the record's ``still_take`` says.
+    with Session(engine) as session, session.begin():
+        job = session.scalar(select(VideoRenderJob).where(VideoRenderJob.id == film["job"]))
+        production = dict(job.production_json)
+        for entry in production["scenes"]:
+            if entry["scene_index"] == 3:
+                stale = {"take_id": str(uuid4()), "status": "APPROVED", "reused": True}
+                entry["still_take"] = stale
+        job.production_json = production
+    with Session(engine) as session:
+        assert stages._still_newer_than_film(session, film["board"], 3, film["asset"]) is False
+    time.sleep(0.01)
+    with Session(engine) as session, session.begin():
+        _take(session, film["board"], 3, "still", None)  # approved after the film's clip
+    with Session(engine) as session:
+        assert stages._still_newer_than_film(session, film["board"], 3, film["asset"]) is True
 
 
 def test_a_candidate_written_into_the_replaced_stills_row_is_a_new_take(engine):
