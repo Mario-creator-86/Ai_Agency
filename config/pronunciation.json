@@ -60,6 +60,48 @@
       "string_to_replace": "NEOWISE",
       "alias": "Neo-wise",
       "why": "Comet NEOWISE, in two verified scripts not yet made: one word, not spelled."
+    },
+    {
+      "type": "phoneme",
+      "string_to_replace": "Kael",
+      "phoneme": "keɪl",
+      "alphabet": "ipa",
+      "why": "The serial's video editor, said the same way by every voice (the Owner's choice, 2026-10-12: «Keil»)."
+    },
+    {
+      "type": "phoneme",
+      "string_to_replace": "Lyra",
+      "phoneme": "ˈlaɪɹə",
+      "alphabet": "ipa",
+      "why": "The voice artist (the Owner's choice, 2026-10-12: «Lai-ra»)."
+    },
+    {
+      "type": "phoneme",
+      "string_to_replace": "Aris",
+      "phoneme": "ˈɑːɹɪs",
+      "alphabet": "ipa",
+      "why": "Dr. Aris, the researcher (the Owner's choice, 2026-10-12: «A-ris»)."
+    },
+    {
+      "type": "phoneme",
+      "string_to_replace": "Nadia",
+      "phoneme": "ˈnɑːdiə",
+      "alphabet": "ipa",
+      "why": "The accountant (the Owner's choice, 2026-10-12: «Na-dia»)."
+    },
+    {
+      "type": "phoneme",
+      "string_to_replace": "Vera",
+      "phoneme": "ˈvɪɹə",
+      "alphabet": "ipa",
+      "why": "The publisher (the Owner's choice, 2026-10-12: «Vi-ra»)."
+    },
+    {
+      "type": "phoneme",
+      "string_to_replace": "Elena",
+      "phoneme": "ɛˈleɪnə",
+      "alphabet": "ipa",
+      "why": "The fact checker (the Owner's choice, 2026-10-12: «E-lei-na»)."
     }
   ]
 }
