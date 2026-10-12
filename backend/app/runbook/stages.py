@@ -2400,6 +2400,12 @@ def _sheet_letter(
         # A prompt/shot-plan refusal is the studio's job, never an Owner questionnaire.
         report = submit_sheet_issues(engine, sheet)
         return report.get("message_id")
+    if status in LADDER_REFUSALS and _ladder_scenes(engine, storyboard_id, film):
+        # Quality control's refusal of a scene is the Director's to answer — her ladder in
+        # the walk, the `ladder_retry` pass after it — never a letter to the Owner
+        # (2026-10-12, 08:10, «The Zero Script Club» scene 3 after two re-rolls: «Foaia de
+        # filmare … așteaptă decizia ta» reached him while the rung was composing again).
+        return None
     key = {
         "storyboard_id": storyboard_id,
         "sheet_hash": sheet.get("sheet_hash"),

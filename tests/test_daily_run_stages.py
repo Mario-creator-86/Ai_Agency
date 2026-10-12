@@ -2925,3 +2925,55 @@ def test_the_letter_is_written_even_when_the_diagnosis_model_fails(
     assert letter.intent == "STATUS"
     assert "a decis singură" in letter.body_text
     assert _owner_letters(engine, "owner_qc_failed") == []
+
+
+def test_a_quality_refusal_the_ladder_answers_writes_the_owner_no_sheet_letter(engine, tmp_path):
+    """2026-10-12, 08:10 («The Zero Script Club», scene 3 after two re-rolls): «Foaia de
+    filmare … așteaptă decizia ta» reached the Owner while the Director's rung was composing
+    the scene again. A walk stopped on quality control's refusal of a scene — the ladder's
+    refusals, the `ladder_retry` pass after it — is hers; the sheet's letter is for what is
+    his (a balance, a budget, his look at the hero, his answer)."""
+    from app.media.models import SceneTake
+    from app.runbook import stages
+    from app.services import utc_now
+
+    _production(engine)
+    board = _bottom_of_the_staircase(engine, tmp_path)
+    now = utc_now()
+    with Session(engine) as session, session.begin():
+        session.add(
+            SceneTake(
+                id=str(uuid4()),
+                storyboard_id=board,
+                scene_number=1,
+                kind="still",
+                prompt_hash=uuid4().hex,
+                model_id="Qwen-Image-2512",
+                resolution="1530:2720",
+                status="REJECTED",
+                failure_code="LOCAL.STILL_GATE",
+                failure_detail="două panouri suprapuse",
+                path=None,
+                sha256=None,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+    film = {
+        "status": "WAITING",
+        "step": "stills",
+        "refusal": "NEEDS_OWNER",
+        "scenes": [1],
+        "reason": "Scena 1: după 2 refaceri imaginea tot nu trece.",
+        "sheet": {"title": "Un film", "sheet_hash": "a" * 64, "steps": {}},
+        "approval_id": None,
+    }
+
+    assert stages._sheet_letter(engine, board, film, None, str(uuid4())) is None
+    assert _owner_letters(engine, "owner_shooting_sheet") == []
+
+    # What is his is still a letter: the balance.
+    his = {**film, "refusal": "LOW_BALANCE", "scenes": []}
+    stages._sheet_letter(engine, board, his, None, str(uuid4()))
+    (letter,) = _owner_letters(engine, "owner_shooting_sheet")
+    assert "alimentarea contului" in letter.subject
