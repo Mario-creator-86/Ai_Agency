@@ -77,6 +77,8 @@ def _cost_view(cost: Mapping[str, Any] | None) -> dict[str, Any]:
         }
     return {
         "estimated_usd": usd_ro(int(cost["estimated_usd_micros"])),
+        #: the studio's own estimate no invoice covers yet (a covered one is `reconciled`)
+        "estimated_micros_open": int(cost["estimated_usd_micros"]),
         "reconciled_usd": usd_ro(int(cost.get("reconciled_usd_micros") or 0)),
         "reconciled_usd_micros": int(cost.get("reconciled_usd_micros") or 0),
         "billed_usd": usd_ro(int(cost["billed_usd_micros"])),
@@ -166,47 +168,74 @@ def film_report(engine: Any, publication_ids: list[str] | None = None) -> dict[s
     return {"films": films, "agent_cost": AGENT_COST_RO, "measured_at": utc_now()}
 
 
+def usd2(micros: int) -> str:
+    """A sum as the Owner reads it in a letter: two decimals («4,58»), never the books' six."""
+    if 0 < micros < 5_000:
+        return "sub 0,01"
+    return decimal(micros / 1_000_000, 2)
+
+
 def report_words(report: Mapping[str, Any]) -> str:
-    """The report as the Owner reads it, one sentence per film."""
+    """The report as the Owner reads it: the total, one short line per film, and once, if it
+    applies, how much of it has no invoice yet.
+
+    2026-10-12, the Owner over «4,584453 USD în cărți (4,584453 estimat, 0 facturat); a adus 0
+    vizualizări, 0,0 minute vizionate, CTR 0,0 %, 0 abonați câștigați» repeated for every film
+    and «Costul agenților pe film: neatribuit (rulările nu poartă încă filmul)»: «greu de
+    înțeles! Trebuie să fie mai succint, să îmi spună exact. Nu trebuie să conțină cod, nu
+    trebuie să se repete!» So: two decimals, no book-keeping words, a returns figure only when
+    there is one, the unbilled share said once, and no line about what cannot be counted."""
     films = list(report.get("films") or [])
     if not films:
         return "Niciun film publicat încă: nu este nimic de socotit."
-    lines: list[str] = []
+
+    def own(film: Mapping[str, Any]) -> int:
+        return int(film["cost"].get("total_usd_micros") or 0)
+
+    def redone(film: Mapping[str, Any]) -> int:
+        return sum(int(s.get("total_usd_micros") or 0) for s in film["siblings"] or [])
+
+    total = sum(own(film) + redone(film) for film in films)
+    measured = [film["returns"] for film in films if film["returns"]]
+    views = sum(int(r["views"]) for r in measured)
+    head = f"{count(len(films), 'film publicat a', 'filme publicate au')} costat {usd2(total)} USD"
+    one = len(films) == 1
+    head += (
+        f" și {'a' if one else 'au'} adus {count(views, 'vizualizare', 'vizualizări')}."
+        if measured
+        else f"; încă nu {'este măsurat' if one else 'sunt măsurate'}."
+    )
+    lines = [head]
     for film in films:
-        cost = film["cost"]
-        spent = (
-            f"{cost['total_usd']} USD în cărți ({cost['estimated_usd']} estimat, "
-            + (
-                f"{cost['reconciled_usd']} estimat și acoperit de factură, "
-                if cost.get("reconciled_usd_micros")
-                else ""
-            )
-            + f"{cost['billed_usd']} facturat)"
-            if cost["rows"]
-            else "niciun cost în cărți"
-        )
+        paid = own(film) + redone(film)
+        spent = f"{usd2(paid)} USD" if paid or film["cost"]["rows"] else "fără cost"
+        if redone(film):
+            spent += f", din care {usd2(redone(film))} pe încercări refăcute"
         returns = film["returns"]
-        got = (
-            f"{count(returns['views'], 'vizualizare', 'vizualizări')}, "
-            f"{decimal(returns['watch_time_seconds'] / 60, 1)} minute vizionate, "
-            f"CTR {decimal(returns['ctr_percentage'], 1)} %, "
-            f"{count(returns['subscribers_gained'], 'abonat câștigat', 'abonați câștigați')}"
-            if returns
-            else "încă nemăsurat"
-        )
-        sibling = ""
-        if film["siblings"]:
-            spent_before = sum(int(s.get("total_usd_micros") or 0) for s in film["siblings"])
-            sibling = (
-                f"; pe același subiect, {count(len(film['siblings']), 'altă placă', 'alte plăci')}"
-                f" au costat {usd_ro(spent_before)} USD"
+        if returns is None:
+            got = "încă nemăsurat"
+        elif not returns["views"]:
+            got = "0 vizualizări"
+        else:
+            got = (
+                f"{count(returns['views'], 'vizualizare', 'vizualizări')}, "
+                f"{decimal(returns['watch_time_seconds'] / 60, 1)} minute vizionate"
             )
+            if returns["subscribers_gained"]:
+                got += f", {count(returns['subscribers_gained'], 'abonat nou', 'abonați noi')}"
+        lines.append(f"• «{film['title']}»: {spent}; {got}.")
+    unbilled = sum(
+        int(view.get("estimated_micros_open") or 0)
+        for film in films
+        for view in [film["cost"], *(film["siblings"] or [])]
+    )
+    if unbilled:
         lines.append(
-            f"«{film['title']}» ({str(film['published_at'] or '')[:10]}): {spent}{sibling}; "
-            f"a adus {got}."
+            "Toată suma este estimarea studioului; nicio factură nu a sosit încă."
+            if unbilled >= total
+            else f"Din total, {usd2(unbilled)} USD sunt estimări fără factură încă."
         )
-    lines.append(f"Costul agenților pe film: {AGENT_COST_RO} (rulările nu poartă încă filmul).")
-    return " ".join(lines)
+    return "\n".join(lines)
 
 
 # ----------------------------------------------------------------------------- detect

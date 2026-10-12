@@ -960,10 +960,12 @@ def test_a_review_is_closed_with_the_film_cost_report_and_no_letter_to_nadia(
     with Session(engine) as session:
         closed = session.get(DirectorDecision, reviewed)
         assert closed.state == "REVIEWED"
-        assert "The Higgs Boson" in closed.outcome and "4,641207" in closed.outcome
-        assert "1,62" in closed.outcome, "the rejected board of the same topic is beside it"
+        # 4,641207 on its board and 1,62 on the rejected board of the same topic, in two
+        # decimals (2026-10-12, the Owner: «să îmi spună exact … nu trebuie să conțină cod»)
+        assert "The Higgs Boson" in closed.outcome and "6,26 USD" in closed.outcome
+        assert "din care 1,62 pe încercări refăcute" in closed.outcome
         assert "120 de vizualizări" in closed.outcome or "120 vizualizări" in closed.outcome
-        assert "neatribuit" in closed.outcome
+        assert "4,641207" not in closed.outcome and "neatribuit" not in closed.outcome
         letter = session.get(AgentMessage, handoff)
         assert letter.status == "RESOLVED" and "The Higgs Boson" in letter.resolution
         (own,) = session.scalars(

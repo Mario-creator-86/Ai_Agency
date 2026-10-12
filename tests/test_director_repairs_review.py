@@ -759,7 +759,67 @@ def test_a_films_estimate_covered_by_an_invoice_is_said_so(engine, studio, setti
     assert cost["reconciled_usd_micros"] == 9 * 509_383
     assert cost["estimated_usd_micros"] == 56_760
     assert cost["total_usd_micros"] == 9 * 509_383 + 56_760, "no double count"
-    assert "acoperit de factură" in report_words(film_report(engine))
+    words = report_words(film_report(engine))
+    # the share no invoice covers yet (this board's 0,06 and the earlier attempt's 1,62), said
+    # once, in two decimals; the covered part is simply part of the total
+    assert words.startswith("1 film publicat a costat 6,26 USD și a adus 120 de vizualizări.")
+    assert "Din total, 1,68 USD sunt estimări fără factură încă." in words
+
+
+def test_the_cost_letter_is_short_exact_and_says_nothing_twice():
+    """2026-10-12, the Owner over the six-decimal, repeated, book-keeping letter: «greu de
+    înțeles! Trebuie să fie mai succint, să îmi spună exact. Nu trebuie să conțină cod, nu
+    trebuie să se repete!»"""
+    from app.agents.repairs.film_cost import report_words
+
+    def film(title, micros, returns, siblings=()):
+        cost = {
+            "rows": 1 if micros else 0,
+            "total_usd_micros": micros,
+            "estimated_micros_open": micros,
+        }
+        return {"title": title, "cost": cost, "siblings": list(siblings), "returns": returns}
+
+    def got(views, seconds=0.0, subscribers=0):
+        return {"views": views, "watch_time_seconds": seconds, "subscribers_gained": subscribers}
+
+    words = report_words(
+        {
+            "films": [
+                film(
+                    "LHC",
+                    0,
+                    got(0),
+                    [{"total_usd_micros": 1_620_000, "estimated_micros_open": 1_620_000}],
+                ),
+                film("ATLAS", 316_000, got(1, 12.0)),
+                film("Mass", 4_584_453, got(0)),
+                film("Heavy", 7_573_920, None),
+            ]
+        }
+    )
+    assert (
+        words.splitlines()[0] == "4 filme publicate au costat 14,09 USD și au adus 1 vizualizare."
+    )
+    assert "• «Mass»: 4,58 USD; 0 vizualizări." in words
+    assert "• «LHC»: 1,62 USD, din care 1,62 pe încercări refăcute; 0 vizualizări." in words
+    assert "• «Heavy»: 7,57 USD; încă nemăsurat." in words
+    assert (
+        words.splitlines()[-1]
+        == "Toată suma este estimarea studioului; nicio factură nu a sosit încă."
+    )
+    for internal in (
+        "4,584453",
+        "în cărți",
+        "estimat,",
+        "facturat)",
+        "neatribuit",
+        "rulările",
+        "CTR",
+        "0,0 minute",
+    ):
+        assert internal not in words, internal
+    assert words.count("estimare") == 1, "the unbilled share is said once"
 
 
 def film_cost_of(engine, storyboard_id: str) -> dict:
