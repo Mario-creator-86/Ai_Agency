@@ -1272,14 +1272,23 @@ def test_her_second_look_at_a_refusal_says_the_scene_the_film_and_what_follows(e
     dacă au picat corect sau nu și dacă trebuie refăcute». Her second look is said with its
     scene and its film: a wrong refusal is accepted and nothing is bought, a right one is
     redone, a small defect she confirms is accepted, a look she could not take leaves the
-    refusal standing. Her run is said with its scene while she looks."""
+    refusal standing. Her run is said with its scene while she looks.
+
+    Review of 68fa0b4, 2026-10-12: a defect she judged real but minor was said as «refuzul
+    controlului e greșit»; only a refusal of a defect not in the picture (severity none) is a
+    wrong one. A look she could not take says its short why once, not her whole reason."""
     ids = studio(engine)
     sarah = ids["agents"]["Director"]
+    unseen_reason = (
+        "Directoarea nu s-a putut uita la imaginea: niciun model care vede. Refuzul controlului "
+        "rămâne."
+    )
     looks = {
-        "accepted": {"kind": "still", "verdict": "OVERTURNED", "severity": "minor", "redo": False},
+        "accepted": {"kind": "still", "verdict": "OVERTURNED", "severity": "none", "redo": False},
+        "minor": {"kind": "still", "verdict": "OVERTURNED", "severity": "minor", "redo": False},
         "redone": {"kind": "shot", "verdict": "CONFIRMED", "severity": "serious", "redo": True},
         "small": {"kind": "film_scene", "verdict": "CONFIRMED", "severity": "minor", "redo": False},
-        "unseen": {"kind": "still", "verdict": "UNAVAILABLE", "severity": "none", "redo": False},
+        "unseen": {"kind": "still", "verdict": "UNAVAILABLE", "severity": "none", "redo": True},
     }
     said: dict[str, dict[str, Any]] = {}
     for scene, (label, look) in enumerate(looks.items(), start=1):
@@ -1291,7 +1300,7 @@ def test_her_second_look_at_a_refusal_says_the_scene_the_film_and_what_follows(e
             "scene_index": scene,
             "take_ids": [str(uuid4())],
             "refusal": ["lettering on the ledger"],
-            "reason_ro": "Registrul e gol" if label != "unseen" else "niciun model care vede",
+            "reason_ro": "Registrul e gol" if label != "unseen" else unseen_reason,
             "run_id": run_id,
             **look,
         }
@@ -1319,28 +1328,33 @@ def test_her_second_look_at_a_refusal_says_the_scene_the_film_and_what_follows(e
     assert by_scene[1]["bubble_ro"] == f"M-am uitat la scena 1 din «{TITLE}»: se acceptă."
     assert by_scene[1]["actor"]["agent_id"] == sarah["id"]
     assert by_scene[2]["words_ro"] == (
-        f"{name} s-a uitat la clipul scenei 2 din «{TITLE}»: refuzul e corect — se reface "
+        f"{name} s-a uitat la imaginea scenei 2 din «{TITLE}»: defectul e real, dar mic — se "
+        "acceptă, nu se reface (Registrul e gol)."
+    )
+    assert "refuzul controlului e greșit" not in by_scene[2]["words_ro"]
+    assert by_scene[3]["words_ro"] == (
+        f"{name} s-a uitat la clipul scenei 3 din «{TITLE}»: refuzul e corect — se reface "
         "(Registrul e gol)."
     )
-    assert by_scene[2]["bubble_ro"] == f"M-am uitat la scena 2 din «{TITLE}»: se reface."
-    assert by_scene[3]["words_ro"] == (
-        f"{name} s-a uitat la cadrele scenei 3 din «{TITLE}»: refuzul e corect, dar defectul e "
-        "mic — se acceptă, nu se reface (Registrul e gol)."
-    )
+    assert by_scene[3]["bubble_ro"] == f"M-am uitat la scena 3 din «{TITLE}»: se reface."
     assert by_scene[4]["words_ro"] == (
-        f"{name} nu s-a putut uita la imaginea scenei 4 din «{TITLE}»: refuzul controlului "
+        f"{name} s-a uitat la cadrele scenei 4 din «{TITLE}»: defectul e real, dar mic — se "
+        "acceptă, nu se reface (Registrul e gol)."
+    )
+    assert by_scene[5]["words_ro"] == (
+        f"{name} nu s-a putut uita la imaginea scenei 5 din «{TITLE}»: refuzul controlului "
         "rămâne (niciun model care vede)."
     )
-    assert "bubble_ro" not in by_scene[4]
+    assert "bubble_ro" not in by_scene[5]
     for event in events:
         assert len(event.get("bubble_ro") or "") <= 64
     # Her run, placed by the event that names it.
     got = by_run(engine)
     working = got[("agent.state_changed", said["redone"]["run"])]
     assert working["words_ro"] == (
-        f"{name} lucrează la a doua privire asupra scenei 2 din «{TITLE}»."
+        f"{name} lucrează la a doua privire asupra scenei 3 din «{TITLE}»."
     )
-    assert working["bubble_ro"].startswith("Lucrez la a doua privire asupra scenei 2 din «The")
+    assert working["bubble_ro"].startswith("Lucrez la a doua privire asupra scenei 3 din «The")
     assert len(working["bubble_ro"]) <= 64
 
 
@@ -1424,3 +1438,71 @@ def test_a_check_names_its_scene_a_long_title_is_shortened_and_an_unplaced_run_k
     assert got[("agent.state_changed", unplaced)]["bubble_ro"] == (
         "Lucrez la rescrierea promptului unei scene."
     )
+
+
+def test_a_clip_her_look_kept_reads_as_kept_never_as_refused(engine):
+    """Review of 68fa0b4, 2026-10-12: a clip quality control refused and her second look kept
+    (``accepted_by`` director_look, the take approved by her look) was said «nu a trecut
+    controlul». It is the film's clip: said as kept, with her reason."""
+    ids = studio(engine)
+    look = {
+        "verdict": "OVERTURNED",
+        "severity": "minor",
+        "redo": False,
+        "reason_ro": "Mâna se mișcă puțin, dar fața rămâne aceeași.",
+        "run_id": str(uuid4()),
+    }
+    record(
+        engine,
+        "media.clip_qc_checked",
+        ("scene_take", str(uuid4())),
+        {
+            "storyboard_id": ids["board"],
+            "scene_number": 3,
+            "take_id": str(uuid4()),
+            "attempt": 1,
+            "scene": 3,
+            "passed": False,
+            "verdict": "PASSED",
+            "blocks_ro": ["Fața se deformează în secunda a doua."],
+            "accepted_by": "director_look",
+            "director_look": look,
+        },
+    )
+    clip = page(engine)["media.clip_qc_checked"]
+    assert clip["words_ro"] == (
+        f"Clipul scenei 3 din «{TITLE}» a fost păstrat de Directoare: controlul l-a refuzat, dar "
+        "defectul e mic — se acceptă (Mâna se mișcă puțin, dar fața rămâne aceeași)."
+    )
+    assert "nu a trecut" not in clip["words_ro"]
+    assert clip["bubble_ro"] == "Clipul scenei 3 păstrat ✓"
+
+
+def test_her_reading_of_a_new_lesson_says_what_it_corrects(engine):
+    """A new prompt lesson read beside the live ones (`prompt_agent.LESSON_READ_EVENT`): by
+    her, what it corrects (retired) and repeats; by the words when she could not read it."""
+    ids = studio(engine)
+    sarah = ids["agents"]["Director"]
+    record(
+        engine,
+        "media.prompt_lesson_read",
+        ("memory_record", str(uuid4())),
+        {
+            "lesson": "Ask for a slow drift while the subject moves.",
+            "scope": "serial",
+            "read_by": "director",
+            "agent_id": sarah["id"],
+            "run_id": str(uuid4()),
+            "corrects": ["Keep the camera static."],
+            "repeats": [],
+            "absorbed_into": None,
+            "unavailable": None,
+        },
+    )
+    read = page(engine)["media.prompt_lesson_read"]
+    assert read["actor"]["agent_id"] == sarah["id"]
+    assert read["words_ro"] == (
+        f"{sarah['name']} a citit lecția nouă «Ask for a slow drift while the subject moves»: "
+        "corectează «Keep the camera static» (retrasă)."
+    )
+    assert read["bubble_ro"] == "Am citit o lecție nouă."

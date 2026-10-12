@@ -923,6 +923,10 @@ def test_20_the_directors_own_approval_still_decides(engine, studio, tmp_path):
                 "story": "Nothing a viewer learns.",
                 "reasons": ["the payoff repeats the hook"],
                 "notes_for": {"VideoEditor": "the flat is lit differently in every shot"},
+                # Only her general rule is a lesson, never her note on this film (review of
+                # 68fa0b4, 2026-10-12).
+                "lesson": "A room lit differently in every shot reads as many rooms; name one "
+                "light for it and keep it.",
             }
         ),
     )
@@ -930,8 +934,10 @@ def test_20_the_directors_own_approval_still_decides(engine, studio, tmp_path):
     assert verdict["verdict"] == "REJECT"
     with Session(engine) as session:
         assert session.get(Storyboard, board["id"]).status == "REJECTED"
-        # And her note about the pictures became a lesson for the next prompt.
-        assert any("lit differently" in lesson for lesson in prompt_lessons(session))
+        # And her lesson about the pictures became a lesson for the next prompt.
+        given = prompt_lessons(session)
+        assert any("lit differently" in lesson for lesson in given)
+        assert not any("the flat is lit" in lesson for lesson in given)
 
 
 def test_21_the_page_and_the_backend_agree_on_what_a_film_is(engine, client, headers, studio):

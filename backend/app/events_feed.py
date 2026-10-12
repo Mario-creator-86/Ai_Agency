@@ -36,6 +36,11 @@ the brief that names the run and the events of its correlation (`_run_places`).
 schema accepts it and nothing asked her again, and it never promises a purchase; her second
 look at a refusal of quality control (`media.director_second_look`) says whether the refusal
 was right and whether the scene is redone, with its scene and its film.
+
+Review of 68fa0b4 (2026-10-12): her second look is said by severity — a defect not in the
+picture is a wrong refusal, a real but minor one is «real, dar mic» — a clip her look kept
+reads as kept, and her reading of a new prompt lesson (`media.prompt_lesson_read`) says what
+it corrects.
 """
 
 from __future__ import annotations
@@ -164,6 +169,7 @@ _TASK_RO: dict[str, str] = {
     "scene_prompt_rewrite": "rescrierea promptului unei scene",
     "director_rewrite_review": "verificarea unei rescrieri",
     "director_second_look": "a doua privire asupra unui refuz al controlului",
+    "prompt_lesson_reading": "citirea unei lecții noi despre prompturi",
     "sheet_repair_assignment": "repartizarea remedierii foii",
     "sound_design": "planul de sunet",
     "write_episode": "episodul serialului",
@@ -596,20 +602,27 @@ def _second_look_words(
     scene = _scene_number(payload.get("scene_index"))
     what = _LOOK_KIND_RO.get(str(payload.get("kind") or ""), "imaginea")
     of_scene = f" scenei {scene}" if scene else ""
-    why = _short(str(payload.get("reason_ro") or "").rstrip("."), 110)
-    because = f" ({why})" if why else ""
     verdict = str(payload.get("verdict") or "").upper()
     redo = bool(payload.get("redo"))
+    severity = str(payload.get("severity") or "").lower()
     if verdict not in ("CONFIRMED", "OVERTURNED"):
+        # Only the short why: her look's reason already says «nu s-a putut uita … Refuzul
+        # controlului rămâne», which the sentence says once (review of 68fa0b4, 2026-10-12).
+        why = _short(_unavailable_why(payload.get("reason_ro")), 110)
         head = _with_film(f"{name} nu s-a putut uita la {what}{of_scene}", " din ", title)
-        return _end(f"{head}: refuzul controlului rămâne{because}"), None
-    if verdict == "OVERTURNED" and not redo:
-        said, tail = "refuzul controlului e greșit — se acceptă, nu se reface", "se acceptă"
-    elif verdict == "CONFIRMED" and redo:
-        said, tail = "refuzul e corect — se reface", "se reface"
-    elif verdict == "CONFIRMED":
-        said = "refuzul e corect, dar defectul e mic — se acceptă, nu se reface"
+        return _end(f"{head}: refuzul controlului rămâne" + (f" ({why})" if why else "")), None
+    why = _short(str(payload.get("reason_ro") or "").rstrip("."), 110)
+    because = f" ({why})" if why else ""
+    # By severity (review of 68fa0b4, 2026-10-12): a defect she saw and judged small is real,
+    # and «refuzul controlului e greșit» said of it was untrue; only a refusal of a defect that
+    # is not in the picture (severity none) is a wrong refusal.
+    if not redo and (severity == "minor" or verdict == "CONFIRMED"):
+        said = "defectul e real, dar mic — se acceptă, nu se reface"
         tail = "defect mic, se acceptă"
+    elif not redo:
+        said, tail = "refuzul controlului e greșit — se acceptă, nu se reface", "se acceptă"
+    elif verdict == "CONFIRMED":
+        said, tail = "refuzul e corect — se reface", "se reface"
     else:
         said, tail = "refuzul controlului e greșit, dar scena tot se reface", "se reface"
     head = _with_film(f"{name} s-a uitat la {what}{of_scene}", " din ", title)
@@ -618,6 +631,68 @@ def _second_look_words(
         _end(f"{head}: {said}{because}"),
         _with_film(bubble_head, " din ", title, f": {tail}.", BUBBLE_MAX),
     )
+
+
+#: Her look's reason when she could not look (`second_look._UNAVAILABLE_RO`): the head and the
+#: tail the register's own sentence already says.
+_UNAVAILABLE_REASON = re.compile(
+    r"^Directoarea nu s-a putut uita la [^:]+:\s*(?P<why>.*?)\.?\s*"
+    r"(?:Refuzul controlului rămâne\.?)?$"
+)
+
+
+def _unavailable_why(reason: Any) -> str:
+    """The short why of a look she could not take, without the words around it."""
+    said = " ".join(str(reason or "").split())
+    found = _UNAVAILABLE_REASON.match(said)
+    if found:
+        said = found.group("why")
+    return said.removesuffix("Refuzul controlului rămâne.").strip().rstrip(".")
+
+
+def _kept_clip_words(payload: Mapping[str, Any], where: str, film: str) -> tuple[str, str | None]:
+    """A clip quality control refused and the Director's look kept (``accepted_by``
+    director_look, `fix_check.DIRECTOR_LOOK_APPROVER`): it is the film's clip, said as kept —
+    never «nu a trecut controlul» (review of 68fa0b4, 2026-10-12)."""
+    look = payload.get("director_look") if isinstance(payload.get("director_look"), Mapping) else {}
+    why = _short(str(look.get("reason_ro") or "").rstrip("."), 110)
+    if str(look.get("severity") or "").lower() == "none":
+        judged = "refuzul controlului era greșit"
+    else:
+        judged = "controlul l-a refuzat, dar defectul e mic"
+    said = f"Clipul{where}{film} a fost păstrat de Directoare: {judged} — se acceptă"
+    return _end(said + (f" ({why})" if why else "")), f"Clipul{where} păstrat ✓"
+
+
+def _lesson_read_words(payload: Mapping[str, Any], name: str) -> tuple[str, str | None]:
+    """A new prompt lesson read beside the live ones (`prompt_agent.LESSON_READ_EVENT`): by the
+    Director, who decided which lessons it corrects (retired) or repeats (kept once), or by the
+    words when she could not read it (review of 68fa0b4, 2026-10-12)."""
+    lesson = _short(str(payload.get("lesson") or "").rstrip("."), 90)
+    corrects = [
+        f"«{_short(str(item).rstrip('.'), 60)}»" for item in payload.get("corrects") or [] if item
+    ]
+    repeats = [
+        f"«{_short(str(item).rstrip('.'), 60)}»" for item in payload.get("repeats") or [] if item
+    ]
+    absorbed = _short(str(payload.get("absorbed_into") or "").rstrip("."), 60)
+    parts: list[str] = []
+    if corrects:
+        retired = "retrasă" if len(corrects) == 1 else "retrase"
+        parts.append(f"corectează {_listed(corrects, 2)} ({retired})")
+    if repeats:
+        parts.append(f"o repetă pe {_listed(repeats, 2)} (păstrate ca una)")
+    if absorbed:
+        parts.append(f"o spune deja «{absorbed}», cu care e una acum")
+    what = "; ".join(parts) or "nu corectează și nu repetă nicio lecție știută"
+    if str(payload.get("read_by") or "") == "director":
+        return _end(f"{name} a citit lecția nouă «{lesson}»: {what}"), (
+            "Am citit o lecție nouă." if parts else None
+        )
+    why = _short(str(payload.get("unavailable") or "").rstrip("."), 80)
+    head = f"Lecția nouă «{lesson}» a fost comparată după cuvinte"
+    head += f" (Directoarea n-a putut-o citi: {why})" if why else ""
+    return _end(f"{head}: {what}"), None
 
 
 def _rewrite_words(
@@ -1179,9 +1254,13 @@ def _words(
         return _brief_words(payload, name, film, editor)
     if kind == _SECOND_LOOK_EVENT:
         return _second_look_words(payload, name, title)
+    if kind == "media.prompt_lesson_read":
+        return _lesson_read_words(payload, name)
     if kind == "media.clip_qc_checked":
         attempt = payload.get("attempt")
         again = f" la încercarea {attempt}" if isinstance(attempt, int) and attempt > 1 else ""
+        if str(payload.get("accepted_by") or "") == "director_look":
+            return _kept_clip_words(payload, where, film)
         if payload.get("passed"):
             return (
                 f"Clipul{where}{film} a trecut controlul{again}.",

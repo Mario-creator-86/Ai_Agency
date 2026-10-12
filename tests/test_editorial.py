@@ -21,7 +21,6 @@ from app.agents.editorial import (
     frames_for,
     gather_facts,
     latest_editorial,
-    picture_lesson,
 )
 from app.agents.models import Agent, AgentMessage, MemoryRecord, ModelRecord, Role
 from app.agents.services import seed_initial_workforce
@@ -342,43 +341,38 @@ def test_a_rejection_writes_to_each_department_named_and_keeps_the_film_out(engi
 SPECTRUM = "A spectrum drawn as a rainbow reads as decoration; show dark absorption lines."
 
 
-@pytest.mark.parametrize(
-    ("note", "lesson"),
-    [
-        (f"{SPECTRUM} The mirror is not the story.", SPECTRUM),
-        ("Scene 4's ledger shows digits. Ask for blank pages.", None),
-        ("The rocky world with water is lit differently in every shot.", None),
-        ("x" * 401, None),
-        ("   ", None),
-        (None, None),
-    ],
-)
-def test_only_the_rule_in_her_picture_note_is_a_lesson(note, lesson):
-    """Review of a9f84ea, 2026-10-12: her note to the Video Editor was stored bare — one
-    film's «scene 4» became a rule for every film, a note over 400 characters was refused
-    whole. Its first sentence is the lesson, when it is a rule: no scene by its number, not
-    the film by its title, at most 400 characters."""
-    assert picture_lesson(note, "A rocky world with water") == lesson
+def test_her_verdict_carries_a_lesson_field_that_may_be_empty():
+    """Review of 68fa0b4, 2026-10-12: the first sentence of her fix-it note to the Video Editor
+    was kept as a rule for every film. Her verdict has a field of its own for the one general
+    rule, empty when she has none."""
+    verdict = EditorialVerdict.model_validate({"verdict": "APPROVE", "story": "x"})
+    assert verdict.lesson == ""
+    said = EditorialVerdict.model_validate({"verdict": "REJECT", "lesson": SPECTRUM})
+    assert said.lesson == SPECTRUM
+    assert EditorialVerdict.model_validate({"verdict": "APPROVE", "lesson": None}).lesson == ""
 
 
-def test_her_picture_note_is_kept_unverified_for_its_kind_of_film(engine, staffed):
+def test_only_her_lesson_is_kept_unverified_for_its_kind_of_film(engine, staffed):
+    """Only the ``lesson`` of her verdict is a prompt lesson — never her note to the Video
+    Editor, which is about this one film — for its kind of film and unverified."""
     from app.media.prompt_agent import prompt_lessons
 
     notes = {
         False: SPECTRUM,
         True: "Two people at one desk drift into profile; keep both turned to the viewer.",
     }
-    for serial, note in notes.items():
+    for serial, lesson in notes.items():
         title = "The Cut Runs Long" if serial else "A rocky world with water"
         ids = a_film(engine, voiceover=ENGLISH, with_source=True, serial=serial, title=title)
 
-        def answer(_prompt, note=note):
+        def answer(_prompt, lesson=lesson):
             return json.dumps(
                 {
                     "verdict": "REJECT",
                     "story": "It never says why the water matters.",
                     "reasons": ["the pictures decorate"],
-                    "notes_for": {"VideoEditor": f"{note} Scene 2 is the worst of them."},
+                    "notes_for": {"VideoEditor": "Scene 2 is the worst; redo its mirror."},
+                    "lesson": lesson,
                 }
             )
 
@@ -386,16 +380,43 @@ def test_her_picture_note_is_kept_unverified_for_its_kind_of_film(engine, staffe
         result = editorial_review(engine, registry, ids["asset"], language="en")
         scope = "serial" if serial else "factual"
         with Session(engine) as session:
-            row = session.scalar(
-                select(MemoryRecord).where(
-                    MemoryRecord.source_id == result["run_id"],
-                    MemoryRecord.content.like("prompt lesson:%"),
+            rows = list(
+                session.scalars(
+                    select(MemoryRecord).where(
+                        MemoryRecord.source_id == result["run_id"],
+                        MemoryRecord.content.like("prompt lesson:%"),
+                    )
                 )
             )
-        assert row is not None and row.content == f"prompt lesson: [{scope}][?] {note}"
+        assert [row.content for row in rows] == [f"prompt lesson: [{scope}][?] {lesson}"]
     with Session(engine) as session:
         assert prompt_lessons(session, scope="serial") == [f"{notes[True]} (unverified)"]
         assert prompt_lessons(session, scope="factual") == [f"{SPECTRUM} (unverified)"]
+        everything = " ".join(prompt_lessons(session))
+    assert "Scene 2" not in everything and "mirror" not in everything
+
+
+@pytest.mark.parametrize(
+    "lesson",
+    [
+        "The rocky world with water is lit differently in every shot.",
+        "Scene 4's ledger shows digits; ask for blank pages.",
+        "x" * 401,
+        "   ",
+    ],
+)
+def test_a_lesson_about_this_film_or_a_report_is_not_kept(engine, staffed, lesson):
+    """Her lesson goes through the store's own refusal with the film it was learned on: its
+    title (here «A rocky world with water», most of its words), a scene by its number, a
+    report over 400 characters, nothing at all."""
+    from app.media.prompt_agent import prompt_lessons
+
+    ids = a_film(engine, voiceover=ENGLISH, with_source=True, title="A rocky world with water")
+    verdict = {"verdict": "REJECT", "story": "s", "reasons": ["r"], "lesson": lesson}
+    registry, _ = registry_with(staffed, lambda _prompt: json.dumps(verdict))
+    editorial_review(engine, registry, ids["asset"], language="en")
+    with Session(engine) as session:
+        assert prompt_lessons(session) == []
 
 
 def test_the_publish_stage_asks_the_director_before_anything_else(engine, settings, staffed):

@@ -39,6 +39,7 @@ from app.media.prompt_agent import (
     MEASURED_SENTENCE,
     MOTION_PAD,
     MOVE_SENTENCES,
+    MOVE_SHORT,
     SERIAL_FACES_SENTENCE,
     SERIAL_LIFE_SENTENCE,
     SIZE_MOVES,
@@ -50,6 +51,8 @@ from app.media.prompt_agent import (
     compose_serial_motion,
     motion_prompt_for,
     render_motion,
+    serial_ending_dropped,
+    serial_motion,
 )
 from app.media.prompt_lint import (
     BLOCK,
@@ -491,14 +494,90 @@ def test_the_ending_survives_a_long_action_whose_later_moments_give_way():
     assert "then lays the pen flat" in short and "The shot ends on" in short
 
 
-def test_an_ending_that_fits_beside_nothing_leaves_the_action_whole():
-    """When not even each person's first moment fits beside the ending, the action is kept
-    whole, as before, and the ending is the one left out."""
-    ending = " ".join(["the desk lamp glowing over a stack of folders"] * 6)
+#: One person's single clause of 54 words: no comma opens a later moment in it.
+ONE_CLAUSE = (
+    "Marcus slowly opens both hands above the cluttered desk as if he were about to begin a "
+    "long and careful pitch about the quarterly numbers and the missing ledger pages that nobody "
+    "in the writers room has managed to find since the studio moved into the new office "
+    "building across the river last spring"
+)
+#: Three people's first moments, nothing later.
+THREE_PEOPLE = (
+    "Marcus opens both hands as if starting a pitch about the quarterly numbers and the missing "
+    "ledger; Sarah leans across the desk and studies the open ledger with a slow doubtful frown; "
+    "Nadia lifts her pen from the page and turns toward the warm window light"
+)
+SHORT_ENDING = (
+    "Marcus with both hands open above the desk and Sarah facing the viewer with a dry "
+    "half-smile just forming"
+)
+PEOPLE = [{"name": "Marcus Writer"}, {"name": "Sarah Director"}, {"name": "Nadia Accountant"}]
+
+
+def test_every_move_said_short_names_its_one_move_and_its_tempo():
+    assert set(MOVE_SHORT) == set(MOVE_SENTENCES)
+    for move, sentence in MOVE_SHORT.items():
+        assert [m for m, _ in camera_moves(sentence)] == [move], sentence
+        assert SPEED_WORDS.search(sentence), sentence
+        assert len(sentence.split()) < len(MOVE_SENTENCES[move].split()), move
+
+
+def test_a_single_long_clause_keeps_the_ending_with_the_move_said_short():
+    """Review of 68fa0b4, 2026-10-12: one person's single clause of 54 words did not fit beside
+    the ending even as its first moment, and the ending was dropped. The move is said short
+    first (the same move, its tempo, no path), and the ending stays."""
+    assert len(ONE_CLAUSE.split()) == 54
+    beat = {
+        "action": ONE_CLAUSE,
+        "ending_frame": SHORT_ENDING,
+        "camera_move": "dolly in",
+        "in_frame": PEOPLE[:2],
+    }
+    prompt, dropped = serial_motion(beat, {})
+    assert dropped is False and serial_ending_dropped(beat, {}) is False
+    assert prompt.startswith(MOVE_SHORT["dolly in"]), prompt
+    assert f"The shot ends on {SHORT_ENDING}." in prompt
+    assert ONE_CLAUSE in prompt, "the one moment is said whole, never cut"
+    assert len(prompt.split()) <= MOTION_WORDS[1] and prompt.endswith(MOTION_CLOSING)
+    assert [m for m, _ in camera_moves(prompt)] == ["dolly in"]
+    assert compose_serial_motion(beat, {}) == prompt
+
+
+def test_three_peoples_moments_give_way_word_by_word_before_the_ending_does():
+    """Review of 68fa0b4: three people's first moments did not fit beside the ending. The
+    later people's clauses are cut word by word (the last person first), before the ending or
+    the first person's moment would be."""
+    beat = {
+        "action": THREE_PEOPLE,
+        "ending_frame": SHORT_ENDING,
+        "camera_move": "dolly in",
+        "in_frame": PEOPLE,
+    }
+    prompt, dropped = serial_motion(beat, {})
+    assert dropped is False
+    assert f"The shot ends on {SHORT_ENDING}." in prompt, prompt
+    assert "Marcus opens both hands as if starting a pitch about the quarterly numbers" in prompt
+    assert "Sarah leans across the desk and studies the open ledger" in prompt
+    assert "turns toward the warm window light" not in prompt, "the last person gave way first"
+    assert len(prompt.split()) <= MOTION_WORDS[1]
+    assert not _blocks(lint_motion_prompt(prompt, scene=3, model_id="LTX-2.5"))
+
+
+def test_an_ending_that_fits_beside_nothing_is_left_out_and_said_so():
+    """When not even the first person's first moment fits beside the ending with the move
+    said short, the action is kept whole, as before, the ending is left out — and the composer
+    says so (``ending_dropped``), so the rewrite asks the editor to shorten the action before
+    any clip is bought on it."""
+    ending = " ".join(["the desk lamp glowing over a stack of folders"] * 9)
     beat = {"action": LONG_ACTION, "ending_frame": ending, "camera_move": "dolly in"}
-    prompt = compose_serial_motion(beat, {})
+    prompt, dropped = serial_motion(beat, {})
+    assert dropped is True and serial_ending_dropped(beat, {}) is True
     assert "The shot ends" not in prompt
     assert "he restarts his sentence with a small head shake" in prompt
+    assert prompt.startswith(MOVE_SENTENCES["dolly in"])
+    assert compose_serial_motion(beat, {}) == prompt
+    # A beat with no ending drops nothing.
+    assert serial_motion({**beat, "ending_frame": ""}, {})[1] is False
 
 
 # ------------------------------------------------------- 4. the Video Editor's brief

@@ -29,7 +29,6 @@ from __future__ import annotations
 import base64
 import json
 import logging
-import re
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -56,10 +55,9 @@ from app.media.models import (
     VideoRenderJob,
 )
 from app.media.prompt_agent import (
-    LESSON_MAX_CHARS,
     SCOPE_FACTUAL,
     SCOPE_SERIAL,
-    lesson_is_general,
+    reconcile_prompt_lessons,
     record_prompt_lesson,
 )
 from app.media.toolchain import find_ffmpeg
@@ -93,7 +91,18 @@ class EditorialVerdict(BaseModel):
     story: str = Field(default="", max_length=400)
     reasons: list[str] = Field(default_factory=list, max_length=8)
     notes_for: dict[str, str] = Field(default_factory=dict)
+    #: One general rule about how the picture models misread prompts, or empty: the only part
+    #: of her verdict kept as a prompt lesson (review of 68fa0b4, 2026-10-12: the first sentence
+    #: of her fix-it note to the Video Editor, about this one film, was kept as a rule). Never
+    #: cut: one over 400 characters is a report, and the store refuses it whole.
+    lesson: str = ""
     _clip_story = field_validator("story", mode="before")(clipped(400))
+
+    @field_validator("lesson", mode="before")
+    @classmethod
+    def _no_lesson(cls, value: Any) -> Any:
+        """«null» or no lesson is an empty one: the verdict is never refused for its lesson."""
+        return "" if value is None else value
 
 
 #: The office serial's series key and script kind, as `storyboard_from_episode` writes them
@@ -139,8 +148,10 @@ _INSTRUCTIONS = (
     "them means REJECT, however good the rest is; is it worth their time. {nature} Return "
     'only JSON: {{"verdict": "APPROVE" | "REJECT", "story": "one sentence: {story_note}", '
     '"reasons": ["..."], "notes_for": {{"ScriptWriter": "...", "VideoEditor": "...", '
-    '"VoiceArtist": "...", "Publisher": "..."}}}} — notes only for departments that must '
-    "change something.\n"
+    '"VoiceArtist": "...", "Publisher": "..."}}, "lesson": "one general rule about how the '
+    'picture models misread prompts, or empty"}} — notes only for departments that must '
+    "change something. The lesson is kept for every next film's prompts: one rule, true of any "
+    "film (no scene, shot or title of this one), or an empty string.\n"
 )
 
 
@@ -396,27 +407,6 @@ def frames_for(
     return frames
 
 
-#: Where a note's first sentence ends: a full stop, a question or an exclamation, then a space.
-_SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
-
-
-def picture_lesson(note: Any, title: Any = None) -> str | None:
-    """The rule in her note to the Video Editor, or None when it holds none: its first
-    sentence, if that sentence is at most `LESSON_MAX_CHARS` and a rule for every next film
-    (`prompt_agent.lesson_is_general`: no scene or shot by its number, no id, not this film's
-    title). 2026-10-12, review of a9f84ea: the note was stored bare, so a note about one
-    film's «scene 4» would have been a rule for every film, and a note over 400 characters
-    was refused whole, its rule with it."""
-    said = " ".join(str(note or "").split())
-    if not said:
-        return None
-    first = _SENTENCE_END.split(said, maxsplit=1)[0].strip()
-    if not first or len(first) > LESSON_MAX_CHARS:
-        return None
-    titles = [str(title)] if title else []
-    return None if lesson_is_general(first, titles) else first
-
-
 def latest_editorial(session: Session, media_asset_id: str) -> EditorialReview | None:
     return session.scalar(
         select(EditorialReview)
@@ -490,7 +480,8 @@ def editorial_review(
             TEMPLATE_VERSION,
             correlation,
             EditorialVerdict,
-            '{"verdict": "APPROVE|REJECT", "story": "...", "reasons": [...], "notes_for": {}}',
+            '{"verdict": "APPROVE|REJECT", "story": "...", "reasons": [...], "notes_for": {}, '
+            '"lesson": ""}',
             summary=(
                 f"Vizionez «{facts['title']}» înainte de publicare "
                 f"({len(frames)} {'cadru' if len(frames) == 1 else 'cadre'})."
@@ -572,21 +563,20 @@ def editorial_review(
             run_id=run_id,
             correlation_id=correlation,
         )
-        # What the Director says about the pictures is a lesson about prompting: if a
-        # wording keeps producing the wrong camera move, or a character who changes coat
-        # between shots, the next film's prompt agent should know it before it writes.
-        picture_note = verdict.notes_for.get("VideoEditor")
-        lesson = picture_lesson(picture_note, facts.get("title"))
-        if lesson:
-            # Only the rule in her note, for its kind of film, and unverified until a picture
-            # proves it (2026-10-12, review of a9f84ea): her note is about this film, and stored
-            # bare a scene of it would have become a rule for every film, or been refused whole.
+        # What the Director says about how the pictures were misread is a lesson about
+        # prompting: if a wording keeps producing the wrong camera move, or a character who
+        # changes coat between shots, the next film's prompt agent should know it before it
+        # writes. Only her lesson, for its kind of film, unverified until a picture proves it,
+        # never this film's title (review of 68fa0b4, 2026-10-12: the first sentence of her
+        # note to the Video Editor was a fix for this one film, kept as a rule for all).
+        if verdict.lesson.strip():
             record_prompt_lesson(
                 session,
-                lesson,
+                verdict.lesson,
                 source_id=run_id,
                 scope=SCOPE_SERIAL if facts.get("serial") else SCOPE_FACTUAL,
                 provisional=True,
+                storyboard_id=facts.get("storyboard_id"),
             )
         sent = 0
         if verdict.verdict == "REJECT":
@@ -617,6 +607,9 @@ def editorial_review(
             source_id=run_id or review_id,
             agent_id=director_id,
         )
+    # Her lesson read beside the live ones by her (free), so a correction retires the rule it
+    # corrects before the next writer reads them; it never raises.
+    reconcile_prompt_lessons(engine, registry, correlation)
     return {
         "review_id": review_id,
         "verdict": verdict.verdict,

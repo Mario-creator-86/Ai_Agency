@@ -1586,6 +1586,12 @@ def write_episode(
     the writer had finished; each refusal now reaches the writer while it can still change.
     """
     correlation = correlation_id or str(uuid4())
+    # The picture lessons learned since the last writer are read by the Director first (free;
+    # review of 68fa0b4, 2026-10-12): a correction retires the rule it corrects before the
+    # showrunner is given them. It never raises.
+    from app.media.prompt_agent import reconcile_prompt_lessons  # noqa: PLC0415
+
+    reconcile_prompt_lessons(engine, registry, correlation)
     with Session(engine) as session, session.begin():
         log = session.get(DailyStudioLog, log_id)
         if log is None:
