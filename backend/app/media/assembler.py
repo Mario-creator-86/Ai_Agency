@@ -10204,9 +10204,17 @@ def _refuse_before_buying(
     )
 
 
-def _clip_plan(scene: dict[str, Any], bible: dict[str, Any]) -> Any:
+def _clip_plan(
+    scene: dict[str, Any], bible: dict[str, Any], *, must_fix: Sequence[dict[str, Any]] = ()
+) -> Any:
     """What one shot must be, as clip QC judges it: the still's plan, the camera move asked
-    for, the bible's face rule and rules, the look (a still_gate.StillPlan)."""
+    for, the bible's face rule and rules, the look (a still_gate.StillPlan).
+
+    2026-10-12, late evening (the review of 9ac0195, finding 5): ``must_fix`` is what the
+    scene's MOVEMENT was rewritten to fix (`fix_check.open_findings`, motion layer), which the
+    clip's look answers item by item; and the scene's written picture is the writer's line for
+    a factual film and the composed beat for the serial (`stills_stage._scene_picture`), never
+    the compiled still prompt that ``visual_prompt`` holds."""
     from app.media import stills_stage as stills  # noqa: PLC0415 - stills_stage imports us
     from app.media.prompt_lint import bible_face_rule  # noqa: PLC0415
     from app.media.still_gate import StillPlan  # noqa: PLC0415
@@ -10216,21 +10224,21 @@ def _clip_plan(scene: dict[str, Any], bible: dict[str, Any]) -> Any:
     intent = package.get("motion_intent")
     asked = intent.get("camera_move") if isinstance(intent, dict) else None
     look = str(package.get("look_block") or "")
+    words = " ".join(str(package.get("still_prompt") or scene.get("visual_prompt") or "").split())
     return StillPlan(
         scene=int(scene["scene_index"]),
-        still_prompt=" ".join(
-            str(package.get("still_prompt") or scene.get("visual_prompt") or "").split()
-        ),
+        still_prompt=words,
         camera_move=str(package.get("camera_move") or asked or ""),
         faces_forbidden=bible_face_rule(bible) is not None,
         bible_rules=stills._bible_rules(bible),
         look_block=look,
         palette_words=stills._palette_words(look),
-        scene_picture=" ".join(str(scene.get("visual_prompt") or "").split()),
+        scene_picture=stills._scene_picture(package, str(scene.get("visual_prompt") or ""), words),
         narration=" ".join(
             str(scene.get("voiceover_segment") or scene.get("narration") or "").split()
         ),
         purpose=str(scene.get("story_purpose") or ""),
+        must_fix=tuple(must_fix),
     )
 
 
@@ -10266,12 +10274,24 @@ def _check_shot(
     the Owner's look; NEEDS_OWNER: every shot measured wrong), the surviving ``take_id``, the
     Owner's ``reason``, the scene's ``clip_qc`` record and ``cap_stop`` (STOPPED_AT_CAP when
     the retry was not bought because of the cap).
+
+    2026-10-12, late evening: the clip is also checked for what the scene's movement was
+    rewritten to fix (`fix_check.open_findings`, motion layer); before the retry is bought the
+    Director looks at the refused clip (`fix_check.shot_second_look`) — a clip her look keeps
+    is PAID as hers (ACCEPTED_BY_LOOK, its record PASSED with her reason) and nothing more is
+    bought; what was accepted on the clip kept is written on it (`fix_check.clip_settled`).
     """
-    from app.media import picture_qc  # noqa: PLC0415
+    from app.media import fix_check, picture_qc  # noqa: PLC0415
     from app.media import qc as clip_qc  # noqa: PLC0415 - qc reads the media models
 
     index = int(scene["scene_index"])
-    plan = _clip_plan(scene, bible)
+    # 2026-10-12, late evening: what the scene's movement was rewritten to fix is checked on
+    # the clip (never on a still, which cannot show it).
+    with Session(engine) as session:
+        motion_items = fix_check.open_findings(
+            session, storyboard_id, index, layer=fix_check.MOTION_LAYER
+        )
+    plan = _clip_plan(scene, bible, must_fix=motion_items)
     prompt_sent, _negative = motion_request(adapter, scene, from_still=True)
 
     def judge(frames: list[Path]) -> Any:
@@ -10299,6 +10319,7 @@ def _check_shot(
             ffmpeg_path=ffmpeg_exe,
             face_counter=face_counter,
             judge=judge,
+            **({"must_fix": plan.must_fix} if plan.must_fix else {}),
         )
 
     checked_takes: list[str] = [take_id]
@@ -10309,6 +10330,20 @@ def _check_shot(
             return None
         checked_takes.append(new_take)
         return path
+
+    def look(report: Any) -> dict[str, Any]:
+        # The Director's second look before a retry is bought (the Owner, 2026-10-12): free.
+        return fix_check.shot_second_look(
+            engine,
+            registry,
+            storyboard_id=storyboard_id,
+            scene_index=index,
+            clip=Path(str(report.path)),
+            refusal=list(report.blocks_ro),
+            correlation_id=correlation_id,
+            take_ids=[checked_takes[-1]],
+            ffmpeg_path=ffmpeg_exe,
+        )
 
     outcome = clip_qc.qc_clip_with_retry(
         clip,
@@ -10321,10 +10356,21 @@ def _check_shot(
         price_credits=float(price),
         committed_credits=float(committed),
         cap_credits=float(cap),
+        look=look,
     )
+    kept_by_her = outcome.status == clip_qc.ACCEPTED_BY_LOOK
     records: list[dict[str, Any]] = []
     for attempt, report in enumerate(outcome.reports):
         record = clip_report_record(report)
+        if kept_by_her and attempt == len(outcome.reports) - 1:
+            # Clip QC refused it and her look kept it: the clip passes as hers, its blocks
+            # kept on the record beside her reason.
+            record = {
+                **record,
+                "verdict": "PASSED",
+                "accepted_by": fix_check.DIRECTOR_LOOK_APPROVER,
+                "director_look": fix_check.look_record(outcome.look),
+            }
         checked = checked_takes[min(attempt, len(checked_takes) - 1)]
         used_seed = outcome.seeds[attempt] if attempt < len(outcome.seeds) else None
         _keep_clip_report(
@@ -10340,6 +10386,19 @@ def _check_shot(
         records.append({**record, "take_id": checked, "seed": used_seed})
     surviving = [record for record in records if record["verdict"] != "FAILED"]
     final = surviving[-1] if surviving else None
+    if outcome.reports:
+        with Session(engine) as session, session.begin():
+            fix_check.clip_settled(
+                session,
+                storyboard_id=storyboard_id,
+                scene_number=index,
+                take_id=final["take_id"] if final is not None else None,
+                must_fix=plan.must_fix,
+                report=outcome.reports[-1],
+                kept=final is not None and final["verdict"] == "PASSED",
+                look=outcome.look if kept_by_her else None,
+                correlation_id=correlation_id,
+            )
     clip_record: dict[str, Any] = {
         "status": outcome.status,
         "verdict": final["verdict"] if final is not None else "FAILED",
@@ -15847,7 +15906,6 @@ def _redo_still(
     from app.media import stills_stage as stills  # noqa: PLC0415 - stills_stage imports us
     from app.media.mode_guard import PurchaseGuard, unasked_refusal  # noqa: PLC0415
     from app.media.prompt_lint import bible_face_rule  # noqa: PLC0415
-    from app.media.still_gate import StillPlan  # noqa: PLC0415
     from app.services import may_act  # noqa: PLC0415
 
     index = int(plan["scene_index"])
@@ -16094,18 +16152,10 @@ def _redo_still(
     references, with_character, with_figure = stills._references(
         scene, figure_one, image_adapter, first=first is None or first.index == index
     )
-    still_plan = StillPlan(
-        scene=index,
-        still_prompt=scene.words,
-        camera_move=scene.camera_move,
-        faces_forbidden=bible_face_rule(bible) is not None,
-        bible_rules=stills._bible_rules(bible),
-        look_block=scene.look_block,
-        palette_words=stills._palette_words(scene.look_block),
-        scene_picture=getattr(scene, "picture", ""),
-        narration=getattr(scene, "narration", ""),
-        purpose=getattr(scene, "purpose", ""),
-        must_fix=getattr(scene, "must_fix", ()),  # 2026-10-12: the redo's still is fix-checked
+    # The stills step's one plan builder (`stills_stage._still_plan`): the scene's written
+    # picture and what its words were rewritten to fix go with every candidate of the redo.
+    still_plan = stills._still_plan(
+        scene, faces_forbidden=bible_face_rule(bible) is not None, rules=stills._bible_rules(bible)
     )
     work_dir = (storage_root or DEFAULT_STORAGE_ROOT) / storyboard_id / "stills"
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -16146,6 +16196,7 @@ def _redo_still(
     )
     return {
         **outcome,
+        **({"director_confirmed": list(buyer.confirmed)} if buyer.confirmed else {}),
         "scene_index": index,
         "model_id": plan["model_id"],
         "rerolls": buyer.rerolls,
@@ -16299,6 +16350,8 @@ class _StillRedoBuyer:
         self.take_ids: list[str] = []
         self.rerolls = 0
         self.unverified = False
+        #: The Director's reasons where her look confirmed a refusal before a re-roll.
+        self.confirmed: list[str] = []
 
     @property
     def committed(self) -> float:
@@ -16311,12 +16364,7 @@ class _StillRedoBuyer:
     def run(self) -> dict[str, Any]:
         from app.media import stills_stage as stills  # noqa: PLC0415 - stills_stage imports us
         from app.media.picture_qc import judge_still  # noqa: PLC0415
-        from app.media.still_gate import (  # noqa: PLC0415
-            ALL_CHECKS,
-            choose_best,
-            next_step,
-            positive_instruction,
-        )
+        from app.media.still_gate import ALL_CHECKS  # noqa: PLC0415
         from app.runbook.services import stop_requested  # noqa: PLC0415
 
         c = self.context
@@ -16518,30 +16566,27 @@ class _StillRedoBuyer:
                         code=stills.NO_OUTPUT_CODE,
                         detail="Furnizorul a încheiat sarcina fără nicio imagine.",
                     )
-            reports = [report for _take, report in verdicts]
-            best = choose_best(reports)
-            stills._set_verdicts(engine, verdicts, best)
-            if best is not None:
-                chosen = next(take for take, report in verdicts if report is best)
-                outcome = {"status": "APPROVED", "take_id": chosen, "score": best.score}
+            # Judged as the stills step judges a round (2026-10-12): the gate's best, else the
+            # Director's look before any re-roll is bought, else the next step.
+            end = stills._settle_round(
+                engine,
+                c["registry"],
+                c["storyboard_id"],
+                scene,
+                verdicts,
+                c["correlation_id"],
+                rerolls=self.rerolls,
+            )
+            if end.report is not None:
+                outcome = end.approved()
                 break
-            failing = next((r for r in reports if r.violations), reports[0] if reports else None)
-            if failing is None:
-                outcome = {
-                    "status": "NEEDS_OWNER",
-                    "reason": f"Scena {index}: furnizorul nu a dat nicio imagine.",
-                }
-                break
-            step = next_step(failing, rerolls_done=self.rerolls)
-            if step.action == "reroll":
+            if end.again:
                 self.rerolls += 1
-                instruction = positive_instruction([v for r in reports for v in r.violations])
+                instruction = end.instruction
+                if end.confirmed:
+                    self.confirmed.extend(end.confirmed)
                 continue
-            outcome = {
-                "status": "COMPOSE_LOCALLY" if step.action == "compose_locally" else "NEEDS_OWNER",
-                "reason": step.reason_ro,
-                "reasons": list(dict.fromkeys(text for r in reports for text in r.reasons_ro)),
-            }
+            outcome = dict(end.outcome or {})
         if outcome["status"] in ("NEEDS_OWNER", "COMPOSE_LOCALLY"):
             _storyboard_event(
                 engine,

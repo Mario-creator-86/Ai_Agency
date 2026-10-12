@@ -37,7 +37,12 @@ What this step does, in order, and what stops it:
    for the Owner to pick on the contact sheet, a failing one is REJECTED with its reasons.
 6. A scene with no passing candidate is bought again at most twice (MAX_REROLLS), with what
    was wrong rewritten as positive words (`still_gate.positive_instruction`), then marked
-   NEEDS_OWNER with a WARNING event. A vendor refusal follows its kind
+   NEEDS_OWNER with a WARNING event. Since 2026-10-12 (the Owner: «LLM-ul este pe abonament!
+   … GENERAREA DE IMAGINI ȘI MIȘCĂRI COSTĂ!») the Director looks first, for free, at the
+   refused candidates the bible's hard limits did not stop (`_settle_round`): a candidate her
+   look lets stand is approved by her and nothing more is bought; and a still that shows its
+   corrected words and the corrected mistake again ends the scene for her ladder at once —
+   never re-rolled on the words that did not correct it. A vendor refusal follows its kind
    (`production_policy.classify_failure`): SAFETY is never resubmitted with the same words
    and the scene goes to the Owner; a transient failure is tried once more; an account
    problem or a second refused request in a row stops the step.
@@ -90,6 +95,7 @@ from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session
 
 from app.db import lock_for_write
+from app.media import fix_check
 from app.media.assembler import (
     DEFAULT_STORAGE_ROOT,
     FREE_FAILURE_KINDS,
@@ -146,7 +152,7 @@ from app.media.cost_plan import (
 )
 from app.media.disk import LOW_DISK, disk_refusal
 from app.media.faces import FaceCounter
-from app.media.fix_check import open_findings
+from app.media.fix_check import STILL_LAYER, open_findings
 from app.media.mode_guard import PurchaseGuard, unasked_refusal
 from app.media.models import SceneTake, Storyboard, StoryboardScene
 from app.media.picture_qc import StillJudgement, judge_still
@@ -167,8 +173,9 @@ from app.media.still_gate import (
     choose_best,
     decide,
     local_checks,
-    next_step,
+    may_be_overturned,
     positive_instruction,
+    round_step,
 )
 from app.providers.media_http import MediaProviderError, TaskStillOpen
 from app.providers.runpod.batch import (
@@ -394,17 +401,55 @@ def _canonical(data: Any) -> str:
     return json.dumps(data, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
 
 
-def _scene_picture(package: Mapping[str, Any], visual: str, words: str) -> str:
-    """The scene's written picture, for the gate's shows_scene: the scriptwriter's line
-    (``writer_visual``, kept on the package by the shot-prompt writer for the factual films and
-    the serial alike), else ``visual_prompt`` when it is not the still prompt itself, else
-    nothing (the gate then judges by the plan, as its instructions say).
+def is_serial_package(package: Mapping[str, Any] | None) -> bool:
+    """Whether a scene's package was composed by the serial composer
+    (`prompt_agent._serial_package`: the beat's people in frame and the shot's size)."""
+    return isinstance((package or {}).get("in_frame"), list) and bool(
+        (package or {}).get("shot_size")
+    )
+
+
+def serial_scene_picture(package: Mapping[str, Any]) -> str:
+    """A serial scene's written picture: what the composer draws its still from — the beat's
+    room, the people in frame (`in_frame`, as the beat puts them there) and the first moment of
+    its action (`prompt_agent._still_moment`) — never the writer's line.
+
+    2026-10-12, f06808c9 scene 1 (the review of 9ac0195, finding 4): ``writer_visual`` said
+    «Marcus alone at his desk» while the composed beat put Marcus and Sarah in frame; a gate
+    shown the writer's line refuses every correct still of the beat as «not the scene»."""
+    from app.media.prompt_agent import _short_name, _still_moment  # noqa: PLC0415 - large
+
+    people = [
+        _short_name(person.get("name"))
+        for person in package.get("in_frame") or []
+        if isinstance(person, Mapping) and person.get("name")
+    ]
+    location = " ".join(str(package.get("location") or "").split()).rstrip(". ")
+    moment = " ".join(_still_moment(str(package.get("action") or "")).split()).rstrip(". ")
+    parts = [
+        f"{location}." if location else "",
+        f"In frame: {', '.join(dict.fromkeys(people))}." if people else "",
+        f"{moment[:1].upper()}{moment[1:]}." if moment else "",
+    ]
+    return " ".join(part for part in parts if part)
+
+
+def _scene_picture(
+    package: Mapping[str, Any], visual: str, words: str, *, serial: bool = False
+) -> str:
+    """The scene's written picture, for the gate's shows_scene. For a factual film the
+    scriptwriter's line (``writer_visual``, kept on the package by the shot-prompt writer),
+    else ``visual_prompt`` when it is not the still prompt itself, else nothing (the gate then
+    judges by the plan, as its instructions say). For an episode of the serial, the beat as
+    the composer draws it (`serial_scene_picture`), never the writer's line.
 
     2026-10-12, read on the database copy: ``visual_prompt`` equals the compiled still prompt
     on 1c038a99 scene 5, aa170155 scene 1 and f06808c9 scene 4 (`prompt_agent` stores what it
     composed there), so the «scene» the gate was shown was the plan again, and a prompt that
     had lost the scene's subject — the detector cavern of 1c038a99 scene 5, whose writer's
     line is «Return to the dark detector cavern from the opening shot…» — matched itself."""
+    if serial or is_serial_package(package):
+        return serial_scene_picture(package)
     writer = " ".join(str(package.get("writer_visual") or "").split())
     if writer:
         return writer
@@ -438,6 +483,8 @@ def _read_scenes(engine: Engine, storyboard_id: str) -> tuple[dict[str, Any], li
     and the reference picture of the character it shows, the identity `assemble_from_takes`
     looks for), its approved still, what was bought and not settled, and what it remembers
     since the Owner last decided about it (`assembler.scene_memory`)."""
+    from app.agents.editorial import is_serial_film  # noqa: PLC0415 - agents import media
+    from app.factual.models import ScriptDraft  # noqa: PLC0415
     from app.media.services import ReferenceRequired  # noqa: PLC0415 - services imports media
 
     loaded: dict[str, bytes] = {}
@@ -446,6 +493,9 @@ def _read_scenes(engine: Engine, storyboard_id: str) -> tuple[dict[str, Any], li
         if board is None:
             raise ValueError(f"Storyboard {storyboard_id} not found")
         bible = dict(board.visual_bible_json or {})
+        script = session.get(ScriptDraft, board.script_draft_id) if board.script_draft_id else None
+        # An episode of the office serial: its scenes' written picture is the composed beat.
+        serial = bool(is_serial_film(board, script))
         rows = list(
             session.scalars(
                 select(StoryboardScene)
@@ -486,12 +536,16 @@ def _read_scenes(engine: Engine, storyboard_id: str) -> tuple[dict[str, Any], li
                 reference=reference,
                 needs_reference=missing,
                 negative=still_negative(package, bible),
-                picture=_scene_picture(package, visual, words),
+                picture=_scene_picture(package, visual, words, serial=serial),
                 narration=" ".join(str(row.voiceover_segment or "").split()),
                 purpose=str(row.story_purpose or ""),
             )
             if kind == LIVE_KIND:
-                scene.must_fix = tuple(open_findings(session, storyboard_id, scene.index))
+                # The picture's open items only: a finding treated in the motion's words is
+                # the clip's to check (`assembler._clip_plan`), never answered by a still.
+                scene.must_fix = tuple(
+                    open_findings(session, storyboard_id, scene.index, layer=STILL_LAYER)
+                )
             if kind == LIVE_KIND and missing is None:
                 found = usable_take(
                     session, storyboard_id, scene.index, "still", [identity], statuses=("APPROVED",)
@@ -920,6 +974,216 @@ def _set_verdicts(
             )
 
 
+# ------------------------------------------- after a round: her look, the notes, the lessons
+#
+# 2026-10-12, the Owner: «trece imaginile picate de la QC pe la Directoare și să decidă dacă
+# au picat corect sau nu și dacă trebuie refăcute», and «LLM-ul este pe abonament! NU COSTĂ
+# BANI SĂ TRECEM PE LA EI! GENERAREA DE IMAGINI ȘI MIȘCĂRI COSTĂ!». A round the gate refused
+# whole was bought again on the gate's word alone; now the Director looks first, for free, at
+# every refused candidate the bible's hard limits did not stop, and a candidate her look lets
+# stand is approved by her — nothing is bought for it. Her confirmation goes with the re-roll.
+
+
+@dataclass
+class _RoundEnd:
+    """What one judged round of a scene leads to: a take approved (by the gate or by her
+    look), another round on the same words with ``instruction``, or ``outcome``."""
+
+    take_id: str | None = None
+    report: StillReport | None = None
+    approved_by: str = GATE_REVIEWER
+    again: bool = False
+    instruction: str = ""
+    outcome: dict[str, Any] | None = None
+    #: Her look, when hers approved the take; her reasons, when she confirmed the refusal.
+    look: dict[str, Any] | None = None
+    confirmed: list[str] = field(default_factory=list)
+
+    def approved(self) -> dict[str, Any]:
+        """The scene's outcome for the approved take, with what was accepted on it."""
+        said: dict[str, Any] = {
+            "status": "APPROVED",
+            "take_id": self.take_id,
+            "score": self.report.score if self.report is not None else 0.0,
+        }
+        if self.approved_by != GATE_REVIEWER:
+            said["approved_by"] = self.approved_by
+            said["director_look"] = fix_check.look_record(self.look)
+        if self.report is not None and self.report.minor:
+            said["minor_defects"] = [dict(item) for item in self.report.minor]
+        return said
+
+
+def _approve_by_look(engine: Engine, take_id: str, look: Mapping[str, Any]) -> None:
+    """The candidate her look let stand, APPROVED by her (`fix_check.DIRECTOR_LOOK_APPROVER`),
+    with no failure left on it — as `director_qc.record_look` writes her choice: a failure left
+    on an approved still would hold the scene for the Owner's look, the wait hers replaces."""
+    with Session(engine) as session, session.begin():
+        lock_for_write(session)
+        row = session.get(SceneTake, take_id)
+        if row is None:
+            return
+        row.status = "APPROVED"
+        row.approved_by = fix_check.DIRECTOR_LOOK_APPROVER
+        row.failure_code = None
+        row.failure_detail = None
+        sync_take_quality(
+            session,
+            row,
+            accepted=True,
+            reason=f"Aprobată de privirea Directoarei: {look.get('reason_ro') or ''}"[:4000],
+        )
+
+
+def _director_looks(
+    engine: Engine,
+    registry: Any | None,
+    storyboard_id: str,
+    scene: _Scene,
+    verdicts: list[tuple[str, StillReport]],
+    correlation_id: str,
+) -> _RoundEnd:
+    """Her second look at each candidate of a round the gate refused whole that she may
+    overturn (`still_gate.may_be_overturned`), fewest violations first, one look per picture;
+    the first her look lets stand (`fix_check.look_accepts`) is returned as approved. Free: a
+    model call, no purchase. With nobody to ask she is UNAVAILABLE and the refusal stands."""
+    offered = sorted(
+        (pair for pair in verdicts if may_be_overturned(pair[1])),
+        key=lambda pair: (len(pair[1].violations), len(pair[1].reasons_ro)),
+    )
+    confirmed: list[str] = []
+    for take_id, report in offered:
+        look = fix_check.director_second_look(
+            engine,
+            registry,
+            storyboard_id=storyboard_id,
+            scene_index=scene.index,
+            kind="still",
+            images=[report.path],
+            refusal=list(report.reasons_ro),
+            correlation_id=correlation_id,
+            take_ids=[take_id],
+        )
+        if fix_check.look_accepts(look):
+            return _RoundEnd(
+                take_id=take_id,
+                report=report,
+                approved_by=fix_check.DIRECTOR_LOOK_APPROVER,
+                look=look,
+                confirmed=confirmed,
+            )
+        if look.get("verdict") == fix_check.CONFIRMED and look.get("reason_ro"):
+            confirmed.append(str(look["reason_ro"]))
+    return _RoundEnd(confirmed=confirmed)
+
+
+def _after_approval(
+    engine: Engine,
+    storyboard_id: str,
+    scene: _Scene,
+    end: _RoundEnd,
+    correlation_id: str,
+) -> None:
+    """What the approved take carries (`fix_check.record_take_note`: the minor traces, her
+    look) and what it teaches the rewrite's lessons: every item gone confirms them."""
+    report = end.report
+    if report is None or end.take_id is None:
+        return
+    with Session(engine) as session, session.begin():
+        fix_check.record_take_note(
+            session,
+            storyboard_id=storyboard_id,
+            scene_number=scene.index,
+            take_id=end.take_id,
+            kind="still",
+            approved_by=end.approved_by,
+            minor=report.minor,
+            look=end.look,
+            correlation_id=correlation_id,
+        )
+        if scene.must_fix:
+            fix_check.settle_lessons(
+                session, scene.must_fix, report.fixes, approved=True, persisted=False
+            )
+
+
+def _settle_round(
+    engine: Engine,
+    registry: Any | None,
+    storyboard_id: str,
+    scene: _Scene,
+    verdicts: list[tuple[str, StillReport]],
+    correlation_id: str,
+    *,
+    rerolls: int,
+) -> _RoundEnd:
+    """One judged round of one scene, the same in the per-request path, the RunPod rounds and
+    the paid still redo: the gate's best candidate APPROVED; else, before anything more is
+    bought, her look at the refused ones; else the next step (`still_gate.round_step`) — a
+    re-roll with the violations as positive words, the scene's words sent back to her ladder
+    (a corrected mistake seen again on a picture that shows its plan), the local compositor or
+    the Owner. A round with no candidate at all goes to the Owner («nicio imagine»)."""
+    reports = [report for _take, report in verdicts]
+    best = choose_best(reports)
+    _set_verdicts(engine, verdicts, best)
+    if best is not None:
+        chosen = next(take for take, report in verdicts if report is best)
+        end = _RoundEnd(take_id=chosen, report=best)
+        _after_approval(engine, storyboard_id, scene, end, correlation_id)
+        return end
+    step = round_step(reports, rerolls_done=rerolls)
+    if step is None:
+        return _RoundEnd(
+            outcome={
+                "status": "NEEDS_OWNER",
+                "reason": f"Scena {scene.index}: furnizorul nu a dat nicio imagine.",
+            }
+        )
+    confirmed: list[str] = []
+    if step.action in ("reroll", "rewrite", "needs_owner"):
+        looked = _director_looks(engine, registry, storyboard_id, scene, verdicts, correlation_id)
+        if looked.take_id is not None and looked.look is not None:
+            _approve_by_look(engine, looked.take_id, looked.look)
+            _after_approval(engine, storyboard_id, scene, looked, correlation_id)
+            return looked
+        confirmed = looked.confirmed
+    if scene.must_fix and step.action != "reroll":
+        # The words end here with the mistake seen again: the review's lessons did not correct
+        # it. Not before a re-roll (a pair that also missed its plan is drawn once more): a
+        # lesson withdrawn there could not be confirmed by the re-roll that fixes it.
+        persisted = any("finding_persists" in report.violations for report in reports)
+        if persisted:
+            with Session(engine) as session, session.begin():
+                fix_check.settle_lessons(
+                    session, scene.must_fix, None, approved=False, persisted=True
+                )
+    her_words = (
+        " Directoarea a privit și confirmă refuzul: " + " | ".join(confirmed) if confirmed else ""
+    )
+    if step.action == "reroll":
+        return _RoundEnd(
+            again=True,
+            instruction=positive_instruction(
+                [code for report in reports for code in report.violations]
+            ),
+            confirmed=confirmed,
+        )
+    if step.action == "compose_locally":
+        return _RoundEnd(outcome={"status": "COMPOSE_LOCALLY", "reason": step.reason_ro})
+    outcome: dict[str, Any] = {
+        "status": "NEEDS_OWNER",
+        "reason": step.reason_ro + her_words,
+        "reasons": list(dict.fromkeys(r for rep in reports for r in rep.reasons_ro)),
+    }
+    if step.action == "rewrite":
+        # Not the Owner's to decide: her ladder rewrites the words (`scene_rewrite`), whose
+        # rewrite releases the hold (`assembler.scene_memory`).
+        outcome["rewrite"] = True
+    if confirmed:
+        outcome["director_confirmed"] = confirmed
+    return _RoundEnd(outcome=outcome, confirmed=confirmed)
+
+
 def _claim_intent(
     open_intents: list[tuple[str | None, str]], task_id: Any, every_task: list[str]
 ) -> tuple[str | None, str | None]:
@@ -983,15 +1247,24 @@ def _settle_pending(
         ]
         best = choose_best([report for _take, report in verdicts])
         _set_verdicts(engine, verdicts, best)
+        end: _RoundEnd | None = None
         if best is not None:
-            chosen = next(take for take, report in verdicts if report is best)
+            end = _RoundEnd(take_id=next(t for t, r in verdicts if r is best), report=best)
+        else:
+            # Refused whole, the scene would be planned and bought again: she looks first.
+            looked = _director_looks(
+                engine, registry, storyboard_id, scene, verdicts, correlation_id
+            )
+            if looked.take_id is not None and looked.look is not None:
+                _approve_by_look(engine, looked.take_id, looked.look)
+                end = looked
+        if end is not None and end.report is not None:
+            _after_approval(engine, storyboard_id, scene, end, correlation_id)
             return {
-                "status": "APPROVED",
-                "take_id": chosen,
-                "score": best.score,
+                **end.approved(),
                 "credits": 0,
                 "judged_collected": len(verdicts),
-                "path": str(best.path),
+                "path": str(end.report.path),
             }
         return {
             "status": "NOT_BOUGHT",
@@ -1356,14 +1629,13 @@ class _StillRounds:
         """The scene after its round: APPROVED, an outcome for the Owner, or "again" (a
         re-roll, or one retry of items the worker failed)."""
         reports = [report for _take, report in state.verdicts]
-        best = choose_best(reports)
-        _set_verdicts(self.engine, state.verdicts, best)
-        if best is not None:
-            chosen = next(take for take, report in state.verdicts if report is best)
-            if state.scene.index == self.first_live:
-                self.figure_one = Path(best.path).read_bytes()
-            state.outcome = {"status": "APPROVED", "take_id": chosen, "score": best.score}
-            return None
+        if choose_best(reports) is not None:
+            return self._settled(state)
+        if state.uncertain or state.cancelled or not reports:
+            # A round stopped (no answer, cancelled) or empty buys nothing more here: its
+            # candidates are refused as the gate said, without her look, which is for a
+            # round that would otherwise be bought again.
+            _set_verdicts(self.engine, state.verdicts, None)
         if state.uncertain:
             state.entry.update(failure_kind="UNANSWERED", failure_code=UNANSWERED_FAILURE_CODE)
             self.stop = UNANSWERED_REASON.format(scene=state.scene.index)
@@ -1394,22 +1666,33 @@ class _StillRounds:
                 f"({', '.join(dict.fromkeys(state.failed))}).",
             }
             return None
-        failing = next((r for r in reports if r.violations), reports[0])
-        step = next_step(failing, rerolls_done=state.rerolls)
-        if step.action == "reroll":
-            state.rerolls += 1
-            state.instruction = positive_instruction(
-                [code for report in reports for code in report.violations]
-            )
-            return "again"
-        if step.action == "compose_locally":
-            state.outcome = {"status": "COMPOSE_LOCALLY", "reason": step.reason_ro}
+        return self._settled(state)
+
+    def _settled(self, state: _SceneRound) -> str | None:
+        """The round judged as every buyer judges one (`_settle_round`: the gate's best, else
+        her look, else the next step)."""
+        end = _settle_round(
+            self.engine,
+            self.registry,
+            self.storyboard_id,
+            state.scene,
+            state.verdicts,
+            self.correlation_id,
+            rerolls=state.rerolls,
+        )
+        if end.report is not None:
+            if state.scene.index == self.first_live:
+                self.figure_one = Path(end.report.path).read_bytes()
+            state.outcome = end.approved()
             return None
-        state.outcome = {
-            "status": "NEEDS_OWNER",
-            "reason": step.reason_ro,
-            "reasons": list(dict.fromkeys(r for rep in reports for r in rep.reasons_ro)),
-        }
+        if end.again:
+            state.rerolls += 1
+            state.instruction = end.instruction
+            if end.confirmed:
+                # Her confirmation goes with the re-roll it lets be bought.
+                state.entry.setdefault("director_confirmed", []).extend(end.confirmed)
+            return "again"
+        state.outcome = dict(end.outcome or {})
         return None
 
     def next_round(self, outcomes: list[ItemOutcome]) -> list[BatchRequest]:
@@ -2085,36 +2368,28 @@ def run_stills_stage(
                         failure_code=NO_OUTPUT_CODE,
                         failure_detail="Furnizorul a încheiat sarcina fără nicio imagine.",
                     )
-            reports = [report for _take, report in verdicts]
-            best = choose_best(reports)
-            _set_verdicts(engine, verdicts, best)
-            if best is not None:
-                chosen = next(take for take, report in verdicts if report is best)
+            end = _settle_round(
+                engine,
+                registry,
+                storyboard_id,
+                scene,
+                verdicts,
+                correlation_id,
+                rerolls=rerolls,
+            )
+            if end.report is not None:
                 if scene.index == first_live:
-                    figure_one = Path(best.path).read_bytes()
-                outcome = {"status": "APPROVED", "take_id": chosen, "score": best.score}
+                    figure_one = Path(end.report.path).read_bytes()
+                outcome = end.approved()
                 break
-            failing = next((r for r in reports if r.violations), reports[0] if reports else None)
-            if failing is None:
-                outcome = {
-                    "status": "NEEDS_OWNER",
-                    "reason": f"Scena {scene.index}: furnizorul nu a dat nicio imagine.",
-                }
-                break
-            step = next_step(failing, rerolls_done=rerolls)
-            if step.action == "reroll":
+            if end.again:
                 rerolls += 1
-                violations = [code for report in reports for code in report.violations]
-                instruction = positive_instruction(violations)
+                instruction = end.instruction
+                if end.confirmed:
+                    # Her confirmation goes with the re-roll it lets be bought.
+                    entry.setdefault("director_confirmed", []).extend(end.confirmed)
                 continue
-            if step.action == "compose_locally":
-                outcome = {"status": "COMPOSE_LOCALLY", "reason": step.reason_ro}
-                break
-            outcome = {
-                "status": "NEEDS_OWNER",
-                "reason": step.reason_ro,
-                "reasons": list(dict.fromkeys(r for rep in reports for r in rep.reasons_ro)),
-            }
+            outcome = dict(end.outcome or {})
         entry.update(outcome)
         entry["rerolls"] = rerolls
         if outcome["status"] in ("NEEDS_OWNER", "COMPOSE_LOCALLY"):

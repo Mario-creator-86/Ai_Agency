@@ -33,7 +33,7 @@ import re
 import shutil
 import subprocess
 import tempfile
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -1957,17 +1957,62 @@ class ClipReport:
     #: frame (the still) is split by a flat band, or the look saw more than one picture or
     #: asked for back_to_still. `clip_retry_decision` never buys motion on it again.
     back_to_still: bool = False
+    #: The look's answer to each motion-layer ``must_fix`` item (2026-10-12, late evening;
+    #: `still_gate.fix_answers`): {"finding", "expected", "status", "fixed", "seen"}. Empty
+    #: when nothing was asked.
+    fixes: tuple[dict[str, Any], ...] = ()
 
     def check(self, code: str) -> ClipCheck:
         return next(item for item in self.checks if item.code == code)
+
+    @property
+    def persists(self) -> bool:
+        """Whether the clip shows again a mistake its movement was rewritten to correct."""
+        return any(fix.get("status") == "persists" for fix in self.fixes)
+
+    @property
+    def matched_plan(self) -> bool:
+        """Whether the look said the clip shows its plan (False when nobody said so)."""
+        picture = (self.measured or {}).get("picture") or {}
+        flags = picture.get("verdict") if isinstance(picture, dict) else None
+        return isinstance(flags, dict) and flags.get("matches_plan") is True
 
 
 def _is_none(text: str) -> bool:
     return str(text or "").strip().strip(".").lower() in ("none", "no", "nothing", "nimic", "")
 
 
-def _picture_check(judgement: Any, *, faces_forbidden: bool) -> ClipCheck:
-    """The vision checklist, read strictly: a keep whose own answers contradict it fails."""
+def _cut_words(text: Any, limit: int) -> str:
+    said = " ".join(str(text or "").split())
+    if len(said) <= limit:
+        return said
+    return said[: limit - 1].rsplit(" ", 1)[0].rstrip(",;:") + "…"
+
+
+def _persists_words(fix: Mapping[str, Any]) -> str:
+    """A clip that shows again what its movement was rewritten to correct (2026-10-12, late
+    evening): what quality control saw and the corrected words that did not correct it."""
+    expected = _cut_words(fix.get("expected"), 120)
+    words = (
+        f"cuvintele «{expected}» nu au corectat-o"
+        if expected
+        else "cuvintele rescrise nu au corectat-o"
+    )
+    seen = _cut_words(fix.get("seen"), 120)
+    return (
+        f"repetă greșeala pe care rescrierea mișcării trebuia să o corecteze: "
+        f"«{_cut_words(fix.get('finding'), 160)}»; {words}"
+        + (f" (se vede: {seen})" if seen else "")
+    )
+
+
+def _picture_check(
+    judgement: Any, *, faces_forbidden: bool, fixes: Sequence[Mapping[str, Any]] = ()
+) -> ClipCheck:
+    """The vision checklist, read strictly: a keep whose own answers contradict it fails.
+    ``fixes`` are the look's answers to the motion-layer ``must_fix`` items: one that persists
+    fails the clip (with the corrected words that did not correct it), one left unanswered is
+    a clip nobody checked for it; a minor trace does not fail it."""
     if judgement is None:
         return ClipCheck(
             "picture",
@@ -1983,6 +2028,21 @@ def _picture_check(judgement: Any, *, faces_forbidden: bool) -> ClipCheck:
             detail = f"clipul nu a fost privit: {detail}"
         return ClipCheck("picture", "NOT_RUN", True, None, detail)
     wrong: list[str] = []
+    for fix in fixes:
+        if fix.get("status") is None:
+            # Only a verdict built in code can leave an item out (`clip_report_schema`).
+            return ClipCheck(
+                "picture",
+                "NOT_RUN",
+                True,
+                None,
+                "clipul nu a fost privit pentru greșeala «"
+                + _cut_words(fix.get("finding"), 160)
+                + "»: modelul de vedere nu a spus dacă a dispărut",
+            )
+        if fix.get("status") == "persists":
+            # First among the reasons: the take's detail is cut, and the ladder reads it.
+            wrong.insert(0, _persists_words(fix))
     if faces_forbidden and verdict.faces_visible:
         wrong.append("se vede o față, deși biblia vizuală interzice fețele")
     if verdict.readable_text:
@@ -2117,17 +2177,21 @@ def _panels_check(
     return ClipCheck("panels", "PASSED", False, widest, detail)
 
 
-def _still_must_change(measured: dict[str, Any], judgement: Any) -> bool:
+def _still_must_change(measured: dict[str, Any], judgement: Any, *, persists: bool = False) -> bool:
     """Whether the clip's fault is its still's: the first frame (the still the clip was made
     from) is split by a flat band, or the look saw more than one picture or asked for the
     still to change. Another seed on the same still buys the same fault (2026-10-09: scene 5
-    was a triptych, and its clip animated the triptych)."""
+    was a triptych, and its clip animated the triptych). A clip that repeats a mistake its
+    MOVEMENT was rewritten to correct (``persists``) goes back to the motion's words, not to
+    the still, unless the picture itself is split (2026-10-12, the review of 9ac0195)."""
     frames = (measured.get("panels") or {}).get("frames") or []
     if any(entry.get("at") == "first" and entry.get("splits_the_picture") for entry in frames):
         return True
     verdict = getattr(judgement, "verdict", None)
     if getattr(judgement, "status", None) != "MEASURED" or verdict is None:
         return False
+    if persists:
+        return not verdict.one_picture
     return not verdict.one_picture or verdict.verdict == "back_to_still"
 
 
@@ -2142,6 +2206,7 @@ def check_clip(
     face_counter: Callable[..., Any] | None = None,
     judge: Callable[[list[Path]], Any] | None = None,
     work_dir: Path | None = None,
+    must_fix: Sequence[Mapping[str, Any]] = (),
 ) -> ClipReport:
     """Measure one bought clip before it is cut into the film, at 0 credits.
 
@@ -2155,6 +2220,12 @@ def check_clip(
     Fail closed: a local check that could not run blocks in PRODUCTION and warns in TEST; a
     clip nobody looked at blocks in every environment, as a still does at the stills gate.
     A clip whose still is at fault (`_still_must_change`) is marked ``back_to_still``.
+
+    ``must_fix`` (2026-10-12, late evening): what the scene's movement was rewritten to fix
+    (`fix_check.open_findings`, motion layer; the same items the judge was shown on its plan).
+    The look's answers are kept on the report (``fixes``, and ``measured["picture"]``): one
+    that persists fails the picture check — back to the motion's words, not the still — a minor
+    trace is a warning.
     """
     from app.media.faces import count_faces  # noqa: PLC0415 - opencv loads lazily
 
@@ -2207,7 +2278,12 @@ def check_clip(
         faces = _faces_check(frames, counter, faces_forbidden=faces_forbidden, measured=measured)
         panels = _panels_check(ffmpeg, frames, measured=measured)
         judgement = judge([path for _at, _moment, path in frames]) if judge and frames else None
-        picture = _picture_check(judgement, faces_forbidden=faces_forbidden)
+        fixes: list[dict[str, Any]] = []
+        if must_fix and getattr(judgement, "status", None) == "MEASURED":
+            from app.media.still_gate import fix_answers  # noqa: PLC0415 - still_gate imports us
+
+            fixes = fix_answers(must_fix, getattr(judgement, "verdict", None))
+        picture = _picture_check(judgement, faces_forbidden=faces_forbidden, fixes=fixes)
         if judgement is not None:
             measured["picture"] = {
                 "status": getattr(judgement, "status", None),
@@ -2217,12 +2293,19 @@ def check_clip(
                 # turned a face or broke its shot (`clip_deformed`) from one that barely moved.
                 "verdict": _verdict_flags(getattr(judgement, "verdict", None)),
             }
+            if fixes:
+                measured["picture"]["fixes"] = fixes
     finally:
         if owned:
             shutil.rmtree(folder, ignore_errors=True)
 
     checks: list[ClipCheck] = []
-    warnings: list[str] = []
+    warnings: list[str] = [
+        f"Scena {scene}: urmă mică a greșelii «{_cut_words(fix.get('finding'), 160)}», "
+        "acceptată" + (f" (se vede: {_cut_words(fix.get('seen'), 120)})" if fix.get("seen") else "")
+        for fix in fixes
+        if fix.get("status") == "minor"
+    ]
     for item in (motion, cuts, faces, panels):
         if item.status == "NOT_RUN" and environment != "PRODUCTION":
             # In TEST a measurement that could not run is said, not counted: the rule the
@@ -2241,7 +2324,13 @@ def check_clip(
         warnings_ro=tuple(warnings),
         unmeasured=tuple(item.code for item in blocking if item.status == "NOT_RUN"),
         measured=measured,
-        back_to_still=bool(blocking) and _still_must_change(measured, judgement),
+        back_to_still=bool(blocking)
+        and _still_must_change(
+            measured,
+            judgement,
+            persists=any(fix.get("status") == "persists" for fix in fixes),
+        ),
+        fixes=tuple(fixes),
     )
 
 
@@ -2423,6 +2512,21 @@ def clip_retry_decision(
             "aceeași imagine nu se mai animă. Scena are nevoie de o imagine nouă, apoi de "
             "mișcare nouă.",
         )
+    if report.persists and report.matched_plan:
+        # 2026-10-12, late evening (the review of 9ac0195, finding 3, for the clip): the clip
+        # shows its corrected movement and the mistake is there again, so those words do not
+        # correct it; a seed + 1 on them is the same mistake bought again. Her ladder rewrites
+        # the movement (a clip QC refusal is a content refusal, `scene_rewrite.refusal_kind`).
+        persisted = next(fix for fix in report.fixes if fix.get("status") == "persists")
+        expected = _cut_words(persisted.get("expected"), 120)
+        words = f"cuvintele «{expected}»" if expected else "cuvintele rescrise"
+        return ClipRetry(
+            "ESCALATE",
+            None,
+            f"Scena {report.scene}: clipul arată planul și repetă totuși greșeala "
+            f"«{_cut_words(persisted.get('finding'), 120)}»: {words} nu au corectat-o. Nu se "
+            "cumpără o reluare pe aceleași cuvinte; Directoarea rescrie mișcarea.",
+        )
     if retries_done >= MAX_CLIP_RETRIES:
         return ClipRetry(
             "ESCALATE",
@@ -2463,8 +2567,10 @@ def clip_retry_decision(
 @dataclass(frozen=True)
 class ClipQCOutcome:
     #: BACK_TO_STILL: the clip failed because of its still; no motion was bought again on it,
-    #: and the scene needs a new still before any new motion.
-    status: str  # PASSED | PASSED_ON_RETRY | ESCALATED | BACK_TO_STILL
+    #: and the scene needs a new still before any new motion. ACCEPTED_BY_LOOK (2026-10-12):
+    #: clip QC refused the last clip (``reports[-1]``) and the Director's look kept it
+    #: (``look``): nothing more was bought, and the clip goes on as hers.
+    status: str  # PASSED | PASSED_ON_RETRY | ESCALATED | BACK_TO_STILL | ACCEPTED_BY_LOOK
     clip: Path | None
     attempts: int
     seeds: tuple[int, ...]
@@ -2472,6 +2578,49 @@ class ClipQCOutcome:
     retry_credits: float
     reason_ro: str
     prompt: str
+    #: Her look at the last refused clip, when she was asked (`fix_check.director_second_look`).
+    look: dict[str, Any] | None = None
+
+
+ACCEPTED_BY_LOOK = "ACCEPTED_BY_LOOK"
+
+
+def look_may_overturn(report: ClipReport) -> bool:
+    """Whether the Director may be asked to look again at a refused clip before anything more
+    is bought for it: a refusal measured whole (nothing unmeasured, not the still's fault) on
+    a reading — the motion floor, a cut, the plan, the look, a deformation, a corrected mistake
+    seen again — and none of the bible's hard limits (a face where faces are forbidden,
+    writing, panels), which stay the code's (the Owner, 2026-10-12)."""
+    if report.passed or report.unmeasured or report.back_to_still:
+        return False
+    failed = {item.code for item in report.checks if item.blocking and item.status == "FAILED"}
+    if not failed or failed & {"faces", "panels"}:
+        return False
+    picture = (report.measured or {}).get("picture") or {}
+    flags = picture.get("verdict") if isinstance(picture, dict) else None
+    flags = flags if isinstance(flags, dict) else {}
+    if flags.get("readable_text") or flags.get("one_picture") is False:
+        return False
+    faces = next((item for item in report.checks if item.code == "faces"), None)
+    forbidden = faces is not None and faces.status != "NOT_APPLICABLE"
+    return not (flags.get("faces_visible") and forbidden)
+
+
+def _her_words(look: Mapping[str, Any] | None) -> str:
+    """Her confirmation, said with what it lets be bought (or escalated)."""
+    if not look or look.get("verdict") != "CONFIRMED" or not look.get("reason_ro"):
+        return ""
+    return f" Directoarea a privit și confirmă refuzul: {look['reason_ro']}"
+
+
+def _looked(
+    look: Callable[[ClipReport], Mapping[str, Any] | None] | None, report: ClipReport
+) -> dict[str, Any] | None:
+    """Her look at a refused clip, asked only where she may overturn it."""
+    if look is None or not look_may_overturn(report):
+        return None
+    answer = look(report)
+    return dict(answer) if answer else None
 
 
 def qc_clip_with_retry(
@@ -2486,12 +2635,23 @@ def qc_clip_with_retry(
     price_credits: float,
     committed_credits: float,
     cap_credits: float,
+    look: Callable[[ClipReport], Mapping[str, Any] | None] | None = None,
 ) -> ClipQCOutcome:
     """Check a bought clip; when it fails, buy it again ONCE on the same model with seed + 1
     and a firmer motion prompt, only when the approved cap still covers that; otherwise, or
     when the retry fails too, hand the scene to the Owner. `buy(seed, prompt)` is the caller's
     purchase of one shot and returns the new clip, or None when nothing was delivered. A clip
-    whose still is at fault buys nothing and comes back BACK_TO_STILL."""
+    whose still is at fault buys nothing and comes back BACK_TO_STILL.
+
+    ``look(report)`` (2026-10-12; the Owner: «trece imaginile picate de la QC pe la Directoare
+    și să decidă dacă au picat corect sau nu și dacă trebuie refăcute») is the Director's
+    second look at a refused clip (`fix_check.director_second_look`), asked before the retry is
+    bought and before a refusal goes on to a rewrite, wherever she may overturn it
+    (`look_may_overturn`): a look that lets the clip stand (`fix_check.look_accepts`) buys
+    nothing more — ACCEPTED_BY_LOOK, the clip kept as hers; a confirmation goes with the retry
+    in its reason; no answer leaves everything as before."""
+    from app.media.fix_check import look_accepts  # noqa: PLC0415 - a small module
+
     first = check(clip)
     decision = clip_retry_decision(
         first,
@@ -2507,8 +2667,32 @@ def qc_clip_with_retry(
         return ClipQCOutcome(
             "BACK_TO_STILL", None, 1, (seed,), (first,), 0.0, decision.reason_ro, ""
         )
+    seen = _looked(look, first)
+    if look_accepts(seen):
+        return ClipQCOutcome(
+            ACCEPTED_BY_LOOK,
+            clip,
+            1,
+            (seed,),
+            (first,),
+            0.0,
+            f"Scena {first.scene}: Directoarea a privit clipul refuzat și îl păstrează: "
+            f"{(seen or {}).get('reason_ro') or 'defectul e mic'}. Nu se cumpără nimic.",
+            "",
+            look=seen,
+        )
     if decision.action == "ESCALATE" or decision.seed is None:
-        return ClipQCOutcome("ESCALATED", None, 1, (seed,), (first,), 0.0, decision.reason_ro, "")
+        return ClipQCOutcome(
+            "ESCALATED",
+            None,
+            1,
+            (seed,),
+            (first,),
+            0.0,
+            decision.reason_ro + _her_words(seen),
+            "",
+            look=seen,
+        )
     prompt = retry_motion_prompt(motion_prompt, camera_move, first, model_id=model_id)
     again = buy(decision.seed, prompt)
     seeds = (seed, decision.seed)
@@ -2520,8 +2704,10 @@ def qc_clip_with_retry(
             seeds,
             (first,),
             float(price_credits),
-            f"Scena {first.scene}: reluarea nu a livrat clipul. Decide Proprietarul.",
+            f"Scena {first.scene}: reluarea nu a livrat clipul. Decide Proprietarul."
+            + _her_words(seen),
             prompt,
+            look=seen,
         )
     second = check(Path(again))
     if second.passed:
@@ -2532,8 +2718,10 @@ def qc_clip_with_retry(
             seeds,
             (first, second),
             float(price_credits),
-            f"Scena {first.scene}: clipul a trecut la reluare (sămânța {decision.seed}).",
+            f"Scena {first.scene}: clipul a trecut la reluare (sămânța {decision.seed})."
+            + _her_words(seen),
             prompt,
+            look=seen,
         )
     final = clip_retry_decision(
         second,
@@ -2543,6 +2731,25 @@ def qc_clip_with_retry(
         price_credits=price_credits,
         cap_credits=cap_credits,
     )
+    if final.action != "BACK_TO_STILL":
+        # The retry failed too: before the scene goes on to a rewrite (and a purchase), she
+        # looks at the clip bought last.
+        last_look = _looked(look, second)
+        if look_accepts(last_look):
+            return ClipQCOutcome(
+                ACCEPTED_BY_LOOK,
+                Path(again),
+                2,
+                seeds,
+                (first, second),
+                float(price_credits),
+                f"Scena {first.scene}: Directoarea a privit reluarea refuzată și o păstrează: "
+                f"{(last_look or {}).get('reason_ro') or 'defectul e mic'}. Nu se cumpără "
+                "nimic.",
+                prompt,
+                look=last_look,
+            )
+        seen = last_look or seen
     return ClipQCOutcome(
         "BACK_TO_STILL" if final.action == "BACK_TO_STILL" else "ESCALATED",
         None,
@@ -2550,8 +2757,9 @@ def qc_clip_with_retry(
         seeds,
         (first, second),
         float(price_credits),
-        final.reason_ro,
+        final.reason_ro + _her_words(seen),
         prompt,
+        look=seen,
     )
 
 
