@@ -37,6 +37,17 @@ once, makes every item in index order, and scales to zero 1 s (idleTimeout) afte
   opened safe mode. Each refused row keeps RunPod's answer (``output.run_refusal``); those
   journal writes are best effort, so a «database is locked» never turns a refusal that queued
   nothing into a purchase (review 2026-10-10, `_journal_failed`).
+* A NEW purchase never carries a seed that already drew a picture (or a clip) for its scene,
+  is still on its way to one, or already ended twice without one after RunPod took it
+  (`reserve_item`, `_seeds_used`, `fresh_item_seed`). The Owner, 2026-10-12 22:00: «Cum
+  este permis să facă 9 încercări… și el să facă același video?». The stills of
+  the cyclotron film aa170155 were bought again on scenes 4 and 5 with the SAME two seeds in
+  four rounds (2509052738/2571181196, 596097424/719292034), and the serial f06808c9 drew its
+  scene-4 index-1 and index-2 seeds a third time at 11:33 and 11:47 UTC: the journal moved
+  the attempt past the spent key and kept the seed. Every purchase passes through here, so
+  this is where the rule holds even when a stage's own counter is wrong. The row keeps the
+  seed the stage asked for (``seed_asked``) next to the one it was sent with, so a resend of
+  that SAME row after a crash or an unanswered /run keeps its key and its fresh seed.
 
 Nothing here switches the GPU on or off: that is `gpu_session` (the caller's ``session``).
 """
@@ -49,6 +60,7 @@ import logging
 import re
 import time
 from collections.abc import Awaitable, Callable, Iterator, Sequence
+from collections.abc import Set as AbstractSet
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -238,6 +250,10 @@ class BatchRequest:
     references: tuple[bytes, ...]
     source_image: bytes | None
     price_usd: Decimal
+    #: The seed the stage asked for, when `reserve_item` sent another one because this one had
+    #: already drawn a picture for the scene (2026-10-12): None when ``seed`` is the asked one.
+    #: Journalled only when set, so a request sent as asked hashes exactly as before.
+    seed_asked: int | None = None
 
 
 @dataclass
@@ -260,9 +276,49 @@ class ItemOutcome:
 
 
 def item_seed(storyboard_id: str, scene: int | str, attempt: int, candidate: int) -> int:
-    """A deterministic seed per item (a re-roll is a new attempt, so a new seed)."""
+    """A deterministic seed per item (a re-roll is a new attempt, so a new seed).
+
+    The index alone does not make a seed fresh: the stills step numbered its re-rolls from 1
+    in every step until 1fbc4f9, and the cyclotron film aa170155 drew index 1 of scene 4
+    (2509052738/2571181196) in four rounds. `fresh_item_seed` skips the seeds already used."""
     text = f"{storyboard_id}|{scene}|{attempt}|{candidate}"
     return int(hashlib.sha256(text.encode("utf-8")).hexdigest()[:8], 16)
+
+
+#: How many indexes `fresh_item_seed` tries before it gives up (a scene has tens of seeds).
+FRESH_SEED_TRIES = 10_000
+
+
+def fresh_item_seed(
+    storyboard_id: str,
+    scene: int | str,
+    start: int,
+    candidate: int,
+    used: AbstractSet[int],
+    *,
+    operation: str = "image",
+) -> int:
+    """The first deterministic seed from index ``start`` on that is not in ``used`` (the seeds
+    that already drew a picture or a clip for this scene).
+
+    The rule of 2026-10-12 in one helper: a redo of a refused picture always uses a seed
+    never used for that scene. Same seed with a small change of words gave near-identical
+    pictures (layout correlation 0.79-0.90 on the cyclotron's scenes 4 and 5, against 0.12
+    for a new seed), so a round on an old seed buys the refused picture again. A still's seed
+    is `item_seed` itself (the stills step's own formula, so both agree on what is next); a
+    clip's seed is drawn under its operation's name, never the still's seed of the scene.
+
+    The last seed the worker takes (`contract.MAX_SEED`) is never handed out: clip QC's one
+    retry is the sent seed + 1 (`qc.clip_retry_decision`), which must stay a seed the
+    worker's contract accepts (review 2026-10-12)."""
+    index = max(1, int(start))
+    scene_key: int | str = scene if operation == "image" else f"{scene}|{operation}"
+    for _ in range(FRESH_SEED_TRIES):
+        seed = item_seed(storyboard_id, scene_key, index, candidate)
+        if seed not in used and seed < contract.MAX_SEED:
+            return seed
+        index += 1
+    raise RunPodProtocolError("No fresh seed left for this scene")
 
 
 def picture_kind(content: bytes) -> tuple[str, str]:
@@ -304,6 +360,9 @@ def journal_payload(request: BatchRequest) -> dict[str, Any]:
         "height": request.height,
         "reference_images": [picture_digest(b) for b in request.references],
     }
+    if request.seed_asked is not None:
+        # What the stage asked for, next to the fresh seed sent instead (`reserve_item`).
+        payload["seed_asked"] = request.seed_asked
     spec = reference_spec(request.model)
     if request.references and spec is not None:
         # Which workflow input each picture was bound to: what the model really received.
@@ -463,17 +522,35 @@ def reserve_item(
     reserved and never answered before), TRACK (already accepted remotely, still open).
 
     A key whose row was used up (judged, collected, failed, cancelled) moves to the next
-    attempt: a redo without a verdict never reuses a spent key."""
+    attempt: a redo without a verdict never reuses a spent key.
+
+    A NEW row never carries a seed already used for its scene and operation (`_seeds_used`):
+    the seed is replaced by `fresh_item_seed` and the row journals the asked one as
+    ``seed_asked`` (2026-10-12: moving to the next attempt kept the seed, so the cyclotron's
+    still redos drew the same two pictures in four rounds). A row that exists keeps what it was
+    sent with: TRACK and RESEND (uncertain, or reserved and never sent) answer the same key
+    with the same fresh seed, matched through its ``seed_asked`` or through the fresh seed
+    itself when the stage now asks that one, so the worker's manifest of that key stays a free
+    reuse. A proven-unsent row is sent again on its own key and seed (cb14792) unless that seed
+    drew a picture elsewhere since; then it stays unsent and the next attempt gets a fresh
+    seed. ``seed_asked`` is the door's own record, never an input: a request that carries one
+    (an item handed back) is read for its seed alone."""
+    if request.seed_asked is not None:
+        from dataclasses import replace  # noqa: PLC0415
+
+        request = replace(request, seed_asked=None)
     attempt = request.attempt_number
     for _ in range(1000):
-        current = request if attempt == request.attempt_number else _with_attempt(request, attempt)
-        payload = journal_payload(current)
-        key = _key(config, integration_id, payload, request.operation)
-        hashed = digest(payload)
+        asked = request if attempt == request.attempt_number else _with_attempt(request, attempt)
+        # The key never depends on the seed: a replaced seed keeps the attempt's key.
+        key = _key(config, integration_id, journal_payload(asked), request.operation)
         with Session(store.engine, expire_on_commit=False) as s, s.begin():
             lock_for_write(s)
             row = s.scalar(select(GenerationJob).where(GenerationJob.idempotency_key == key))
             if row is None:
+                current = _fresh(asked, _seeds_used(s, asked))
+                payload = journal_payload(current)
+                hashed = digest(payload)
                 row = GenerationJob(
                     id=_uuid(),
                     idempotency_key=key,
@@ -496,7 +573,25 @@ def reserve_item(
                     poll_count=0,
                 )
                 s.add(row)
+                if current.seed_asked is not None:
+                    logger.info(
+                        "runpod_seed_refreshed",
+                        extra={
+                            "project_id": current.project_id,
+                            "scene_id": current.scene_id,
+                            "operation": current.operation,
+                            "candidate_index": current.candidate_index,
+                            "attempt": attempt,
+                            "seed_asked": current.seed_asked,
+                            "seed_sent": current.seed,
+                        },
+                    )
                 return row, "SEND", current
+            # The row is compared with the request as IT was journalled: with its fresh seed
+            # when it replaced the very seed asked now (a resend after a crash or an
+            # unanswered /run), else as asked.
+            current = _as_journalled(asked, row)
+            hashed = digest(journal_payload(current))
             same = (row.request_digest or row.payload_hash) == hashed
             terminal = row.status in TERMINAL
             if not same and not terminal:
@@ -522,6 +617,8 @@ def reserve_item(
                 and row.status == "FAILED"
                 and not row.remote_job_id
                 and (row.error_code == UNSENT or str(row.error_code).startswith("HTTP_"))
+                # Its seed drew nothing, but another row may have drawn with it since.
+                and current.seed not in _seeds_used(s, current, exclude=row.id)
             ):
                 # Proven never served: the creative attempt and its key are reusable.
                 row.status, row.error_code, row.finished_at = "STARTING", None, None
@@ -536,6 +633,94 @@ def _with_attempt(request: BatchRequest, attempt: int) -> BatchRequest:
     from dataclasses import replace  # noqa: PLC0415
 
     return replace(request, attempt_number=attempt)
+
+
+#: How often a seed may go again after its job ended without a picture once RunPod had taken
+#: it (expired, cancelled, a worker error, an output that could not be taken): once.
+TECHNICAL_RETRIES_PER_SEED = 1
+
+
+def _seeds_used(s: Session, request: BatchRequest, *, exclude: str | None = None) -> set[int]:
+    """The seeds that already drew a picture (or a clip) for the request's scene and
+    operation, or may still draw one: every journal row of that project, scene and operation
+    that COMPLETED or holds an asset, and every row still open (reserved, queued, running,
+    uncertain), except the row ``exclude``. A row that ended with nothing (failed, cancelled,
+    expired, proven unsent) showed the studio no picture, so its seed may go again: the
+    cyclotron's scene-1 clip that expired undelivered at 16:55 UTC on 2026-10-12 (seed
+    580970446) was sent again on that seed at 18:07, a clip nobody had seen. Any model and any
+    key count: the same seed on the same scene draws the same layout. Read in the caller's
+    write-locked transaction, so two reservations never pick one seed.
+
+    Again ONCE (`TECHNICAL_RETRIES_PER_SEED`, review 2026-10-12): a seed whose jobs RunPod
+    took ended twice without a picture is used up too. The worker draws a seed the same way
+    every time, so a second such ending is no longer bad luck (a seed it cannot finish, an
+    output it cannot hand over) and a third purchase on it would buy the same failure; the
+    Owner, 22:00: the studio must think, not repeat. A /run RunPod never took (proven unsent,
+    no job id) never counts: that key and seed go again as often as needed (cb14792)."""
+    rows = s.execute(
+        select(
+            GenerationJob.id,
+            GenerationJob.status,
+            GenerationJob.asset_path,
+            GenerationJob.remote_job_id,
+            GenerationJob.request,
+        ).where(
+            GenerationJob.project_id == request.project_id,
+            GenerationJob.scene_id == request.scene_id,
+            GenerationJob.operation == request.operation,
+        )
+    ).all()
+    used: set[int] = set()
+    endings: dict[int, int] = {}
+    for row_id, status, asset_path, remote_job_id, journalled in rows:
+        if row_id == exclude:
+            continue
+        seed = _count(dict(journalled or {}).get("seed"))
+        if seed is None:
+            continue
+        if status not in TERMINAL or status == "COMPLETED" or asset_path:
+            used.add(seed)
+        elif remote_job_id:
+            endings[seed] = endings.get(seed, 0) + 1
+    used.update(seed for seed, count in endings.items() if count > TECHNICAL_RETRIES_PER_SEED)
+    return used
+
+
+def _fresh(asked: BatchRequest, used: AbstractSet[int]) -> BatchRequest:
+    """The request with a seed never used for its scene: as asked when its seed is fresh,
+    else with `fresh_item_seed` from its own attempt on, the asked seed kept as
+    ``seed_asked``."""
+    if asked.seed not in used:
+        return asked
+    from dataclasses import replace  # noqa: PLC0415
+
+    seed = fresh_item_seed(
+        asked.project_id,
+        asked.scene_id,
+        asked.attempt_number,
+        asked.candidate_index,
+        used,
+        operation=asked.operation,
+    )
+    return replace(asked, seed=seed, seed_asked=asked.seed)
+
+
+def _as_journalled(asked: BatchRequest, row: GenerationJob) -> BatchRequest:
+    """``asked`` as ``row`` journalled it: with the row's fresh seed and its ``seed_asked``
+    when the row replaced a seed and the stage asks either of the two now, else unchanged. A
+    resend after a crash, or after an unanswered /run, asks the stage's seed again; the row
+    answers with the seed it was really sent with, never a second fresh one and never the old
+    one. A stage whose counter moved past the old seed may ask the fresh one itself: the same
+    purchase byte for byte, so it resends too, instead of an IDEMPOTENCY_CONFLICT that would
+    leave the scene behind its own reserved row (review 2026-10-12)."""
+    sent = dict(row.request or {})
+    fresh = _count(sent.get("seed"))
+    replaced = _count(sent.get("seed_asked"))
+    if fresh is None or replaced is None or asked.seed not in (fresh, replaced):
+        return asked
+    from dataclasses import replace  # noqa: PLC0415
+
+    return replace(asked, seed=fresh, seed_asked=replaced)
 
 
 def _uuid() -> str:
@@ -1277,6 +1462,7 @@ def _request_of(row: GenerationJob) -> BatchRequest:
         references=(),
         source_image=None,
         price_usd=Decimal(0),
+        seed_asked=_count(data.get("seed_asked")),
     )
 
 
@@ -1454,10 +1640,64 @@ def submit_round(
         return run
     if config.mock:
         _submit_mock(run, to_send, session, on_submitted)
-        return run
-    stop = should_stop if should_stop is not None else STEP_STOP.get()
-    asyncio.run(_submit_remote(run, to_send, session, on_submitted, operation, stop))
+    else:
+        stop = should_stop if should_stop is not None else STEP_STOP.get()
+        asyncio.run(_submit_remote(run, to_send, session, on_submitted, operation, stop))
+    _note_fresh_seeds(run, [item for item, _row in to_send])
     return run
+
+
+#: The event of each item RunPod took on a fresh seed instead of the one its stage asked for
+#: (aggregate: the GPU session), so the record shows a redo was a new throw (2026-10-12).
+SEED_EVENT = "runpod.seed_refreshed"
+
+
+def _seed_refreshed_ro(item: SubmittedItem) -> str:
+    """The Owner's sentence for one fresh seed. «A mai fost folosită», not «a mai făcut»: the
+    old seed may be still on its way, or have ended twice without a picture (`_seeds_used`),
+    and the sentence never claims a picture that does not exist (review 2026-10-12)."""
+    request = item.request
+    if request.operation == "video":
+        used, same = "pentru un clip al acestei scene", "același clip nu se cumpără"
+    else:
+        used, same = "pentru o imagine a acestei scene", "aceeași imagine nu se cumpără"
+    return (
+        f"Scena {request.scene_id}: sămânța {request.seed_asked} a mai fost folosită {used}, "
+        f"așa că s-a trimis sămânța nouă {request.seed}; {same} de două ori."
+    )
+
+
+def _note_fresh_seeds(run: BatchRun, items: Sequence[SubmittedItem]) -> None:
+    """`SEED_EVENT` for every item of this submission RunPod took (it has a job id) on a
+    fresh seed. Written after the /runs, never before one (a write may wait out the busy
+    timeout while the GPU is on); an item refused or still uncertain has no event yet, and
+    its row already journals both seeds. `_write_event` never raises."""
+    if not run.session_id:
+        return
+    from app.providers.runpod.gpu_session import _write_event  # noqa: PLC0415 - cycle
+
+    for item in items:
+        request = item.request
+        if request.seed_asked is None or not item.remote_item_id:
+            continue
+        scene: int | str = int(request.scene_id) if request.scene_id.isdigit() else request.scene_id
+        _write_event(
+            run.engine,
+            SEED_EVENT,
+            run.session_id,
+            {
+                "storyboard_id": request.project_id,
+                "scene_number": scene,
+                "operation": request.operation,
+                "candidate_index": request.candidate_index,
+                "attempt": request.attempt_number,
+                "job_row_id": item.job_row_id,
+                "seed_asked": request.seed_asked,
+                "seed_sent": request.seed,
+                "reason_ro": _seed_refreshed_ro(item),
+            },
+            run.session_id,
+        )
 
 
 #: RunPod's /run answers 409 «Endpoint is paused (max_workers=0)» for a while after the
