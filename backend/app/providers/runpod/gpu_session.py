@@ -719,6 +719,8 @@ def precheck(
     config: RunPodConfig = adapter.config
     if config.mock:
         return
+    # His stop holds before anything else is read: no yes is asked or spent while it stands.
+    _refuse_owner_hold(engine)
     if not config.configured or config.endpoint_for(purpose) is None or config.mode != "serverless":
         raise GpuSessionRefused(
             "NOT_CONFIGURED", "RunPod Serverless nu este configurat pentru acest pas."
@@ -755,6 +757,55 @@ RUNPOD_OFF_WORDS = (
     "RunPod este oprit din comutatorul «RunPod pornit»: GPU-ul nu se pornește; nu s-a trimis "
     "și nu s-a cheltuit nimic."
 )
+
+#: The Owner's «Oprește GPU acum» HOLDS (2026-10-12): his press is recorded as a hold, on the
+#: record as {on: true, by, command_id}; lifted only by his answer «Permite din nou» on the card
+#: `decisions.producers.gpu_hold` writes ({on: false}). 16:52:08 that day he pressed it while the
+#: Director's repair of Higgs-2's scene 5 was buying a clip; the clip was cancelled, and 25 s
+#: later the same walk opened a new GPU session and bought the same clip again — his stop held
+#: for nothing but the job it caught.
+OWNER_HOLD_EVENT = "runpod.owner_hold"
+OWNER_HOLD = "OWNER_HOLD"
+OWNER_HOLD_WORDS = (
+    "Ai oprit GPU-ul: niciun pas plătit nu-l mai pornește până nu permiți din nou (cardul din "
+    "«Decizii»); nu s-a trimis și nu s-a cheltuit nimic."
+)
+
+
+def owner_hold_active(engine: Engine) -> bool:
+    """Whether his stop holds now: the newest `OWNER_HOLD_EVENT` says on. Unreadable → held
+    (a GPU is never switched on past a stop nobody could read)."""
+    from app.models import DomainEvent  # noqa: PLC0415 - the core's model
+
+    try:
+        with Session(engine) as session:
+            newest = session.scalar(
+                select(DomainEvent)
+                .where(DomainEvent.event_type == OWNER_HOLD_EVENT)
+                .order_by(DomainEvent.sequence.desc())
+                .limit(1)
+            )
+    except Exception:  # noqa: BLE001 - fail closed on money
+        logger.warning("owner_hold_unreadable")
+        return True
+    payload = newest.payload if newest is not None and isinstance(newest.payload, dict) else {}
+    return bool(payload.get("on"))
+
+
+def set_owner_hold(engine: Engine, on: bool, *, by: str, command_id: str | None = None) -> None:
+    """Record his hold (``on``) or its lift; idempotent in effect (the newest one counts)."""
+    _write_event(
+        engine,
+        OWNER_HOLD_EVENT,
+        "owner_hold",
+        {"on": bool(on), "by": by, "command_id": command_id},
+        command_id or str(uuid4()),
+    )
+
+
+def _refuse_owner_hold(engine: Engine) -> None:
+    if owner_hold_active(engine):
+        raise GpuSessionRefused(OWNER_HOLD, OWNER_HOLD_WORDS)
 
 
 def _switched_off_now(engine: Engine, integration_id: str | None) -> bool:
@@ -870,6 +921,9 @@ def open_session(
             transport=transport,
         )
     endpoint_id = config.endpoint_for(purpose)
+    # His stop holds (`OWNER_HOLD_EVENT`): read again here, at the switch, whatever the step's
+    # precheck read before (a press between the two is his press).
+    _refuse_owner_hold(engine)
     if not config.configured or endpoint_id is None or config.mode != "serverless":
         raise GpuSessionRefused(
             "NOT_CONFIGURED", "RunPod Serverless nu este configurat pentru acest pas."
@@ -1501,9 +1555,11 @@ def gpu_status(
                 "storyboard_id": row.storyboard_id,
                 "opened_at": row.opened_at,
                 "renewed_at": row.renewed_at,
+                "words_ro": _session_words(session, row),
             }
             for row in live
         ]
+        held = owner_hold_active(engine)
         last_off = (
             {"at": last.closed_at, "reason": last.close_reason, "verified": last.verified_off}
             if last is not None
@@ -1516,17 +1572,30 @@ def gpu_status(
         words = "RunPod nu este configurat."
     elif mock:
         words = "Simulare RunPod: niciun GPU real."
+    # What is being made, in the Owner's words: the film, the scene and the take, never a step's
+    # code name (2026-10-12: «GPU pornit, worker activ · pas: scene_redo» — «Ce lucrează? Pentru
+    # ce film, ce cadru?»).
+    doing = "; ".join(str(s["words_ro"]) for s in sessions if s.get("words_ro"))
+    if not configured:
+        words = "RunPod nu este configurat."
+    elif mock:
+        words = "Simulare RunPod: niciun GPU real."
     elif waiting:
-        steps = ", ".join(sorted({str(s["step"]) for s in sessions}))
-        words = f"GPU: {weights.WAIT_WORDS_RO}" + (f" — pas: {steps}." if steps else ".")
+        steps = doing or ", ".join(sorted({str(s["step"]) for s in sessions}))
+        words = f"GPU: {weights.WAIT_WORDS_RO}" + (f" — {steps}." if steps else ".")
     elif sessions:
-        words = "GPU pornit — pas: " + ", ".join(sorted({str(s["step"]) for s in sessions})) + "."
+        words = "GPU pornit — " + (
+            doing or "pas: " + ", ".join(sorted({str(s["step"]) for s in sessions}))
+        )
+        words = words.rstrip(".") + "."
     elif any(e["state"] == "ON" for e in endpoints):
         words = "GPU pornit fără niciun pas plătit deschis; paznicul îl oprește."
     elif endpoints and all(e["state"] == "OFF" for e in endpoints):
         words = "GPU oprit."
     else:
         words = "GPU: stare necunoscută."
+    if held and configured and not mock:
+        words = f"{words} Oprit de tine: nu pornește până permiți din nou (cardul din «Decizii»)."
     return {
         "configured": configured,
         "mock": mock,
@@ -1536,7 +1605,57 @@ def gpu_status(
         "last_off": last_off,
         "words_ro": words,
         "model_wait_ro": waiting,
+        "owner_hold": bool(held),
     }
+
+
+#: A paid step's name in the Owner's words (`StepPermit.step`).
+_STEP_WORDS_RO = {
+    "stills": "imaginile",
+    "test_shot": "cadrul de probă",
+    "motion": "mișcarea",
+    "scene_redo": "refacerea",
+}
+#: A take's kind in the Owner's words.
+_TAKE_WORDS_RO = {"still": "imaginea", "motion": "clipul", "test_shot": "cadrul de probă"}
+
+
+def _session_words(session: Session, row: GpuSessionRow) -> str:
+    """One live GPU session in the Owner's words: ««The Particle That Shouldn't Exist»: refacerea
+    — clipul scenei 5». The scenes are the takes of the session's film still at the vendor
+    (SUBMITTED); a session whose takes are not sent yet says its step alone. Never raises."""
+    from app.media.models import SceneTake, Storyboard  # noqa: PLC0415 - media imports providers
+
+    try:
+        step = _STEP_WORDS_RO.get(str(row.step or ""), str(row.step or "un pas plătit"))
+        if not row.storyboard_id:
+            return step
+        board = session.get(Storyboard, row.storyboard_id)
+        title = str(getattr(board, "title", "") or "").strip()
+        if title.lower().startswith("storyboard:"):
+            title = title.split(":", 1)[1].strip()
+        takes = list(
+            session.scalars(
+                select(SceneTake)
+                .where(
+                    SceneTake.storyboard_id == row.storyboard_id,
+                    SceneTake.status == "SUBMITTED",
+                )
+                .order_by(SceneTake.scene_number)
+            )
+        )
+        what = sorted(
+            {
+                (int(take.scene_number), _TAKE_WORDS_RO.get(str(take.kind), str(take.kind)))
+                for take in takes
+            }
+        )
+        made = ", ".join(f"{kind} scenei {scene}" for scene, kind in what)
+        film = f"«{title[:80]}»: " if title else ""
+        return f"{film}{step}" + (f" — {made}" if made else "")
+    except Exception:  # noqa: BLE001 - words never break the GPU switch
+        logger.warning("gpu_session_words_unreadable")
+        return str(row.step or "")
 
 
 __all__ = [

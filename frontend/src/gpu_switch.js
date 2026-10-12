@@ -66,14 +66,14 @@
  *   running?: number|null, in_progress?: number|null, in_queue?: number|null,
  *   initializing?: number|null, model_wait_ro?: string|null, read_at?: string|null}} GpuEndpoint
  * @typedef {{id: string, purpose: string, step: string, storyboard_id?: string|null,
- *   endpoint_id?: string|null, opened_at?: string|null}} GpuSession
+ *   endpoint_id?: string|null, opened_at?: string|null, words_ro?: string|null}} GpuSession
  * @typedef {{at: string, reason: string, verified: boolean|null, off_state?: string|null,
  *   off_confirmed_at?: string|null, confirmed_by?: string|null, session_id?: string|null,
  *   words_ro?: string|null}} GpuLastOff
  * @typedef {{configured: boolean, mock?: boolean, rate_usd_per_hour?: string,
  *   endpoints?: GpuEndpoint[], sessions?: GpuSession[],
  *   last_off?: GpuLastOff|null, words_ro?: string,
- *   model_wait_ro?: string|null}} GpuStatus
+ *   model_wait_ro?: string|null, owner_hold?: boolean}} GpuStatus
  * @typedef {'off'|'on'|'armed'|'unknown'} GpuTone
  * @typedef {'VERIFIED'|'CONFIRMED'|'UNVERIFIED'|'UNREAD'|'SIMULATED'} GpuOffState
  * @typedef {{now?: number, timeZone?: string}} GpuClock when the words are read, and on which
@@ -283,14 +283,26 @@ export function gpuWords(status, clock = {}) {
   const sessions = status.sessions || [];
   const endpoints = status.endpoints || [];
   if (gpuLive(status)) {
-    const steps = sessions.length ? [...new Set(sessions.map((s) => s.step))].join(', ') : 'niciunul';
+    // What is being made, in words: the film, the scene, the take (2026-10-12, the Owner: «Ce
+    // lucrează? Pentru ce film, ce cadru?» over «pas: scene_redo»). A session without words
+    // (an older backend) says its step as before.
+    const said = sessions.map((s) => s.words_ro || '').filter(Boolean);
+    const steps = said.length
+      ? [...new Set(said)].join('; ')
+      : sessions.length
+        ? `pas: ${[...new Set(sessions.map((s) => s.step))].join(', ')}`
+        : 'pas: niciunul';
     const workers = workerWords(endpoints);
     // RunPod has not started the worker yet (a cache miss downloads the model): unbilled, though
     // the job waits in the queue; a worker already counted bills whatever the wait says.
     if (status.model_wait_ro && !workers.active) {
-      return { label: `GPU: ${status.model_wait_ro} · pas: ${steps}`, tone: 'armed', detail };
+      return { label: `GPU: ${status.model_wait_ro} · ${steps}`, tone: 'armed', detail };
     }
-    return { label: `${workers.words} · pas: ${steps}`, tone: workers.tone, detail };
+    return { label: `${workers.words} · ${steps}`, tone: workers.tone, detail };
+  }
+  if (status.owner_hold) {
+    // His «Oprește GPU acum» holds until he allows it again on its card.
+    return { label: 'GPU oprit de tine · nu pornește până permiți din nou (Decizii)', tone: 'off', detail };
   }
   if (endpoints.length && endpoints.every((e) => e.state === 'OFF')) {
     return { label: stoppedLabel(last, clock), tone: 'off', detail };

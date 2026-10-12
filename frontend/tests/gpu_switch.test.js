@@ -55,6 +55,20 @@ test('the switch says off, a worker that bills, a permitted GPU that does not, o
   assert.equal(gpuWords(liveWith({ running: 2 }, [])).label, 'GPU pornit, 2 workeri activi · pas: niciunul');
 });
 
+test('the switch names the film, the scene and the take, and his stop that holds', () => {
+  // 2026-10-12, the Owner over «GPU pornit, worker activ · pas: scene_redo»: «Ce lucrează?
+  // Pentru ce film, ce cadru?» — the backend's words for the session replace the step's code.
+  const redo = [{ ...stillsSession[0], purpose: 'video', step: 'scene_redo',
+    words_ro: "«The Particle That Shouldn't Exist»: refacerea — clipul scenei 5" }];
+  const working = liveWith({ running: 1, in_progress: 1 }, redo);
+  assert.equal(gpuWords(working).label,
+    "GPU pornit, worker activ · «The Particle That Shouldn't Exist»: refacerea — clipul scenei 5");
+  // His «Oprește GPU acum» holds: the switch says so until he allows the GPU again.
+  const held = { ...off, owner_hold: true };
+  assert.equal(gpuWords(held).label, 'GPU oprit de tine · nu pornește până permiți din nou (Decizii)');
+  assert.equal(gpuWords(held).tone, 'off');
+});
+
 test('the workers are read from RunPod counts: running or a job in progress bills', () => {
   assert.deepEqual(workerWords([{ purpose: 'image', endpoint_id: 'a', state: 'ON', workers_max: 1, running: 0, in_progress: 1 }]),
     { words: 'GPU pornit, worker activ', tone: 'on', active: 1 });

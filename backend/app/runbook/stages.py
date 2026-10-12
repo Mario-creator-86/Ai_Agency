@@ -2433,6 +2433,10 @@ def _sheet_letter(
         # A prompt/shot-plan refusal is the studio's job, never an Owner questionnaire.
         report = submit_sheet_issues(engine, sheet)
         return report.get("message_id")
+    if status == "OWNER_HOLD":
+        # His own «Oprește GPU acum» stopped the step (2026-10-12): his card in «Decizii» says
+        # it once for every film; a letter per film would repeat his own press back to him.
+        return None
     if status in LADDER_REFUSALS and _ladder_scenes(engine, storyboard_id, film):
         # Quality control's refusal of a scene is the Director's to answer — her ladder in
         # the walk, the `ladder_retry` pass after it — never a letter to the Owner

@@ -23,7 +23,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.providers.runpod import setup_steps
-from app.providers.runpod.gpu_session import force_off, gpu_status
+from app.providers.runpod.gpu_session import force_off, gpu_status, set_owner_hold
 from app.security import require_owner
 
 COMMAND_TYPE = "RunPodGpuOff"
@@ -84,15 +84,27 @@ def create_runpod_router() -> APIRouter:
             return JSONResponse({"detail": str(exc)}, status_code=409)
         if previous is not None:
             return previous
+        # His press holds (2026-10-12, 16:52: the walk bought the same clip again 25 s after it):
+        # recorded BEFORE the off, so a step between the off and the record cannot slip a
+        # session in; lifted only by his answer on the card.
+        set_owner_hold(engine, True, by="owner", command_id=identifier)
         readings = [
             r.as_dict()
             for r in force_off(engine, request.app.state.credential_vault, reason="OWNER_OFF")
         ]
+        from app.decisions.producers.gpu_hold import (  # noqa: PLC0415 - producers read the core
+            propose_gpu_hold_card,
+        )
+
+        card_id = propose_gpu_hold_card(engine)
         answer = {
             "command_id": identifier,
             "readings": readings,
             "verified": bool(readings) and all(r["off"] for r in readings),
-            "words_ro": _off_words(readings),
+            "words_ro": _off_words(readings)
+            + " GPU-ul rămâne oprit până permiți din nou (cardul din «Decizii»).",
+            "hold": True,
+            "card_id": card_id,
         }
         try:
             with Session(engine) as session, session.begin():
