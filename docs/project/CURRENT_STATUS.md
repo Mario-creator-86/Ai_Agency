@@ -22,8 +22,12 @@ existing authorized production workflow and are reported separately from offline
 
 Owner (screenshot of the 16:52:35 Kael row): «Poza agentului trebuie să fie sub oră, nu în
 dreapta ei». `Ledger.render` (frontend/src/ledger.js) now draws the employee's portrait in the
-time rail (`.ledger-when`: the time, the portrait under it, 26×20 px), and the head line keeps
-the name alone; letters and the studio's routine rows are unchanged. Tested: 951 frontend unit
+time rail (`.ledger-when`: the time, the portrait under it), and the head line keeps the name
+alone; letters and the studio's routine rows are unchanged. Then («De ce așa mică?») the
+portrait fills the rail (54×40 px) and is drawn sharp: main.js `registerPortrait` draws the
+painted atlas face at the roster's 264×198, brings it down smoothly to 108×81 (was a 32×24
+nearest-neighbour copy) and hands the register a blob URL that stays the same while the face
+does, so the rows written anew on every render stay small and do not flicker. Tested: 951 frontend unit
 tests (a new one in ledger_fold.test.js pins the order), tsc, vite build, and a Playwright render
 of the real rows with the built CSS. Live once the studio is started again (it stopped for a
 restart at 16:58 and was still down at 18:08; not started by this session).

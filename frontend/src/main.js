@@ -399,11 +399,21 @@ function refreshPaidWork() {
 /**
  * The employees' portraits for the register (2026-10-11, the Owner: «poate punem și imaginea
  * celui care lucrează»): drawn once per employee by the office's own renderer, the same face
- * the office shows, kept as data URLs; drawn again once the portrait atlas has arrived.
+ * the office shows; drawn again once the portrait atlas has arrived. The portraits are painted
+ * art, so the face is drawn at the roster's size and brought down smoothly to twice the rail's
+ * width (the Owner, 2026-10-12: «De ce așa mică?» — a 32×24 copy had lost it), and handed out
+ * as a blob URL: the register writes the URL into every row it draws.
  * @type {Map<string, string|null>}
  */
 const registerPortraits = new Map();
 let portraitAtlasAsked = false;
+const REGISTER_PORTRAIT_PX = { w: 108, h: 81 };
+/**
+ * Each employee's face as last drawn and its blob URL. The list is written anew on every render,
+ * so the URL stays the same while the face does (no flicker); a changed face lets the old one go.
+ * @type {Map<string, {data: string, url: string}>}
+ */
+const registerPortraitBlobs = new Map();
 
 /** @param {string} agentId */
 function registerPortrait(agentId) {
@@ -413,11 +423,30 @@ function registerPortrait(agentId) {
   if (!agent) return null;
   let url = null;
   try {
-    const canvas = document.createElement('canvas');
-    canvas.width = 32;
-    canvas.height = 24;
-    const ctx = canvas.getContext('2d');
-    if (ctx && officeEngine.renderer.drawPortrait(ctx, agent)) url = canvas.toDataURL();
+    const full = document.createElement('canvas');
+    full.width = PORTRAIT_PX.w;
+    full.height = PORTRAIT_PX.h;
+    const fullCtx = full.getContext('2d');
+    if (fullCtx && officeEngine.renderer.drawPortrait(fullCtx, agent)) {
+      const canvas = document.createElement('canvas');
+      canvas.width = REGISTER_PORTRAIT_PX.w;
+      canvas.height = REGISTER_PORTRAIT_PX.h;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(full, 0, 0, canvas.width, canvas.height);
+        const data = canvas.toDataURL('image/png');
+        const kept = registerPortraitBlobs.get(agentId);
+        if (kept && kept.data === data) url = kept.url;
+        else {
+          if (kept) URL.revokeObjectURL(kept.url);
+          const bytes = Uint8Array.from(atob(data.slice(data.indexOf(',') + 1)), (c) => c.charCodeAt(0));
+          url = URL.createObjectURL(new Blob([bytes], { type: 'image/png' }));
+          registerPortraitBlobs.set(agentId, { data, url });
+        }
+      }
+    }
   } catch {
     url = null;
   }

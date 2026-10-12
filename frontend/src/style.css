@@ -1196,8 +1196,8 @@ p { color: var(--ink-2); line-height: 1.6; margin: 0; }
 .ledger-item time { font-size: var(--fs-micro); color: var(--ink-3); padding-top: 2px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .ledger-head { color: var(--ink); }
 /* The employee's portrait stands under the row's time, in the time rail. */
-.ledger-when { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; min-width: 0; }
-.ledger-portrait { display: block; width: 26px; height: 20px; border-radius: 3px; image-rendering: pixelated; border: 1px solid var(--line); }
+.ledger-when { display: flex; flex-direction: column; align-items: stretch; gap: 6px; min-width: 0; }
+.ledger-portrait { display: block; width: 100%; height: auto; aspect-ratio: 4 / 3; object-fit: cover; border-radius: var(--radius-xs, 4px); border: 1px solid var(--line); }
 .ledger-head strong { font-weight: 650; }
 .ledger-text { color: var(--ink-2); margin-top: 2px; overflow-wrap: anywhere; }
 .ledger-speech { border-left-color: var(--forest); }
