@@ -916,6 +916,9 @@ def _record_brief(
 
 #: The reason a serial scene's words are said again on the record (`SCENE_PROMPTS_REWRITTEN`).
 SERIAL_RECOMPOSE_REASON = "serial_recompose"
+#: The reason a serial scene whose words are already today's is made again on them (the same
+#: record, the same words): quality control's refusal is answered with another picture or clip.
+SERIAL_REROLL_REASON = "serial_reroll"
 
 
 def _serial_scene(engine: Engine, storyboard_id: str) -> bool:
@@ -1026,12 +1029,6 @@ def recompose_serial_scene(
             outcome["reason"] = "Filmul este închis; nimic nu se mai rescrie."
             return outcome
         rewrite = serial_recomposition(session, storyboard_id, scene_index)
-        if rewrite is None:
-            outcome["reason"] = (
-                f"Scena {scene_index} a serialului are deja cuvintele de azi; se refac doar "
-                "imaginile, nu cuvintele."
-            )
-            return outcome
         target = session.scalar(
             select(StoryboardScene).where(
                 StoryboardScene.storyboard_id == storyboard_id,
@@ -1040,6 +1037,52 @@ def recompose_serial_scene(
         )
         if target is None:
             outcome["reason"] = "Scena nu există."
+            return outcome
+        if rewrite is None:
+            code = last_failure_code(session, storyboard_id, scene_index)
+            if code not in QUALITY_CODES:
+                outcome["reason"] = (
+                    f"Scena {scene_index} a serialului are deja cuvintele de azi; se refac doar "
+                    "imaginile, nu cuvintele."
+                )
+                return outcome
+            # Today's words, refused by quality control: her decision is to make the picture
+            # (the gate's refusal) or the clip (clip QC's) again on the same words — the hold
+            # lifts, the attempts count again, and the motion is bought on a seed moved past
+            # the clips the scene had (`assembler._scene_seed`). Nothing of it is the Owner's.
+            layer = STILL if code == STILL_GATE_CODE else MOTION
+            stored = dict(target.prompt_json or {})
+            append_event(
+                session,
+                SCENE_PROMPTS_REWRITTEN_EVENT,
+                "storyboard",
+                storyboard_id,
+                1,
+                {
+                    "scene_index": scene_index,
+                    "old_still_prompt": target.visual_prompt,
+                    "still_prompt": target.visual_prompt,
+                    "old_motion_prompt": stored.get("motion_prompt"),
+                    "motion_prompt": stored.get("motion_prompt"),
+                    "reason": SERIAL_REROLL_REASON,
+                    "decided_by": DIRECTOR_REWRITE,
+                    "layer": layer,
+                    "refused_code": code,
+                    "camera_move": stored.get("camera_move"),
+                },
+                correlation_id,
+            )
+            what = "imaginea" if layer == STILL else "cadrul"
+            outcome.update(
+                rewritten=True,
+                layer=layer,
+                reason=SERIAL_REROLL_REASON,
+                summary_ro=(
+                    f"Scena {scene_index} a serialului are deja cuvintele de azi; {what} ei, "
+                    f"refuzat{'ă' if layer == STILL else ''} de controlul calității ({code}), se "
+                    "reface pe aceleași cuvinte, cu altă sămânță."
+                ),
+            )
             return outcome
         target.prompt_json = dict(rewrite["package"])
         target.visual_prompt = str(rewrite["visual_prompt"])

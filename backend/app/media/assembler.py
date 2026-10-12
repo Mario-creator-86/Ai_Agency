@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import Engine, and_, or_, select
+from sqlalchemy import Engine, and_, func, or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -8161,6 +8161,41 @@ def _usd_ro(amount: float) -> str:
 _BOUGHT_SHOT_STATUSES = ("SUBMITTED", "PAID", "APPROVED")
 
 
+#: A scene's shot takes that became a clip (a round that made nothing keeps its seed).
+_MADE_SHOT_STATUSES: tuple[str, ...] = ("PAID", "APPROVED", "REJECTED", "LOST")
+
+
+def _shots_made(engine: Engine, storyboard_id: str, scenes: Sequence[int]) -> dict[int, int]:
+    """How many clips each of these scenes already had made, whatever their identity."""
+    found: dict[int, int] = {int(index): 0 for index in scenes}
+    if not found:
+        return found
+    with Session(engine) as session:
+        for number, count in session.execute(
+            select(SceneTake.scene_number, func.count(SceneTake.id))
+            .where(
+                SceneTake.storyboard_id == storyboard_id,
+                SceneTake.kind.in_(SHOT_TAKE_KINDS),
+                SceneTake.status.in_(_MADE_SHOT_STATUSES),
+                SceneTake.scene_number.in_(list(found)),
+            )
+            .group_by(SceneTake.scene_number)
+        ):
+            found[int(number)] = int(count)
+    return found
+
+
+def _scene_seed(base: int, made: int) -> int:
+    """The seed a scene's next round is bought on: the film's seed, moved past the clips the
+    scene already had (two seeds a round: the shot and its clip-QC retry at seed + 1).
+
+    2026-10-12: the film's one seed on every shot meant a scene bought again on the same words
+    — the serial's, whose words are the composer's and may already be today's — would have
+    made the same clip and failed the same check. A round that made nothing (a refusal, a
+    cancelled shot) keeps its seed, as the technical retry does."""
+    return (int(base) + 2 * max(0, int(made))) % SEED_RANGE
+
+
 def _shot_take_ids(
     engine: Engine, storyboard_id: str, scenes: Sequence[int]
 ) -> dict[int, set[str]]:
@@ -8321,7 +8356,8 @@ def uncounted_drop(before: float | None, balance: float | None, committed: float
 
 
 def film_seed(storyboard_id: str) -> int:
-    """The film's one seed, the same on every shot and every retry of the film."""
+    """The film's seed: the one every scene's first round and the plan's hash are built on; a
+    scene's later rounds move past it (`_scene_seed`), a round's technical retry keeps it."""
     digest = hashlib.sha256(f"film-seed:{storyboard_id}".encode()).digest()
     return int.from_bytes(digest[:4], "big") % SEED_RANGE
 
@@ -11544,7 +11580,11 @@ def run_motion_step(
         work_dir.mkdir(parents=True, exist_ok=True)
 
     scene_dicts = {int(scene["scene_index"]): scene for scene in state["scenes"]}
-    seed = int(plan["seed"])
+    base_seed = int(plan["seed"])
+    # Each scene's round is bought on its own seed: the film's, moved past the clips the scene
+    # already had (`_scene_seed`), so the same words bought again make a different clip.
+    made_before = _shots_made(engine, storyboard_id, to_buy)
+    seed = base_seed
     results: list[dict[str, Any]] = []
     charged: list[dict[str, Any]] = []
     bought_now: list[int] = []
@@ -11618,6 +11658,7 @@ def run_motion_step(
             continue
         still_take: SceneTake = state["stills"][index]
         identity = take_hash(state["fields"][index], model_id)
+        seed = _scene_seed(base_seed, made_before.get(index, 0))
         if supports_batch(adapter):
             prompt_words, extra_words = motion_request(adapter, scene_dicts[index], from_still=True)
             remembered_shot = state["memory"].get(index)
@@ -11884,6 +11925,7 @@ def run_motion_step(
                 _identity: str = identity,
                 _posted: list[str] = posted,
                 _intents: list[str | None] = intents,
+                _seed: int = seed,
             ) -> None:
                 _posted.append(task_id)
                 _intents.append(
@@ -11899,7 +11941,7 @@ def run_motion_step(
                         correlation_id=correlation_id,
                         credits=max(float(_price), float(_quoted_credits(_adapter) or 0.0)),
                         seconds=float(_seconds),
-                        seed=seed,
+                        seed=_seed,
                     )
                 )
 
@@ -12247,7 +12289,7 @@ def run_motion_step(
         "storyboard_id": storyboard_id,
         "step": step,
         "plan_hash": plan_hash,
-        "seed": seed,
+        "seed": base_seed,
         "resolution": resolution,
         "scenes": results,
         "bought_shots": len(bought_now),

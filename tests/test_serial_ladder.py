@@ -140,8 +140,8 @@ def test_a_serial_scene_with_todays_words_is_not_rewritten_and_says_so(
     staffed,  # noqa: F811
     monkeypatch,
 ):
+    """Nothing refused the scene: its words are today's and nothing is made again."""
     board_id = described_board(engine, monkeypatch)
-    refused_by_the_gate(engine, board_id, 2)
 
     outcome = rewrite_failed_scene(engine, models(), board_id, 2, "c-2")
 
@@ -155,6 +155,64 @@ def test_a_serial_scene_with_todays_words_is_not_rewritten_and_says_so(
             ).all()
             == []
         )
+
+
+def test_a_serial_scene_with_todays_words_refused_by_quality_control_is_made_again_on_them(
+    engine,
+    staffed,  # noqa: F811
+    monkeypatch,
+):
+    """2026-10-12: a serial scene whose words the composer had already said today, refused by
+    the gate (or its clip by clip QC), left the rung with nothing to rewrite — and the walk
+    stopped on it for good. Her decision is to make the picture (or the clip) again on the same
+    words: the record carries it (the hold lifts, the attempts count again), the words stay."""
+    from app.media.scene_rewrite import SERIAL_REROLL_REASON
+
+    board_id = described_board(engine, monkeypatch)
+    before = next(s for s in scenes_of(engine, board_id) if s.scene_index == 2)
+    refused_by_the_gate(engine, board_id, 2)
+
+    outcome = rewrite_failed_scene(engine, models(), board_id, 2, "c-2")
+
+    assert outcome["rewritten"] is True and outcome["layer"] == "still"
+    assert outcome["reason"] == SERIAL_REROLL_REASON
+    assert "cuvintele de azi" in outcome["summary_ro"] and "altă sămânță" in outcome["summary_ro"]
+    after = next(s for s in scenes_of(engine, board_id) if s.scene_index == 2)
+    assert after.visual_prompt == before.visual_prompt
+    assert dict(after.prompt_json or {}) == dict(before.prompt_json or {})
+    with Session(engine) as session:
+        (event,) = session.scalars(
+            select(DomainEvent).where(DomainEvent.event_type == SCENE_PROMPTS_REWRITTEN_EVENT)
+        ).all()
+        assert event.payload["decided_by"] == "director" and event.payload["layer"] == "still"
+        assert event.payload["reason"] == SERIAL_REROLL_REASON
+        assert event.payload["refused_code"] == "LOCAL.STILL_GATE"
+        assert event.payload["still_prompt"] == event.payload["old_still_prompt"]
+
+    # A clip refused by clip QC: the clip is made again, the picture stays.
+    now = utc_now()
+    with Session(engine) as session, session.begin():
+        session.add(
+            SceneTake(
+                id=str(uuid4()),
+                storyboard_id=board_id,
+                scene_number=4,
+                kind="motion",
+                prompt_hash=uuid4().hex,
+                model_id="LTX-2.5",
+                resolution="1080p",
+                status="REJECTED",
+                failure_code="QC.CLIP",
+                failure_detail="apare text ars în cadru",
+                path=None,
+                sha256=uuid4().hex,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+    clip = rewrite_failed_scene(engine, models(), board_id, 4, "c-4")
+    assert clip["rewritten"] is True and clip["layer"] == "motion"
+    assert "cadrul" in clip["summary_ro"]
 
 
 def test_a_redo_of_a_serial_scene_buys_on_todays_words_not_the_stored_ones(

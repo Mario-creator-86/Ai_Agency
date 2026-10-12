@@ -86,7 +86,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import Engine, select
+from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session
 
 from app.db import lock_for_write
@@ -275,6 +275,10 @@ class _Scene:
     hold_ro: str | None = None
     #: Paid requests for the scene since the Owner last decided about it.
     attempts: int = 0
+    #: Every still the scene ever had bought (any identity, any status): the re-rolls of a
+    #: new round are seeded past them, so the same words make different candidates
+    #: (2026-10-12: a serial scene made again on today's words after a decision).
+    rolls: int = 0
 
 
 @dataclass
@@ -371,6 +375,16 @@ def _read_scenes(engine: Engine, storyboard_id: str) -> tuple[dict[str, Any], li
                     scene.reuse = found
                 else:
                     scene.pending = _pending_takes(session, storyboard_id, scene)
+                    scene.rolls = int(
+                        session.scalar(
+                            select(func.count(SceneTake.id)).where(
+                                SceneTake.storyboard_id == storyboard_id,
+                                SceneTake.scene_number == scene.index,
+                                SceneTake.kind == "still",
+                            )
+                        )
+                        or 0
+                    )
             scenes.append(scene)
     # What each scene still to be bought remembers since the Owner last decided about it: a
     # scene the gate or the vendor left to him is held, and is never bought meanwhile.
@@ -1062,7 +1076,14 @@ class _StillRounds:
                 model=self.model_id,
                 prompt=prompt,
                 negative_prompt=None,
-                seed=item_seed(self.storyboard_id, state.scene.index, state.attempt, candidate),
+                # Seeded past every still the scene had before this step: a round bought
+                # again on the same words (after the Director's decision) draws new pictures.
+                seed=item_seed(
+                    self.storyboard_id,
+                    state.scene.index,
+                    state.scene.rolls + state.attempt,
+                    candidate,
+                ),
                 width=width,
                 height=height,
                 duration=None,
