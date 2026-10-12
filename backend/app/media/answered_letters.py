@@ -9,6 +9,10 @@ closed by him at 17:12). The studio now closes an OPEN letter to him when:
   (``approval_id``) no longer waits: answered, withdrawn or expired;
 - it is the sheet's letter and a newer sheet letter about the same film says where the film
   stands now;
+- it is the sheet's letter and the film's newest walk (``runbook.film_state``, newer than the
+  letter) left it somewhere else than the letter says (2026-10-12: «scena 6 așteaptă decizia
+  Proprietarului» stayed OPEN while the walk had moved the scene to the Director's ladder,
+  which writes him no newer letter to move past it);
 - it is the list of his standing questions (``owner_waiting``) and none of them waits any more.
 
 Every other letter stays for him: a letter about the books or money (``paid_step_interrupted``,
@@ -45,6 +49,43 @@ SUPERSEDED_RO = (
     "Închisă de studio: o scrisoare mai nouă despre același film spune unde a ajuns acum."
 )
 LIST_ANSWERED_RO = "Închisă de studio: nicio întrebare din listă nu mai așteaptă răspunsul tău."
+MOVED_ON_RO = (
+    "Închisă de studio: filmul a plecat din starea despre care întreba scrisoarea; acum: {now}"
+)
+#: Where a walk left a film (`runbook.stages.FILM_STATE_EVENT`): its status and reason.
+FILM_STATE_EVENT = "runbook.film_state"
+
+
+def _state_words(text: Any) -> str:
+    return " ".join(str(text or "").split()).rstrip(" .")
+
+
+def _film_moved_on(
+    session: Session, film: str, written_at: str, body: dict[str, Any]
+) -> str | None:
+    """Where the film's newest walk left it, when that is not the state the letter named (a
+    walk newer than the letter, with another status or reason); None while the letter is
+    still the film's word. Reads only."""
+    from app.models import DomainEvent  # noqa: PLC0415
+
+    newest = session.scalar(
+        select(DomainEvent)
+        .where(
+            DomainEvent.event_type == FILM_STATE_EVENT,
+            DomainEvent.aggregate_id == film,
+            DomainEvent.timestamp > written_at,
+        )
+        .order_by(DomainEvent.sequence.desc())
+        .limit(1)
+    )
+    if newest is None:
+        return None
+    payload = newest.payload if isinstance(newest.payload, dict) else {}
+    status = str(payload.get("status") or "")
+    reason = _state_words(payload.get("reason"))
+    if status == "WAITING" and reason == _state_words(body.get("reason")):
+        return None
+    return reason or status or "filmul a mers mai departe"
 
 
 def retire_answered_letters(engine: Engine, correlation_id: str | None = None) -> dict[str, Any]:
@@ -55,7 +96,7 @@ def retire_answered_letters(engine: Engine, correlation_id: str | None = None) -
     from app.db import lock_for_write  # noqa: PLC0415
 
     correlation = correlation_id or str(uuid4())
-    closed: dict[str, list[str]] = {"answered": [], "superseded": [], "lists": []}
+    closed: dict[str, list[str]] = {"answered": [], "superseded": [], "moved_on": [], "lists": []}
     with Session(engine) as session, session.begin():
         lock_for_write(session)
         # Read after the lock: a question asked (and its letter written) before it is in the
@@ -104,6 +145,17 @@ def retire_answered_letters(engine: Engine, correlation_id: str | None = None) -
                         correlation_id=correlation,
                     )
                     closed["superseded"].append(str(row.id))
+                    continue
+                now = _film_moved_on(session, film, str(row.created_at), body) if film else None
+                if now is not None:
+                    resolve_message(
+                        session,
+                        row.id,
+                        resolution=MOVED_ON_RO.format(now=now)[:600],
+                        resolved_by=RESOLVED_BY,
+                        correlation_id=correlation,
+                    )
+                    closed["moved_on"].append(str(row.id))
             elif kind == WAITING_LETTER:
                 questions = body.get("questions")
                 if not isinstance(questions, list) or not questions:

@@ -943,7 +943,13 @@ def run_watchdog(
         answered_letters = retire_answered_letters(engine, correlation)
     except Exception as exc:  # noqa: BLE001 - one part's failure must not lose the others'
         logger.error("watchdog_answered_letters_failed", extra={"error": type(exc).__name__})
-        answered_letters = {"answered": [], "superseded": [], "lists": [], "error": True}
+        answered_letters = {
+            "answered": [],
+            "superseded": [],
+            "moved_on": [],
+            "lists": [],
+            "error": True,
+        }
 
     # The seventh, only when the Owner turned it on: a failed render's shots, deleted.
     try:

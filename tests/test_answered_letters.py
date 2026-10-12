@@ -187,6 +187,59 @@ def test_the_list_of_standing_questions_closes_when_none_waits(engine):
     assert status(engine, unreadable)[0] == "OPEN"
 
 
+def test_a_sheet_letter_closes_when_the_films_walk_left_the_state_it_named(engine):
+    """2026-10-12 («The Zero Script Club», scene 6): «scena 6 așteaptă decizia Proprietarului»
+    stayed OPEN after the walk moved the scene to the Director's ladder, which writes him no
+    newer sheet letter to move past it; the film's newest walk says where it stands."""
+    from app.services import append_event
+
+    said = (
+        "după pasul «restul mișcării», scena 6 așteaptă decizia Proprietarului pe foaia de "
+        "filmare; nu se cumpără din nou până nu decide el."
+    )
+    asking = sheet_letter(engine, step="motion", status="NEEDS_OWNER", reason=said)
+    other = sheet_letter(engine, OTHER, step="motion", status="NEEDS_OWNER", reason=said)
+
+    def walked(film: str, state: str, reason: str) -> None:
+        with Session(engine) as session, session.begin():
+            append_event(
+                session,
+                "runbook.film_state",
+                "storyboard",
+                film,
+                1,
+                {
+                    "business_date": "2026-10-12",
+                    "status": state,
+                    "refusal": "NEEDS_OWNER",
+                    "step": "motion",
+                    "reason": reason,
+                    "moved": False,
+                },
+                str(uuid4()),
+            )
+
+    # The walk found the film where the letter said (the event's reason bare of the period).
+    walked(FILM, "WAITING", said.rstrip("."))
+    assert retire_answered_letters(engine)["moved_on"] == []
+    assert status(engine, asking)[0] == "OPEN"
+
+    # The walk moved the scene to the Director's ladder: the state the letter named is gone.
+    hers = (
+        "după pasul «restul mișcării», scena 6 refuzată de controlul calității așteaptă "
+        "rescrierea Directoarei; nu se cumpără din nou până nu o rescrie ea."
+    )
+    walked(FILM, "WAITING", hers)
+    closed = retire_answered_letters(engine)
+
+    assert closed["moved_on"] == [asking]
+    state, by, resolution = status(engine, asking)
+    assert (state, by) == ("RESOLVED", "system")
+    assert "a plecat din starea" in resolution and "rescrierea Directoarei" in resolution
+    assert status(engine, other)[0] == "OPEN", "another film's letter was closed"
+    assert retire_answered_letters(engine)["moved_on"] == []
+
+
 def test_his_own_answered_letter_is_left_as_he_left_it(engine):
     approval = ask(engine)
     asking = sheet_letter(engine, approval_id=approval, status="ASKED")
