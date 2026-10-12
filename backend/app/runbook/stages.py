@@ -1614,13 +1614,16 @@ LADDER_CAUSE = "director_ladder"
 
 def _ladder_scenes(engine: Engine, storyboard_id: str, film: dict[str, Any]) -> list[int]:
     """The scenes of a stopped walk that quality control refused (the Director's to answer)."""
-    from app.media.scene_rewrite import quality_refused  # noqa: PLC0415 - media imports runbook
-
     if film.get("status") != "WAITING" or film.get("refusal") not in LADDER_REFUSALS:
         return []
     scenes = [int(scene) for scene in film.get("scenes") or [] if isinstance(scene, int)]
-    if not scenes:
-        return []
+    return _quality_scenes(engine, storyboard_id, scenes) if scenes else []
+
+
+def _quality_scenes(engine: Engine, storyboard_id: str, scenes: list[int]) -> list[int]:
+    """Of ``scenes``, those whose newest take quality control refused; [] when unreadable."""
+    from app.media.scene_rewrite import quality_refused  # noqa: PLC0415 - media imports runbook
+
     try:
         return quality_refused(engine, storyboard_id, scenes)
     except Exception as exc:  # noqa: BLE001 - the walk's own stop stands
@@ -1629,6 +1632,37 @@ def _ladder_scenes(engine: Engine, storyboard_id: str, film: dict[str, Any]) -> 
             extra={"storyboard_id": storyboard_id, "error": type(exc).__name__},
         )
         return []
+
+
+def _scenes_ro(scenes: list[int], *, refused: bool = False) -> str:
+    """«scena 6», «scenele 3, 6» — with «refuzată/refuzate de controlul calității» when asked."""
+    one = len(scenes) == 1
+    words = ("scena " if one else "scenele ") + ", ".join(map(str, scenes))
+    if refused:
+        words += (" refuzată" if one else " refuzate") + " de controlul calității"
+    return words
+
+
+def _held_words(engine: Engine, storyboard_id: str, stair_ro: str, scenes: list[int]) -> str:
+    """Why the walk stops before a stair, in the film's words: the scenes quality control
+    refused wait for the Director's rewrite (her ladder, this same walk), the others for the
+    Owner's decision on the shooting sheet. 2026-10-12: «scena 6 așteaptă decizia
+    Proprietarului» reached him for a clip quality control had refused — hers, not his."""
+    hers = set(_quality_scenes(engine, storyboard_id, scenes))
+    his = [scene for scene in scenes if scene not in hers]
+    parts: list[str] = []
+    if hers:
+        parts.append(_scenes_ro(sorted(hers), refused=True) + " așteaptă rescrierea Directoarei")
+    if his:
+        parts.append(_scenes_ro(his) + " așteaptă decizia Proprietarului pe foaia de filmare")
+    ending = (
+        "nu se cumpără din nou până nu decide el."
+        if not hers
+        else "nu se cumpără din nou până nu o rescrie ea."
+        if not his
+        else "nu se cumpără din nou până atunci."
+    )
+    return f"după pasul «{stair_ro}», " + "; ".join(parts) + "; " + ending
 
 
 def _director_rung(
@@ -1761,11 +1795,7 @@ def _walk_staircase(
             return stop(
                 "WAITING",
                 held_at,
-                f"după pasul «{STEP_WORDS[held_at]}», "
-                + ("scena " if len(scenes) == 1 else "scenele ")
-                + ", ".join(map(str, scenes))
-                + " așteaptă decizia Proprietarului pe foaia de filmare; nu se cumpără din nou "
-                "până nu decide el.",
+                _held_words(engine, storyboard_id, STEP_WORDS[held_at], scenes),
                 refusal="NEEDS_OWNER",
                 recovered=recovered,
                 scenes=scenes,
@@ -1804,9 +1834,12 @@ def _walk_staircase(
             return stop(
                 "WAITING",
                 step,
-                f"după pasul «{STEP_WORDS[bought[-1]['step']]}», scenele "
-                + ", ".join(map(str, scenes))
-                + " așteaptă decizia Proprietarului pe foaia de filmare.",
+                _held_words(
+                    engine,
+                    storyboard_id,
+                    STEP_WORDS[bought[-1]["step"]],
+                    [int(scene) for scene in scenes],
+                ),
                 refusal="NEEDS_OWNER",
                 scenes=[int(scene) for scene in scenes],
             )

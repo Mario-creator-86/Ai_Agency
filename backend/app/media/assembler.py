@@ -8255,6 +8255,11 @@ UNANSWERED_REASON = (
 #: queued and never made (`providers.runpod.batch.BatchRun.prove_unsent`, 2026-10-09), or that
 #: the Owner released on his card (`media.runpod_unsent`): a refusal that cost nothing and says
 #: nothing about the scene, so it holds nothing and counts as no paid attempt.
+#: A shot the step stopped before sending (his stop, a shutdown, the step's own stop): its
+#: take is REFUSED with this code and detail, nothing was made or paid, and `take_failure`
+#: says nothing about the scene for it (2026-10-12, «The Zero Script Club», scene 6).
+CANCELLED_FAILURE_CODE = "RUNPOD.CANCELLED"
+CANCELLED_DETAIL = "Nu s-a cumpărat: pasul s-a oprit înainte de acest cadru."
 NOT_QUEUED_FAILURE_CODE = "RUNPOD.NOT_QUEUED"
 NOT_QUEUED_DETAIL = (
     "RunPod nu a pus cererea la coadă: la oprirea GPU-ului coada era goală și lucrătorul nu "
@@ -8558,6 +8563,12 @@ def take_failure(row: SceneTake) -> FailureRecord | None:
     if code == NOT_QUEUED_FAILURE_CODE and not charged:
         # RunPod never queued it (proven, or released by the Owner): nothing was made.
         return None
+    if code == CANCELLED_FAILURE_CODE and not charged:
+        # The step stopped before this shot (the Owner's stop, 2026-10-11 20:58, «The Zero
+        # Script Club» scene 6): nothing was made or paid. The take says nothing about the
+        # scene — read as UNKNOWN it held the scene for the Owner and stood before the refusal
+        # quality control had given the shot before it, so the Director's ladder never saw it.
+        return None
     if code == UNANSWERED_FAILURE_CODE:
         kind = "UNKNOWN"
     elif code in _KIND_CODES:
@@ -8601,6 +8612,50 @@ def _paid_attempts(rows: list[SceneTake], kind_group: str) -> int:
     tasks = {row.remote_task_id for row in charged if row.remote_task_id}
     loose = sum(1 for row in charged if not row.remote_task_id)
     return len(tasks) + math.ceil(loose / max(1, STILL_CANDIDATES))
+
+
+def _newest_quality_refusal(rows: list[SceneTake]) -> FailureRecord | None:
+    """The quality refusal that is the scene's newest word about itself, or None.
+
+    ``rows`` are the scene's takes as it is now, oldest first. A take that came out right at
+    the same moment or later (a sibling candidate the gate approved) outranks the refusal; a
+    newer failure of another kind is another matter (`HOLDING_FAILURE_KINDS`, the attempts)."""
+    newest: tuple[datetime | None, FailureRecord] | None = None
+    for row in rows:
+        record = take_failure(row)
+        if record is not None:
+            newest = (_stamp(row.created_at), record)
+    if newest is None or newest[1].kind != "QUALITY":
+        return None
+    refused_at = newest[0]
+    for row in rows:
+        if row.status not in ("PAID", "APPROVED", "SUBMITTED"):
+            continue
+        good_at = _stamp(row.created_at)
+        if refused_at is None or good_at is None or good_at >= refused_at:
+            return None
+    return newest[1]
+
+
+def _quality_hold(index: int, kind_group: str, refused: FailureRecord) -> str:
+    """Why a scene quality control refused is not bought again as it is: the Director rewrites
+    it first (her ladder: `runbook.stages._director_rung`), nothing of it is the Owner's.
+
+    2026-10-12: a motion step stopped by the Owner between a clip's refusal and its retry left
+    scene 6 of «The Zero Script Club» with the refusal, no hold event, one paid attempt — and
+    the next walk would have bought the same words again. The hold stops the stair, the walk's
+    ladder reads the refusal (`scene_rewrite.quality_refused`) and she rewrites; her rewrite
+    decides about the scene (`DIRECTOR_REWRITE`) and lifts this hold."""
+    code = refused.code or refused.kind
+    if kind_group == "still":
+        return (
+            f"Scena {index}: imaginea ei a fost refuzată de controlul calității ({code}); "
+            "Directoarea o rescrie înainte de o nouă cumpărare, nu e decizia Proprietarului."
+        )
+    return (
+        f"Scena {index}: cadrul ei a fost refuzat de controlul calității ({code}); "
+        "Directoarea îl rescrie înainte de o nouă cumpărare, nu e decizia Proprietarului."
+    )
 
 
 def _hold_reason(payload: dict[str, Any], index: int) -> str:
@@ -8753,6 +8808,13 @@ def scene_memory(
                     f"Scena {index}: {what} ({severe[-1].code or severe[-1].kind}); nu se "
                     "cumpără din nou până nu decide Proprietarul pe foaia de filmare."
                 )
+        if hold is None:
+            # Quality control's refusal, with no hold event of the step (the step stopped
+            # between the refusal and its retry): the Director's rewrite comes before any
+            # new purchase, the same as when the step itself held the scene.
+            refused = _newest_quality_refusal(mine)
+            if refused is not None:
+                hold = _quality_hold(index, kind_group, refused)
         if hold is None and attempts >= limit:
             from app.wording import count as count_ro  # noqa: PLC0415
 
@@ -10913,12 +10975,14 @@ class _ShotRounds:
             seconds=float(state.seconds),
             seed=seed,
             credits_quoted=float(state.price) if uncertain else None,
-            failure_code=UNANSWERED_FAILURE_CODE if uncertain else f"RUNPOD.{error}"[:100],
-            failure_detail=(
-                "Nu s-a cumpărat: pasul s-a oprit înainte de acest cadru."
+            failure_code=(
+                UNANSWERED_FAILURE_CODE
+                if uncertain
+                else CANCELLED_FAILURE_CODE
                 if outcome.state == "CANCELLED"
-                else None
+                else f"RUNPOD.{error}"[:100]
             ),
+            failure_detail=CANCELLED_DETAIL if outcome.state == "CANCELLED" else None,
             remote_task_id=outcome.item.remote_item_id,
         )
         if uncertain:
