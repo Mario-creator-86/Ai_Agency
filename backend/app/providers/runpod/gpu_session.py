@@ -792,6 +792,40 @@ def owner_hold_active(engine: Engine) -> bool:
     return bool(payload.get("on"))
 
 
+#: «Permite GPU din nou» is refused this long after his stop (2026-10-12, 19:48 UTC: he pressed
+#: «Oprește GPU acum», the key under his cursor became «Permite GPU din nou», a second press 7 s
+#: later lifted the hold, and the same refused clip was bought again 4 s after that). A stop is
+#: never undone by the click that made it.
+ALLOW_AFTER_STOP_SECONDS = 20
+
+
+def owner_hold_since(engine: Engine) -> str | None:
+    """When his hold now in force was set (the newest `OWNER_HOLD_EVENT`, if it says on)."""
+    from app.models import DomainEvent  # noqa: PLC0415 - the core's model
+
+    with Session(engine) as session:
+        newest = session.scalar(
+            select(DomainEvent)
+            .where(DomainEvent.event_type == OWNER_HOLD_EVENT)
+            .order_by(DomainEvent.sequence.desc())
+            .limit(1)
+        )
+    if newest is None or not isinstance(newest.payload, dict) or not newest.payload.get("on"):
+        return None
+    return str(newest.timestamp)
+
+
+def seconds_since_hold(engine: Engine, now: datetime | None = None) -> float | None:
+    """How long his hold has been in force, in seconds; None when no hold is."""
+    since = owner_hold_since(engine)
+    if since is None:
+        return None
+    at = datetime.fromisoformat(since)
+    if at.tzinfo is None:
+        at = at.replace(tzinfo=UTC)
+    return ((now or datetime.now(UTC)) - at).total_seconds()
+
+
 def set_owner_hold(engine: Engine, on: bool, *, by: str, command_id: str | None = None) -> None:
     """Record his hold (``on``) or its lift; idempotent in effect (the newest one counts)."""
     _write_event(
@@ -1560,6 +1594,10 @@ def gpu_status(
             for row in live
         ]
         held = owner_hold_active(engine)
+        try:
+            held_since = owner_hold_since(engine) if held else None
+        except Exception:  # noqa: BLE001 - the switch's reading never fails on this
+            held_since = None
         last_off = (
             {"at": last.closed_at, "reason": last.close_reason, "verified": last.verified_off}
             if last is not None
@@ -1595,7 +1633,7 @@ def gpu_status(
     else:
         words = "GPU: stare necunoscută."
     if held and configured and not mock:
-        words = f"{words} Oprit de tine: nu pornește până permiți din nou (cardul din «Decizii»)."
+        words = f"{words} Oprit de tine: nu pornește până apeși «Permite GPU din nou…»."
     return {
         "configured": configured,
         "mock": mock,
@@ -1606,6 +1644,10 @@ def gpu_status(
         "words_ro": words,
         "model_wait_ro": waiting,
         "owner_hold": bool(held),
+        # when his hold was set: the page keeps «Permite GPU din nou» disabled for
+        # ALLOW_AFTER_STOP_SECONDS after it, whichever page or tab he stopped it from
+        "owner_hold_since": held_since if held else None,
+        "allow_after_stop_seconds": ALLOW_AFTER_STOP_SECONDS,
     }
 
 

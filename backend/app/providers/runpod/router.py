@@ -23,7 +23,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.providers.runpod import setup_steps
-from app.providers.runpod.gpu_session import force_off, gpu_status, set_owner_hold
+from app.providers.runpod.gpu_session import (
+    ALLOW_AFTER_STOP_SECONDS,
+    force_off,
+    gpu_status,
+    seconds_since_hold,
+    set_owner_hold,
+)
 from app.security import require_owner
 
 COMMAND_TYPE = "RunPodGpuOff"
@@ -108,7 +114,7 @@ def create_runpod_router() -> APIRouter:
             "readings": readings,
             "verified": bool(readings) and all(r["off"] for r in readings),
             "words_ro": _off_words(readings)
-            + " GPU-ul rămâne oprit până permiți din nou: «Permite GPU din nou», în același loc.",
+            + " GPU-ul rămâne oprit până permiți din nou («Permite GPU din nou…», cu confirmare).",
             "hold": True,
             "card_id": card_id,
         }
@@ -148,6 +154,22 @@ def create_runpod_router() -> APIRouter:
             return JSONResponse({"detail": str(exc)}, status_code=409)
         if previous is not None:
             return previous
+        # A stop is never undone by the click that made it (19:48 UTC: «Permite» 7 s after his
+        # «Oprește», the same refused clip bought 4 s later). Refused, not recorded: a press
+        # after the wait is a new decision of his.
+        held_for = seconds_since_hold(engine)
+        if held_for is not None and held_for < ALLOW_AFTER_STOP_SECONDS:
+            wait = max(1, int(ALLOW_AFTER_STOP_SECONDS - held_for + 0.999))
+            return JSONResponse(
+                {
+                    "detail": (
+                        f"Ai oprit GPU-ul acum {int(held_for)} s; «Permite GPU din nou» se poate "
+                        f"apăsa peste {wait} s, ca o oprire să nu fie anulată de un clic în plus."
+                    ),
+                    "hold": True,
+                },
+                status_code=409,
+            )
         set_owner_hold(engine, False, by="owner", command_id=identifier)
         answer = {"command_id": identifier, "hold": False, "words_ro": ALLOW_WORDS}
         try:

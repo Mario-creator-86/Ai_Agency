@@ -8,6 +8,7 @@ simulation is never held (it switches nothing on). Every RunPod call goes to a f
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -165,6 +166,26 @@ def test_his_allow_on_the_switch_lifts_the_hold_like_the_card(client, headers, e
     assert owner_hold_active(engine)
     assert client.get("/api/v1/runpod/gpu", headers=headers).json()["owner_hold"] is True
 
+    status = client.get("/api/v1/runpod/gpu", headers=headers).json()
+    assert status["owner_hold_since"] and status["allow_after_stop_seconds"] == 20
+
+    # 19:48 UTC, 2026-10-12: a second press 7 s after his stop lifted the hold and the refused clip
+    # was bought again. Within 20 s of a stop, the allow is refused and nothing is recorded.
+    command = {"schema_version": 1, "command_id": str(uuid4())}
+    too_soon = client.post("/api/v1/runpod/gpu/allow", headers=headers, json=command)
+    assert too_soon.status_code == 409, too_soon.text
+    assert "20" in too_soon.json()["detail"] or "peste" in too_soon.json()["detail"]
+    assert owner_hold_active(engine)
+
+    # 30 s later (the record is immutable: the clock moves instead), his press is a new decision
+    later = datetime.now(UTC) + timedelta(seconds=30)
+    from app.providers.runpod import router as runpod_router
+
+    monkeypatch.setattr(
+        runpod_router,
+        "seconds_since_hold",
+        lambda engine: gpu_session.seconds_since_hold(engine, later),
+    )
     command = {"schema_version": 1, "command_id": str(uuid4())}
     calls = len(fake.calls)
     allowed = client.post("/api/v1/runpod/gpu/allow", headers=headers, json=command)

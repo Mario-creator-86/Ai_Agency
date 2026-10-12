@@ -61,11 +61,16 @@
 // - PHONE INSPECTOR (style.css): the stop among the inspector's header keys pushed the close key
 //   out of the dialog at 375 px.
 //
-// ALLOW FROM THE SAME PLACE (2026-10-12, the Owner: «GPU-ul RunPod este oprit, de unde îl
-// pornesc??? Ar trebui să o pot face din același loc din care îl opresc!»): his stop holds until
-// he allows it again (c529061), and the only way back was a card in «Decizii». While the hold is
-// on and no GPU session is live, the same button reads «Permite GPU din nou» and sends POST
-// /api/v1/runpod/gpu/allow, which lifts the hold exactly as the card does; it switches nothing on.
+// ALLOW FROM THE SAME BAR, NEVER FROM THE SAME CLICK (2026-10-12, the Owner: «GPU-ul RunPod este
+// oprit, de unde îl pornesc??? Ar trebui să o pot face din același loc din care îl opresc!»): his
+// stop holds until he allows it again (c529061), and the only way back was a card in «Decizii».
+// While the hold is on and no GPU session is live, a SEPARATE key «Permite GPU din nou…» shows at
+// the bar's other end, asks him to confirm, and sends POST /api/v1/runpod/gpu/allow, which lifts the
+// hold exactly as the card does; it switches nothing on. 7e08086 first turned the stop key itself
+// into «Permite» — at 19:48 UTC his second press on the same spot lifted the hold 7 s after his stop
+// and the refused clip was bought again 4 s later. So: the stop key always says «Oprește GPU acum»
+// (disabled while there is nothing to stop), the allow key sits elsewhere, needs a confirmation,
+// and stays disabled for `ALLOW_AFTER_STOP_MS` after any stop (the backend refuses it too).
 // NEVER SQUEEZED (same day, «Scrisul se suprapune!»): the toolbar folds `.cam-worded` keys to a
 // 32 px icon below a 1500 px dock and hides their `.dock-label`; this key has no icon, so its
 // words ran over the reading and «MEDIU». The key is no longer `.cam-worded`; the reading ends in
@@ -88,13 +93,18 @@
  * @typedef {'VERIFIED'|'CONFIRMED'|'UNVERIFIED'|'UNREAD'|'SIMULATED'} GpuOffState
  * @typedef {{now?: number, timeZone?: string}} GpuClock when the words are read, and on which
  *   clock (the page's own zone, his PC's, unless one is named)
- * @typedef {{container: any, label: any, button: any, said: any|null, dialog: boolean}} GpuMount
+ * @typedef {{container: any, label: any, button: any, allow: any|null, said: any|null, dialog: boolean}} GpuMount
  */
 
 /** While a session is live, one fresh reading at most this often (ms); the backend caps it too. */
 export const FRESH_EVERY_MS = 10000;
 /** After failed fresh readings the next one waits 2x, 4x, ... `FRESH_EVERY_MS`, at most this (ms). */
 export const FRESH_BACKOFF_MAX_MS = 300000;
+/** «Permite GPU din nou…» stays disabled this long after a stop (ms); the backend refuses it too. */
+export const ALLOW_AFTER_STOP_MS = 20000;
+/** What he confirms before the GPU may start again. */
+export const ALLOW_CONFIRM_RO =
+  'Permiți din nou GPU-ul RunPod? Studioul va putea porni din nou pașii plătiți (imagini și clipuri), sub regula ta, bugetele și plafonul fiecărui film.';
 /** His answer stays in a dialog's stop this long after the press, though the session closed (ms). */
 export const SAID_KEEP_MS = 60000;
 /**
@@ -337,6 +347,22 @@ export function heldOnly(status) {
   return Boolean(status && status.configured && !status.mock && status.owner_hold && !gpuLive(status));
 }
 
+/**
+ * How long «Permite GPU din nou…» must still wait (ms): `ALLOW_AFTER_STOP_MS` after the hold was
+ * set (the backend's `owner_hold_since`, whichever page stopped it) or after this page's own stop.
+ * @param {GpuStatus|null|undefined} status @param {number} nowMs @param {number} stoppedAt
+ */
+export function allowWaitMs(status, nowMs, stoppedAt) {
+  const read = /** @type {any} */ (status || {});
+  const seconds = Number(read.allow_after_stop_seconds);
+  const span = Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : ALLOW_AFTER_STOP_MS;
+  const since = read.owner_hold_since ? Date.parse(String(read.owner_hold_since)) : Number.NaN;
+  let until = Number.NEGATIVE_INFINITY;
+  if (Number.isFinite(since)) until = Math.max(until, since + span);
+  if (Number.isFinite(stoppedAt)) until = Math.max(until, stoppedAt + span);
+  return Math.max(0, until - nowMs);
+}
+
 /** What the Owner reads after «Permite GPU din nou». @param {{words_ro?: string}|null|undefined} result */
 export function allowAnswer(result) {
   if (result && result.words_ro) return result.words_ro;
@@ -431,9 +457,11 @@ export function focusCandidates(dialog, box) {
  * The page's one GPU stop: one reading, one press, any number of places.
  * @param {{api: (path: string, options?: any) => Promise<any>, notify: (message: string) => void,
  *   intervalMs?: number, freshEveryMs?: number, uuid?: () => string, now?: () => number,
- *   timeZone?: string}} options `timeZone`: the receipt's clock (default: the page's own)
+ *   timeZone?: string, confirm?: (message: string) => boolean}} options `timeZone`: the
+ *   receipt's clock (default: the page's own); `confirm`: his yes before «Permite GPU din nou…»
+ *   (default: the browser's own confirmation box)
  */
-export function createGpuSwitch({ api, notify, intervalMs = 15000, freshEveryMs = FRESH_EVERY_MS, uuid, now = () => Date.now(), timeZone }) {
+export function createGpuSwitch({ api, notify, intervalMs = 15000, freshEveryMs = FRESH_EVERY_MS, uuid, now = () => Date.now(), timeZone, confirm = (/** @type {string} */ message) => (typeof globalThis.confirm === 'function' ? globalThis.confirm(message) : false) }) {
   const newId = uuid || (() => crypto.randomUUID());
   /** @type {Set<GpuMount>} */
   const mounts = new Set();
@@ -452,6 +480,10 @@ export function createGpuSwitch({ api, notify, intervalMs = 15000, freshEveryMs 
   let pressing = null;
   /** @type {Promise<void>|null} */
   let allowing = null;
+  /** when this page last sent a stop (ms, `now()`): «Permite» waits `ALLOW_AFTER_STOP_MS` after it */
+  let stoppedAt = Number.NEGATIVE_INFINITY;
+  /** @type {ReturnType<typeof setTimeout>|null} the allow key's countdown */
+  let allowTimer = null;
   /** the command id of the press in flight, the same for every place it was pressed from */
   let commandId = '';
   /**
@@ -504,14 +536,22 @@ export function createGpuSwitch({ api, notify, intervalMs = 15000, freshEveryMs 
     mount.label.title = whole;
     mount.container.title = whole;
     mount.container.dataset.tone = readFailed ? 'unknown' : words.tone;
-    const allow = !readFailed && !pressing && heldOnly(status);
-    say(mount.button, allow ? 'Permite GPU din nou' : 'Oprește GPU acum');
-    mount.button.dataset.action = allow ? 'allow' : 'off';
-    if (hasClass(mount.button, 'is-allow') !== allow) {
-      const rest = String(mount.button.className).split(/\s+/).filter((c) => c && c !== 'is-allow');
-      mount.button.className = (allow ? [...rest, 'is-allow'] : rest).join(' ');
+    // the stop key never changes its words or its place: a second press on it can only stop
+    const held = !readFailed && heldOnly(status);
+    mount.button.disabled = Boolean(pressing || allowing || held);
+    mount.button.title = held ? 'GPU-ul este deja oprit de tine.' : '';
+    if (mount.allow) {
+      const wait = held ? allowWaitMs(status, now(), stoppedAt) : 0;
+      mount.allow.hidden = !(held && !pressing);
+      mount.allow.disabled = Boolean(allowing || wait > 0);
+      say(mount.allow, wait > 0 ? `Permite GPU din nou (${Math.ceil(wait / 1000)} s)` : 'Permite GPU din nou…');
+      mount.allow.title = wait > 0
+        ? 'Se poate apăsa la 20 de secunde după oprire, ca oprirea să nu fie anulată de un clic în plus.'
+        : 'Cere confirmare, apoi studioul poate porni din nou GPU-ul pentru pașii plătiți.';
+      if (wait > 0 && !allowTimer && !stopped) {
+        allowTimer = setTimeout(() => { allowTimer = null; paint(); }, Math.min(1000, wait));
+      }
     }
-    mount.button.disabled = Boolean(pressing || allowing);
   }
 
   function paint() {
@@ -575,6 +615,7 @@ export function createGpuSwitch({ api, notify, intervalMs = 15000, freshEveryMs 
   function press() {
     if (pressing) return pressing;
     commandId = newId();
+    stoppedAt = now();
     const sessions = new Set(((status && status.sessions) || []).map((s) => s.id));
     const send = async () => {
       try {
@@ -601,9 +642,14 @@ export function createGpuSwitch({ api, notify, intervalMs = 15000, freshEveryMs 
     return pressing;
   }
 
-  /** «Permite GPU din nou»: one POST, its own command id; his hold lifts as the card lifts it. */
+  /**
+   * «Permite GPU din nou…»: only after the wait, only on his confirmation; one POST, its own command
+   * id; his hold lifts as the card lifts it.
+   */
   function allow() {
     if (allowing) return allowing;
+    if (!heldOnly(status) || allowWaitMs(status, now(), stoppedAt) > 0) return Promise.resolve();
+    if (!confirm(ALLOW_CONFIRM_RO)) return Promise.resolve();
     const id = newId();
     const send = async () => {
       try {
@@ -637,9 +683,20 @@ export function createGpuSwitch({ api, notify, intervalMs = 15000, freshEveryMs 
     button.type = 'button';
     button.className = dialog ? 'gpu-switch-off' : 'cam-btn gpu-switch-off';
     button.textContent = 'Oprește GPU acum';
-    button.dataset.action = 'off';
-    button.addEventListener('click', () => (button.dataset.action === 'allow' ? allow() : press()));
-    container.append(label, button);
+    button.addEventListener('click', () => press());
+    // the allow key lives only in the toolbar, at the bar's other end from the stop
+    let allowKey = null;
+    if (!dialog) {
+      allowKey = owner.createElement('button');
+      allowKey.type = 'button';
+      allowKey.className = 'cam-btn gpu-switch-allow';
+      allowKey.textContent = 'Permite GPU din nou…';
+      allowKey.hidden = true;
+      allowKey.addEventListener('click', () => allow());
+      container.append(allowKey, label, button);
+    } else {
+      container.append(label, button);
+    }
     let line = null;
     if (dialog) {
       line = owner.createElement('span');
@@ -650,7 +707,7 @@ export function createGpuSwitch({ api, notify, intervalMs = 15000, freshEveryMs 
       container.append(line);
     }
     /** @type {GpuMount} */
-    const placed = { container, label, button, said: line, dialog };
+    const placed = { container, label, button, allow: allowKey, said: line, dialog };
     mounts.add(placed);
     if (status || readFailed) paintOne(placed);
     return placed;
@@ -806,6 +863,7 @@ export function createGpuSwitch({ api, notify, intervalMs = 15000, freshEveryMs 
     stop() {
       stopped = true;
       if (timer) clearTimeout(timer);
+      if (allowTimer) clearTimeout(allowTimer);
       if (watcher) watcher.disconnect();
       if (inside) inside.disconnect();
     },
@@ -818,7 +876,8 @@ export function createGpuSwitch({ api, notify, intervalMs = 15000, freshEveryMs 
  * @param {any} container
  * @param {{api: (path: string, options?: any) => Promise<any>, notify: (message: string) => void,
  *   intervalMs?: number, freshEveryMs?: number, uuid?: () => string, now?: () => number,
- *   timeZone?: string, document?: any, MutationObserver?: any, dialogs?: boolean}} options
+ *   timeZone?: string, document?: any, MutationObserver?: any, dialogs?: boolean,
+ *   confirm?: (message: string) => boolean}} options
  */
 export function mountGpuSwitch(container, options) {
   const hub = createGpuSwitch(options);

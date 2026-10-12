@@ -69,10 +69,11 @@ test('the switch names the film, the scene and the take, and his stop that holds
   assert.equal(gpuWords(held).tone, 'off');
 });
 
-test('his hold: the same key allows the GPU again, and a live session keeps the stop', async () => {
+test('his hold: a separate key allows the GPU again, on his confirmation; the stop key never changes', async () => {
   // 2026-10-12, the Owner: «GPU-ul RunPod este oprit, de unde îl pornesc??? Ar trebui să o pot
-  // face din același loc din care îl opresc!»
-  const held = { ...off, owner_hold: true };
+  // face din același loc din care îl opresc!» — from the same bar, never from the same click.
+  const sinceLongAgo = new Date(evening.now - 60_000).toISOString();
+  const held = { ...off, owner_hold: true, owner_hold_since: sinceLongAgo, allow_after_stop_seconds: 20 };
   assert.equal(heldOnly(held), true);
   assert.equal(heldOnly(off), false);
   const live = { ...held, endpoints: [{ ...off.endpoints[0], state: 'ON', workers_max: 1, running: 1 }],
@@ -91,26 +92,85 @@ test('his hold: the same key allows the GPU again, and a live session keeps the 
     return status;
   };
   const said = [];
+  let answer = false;
+  const asked = [];
   const { bar } = fakeWorld();
   const control = mountGpuSwitch(bar, {
     api, notify: (m) => said.push(m), intervalMs: 0, uuid: () => 'a-1', dialogs: false, now: () => evening.now, timeZone: 'UTC',
+    confirm: (m) => { asked.push(m); return answer; },
   });
   await control.refresh();
-  const [label, button] = bar.children;
+  const [allowKey, label, button] = bar.children;
   assert.equal(label.textContent, 'GPU oprit de tine');
-  assert.equal(button.textContent, 'Permite GPU din nou');
-  assert.ok(button.className.split(' ').includes('is-allow'));
+  assert.equal(button.textContent, 'Oprește GPU acum', 'the stop key never changes its words');
+  assert.equal(button.disabled, true, 'nothing to stop while held');
+  assert.equal(allowKey.hidden, false);
+  assert.equal(allowKey.textContent, 'Permite GPU din nou…');
+  assert.equal(allowKey.disabled, false);
+  assert.ok(allowKey.className.split(' ').includes('gpu-switch-allow'));
   assert.ok(!button.className.split(' ').includes('cam-worded'), 'the key never folds to an icon');
-  await button.listeners.click();
+  // he says no: nothing is sent
+  await allowKey.listeners.click();
+  assert.equal(asked.length, 1);
+  assert.equal(calls.filter((c) => c[0] === '/runpod/gpu/allow').length, 0);
+  // he confirms: one POST
+  answer = true;
+  await allowKey.listeners.click();
   const allows = calls.filter((c) => c[0] === '/runpod/gpu/allow');
   assert.equal(allows.length, 1);
   assert.deepEqual(allows[0][2], { schema_version: 1, command_id: 'a-1' });
   assert.equal(calls.filter((c) => c[0] === '/runpod/gpu/off').length, 0);
   assert.deepEqual(said, ['Ai permis din nou GPU-ul.']);
+  assert.equal(allowKey.hidden, true);
   assert.equal(button.textContent, 'Oprește GPU acum');
-  assert.ok(!button.className.split(' ').includes('is-allow'));
   // the long reading is said whole on hover, where the toolbar ends it in «…»
   assert.ok(label.title.startsWith(label.textContent));
+  control.stop();
+});
+
+test('a second press right after the stop never lifts the hold (19:48 UTC, 2026-10-12)', async () => {
+  // His stop, then a second press on the same spot 7 s later lifted the hold and the refused clip
+  // was bought again: the stop key keeps its words, the allow key waits 20 s and asks first.
+  let clock = evening.now;
+  const calls = [];
+  let status = { ...off, endpoints: [{ ...off.endpoints[0], state: 'ON', workers_max: 1, running: 1 }],
+    sessions: [{ id: 's', purpose: 'video', step: 'scene_redo' }] };
+  const api = async (/** @type {string} */ path, /** @type {any} */ options = {}) => {
+    calls.push([path, options.method || 'GET']);
+    if (path.startsWith('/runpod/gpu/off')) {
+      status = { ...off, owner_hold: true, owner_hold_since: new Date(clock).toISOString(), allow_after_stop_seconds: 20 };
+      return { command_id: 'x', verified: true, readings: [], words_ro: 'GPU-ul RunPod este oprit și verificat.' };
+    }
+    if (path.startsWith('/runpod/gpu/allow')) return { hold: false };
+    return status;
+  };
+  const { bar } = fakeWorld();
+  const control = mountGpuSwitch(bar, {
+    api, notify: () => {}, intervalMs: 0, uuid: () => 'u-1', dialogs: false, now: () => clock, timeZone: 'UTC',
+    confirm: () => true,
+  });
+  await control.refresh();
+  const [allowKey, , button] = bar.children;
+  assert.equal(allowKey.hidden, true, 'nothing to allow while a round is live');
+  await button.listeners.click();
+  assert.equal(button.textContent, 'Oprește GPU acum');
+  assert.equal(button.disabled, true);
+  // 7 s later: the allow key is there, counting down, and a press sends nothing
+  clock += 7000;
+  await control.refresh();
+  assert.equal(allowKey.hidden, false);
+  assert.equal(allowKey.disabled, true);
+  assert.equal(allowKey.textContent, 'Permite GPU din nou (13 s)');
+  await allowKey.listeners.click();
+  // the stop key under his cursor is disabled (the browser sends it no click) and still says stop
+  assert.equal(button.disabled, true);
+  assert.equal(button.textContent, 'Oprește GPU acum');
+  assert.equal(calls.filter((c) => c[0] === '/runpod/gpu/allow').length, 0, 'the stop was undone');
+  // after the wait, it can be pressed (and still asks)
+  clock += 14000;
+  await control.refresh();
+  assert.equal(allowKey.disabled, false);
+  assert.equal(allowKey.textContent, 'Permite GPU din nou…');
   control.stop();
 });
 
@@ -489,7 +549,7 @@ test('hidden without RunPod; the button switches off once however often it is pr
     sessions: [{ id: 's', purpose: 'image', step: 'motion' }] };
   await control.refresh();
   assert.equal(bar.hidden, false);
-  const [label, button] = bar.children;
+  const [, label, button] = bar.children;
   assert.equal(label.textContent, 'GPU pornit, worker activ · pas: motion');
   assert.equal(button.textContent, 'Oprește GPU acum');
   assert.equal(button.disabled, false);
@@ -546,10 +606,10 @@ test('after a failed fresh reading the next fresh one waits twice as long each t
   const control = mountGpuSwitch(bar, { api, notify: () => {}, intervalMs: 0, now: () => clock, dialogs: false });
   await control.refresh(); // learns it is live
   await control.refresh(); // fresh: fails (the page gave up on it)
-  assert.equal(bar.children[0].textContent, 'GPU: stare necitită');
+  assert.equal(bar.children[1].textContent, 'GPU: stare necitită');
   clock += FRESH_EVERY_MS;
   await control.refresh(); // 10 s later: the guard's reading, not another live one
-  assert.equal(bar.children[0].textContent, 'GPU pornit, worker activ · pas: stills');
+  assert.equal(bar.children[1].textContent, 'GPU pornit, worker activ · pas: stills');
   clock += FRESH_EVERY_MS;
   await control.refresh(); // 20 s after the failure: fresh again, fails again
   clock += 3 * FRESH_EVERY_MS;

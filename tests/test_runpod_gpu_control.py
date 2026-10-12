@@ -741,7 +741,8 @@ def test_status_shape_for_the_page(engine, tmp_path, monkeypatch):
     by_purpose = {e["purpose"]: e for e in live["endpoints"]}
     assert by_purpose["image"]["state"] == "ON" and by_purpose["image"]["workers_max"] == 1
     assert by_purpose["video"]["state"] == "OFF"
-    assert live["sessions"][0]["step"] == "stills" and "pas" in live["words_ro"]
+    # the session is said in the Owner's words since c529061 («imaginile»), its step stays its code
+    assert live["sessions"][0]["step"] == "stills" and "imaginile" in live["words_ro"]
     calls = len(fake.calls)
     gpu_status(engine, vault, fresh=True, transport=fake)
     assert len(fake.calls) == calls  # one live read per endpoint per 10 s

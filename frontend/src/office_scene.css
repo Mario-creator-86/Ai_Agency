@@ -436,7 +436,12 @@
 #office-scene-container .toolbar-scene .gpu-switch[hidden] { display: none; }
 #office-scene-container .toolbar-scene .gpu-switch-state { min-width: 0; max-width: 52ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #office-scene-container .toolbar-scene .gpu-switch-off { flex: none; width: auto; padding: 0 var(--s3); white-space: nowrap; }
-#office-scene-container .toolbar-scene .gpu-switch-off.is-allow { color: var(--teal); border-color: var(--ok-line); background: var(--ok-bg); }
+/* «Permite GPU din nou…» is its own key at the switch's other end, never the stop key: a second
+   press on «Oprește GPU acum» must not undo the stop (19:48 UTC, 2026-10-12). */
+#office-scene-container .toolbar-scene .gpu-switch-allow { flex: none; width: auto; padding: 0 var(--s3); white-space: nowrap; color: var(--teal); border-color: var(--ok-line); background: var(--ok-bg); }
+#office-scene-container .toolbar-scene .gpu-switch-allow[hidden] { display: none; }
+#office-scene-container .toolbar-scene .gpu-switch-allow:disabled { opacity: .55; cursor: not-allowed; }
+#office-scene-container .toolbar-scene .gpu-switch-off:disabled { opacity: .45; cursor: default; }
 /* Tier 1: the two state readouts, the camera, and the way out to fullscreen. */
 #office-scene-container .toolbar-scene {
   flex: 1 1 100%;
