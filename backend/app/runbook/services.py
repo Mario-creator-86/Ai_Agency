@@ -22,7 +22,7 @@ import re
 import socket
 import sqlite3
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -1029,10 +1029,10 @@ def tell_day_interrupted(
     )
     subject = f"{day} a fost întreruptă {where}"
     body = (
-        f"{subject}: {_interruption_words(cause)}; nu o repornesc singur. Ce s-a cumpărat până "
-        "atunci rămâne cumpărat și trecut în cărți, iar ce a acceptat un furnizor și nu a fost "
-        "încă adus îl colectează supraveghetorul, fără să cumpere din nou. O nouă rulare azi o "
-        "pornești tu, din panoul rulării zilnice."
+        f"{subject}: {_interruption_words(cause)}; după repornirea studioului o reiau singur de "
+        "la etapa unde s-a oprit, fără să refac etapele încheiate (2026-10-12). Ce s-a cumpărat "
+        "până atunci rămâne cumpărat și trecut în cărți, iar ce a acceptat un furnizor și nu a "
+        "fost încă adus îl colectează supraveghetorul, fără să cumpere din nou."
     )
     with Session(engine) as session, session.begin():
         director = agent_for_role(session, "Director")
@@ -1052,6 +1052,61 @@ def tell_day_interrupted(
             correlation_id=correlation_id,
         )
         return row.id
+
+
+#: The cause on the task and the event of a day resumed after a start.
+RESUME_CAUSE = "resume_after_start"
+DAY_RESUME_QUEUED_EVENT = "runbook.daily_run_resume_queued"
+#: What a replayed stage says instead of doing its work again.
+RESUMED_NOTE_RO = "reluată din rularea întreruptă {run}: etapa era încheiată, nimic refăcut"
+
+
+def resumable_run(engine: Engine, date_iso: str) -> DailyRun | None:
+    """The day's newest run when it ended INTERRUPTED (a shutdown, a crash) and nothing ran
+    after it: the one a start resumes (`workflows.passes.resume_interrupted_day`). None when
+    the day finished, is running, or never ran."""
+    with Session(engine) as session:
+        runs = session.scalars(
+            select(DailyRun).where(DailyRun.business_date == date_iso).order_by(DailyRun.started_at)
+        ).all()
+        if not runs or runs[-1].status != INTERRUPTED:
+            return None
+        run = runs[-1]
+        session.expunge(run)
+        return run
+
+
+def resume_runners(
+    previous_stages: list[dict[str, Any]],
+    runners: Mapping[str, Callable[[], dict[str, Any]]],
+    run_id: str,
+) -> dict[str, Callable[[], dict[str, Any]]]:
+    """The runners of a day resumed after a start: a stage the interrupted run COMPLETED is
+    replayed from its record (its status, reason and artefacts; nothing done again, so a film
+    is never bought or a subject chosen twice), and every other stage — the one it stopped in,
+    those blocked behind it, one that failed or was skipped — runs for real with the caller's
+    runner. The preflight is the run's own and is never replayed.
+    """
+
+    def replay(record: dict[str, Any]) -> Callable[[], dict[str, Any]]:
+        note = RESUMED_NOTE_RO.format(run=str(run_id)[:8])
+        reason = str(record.get("reason") or "").rstrip(".")
+
+        def runner() -> dict[str, Any]:
+            return {
+                "status": COMPLETED,
+                "reason": f"{reason} ({note})." if reason else f"{note[:1].upper()}{note[1:]}.",
+                "artefacts": dict(record.get("artefacts") or {}),
+            }
+
+        return runner
+
+    merged: dict[str, Callable[[], dict[str, Any]]] = dict(runners)
+    for record in previous_stages:
+        name = str(record.get("stage") or "")
+        if name and name != "preflight" and record.get("status") == COMPLETED:
+            merged[name] = replay(record)
+    return merged
 
 
 def interrupt_run(

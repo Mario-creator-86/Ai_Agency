@@ -157,7 +157,7 @@ def test_a_shutdown_during_a_staircase_ends_after_the_current_scene_and_buys_not
     told = _letters(engine, "day_interrupted")
     assert len(told) == 1
     letter = f"{told[0].subject} {told[0].body_text}"
-    assert "întreruptă" in letter and "nu o repornesc singur" in letter
+    assert "întreruptă" in letter and "o reiau singur" in letter
 
 
 def test_the_worker_claims_nothing_while_the_studio_shuts_down(engine, settings, vault):

@@ -44,6 +44,7 @@ from app.runbook.services import (
     SafeModeActive,
     execute_daily_run,
     interrupt_task_day,
+    resume_runners,
     shutdown_requested,
     stop_requested,
 )
@@ -182,6 +183,8 @@ def build_task_handlers(
                 "status": "SKIPPED",
                 "reason": f"Reîncercarea era pentru ziua {retry_for}, care a trecut.",
             }
+        resume_of = str(payload.get("resume_of") or "") or None
+        runners = stage_runners
         with Session(engine) as session:
             runs_today = session.scalars(
                 select(DailyRun)
@@ -192,8 +195,49 @@ def build_task_handlers(
             done_id = done.id if done is not None else None
             cut = next((run for run in runs_today if run.status in (INTERRUPTED, RUNNING)), None)
             cut_id = cut.id if cut is not None else None
+            previous = session.get(DailyRun, resume_of) if resume_of else None
+            previous_date = previous.business_date if previous is not None else None
+            previous_status = previous.status if previous is not None else None
+            previous_stages = (
+                [dict(stage) for stage in (previous.stages_json or [])]
+                if previous is not None
+                else []
+            )
+            later = [
+                run.id
+                for run in runs_today
+                if previous is not None and str(run.started_at) > str(previous.started_at)
+            ]
         attempt = len(runs_today) + 1
-        if not manual:
+        if resume_of is not None:
+            # A day cut off under the studio (a shutdown, a crash), resumed after the start
+            # (`passes.resume_interrupted_day`, 2026-10-12): the stages that run completed are
+            # replayed from its record and the rest run — never a second subject or film.
+            if previous is None or previous_date != today:
+                return {
+                    "status": "SKIPPED",
+                    "reason": f"Reluarea era pentru ziua {previous_date or '?'}, care a trecut.",
+                }
+            if previous_status != INTERRUPTED or later:
+                return {
+                    "status": "SKIPPED",
+                    "reason": (
+                        f"Ziua {today} nu mai are nimic de reluat: rularea {resume_of[:8]} nu "
+                        "mai este cea întreruptă."
+                    ),
+                    "run_id": later[-1] if later else resume_of,
+                }
+            if attempt > settings.daily_max_attempts:
+                return {
+                    "status": "SKIPPED",
+                    "reason": (
+                        f"Ziua {today} și-a folosit cele {settings.daily_max_attempts} "
+                        "încercări; reluarea ei este decizia Owner-ului."
+                    ),
+                    "run_id": resume_of,
+                }
+            runners = resume_runners(previous_stages, stage_runners or {}, resume_of)
+        elif not manual:
             if cut_id is not None:
                 # A day cut off under the studio (a shutdown, a crash) — or one another
                 # process is still running. Running it again would buy its films twice; the
@@ -228,7 +272,7 @@ def build_task_handlers(
                 settings,
                 vault,
                 correlation_id=task["id"],
-                stage_runners=stage_runners,
+                stage_runners=runners,
                 attempt=attempt,
                 attempts_allowed=settings.daily_max_attempts,
             )
@@ -241,6 +285,8 @@ def build_task_handlers(
             "date": today,
             "attempt": attempt,
         }
+        if resume_of is not None:
+            outcome["resumed_from"] = resume_of
         if (
             result.get("retryable")
             and attempt < settings.daily_max_attempts

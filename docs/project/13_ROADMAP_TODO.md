@@ -1909,5 +1909,10 @@ No provider was called, no run was queued, no credit was spent, and
   același prompt», scene 5 of the cyclotron, every hour) turns the redo to the picture — in the
   QC repair (`_correct_before_redo` tries the still layer) and in the ladder (`open_layers`
   counts the attempt).
+- Done the same morning (the Owner, 07:40: «dai singur restart, nu mă aștepta»): a day cut off
+  by a shutdown or a crash is resumed by the studio itself after the start
+  (`passes/resume_interrupted_day`, `resume_runners`: completed stages replayed, the rest run);
+  the restart is the developer session's own, at a safe point, after commit and green suites.
 - Next: a RunPod job queued with no worker for longer than the cold start (06:15 → 07:38,
-  today's film) should be given up earlier or the Owner told at once.
+  today's film: RunPod expired it at its ttl, 83 min) should be given up earlier or the Owner
+  told at once; a `scripts/restart.py` for the graceful self-restart (today: a scratchpad script).
