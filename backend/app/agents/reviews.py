@@ -592,7 +592,11 @@ DIRECTOR_QC_TASK = "director_qc_review"
 #: «Controlul … a picat» is REAL only with its scenes' findings; what passed, or what she judged
 #: FALSE or accepted, with the same takes is settled check by check; a lesson is written only
 #: for what a picture or motion prompt can act on.
-DIRECTOR_QC_TEMPLATE_VERSION = "director-qc-v9"
+#: v10 (2026-10-12, round 3 of that review): what YuNet or the flat band measured is never
+#: settled; her second looks settle what they overturned; the small traces accepted on a take
+#: (``accepted_on_takes``) are accepted; a Motion QC fallback needs no lesson; a measured
+#: serious defect whose only fix was the free fix already made goes to his card.
+DIRECTOR_QC_TEMPLATE_VERSION = "director-qc-v10"
 #: Her verdict on one finding of the report.
 QC_VERDICTS = ("REAL", "FALSE", "OWNER_CHOICE", "ACCEPTED")
 #: The longest lesson she writes for future prompts, in characters.
@@ -662,6 +666,38 @@ def measured_serious(text: Any) -> str | None:
         if any(mark.lower() in words for mark in marks):
             return label
     return None
+
+
+#: The words of the free detectors that read the frame itself on every film, a carried scene
+#: or not (`qc.span_picture_qc`): YuNet's face count and the flat-band reading. What they
+#: measure is never settled by an earlier pass or by her word on the same takes (the review of
+#: 2026-10-12, round 3: a settlement keyed by the takes covered them, and a face YuNet newly
+#: counted on a faceless bible could only be called FALSE, and was published).
+DETECTOR_MARKS = ("YuNet a găsit fețe", "nu e o singură fotografie")
+
+
+def measured_by_detector(text: Any) -> bool:
+    """Whether a finding's words are YuNet's or the flat band's (`DETECTOR_MARKS`)."""
+    words = " ".join(str(text or "").split()).lower()
+    return any(mark.lower() in words for mark in DETECTOR_MARKS)
+
+
+def _detector(finding: Mapping[str, Any]) -> bool:
+    return bool(finding.get("detector")) or measured_by_detector(finding.get("text"))
+
+
+def vendor_fallback(finding: Mapping[str, Any]) -> bool:
+    """Whether a finding is Motion QC's fallback (the vendor delivered no clip and the scene
+    shows a still): no prompt caused it, so no lesson can come from it (the review of
+    2026-10-12, round 3: one was required, and so invented)."""
+    return str(finding.get("check") or "") == "motion_qc" and "fallback" in (
+        str(finding.get("text") or "").lower()
+    )
+
+
+#: The family of a finding no check claimed: only her second look settles it
+#: (`picture_qc.settle_family`, `picture_qc.earlier_acceptances`).
+UNATTRIBUTED = "unattributed"
 
 
 def check_family(check: Any) -> str | None:
@@ -761,16 +797,20 @@ def settled_checks(scene: Mapping[str, Any]) -> set[str]:
 def prompt_actionable(finding: Mapping[str, Any], context: Mapping[str, Any] | None = None) -> bool:
     """Whether a picture or motion prompt can act on a finding, so a lesson from it is a rule
     for future prompts: one scene's finding of a picture or motion check (or one no check
-    claimed), not a whole check's «a picat», not the sound or the encode, and not a finding on a
-    picture already settled for its check (2026-10-12 review: those «lessons» were invented)."""
+    claimed), not a whole check's «a picat», not the sound or the encode, not Motion QC's
+    fallback (a vendor failure, `vendor_fallback`), and not a finding on a picture already
+    settled for its check (2026-10-12 review: those «lessons» were invented). What YuNet or the
+    flat band measured is never settled (`measured_by_detector`)."""
     scene = _own_scene(finding)
     if finding.get("check_level") or scene is None:
         return False
     check = finding.get("check")
     if check is not None and str(check) not in PROMPT_CHECKS:
         return False
-    if context is not None:
-        family = check_family(check)
+    if vendor_fallback(finding):
+        return False
+    if context is not None and not _detector(finding):
+        family = check_family(check) or UNATTRIBUTED
         return family not in settled_checks(_scenes_of(context).get(scene) or {})
     return True
 
@@ -973,6 +1013,32 @@ def capped_repair(repairs: list[DirectorRedo], context: Mapping[str, Any]) -> bo
     )
 
 
+#: Why a redo cannot be carried out that no agent can lift, only the Owner: his cap
+#: (`LIMITS`), and the free fix already made once for the film (FREE_USED).
+OWNER_BOUND = frozenset({LIMITS, "FREE_USED"})
+
+
+def owner_bound_repair(
+    repairs: list[DirectorRedo], context: Mapping[str, Any], measured: bool
+) -> bool:
+    """Whether a REPAIR is stopped only by what the Owner alone can lift: his cap
+    (`capped_repair`), or — for a defect of the whole film quality control measured as serious
+    (``measured``) — the free fix already made once (`OWNER_BOUND`).
+
+    The review of 2026-10-12, round 3: «The film has no audio stream» is measured serious, so
+    never ACCEPTED; its only fix, the audio redo, was refused FREE_USED; the refusal told her to
+    decide ACCEPT, which did not validate either, and the film had no honest answer. Such a
+    REPAIR is carried out: nothing is done, and his card asks him (`runbook.stages`)."""
+    if capped_repair(repairs, context):
+        return True
+    if not measured:
+        return False
+    refusals = [redo_refusal(item, context) for item in repairs]
+    return bool(refusals) and all(
+        refused is not None and refused[0] in OWNER_BOUND for refused in refusals
+    )
+
+
 def passed_scene_refusal(decision: DirectorQcDecision, context: Mapping[str, Any]) -> str | None:
     """Why her answer touches a scene or a check it must leave as it is, read from her context;
     None when it does not (2026-10-12, the Owner: «Nu putem permite loopuri pe bani și picarea QC
@@ -1004,7 +1070,9 @@ def passed_scene_refusal(decision: DirectorQcDecision, context: Mapping[str, Any
         for _verdict, finding in real
         if _own_scene(finding) is not None
         and not finding.get("check_level")
-        and check_family(finding.get("check"))
+        # YuNet and the flat band read the frame again on every film: never settled.
+        and not _detector(finding)
+        and (check_family(finding.get("check")) or UNATTRIBUTED)
         in settled_checks(scenes.get(int(finding["scene_index"])) or {})
     )
     if misread:
@@ -1180,10 +1248,27 @@ def decision_schema(
                     raise ValueError(why)
             if context is not None and self.decision == "REPAIR":
                 why = repair_refusal(list(self.repairs), context)
-                if why is not None and not capped_repair(list(self.repairs), context):
+                # A serious defect of the whole film quality control measured (no audio
+                # stream): its fixes are the free ones, and a scene's paid redo is no fix of it.
+                measured = any(
+                    item.verdict == "REAL"
+                    and item.finding in known
+                    and _serious_label(known[item.finding])
+                    and _own_scene(known[item.finding]) is None
+                    and not scenes_named(known[item.finding].get("text"))
+                    for item in self.verdicts
+                )
+                if why is not None and not owner_bound_repair(
+                    list(self.repairs), context, measured
+                ):
+                    # No «decide ACCEPT» here (the review of 2026-10-12, round 3): a measured
+                    # serious defect is never ACCEPTED, and the words steered her to an answer
+                    # that could not validate either.
                     raise ValueError(
-                        f"no redo of this REPAIR can be carried out now ({why}); decide ACCEPT "
-                        "(a minor flaw you accept is ACCEPTED, not REAL)"
+                        f"no redo of this REPAIR can be carried out now ({why}): list a redo that "
+                        "can be; a serious defect stopped only by the Owner's limits, or by a "
+                        "free fix already made once, is REPAIRed all the same and he is asked on "
+                        "a card; a minor flaw you let through is ACCEPTED, not REAL"
                     )
             return self
 
@@ -1221,11 +1306,17 @@ _DIRECTOR_QC_INSTRUCTIONS = (
     "a scene's picture or motion also says its lesson (one general rule, at most 240 "
     "characters, that a future prompt follows so the defect does not appear again: positive, "
     "about what to write, with no film title and no scene number). A finding about the sound, "
-    "the encode, the captions or a whole check needs no lesson. A scene's passed_before names "
+    "the encode, the captions or a whole check needs no lesson, and neither does a Motion QC "
+    "fallback (the vendor delivered no clip: no prompt made it). A scene's passed_before names "
     "the checks that passed it in an earlier film with exactly the still and clip it has now, "
-    "and accepted_before the checks whose findings on it you judged FALSE or accepted as minor "
-    "with exactly these takes: the picture did not change, so a finding of one of those checks "
-    "on it is FALSE (no cause, no lesson), never REAL. passed_before_unchanged means every "
+    "and accepted_before the checks whose findings on it you judged FALSE or accepted as minor, "
+    "or your second look overturned, with exactly these takes: the picture did not change, so "
+    "a finding of one of those checks on it is FALSE (no cause, no lesson), never REAL — except "
+    "a face YuNet counted or a band the flat-band reading found: those detectors read the "
+    "frame again on every film and are judged each time. accepted_on_takes lists the small "
+    "traces accepted on the scene's takes before they were filmed, and the look of yours that "
+    "approved a take: a finding that is one of those traces, and not measured_serious, is "
+    "ACCEPTED as minor, not REAL. passed_before_unchanged means every "
     "check failing the scene now passed it, or was settled, before: it is never redone. A "
     "finding marked check_level only says that a whole check failed: what is wrong is in its "
     "scenes' findings, so it is REAL only together with one of them, otherwise FALSE. Then "
@@ -1251,7 +1342,8 @@ _DIRECTOR_QC_INSTRUCTIONS = (
     "your_looks are your own looks at pictures bought for your earlier repairs that a gate "
     "refused: what you chose or rejected, and why. A "
     "REPAIR must list at least one redo that can be carried out now (or one only his limits "
-    "stop): when none can and you do "
+    "stop, or, for a defect measured as serious, a free fix already made once): when none can "
+    "and you do "
     "not accept the film, say so in the summary and it waits. Findings marked not_yours "
     "(rights, music licences, factual claims, placeholder "
     "visuals, how the film was made, a file that does not match its record) are settled by "
@@ -1281,8 +1373,10 @@ def _director_payload(context: Mapping[str, Any]) -> str:
 
     Slicing a serialized object can lose a scene's corrective intent and even its closing
     structure. The Director must receive every finding, exact scene prompt and bible rule.
+    A key starting with «_» is the code's own bookkeeping (the carry keys her verdicts are
+    recorded with, `director_qc.film_qc_context`), never shown to her.
     """
-    data = dict(context)
+    data = {key: value for key, value in context.items() if not str(key).startswith("_")}
     for key in ("checks", "earlier_reviews", "redo_proposals", "your_looks"):
         text = json.dumps(data, ensure_ascii=False, default=str)
         if len(text) <= DIRECTOR_QC_PAYLOAD_CHARS:
@@ -1347,6 +1441,14 @@ def review_film_qc(
                 f"redo (scenes {capped}), REPAIR it anyway: nothing is bought, and the Owner is "
                 "asked on a card for more paid redos"
                 if capped
+                else ""
+            )
+            + (
+                # The review of 2026-10-12, round 3: «no audio stream» had no honest answer.
+                "; a defect measured as serious whose only fix is a free fix already made once "
+                "(free_fix_already_used) is REPAIRed all the same: nothing is done, and the "
+                "Owner is asked on a card"
+                if context.get("free_fix_already_used")
                 else ""
             )
             + "; otherwise the film waits.\n"

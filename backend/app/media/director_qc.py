@@ -84,7 +84,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
@@ -98,11 +98,13 @@ from app.agents.reviews import (
     DirectorRedo,
     _names_scene,
     check_family,
+    measured_by_detector,
     measured_serious,
     prompt_actionable,
     redo_refusal,
     scenes_named,
     settled_checks,
+    vendor_fallback,
 )
 from app.db import lock_for_write
 from app.factual.models import ScriptDraft
@@ -427,6 +429,8 @@ def report_findings(report: Mapping[str, Any]) -> list[dict[str, Any]]:
                 "scene_index": scene,
                 "scenes": sorted(scenes_named(words, own=scene)),
                 "measured_serious": measured_serious(words),
+                # YuNet or the flat band: read again on every film, never settled (round 3).
+                "detector": measured_by_detector(words),
                 "not_yours": is_not_yours(text, check),
             }
         )
@@ -612,6 +616,57 @@ def film_takes(production: Mapping[str, Any]) -> dict[int, dict[str, str | None]
             "motion": str(motion.get("take_id")) if motion and motion.get("take_id") else None,
         }
     return takes
+
+
+def _take_notes(
+    session: Session, in_film: Mapping[int, Mapping[str, str | None]]
+) -> dict[int, dict[str, Any]]:
+    """Per scene, what was accepted on the takes the film was cut from before they were filmed
+    (`fix_check.take_note`: the small traces a look saw and let through, and the Director's look
+    that approved a take). The review of 2026-10-12, round 3: the film QC context did not read
+    them, and the same small trace accepted on the still came back as a finding after the
+    money. Read only; a scene with no note is left out."""
+    try:
+        from app.media.fix_check import take_note  # noqa: PLC0415 - a large module
+    except ImportError:
+        return {}
+    out: dict[int, dict[str, Any]] = {}
+    for scene, takes in in_film.items():
+        found: dict[str, Any] = {}
+        for layer, take_id in takes.items():
+            note = take_note(session, str(take_id)) if take_id else None
+            if not note:
+                continue
+            minor = [
+                {
+                    "finding": _short(item.get("finding"), 200),
+                    "seen": _short(item.get("seen"), 200),
+                }
+                for item in note.get("minor") or []
+                if isinstance(item, Mapping)
+            ][:6]
+            said = note.get("director_look")
+            look = said if isinstance(said, Mapping) else None
+            if not minor and not look:
+                continue
+            found[layer] = {
+                "approved_by": note.get("approved_by"),
+                **({"minor_traces_accepted": minor} if minor else {}),
+                **(
+                    {
+                        "director_look": {
+                            "verdict": look.get("verdict"),
+                            "severity": look.get("severity"),
+                            "reason": _short(look.get("reason_ro"), 300),
+                        }
+                    }
+                    if look
+                    else {}
+                ),
+            }
+        if found:
+            out[int(scene)] = found
+    return out
 
 
 def protected_redos(
@@ -809,6 +864,19 @@ def _earlier(session: Session, decisions: list[dict[str, Any]]) -> list[dict[str
                     for entry in done.get("limited") or []
                     if isinstance(entry, Mapping)
                 ],
+                # Her second looks that overturned a refusal before a purchase: nothing was
+                # bought for those scenes (the review of 2026-10-12, round 3: they were not
+                # shown to her, and she marked the same findings REAL every hour).
+                "overturned": [
+                    {
+                        "scene_index": entry.get("scene_index"),
+                        "checks": list(entry.get("checks") or []),
+                        "severity": entry.get("severity"),
+                        "reason": _short(entry.get("reason"), 200),
+                    }
+                    for entry in done.get("overturned") or []
+                    if isinstance(entry, Mapping)
+                ],
                 "owner_answers": answers,
             }
         )
@@ -884,6 +952,7 @@ def film_qc_context(
         earlier_acceptances,
         earlier_passes,
         film_scene_prompts,
+        settle_family,
         storyboard_carry_keys,
     )
 
@@ -893,6 +962,18 @@ def film_qc_context(
     production: Mapping[str, Any] = reading.get("production") or {}
     checks = report.get("checks_json") or {}
     findings = report_findings(report)
+    # Every family a scene's finding belongs to now, beside the picture checks: her second
+    # look settles any of them (the review of 2026-10-12, round 3: an overturned Motion QC or
+    # unattributed finding was neither settled nor shown, and the film looped every hour).
+    families = sorted(
+        set(CARRIED_CHECKS)
+        | {
+            settle_family(finding.get("check"))
+            for finding in findings
+            if not finding.get("check_level")
+            and (finding.get("scene_index") is not None or finding.get("scenes"))
+        }
+    )
     limits = dict(limits or {})
     per_scene = int(limits.get("per_scene") or 0)
     per_film = int(limits.get("per_film") or 0)
@@ -929,20 +1010,26 @@ def film_qc_context(
         this_report = session.get(QualityControlReport, report_id) if report_id else None
         passed_before: dict[str, dict[int, Any]] = {}
         accepted_before: dict[str, dict[int, Any]] = {}
+        #: Per family, each scene's carry key now: her verdicts and second looks are recorded
+        #: with it, and only exactly this picture is settled by them later (round 3).
+        settle_keys: dict[str, dict[int, dict[str, Any]]] = {}
         if storyboard_id:
+            for name in families:
+                settle_keys[name] = storyboard_carry_keys(session, storyboard_id, production, name)
+                accepted_before[name] = earlier_acceptances(
+                    session, storyboard_id, production, name, settle_keys[name]
+                )
             for name in CARRIED_CHECKS:
                 passed_before[name] = earlier_passes(
                     session,
                     storyboard_id,
-                    storyboard_carry_keys(session, storyboard_id, production, name),
+                    settle_keys[name],
                     name,
                     before=str(this_report.verified_at) if this_report is not None else None,
                     exclude_report_ids=[report_id],
                 )
-                accepted_before[name] = earlier_acceptances(
-                    session, storyboard_id, production, name
-                )
         in_film = film_takes(production)
+        notes = _take_notes(session, in_film)
         ids = [take for takes in in_film.values() for take in takes.values() if take]
         rows = {
             row.id: row for row in session.scalars(select(SceneTake).where(SceneTake.id.in_(ids)))
@@ -978,6 +1065,14 @@ def film_qc_context(
             }
             failing = _failing_now(findings, index)
             settled = settled_checks({"passed_before": passed, "accepted_before": accepted})
+            # A face YuNet counted or a band the flat-band reading found on this scene now is
+            # measured, never settled (round 3 of the 2026-10-12 review).
+            detected = any(
+                finding.get("detector")
+                and not finding.get("check_level")
+                and _names_scene(finding, index)
+                for finding in findings
+            )
             scenes.append(
                 {
                     "scene_index": index,
@@ -1025,8 +1120,13 @@ def film_qc_context(
                     # aprobată» is not allowed).
                     **({"passed_before": passed} if passed else {}),
                     **({"accepted_before": accepted} if accepted else {}),
+                    # The small traces accepted on its takes before they were filmed, and her
+                    # look that approved one (`fix_check.TAKE_NOTE_EVENT`, round 3).
+                    **({"accepted_on_takes": notes[index]} if notes.get(index) else {}),
                     "failing_now": failing,
-                    "passed_before_unchanged": bool(settled) and set(failing) <= settled,
+                    "passed_before_unchanged": bool(settled)
+                    and set(failing) <= settled
+                    and not detected,
                     "accepted_before_unchanged": bool(accepted),
                 }
             )
@@ -1083,6 +1183,9 @@ def film_qc_context(
             proposal.as_dict() if isinstance(proposal, RedoProposal) else dict(proposal)
             for proposal in reading.get("proposals") or []
         ],
+        # The code's own bookkeeping, never shown to her (`reviews._director_payload`): each
+        # scene's carry key per family, recorded on her verdicts (`annotate_verdicts`).
+        "_settle_keys": settle_keys,
     }
 
 
@@ -1095,7 +1198,10 @@ def annotate_verdicts(
     the next reading needs (the review of 2026-10-12): whether the finding is a whole check's
     (``check_level``), the scenes it names, and whether a prompt can act on it
     (``teaches``: only then is its lesson stored, `learn_from_decision`)."""
+    from app.media.picture_qc import settle_family  # noqa: PLC0415 - shared render evidence
+
     findings = {int(item["id"]): item for item in context.get("findings") or []}
+    keys = context.get("_settle_keys") if isinstance(context.get("_settle_keys"), Mapping) else {}
     owner_scenes: set[int] = set()
     for scene in context.get("scenes") or []:
         in_film = scene.get("in_film") or {}
@@ -1118,6 +1224,18 @@ def annotate_verdicts(
         }
         if finding.get("check_level"):
             entry["check_level"] = True
+            entry["scenes_of_check"] = list(finding.get("scenes_of_check") or [])
+        if finding.get("measured_serious"):
+            entry["measured_serious"] = finding.get("measured_serious")
+        if finding.get("detector"):
+            entry["detector"] = True
+        scene = finding.get("scene_index")
+        if isinstance(scene, int) and not finding.get("check_level"):
+            # Exactly the picture she judged (round 3 of the 2026-10-12 review): only a later
+            # film with this very carry key is settled by this verdict.
+            key = (keys.get(settle_family(finding.get("check"))) or {}).get(scene)
+            if key:
+                entry["carry_key"] = dict(key)
         if entry["verdict"] in ("REAL", "ACCEPTED"):
             # How bad, why it appeared, and the rule a future prompt follows (2026-10-12).
             entry["severity"] = verdict.get("severity")
@@ -1709,6 +1827,7 @@ def resume_repairs(
     serious), unless that finding's check is settled for the scene (`reviews.settled_checks`).
     The free fixes (card, audio, encode) need only `redo_refusal`."""
     from app.agents.reviews import LIMITS  # noqa: PLC0415 - one code for his cap
+    from app.media.picture_qc import settle_family  # noqa: PLC0415 - shared render evidence
 
     bought = {
         (str(pair[0]), pair[1] if isinstance(pair[1], int) else None)
@@ -1729,7 +1848,9 @@ def resume_repairs(
         and not verdict.get("check_level")
         and not (
             isinstance(verdict.get("scene_index"), int)
-            and check_family(verdict.get("check"))
+            # What YuNet or the flat band measured is never settled (round 3).
+            and not (verdict.get("detector") or measured_by_detector(verdict.get("text")))
+            and settle_family(verdict.get("check"))
             in settled_checks(scenes.get(int(verdict["scene_index"])) or {})
         )
     ]
@@ -1775,16 +1896,17 @@ def resume_repairs(
     return kept, dropped
 
 
-def teachable_lessons(payload: Mapping[str, Any]) -> list[tuple[str, int | None]]:
-    """The lessons of her decision a prompt writer can follow, each with the scene it was about:
-    a REAL or ACCEPTED verdict whose finding a picture or motion prompt can act on (``teaches``,
-    `reviews.prompt_actionable`: not the sound, the encode, a whole check's «a picat», nor a
-    picture already settled for its check), each said once. A verdict recorded before
-    ``teaches`` existed counts when it is one scene's finding of a picture or motion check."""
+def _teaching(payload: Mapping[str, Any]) -> list[tuple[str, list[tuple[int, str, str]]]]:
+    """Each lesson of her decision a prompt writer can follow, in the order her verdicts give
+    them, with every (scene, family, verdict) that taught it: a REAL or ACCEPTED verdict whose
+    finding a picture or motion prompt can act on (``teaches``, `reviews.prompt_actionable`:
+    not the sound, the encode, a whole check's «a picat», Motion QC's fallback, nor a picture
+    already settled for its check). A verdict recorded before ``teaches`` existed counts when it
+    is one scene's finding of a picture or motion check other than a vendor's fallback."""
     from app.agents.reviews import PROMPT_CHECKS  # noqa: PLC0415 - one list for both
+    from app.media.picture_qc import settle_family  # noqa: PLC0415 - shared render evidence
 
-    out: list[tuple[str, int | None]] = []
-    seen: set[str] = set()
+    taught: dict[str, list[tuple[int, str, str]]] = {}
     for verdict in payload.get("verdicts") or []:
         if not isinstance(verdict, Mapping) or verdict.get("verdict") not in ("REAL", "ACCEPTED"):
             continue
@@ -1795,14 +1917,62 @@ def teachable_lessons(payload: Mapping[str, Any]) -> list[tuple[str, int | None]
                 not verdict.get("check_level")
                 and isinstance(verdict.get("scene_index"), int)
                 and (check is None or str(check) in PROMPT_CHECKS)
+                and not vendor_fallback(verdict)
             )
         lesson = " ".join(str(verdict.get("lesson") or "").split())
-        if not teaches or not lesson or lesson in seen:
+        if not teaches or not lesson:
             continue
-        seen.add(lesson)
+        pairs = taught.setdefault(lesson, [])
         scene = verdict.get("scene_index")
-        out.append((lesson, int(scene) if isinstance(scene, int) else None))
-    return out
+        if isinstance(scene, int):
+            pairs.append((int(scene), settle_family(verdict.get("check")), str(verdict["verdict"])))
+    return list(taught.items())
+
+
+def teachable_lessons(payload: Mapping[str, Any]) -> list[tuple[str, int | None]]:
+    """The lessons of her decision a prompt writer can follow (`_teaching`), each said once,
+    with the first scene it was about."""
+    return [(lesson, pairs[0][0] if pairs else None) for lesson, pairs in _teaching(payload)]
+
+
+def lesson_source(run_id: Any, number: int) -> str:
+    """The source a lesson of her decision is stored under: an id made from her decision's run
+    and the lesson's place among its lessons (`_teaching`), the length of a run id (the memory
+    row's ``source_id`` holds 36 characters). One source per lesson (the review of 2026-10-12,
+    round 3): a lesson is confirmed by its own scenes and withdrawn when her second look
+    overturned the very findings that taught it, never with the rest of her decision's."""
+    return str(uuid5(NAMESPACE_URL, f"director-qc-lesson:{run_id}#{int(number)}"))
+
+
+def lesson_sources(payload: Mapping[str, Any]) -> dict[str, str]:
+    """{lesson: source} for every lesson of her decision a prompt can follow."""
+    run_id = payload.get("run_id")
+    if not run_id:
+        return {}
+    return {
+        lesson: lesson_source(run_id, number)
+        for number, (lesson, _pairs) in enumerate(_teaching(payload), start=1)
+    }
+
+
+def lesson_groups(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """The lessons her decision recorded, each with the source it was stored under and the
+    (scene, family, verdict) that taught it. A decision recorded before one source per lesson
+    (no ``lesson_sources``) stored them all under its run: one group, every pair."""
+    recorded = {str(item) for item in payload.get("lessons_recorded") or []}
+    run_id = payload.get("run_id")
+    if not recorded or not run_id:
+        return []
+    teaching = [(lesson, pairs) for lesson, pairs in _teaching(payload) if lesson in recorded]
+    sources = payload.get("lesson_sources")
+    if isinstance(sources, Mapping):
+        return [
+            {"lesson": lesson, "source_id": str(sources[lesson]), "pairs": pairs}
+            for lesson, pairs in teaching
+            if sources.get(lesson)
+        ]
+    pairs = [pair for _lesson, found in teaching for pair in found]
+    return [{"lesson": None, "source_id": str(run_id), "pairs": pairs}] if pairs else []
 
 
 def _film_scope(session: Session, payload: Mapping[str, Any]) -> str:
@@ -1827,8 +1997,10 @@ def learn_from_decision(session: Session, payload: Mapping[str, Any]) -> list[st
     was written only by the editorial review, and the same mistakes were bought again film after
     film. Each is stored through `prompt_agent.record_prompt_lesson` (the studio's one rule for
     what a lesson may say and how a newer one supersedes an older one), with the run of her
-    decision as its source, scoped to the kind of film (`_film_scope`) and provisional until a
-    later QC passes the scenes it was about (`confirm_lessons`); what it refuses is not counted.
+    decision and the lesson's place as its source (`lesson_source`), scoped to the kind of film
+    (`_film_scope`) and provisional until a later QC passes the scenes it was about with new
+    takes (`confirm_lessons`), or withdrawn when her second look overturned the findings that
+    taught it (`withdraw_overturned_lessons`); what it refuses is not counted.
     Only her own fresh decision teaches: a decision carried on (``resumed``) repeats one already
     learned, and the Owner's card that publishes a film (``decided_by`` owner) is not her
     reading."""
@@ -1839,14 +2011,14 @@ def learn_from_decision(session: Session, payload: Mapping[str, Any]) -> list[st
     lessons = teachable_lessons(payload)
     if not lessons:
         return []
-    run_id = payload.get("run_id")
+    sources = lesson_sources(payload)
     scope = _film_scope(session, payload)
     stored: list[str] = []
     for lesson, _scene in lessons:
         if record_prompt_lesson(
             session,
             lesson,
-            source_id=str(run_id) if run_id else None,
+            source_id=sources.get(lesson),
             scope=scope,
             provisional=True,
         ):
@@ -1896,40 +2068,86 @@ def _decision_event(session: Session, payload: Mapping[str, Any], correlation: s
     (`_learned`)."""
     learned = _learned(session, payload)
     data = {key: value for key, value in payload.items() if key != "lessons_recorded"}
+    if learned:
+        data["lessons_recorded"] = learned
+        if "lesson_sources" not in data and not payload.get("resumed"):
+            # Her fresh decision's lessons were stored each under its own source
+            # (`lesson_source`, round 3); a decision recorded before that and carried on now
+            # stored them under its run, and says so by having none (`lesson_groups`).
+            data["lesson_sources"] = {
+                lesson: source
+                for lesson, source in lesson_sources(payload).items()
+                if lesson in learned
+            }
     return append_event(
         session,
         DECISION_EVENT,
         "quality_control_report",
         str(payload["report_id"]),
         1,
-        {**data, "lessons_recorded": learned} if learned else data,
+        data,
         correlation,
     )
 
 
-def _scene_passes(checks: Mapping[str, Any], findings: list[dict[str, Any]], scene: int) -> bool:
-    """Whether a report passes one scene: no finding of it is about the scene (its own, or
-    named with a scene word; a whole check's «a picat» counts for the scenes its record failed)
-    and the picture checks that looked at it did not refuse it."""
-    from app.media.picture_qc import CARRIED_CHECKS, scene_state  # noqa: PLC0415
+def _check_passes(
+    checks: Mapping[str, Any], findings: list[dict[str, Any]], family: str, scene: int
+) -> bool:
+    """Whether a report's check of ``family`` passes one scene: no finding of that family is
+    about the scene (its own, named with a scene word, or a whole check's «a picat» over it),
+    and the check measured it — a picture check's own verdict on the scene passed
+    (`picture_qc.scene_state`), any other check ran. A finding no check claimed passes a scene
+    no finding at all is about."""
+    from app.media.picture_qc import (  # noqa: PLC0415
+        CARRIED_CHECKS,
+        UNATTRIBUTED,
+        scene_state,
+        settle_family,
+    )
 
     for finding in findings:
+        if family != UNATTRIBUTED and settle_family(finding.get("check")) != family:
+            continue
         if finding.get("check_level"):
             if scene in (finding.get("scenes_of_check") or []):
                 return False
             continue
         if _names_scene(finding, scene):
             return False
-    return all(scene_state(checks, name, scene) is not False for name in CARRIED_CHECKS)
+    if family in CARRIED_CHECKS:
+        return scene_state(checks, family, scene) is True
+    if family == UNATTRIBUTED:
+        return True
+    record = checks.get(family)
+    return isinstance(record, Mapping) and record.get("passed") is not None
+
+
+def _film_takes_of_report(session: Session, report_id: str) -> dict[int, tuple[str, str | None]]:
+    """The (still, clip) each scene of the report's film was cut from."""
+    from app.media.picture_qc import scene_takes  # noqa: PLC0415
+
+    report = session.get(QualityControlReport, report_id) if report_id else None
+    job = (
+        session.scalar(
+            select(VideoRenderJob).where(VideoRenderJob.output_asset_id == report.media_asset_id)
+        )
+        if report is not None
+        else None
+    )
+    production = job.production_json if job is not None else None
+    return scene_takes(production if isinstance(production, Mapping) else {})
 
 
 def confirm_lessons(engine: Engine, report_id: str) -> int:
-    """Confirm her provisional lessons once a later film QC of the storyboard passes the scenes
-    they were about (`prompt_agent.confirm_prompt_lessons`, by the run of her decision): a lesson
-    whose scenes came back clean was followed and worked (2026-10-12 review: her lessons stayed
-    «unverified» for ever). A decision whose lessons are about no scene is confirmed by a
-    report that passed as a whole. Returns how many were confirmed. Read and written in one
-    short transaction; nothing is bought."""
+    """Confirm her provisional lessons once a later film QC of the storyboard shows they worked
+    (`prompt_agent.confirm_prompt_lessons`, by each lesson's source, `lesson_source`): for a
+    lesson, every scene it was about that the later film shows with other takes than the film
+    she judged is passed by the same check, and at least one such scene exists.
+
+    2026-10-12 review: her lessons stayed «unverified» for ever; round 3 of it: they were
+    confirmed by scenes nothing had changed in (a scene her second look kept as it was passed
+    again with the very picture, which proves nothing about the words). Returns how many were
+    confirmed. Read and written in one short transaction; nothing is bought."""
     from app.media.prompt_agent import confirm_prompt_lessons  # noqa: PLC0415 - a large module
 
     with Session(engine) as session:
@@ -1946,36 +2164,162 @@ def confirm_lessons(engine: Engine, report_id: str) -> int:
         findings = report_findings(
             {"checks_json": checks, "failure_reasons_json": report.failure_reasons_json or []}
         )
-        passed_whole = report.status == "PASSED"
+        takes_now = _film_takes_of_report(session, report_id)
         verified_at = str(report.verified_at)
         sources: list[str] = []
+        judged: dict[str, dict[int, tuple[str, str | None]]] = {}
         for decision in decisions_of_film(session, storyboard_id):
-            if not decision.get("lessons_recorded") or not decision.get("run_id"):
-                continue
             if str(decision.get("report_id") or "") == report_id:
                 continue
             # When her decision began to be carried out (a REPAIR's ``started_at``), else when
             # it was recorded: a QC from before cannot show her lesson worked.
             if str(decision.get("started_at") or decision.get("at") or "") >= verified_at:
                 continue
-            recorded = {str(item) for item in decision.get("lessons_recorded") or []}
-            scenes = {
-                scene
-                for lesson, scene in teachable_lessons(decision)
-                if lesson in recorded and scene is not None
-            }
-            clean = (
-                all(_scene_passes(checks, findings, scene) for scene in scenes)
-                if scenes
-                else passed_whole
-            )
-            if clean:
-                sources.append(str(decision["run_id"]))
+            groups = lesson_groups(decision)
+            if not groups:
+                continue
+            then_id = str(decision.get("report_id") or "")
+            if then_id not in judged:
+                judged[then_id] = _film_takes_of_report(session, then_id)
+            takes_then = judged[then_id]
+            for group in groups:
+                changed = [
+                    (scene, family)
+                    for scene, family, _verdict in group["pairs"]
+                    if scene in takes_now and takes_now.get(scene) != takes_then.get(scene)
+                ]
+                if changed and all(
+                    _check_passes(checks, findings, family, scene) for scene, family in changed
+                ):
+                    sources.append(str(group["source_id"]))
     if not sources:
         return 0
     with Session(engine) as session, session.begin():
         lock_for_write(session)
         return int(confirm_prompt_lessons(session, sorted(set(sources))) or 0)
+
+
+#: Why her lessons are withdrawn when her second look overturned the findings that taught them.
+OVERTURNED_LESSON_RO = (
+    "Directoarea s-a uitat din nou la scenă: refuzul controlului nu s-a confirmat, deci lecția "
+    "nu avea ce corecta"
+)
+
+
+def withdraw_overturned_lessons(
+    engine: Engine, payload: Mapping[str, Any], overturned: Iterable[int]
+) -> int:
+    """Withdraw the provisional lessons of her decision that only REAL findings of scenes her
+    second look overturned taught (`prompt_agent.withdraw_prompt_lessons`, by each lesson's
+    source): the defect was not there, so the cause she wrote for it teaches nothing (the review
+    of 2026-10-12, round 3: those lessons were stored before her look and stayed). A lesson
+    another verdict also taught stays. Returns how many; never raises."""
+    scenes = {int(scene) for scene in overturned}
+    sources = [
+        str(group["source_id"])
+        for group in lesson_groups(payload)
+        if group["pairs"]
+        and all(verdict == "REAL" and scene in scenes for scene, _f, verdict in group["pairs"])
+    ]
+    if not sources:
+        return 0
+    try:
+        from app.media.prompt_agent import withdraw_prompt_lessons  # noqa: PLC0415
+
+        with Session(engine) as session, session.begin():
+            lock_for_write(session)
+            return int(withdraw_prompt_lessons(session, sources, OVERTURNED_LESSON_RO) or 0)
+    except Exception as exc:  # noqa: BLE001 - the lessons stay provisional; the film goes on
+        logger.warning(
+            "director_lessons_not_withdrawn",
+            extra={"report_id": payload.get("report_id"), "error": type(exc).__name__},
+        )
+        return 0
+
+
+#: Her ACCEPT that her second looks made of her REPAIR: what the summary adds.
+ACCEPTED_BY_LOOKS_RO = (
+    "Înainte de orice cumpărare s-a uitat din nou la fiecare scenă pe care o refăcea, și "
+    "refuzul controlului nu s-a confirmat la niciuna ({scenes}): nu se cumpără nimic, iar filmul "
+    "trece controlul prin decizia ei și merge la publicare."
+)
+
+
+def accepted_by_looks(
+    decided: Mapping[str, Any], overturned: Iterable[Mapping[str, Any]]
+) -> dict[str, Any] | None:
+    """Her REPAIR made her ACCEPT when her second looks before the purchases overturned every
+    REAL finding of the report; None when one REAL finding stands.
+
+    The Owner, 2026-10-12 19:00: «și după ce se uită Directoarea, trebuie să aibă și puterea de
+    a trece de QC și merge mai departe cu publicarea». Until then a REPAIR whose every purchase
+    her look dropped did nothing, and the film waited an hour for her next reading. Every REAL
+    finding must name scenes her looks overturned (``overturned``: `runbook.stages`'s entries,
+    with ``scene_index`` and ``severity``) — for a defect quality control measured as serious
+    only with no defect at all (severity none: the contract of her second look and, again, the
+    code's); a whole check's «a picat» only over such scenes; none about no scene (the sound,
+    the encode); and no finding is one that is not hers (rights, claims, the file: her ACCEPT
+    does not reach them). Her verdicts are kept as her looks left them: no defect makes the
+    finding FALSE, a minor one ACCEPTED as minor (``before_look`` keeps REAL), and the looks are
+    the evidence the PASSED report stands on (``second_looks``, ``done.overturned``)."""
+    looks: dict[int, Mapping[str, Any]] = {
+        int(entry["scene_index"]): entry
+        for entry in overturned
+        if isinstance(entry, Mapping) and isinstance(entry.get("scene_index"), int)
+    }
+    verdicts = [item for item in decided.get("verdicts") or [] if isinstance(item, Mapping)]
+    if str(decided.get("decision") or "") != "REPAIR" or not looks or not verdicts:
+        return None
+    if any(item.get("not_yours") for item in verdicts):
+        return None
+    after: list[dict[str, Any]] = []
+    cleared: set[int] = set()
+    for verdict in verdicts:
+        item = dict(verdict)
+        if item.get("verdict") != "REAL":
+            after.append(item)
+            continue
+        if item.get("check_level"):
+            named = {int(s) for s in item.get("scenes_of_check") or [] if isinstance(s, int)}
+        else:
+            own = item.get("scene_index")
+            named = set(scenes_named(item.get("text"), own=own if isinstance(own, int) else None))
+            named |= {int(s) for s in item.get("scenes") or [] if isinstance(s, int)}
+        if not named or not named <= set(looks):
+            return None
+        severities = {str(looks[scene].get("severity") or "") for scene in named}
+        serious = bool(item.get("measured_serious") or measured_serious(item.get("text")))
+        if not severities <= {"none", "minor"} or (serious and severities != {"none"}):
+            return None
+        reasons = "; ".join(
+            dict.fromkeys(_short(looks[scene].get("reason"), 200) for scene in sorted(named))
+        )
+        item["before_look"] = "REAL"
+        item["reason"] = _short(f"A doua privire a Directoarei: {reasons}", 400)
+        if severities == {"none"}:
+            item["verdict"] = "FALSE"
+        else:
+            item["verdict"] = "ACCEPTED"
+            item["severity"] = "minor"
+        cleared |= named
+        after.append(item)
+    if not cleared:
+        return None
+    scenes = ", ".join(f"scena {scene}" for scene in sorted(cleared))
+    said = str(decided.get("summary") or "").strip()
+    summary = " ".join(part for part in (said, ACCEPTED_BY_LOOKS_RO.format(scenes=scenes)) if part)
+    entries = [dict(looks[scene]) for scene in sorted(looks)]
+    return {
+        **decided,
+        "decision": "ACCEPT",
+        "verdicts": after,
+        "repairs": [],
+        "repairs_before_look": list(decided.get("repairs") or []),
+        "accepted_by_second_look": True,
+        "second_looks": entries,
+        "done": {"overturned": entries},
+        "summary": _short(summary, 800),
+    }
 
 
 def record_decision(engine: Engine, payload: Mapping[str, Any], correlation: str) -> str:
@@ -2020,6 +2364,14 @@ def accept_film(
         "original_failures": list(report.get("failure_reasons_json") or []),
         "overrules": [item for item in verdicts if item.get("verdict") != "REAL"],
         "summary": payload.get("summary"),
+        # Her second looks that overturned every REAL finding before anything was bought: the
+        # evidence her ACCEPT stands on (the Owner, 2026-10-12 19:00: «și după ce se uită
+        # Directoarea, trebuie să aibă și puterea de a trece de QC»).
+        **(
+            {"second_looks": list(payload.get("second_looks") or [])}
+            if payload.get("second_looks")
+            else {}
+        ),
     }
     score = max(float(QC_MINIMUM_SCORE), float(PUBLISH_SCORE), float(report.get("score") or 0.0))
     with Session(engine) as session, session.begin():
@@ -2902,6 +3254,9 @@ __all__ = [
     "film_takes",
     "is_not_yours",
     "learn_from_decision",
+    "lesson_groups",
+    "lesson_source",
+    "lesson_sources",
     "look_entries",
     "look_letter",
     "look_pictures",
@@ -2922,4 +3277,5 @@ __all__ = [
     "settle_inbox",
     "teachable_lessons",
     "wait_for_director",
+    "withdraw_overturned_lessons",
 ]

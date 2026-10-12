@@ -4372,6 +4372,13 @@ def _director_reads(
     # Her lessons are kept before anything is rewritten or bought (2026-10-12, the Owner: «să
     # înțeleagă de ce apar defectele»): the rewrite of her REPAIR's scenes already reads them.
     decided["lessons_recorded"] = director_qc.record_lessons(engine, decided)
+    # Each under its own source (round 3 of the 2026-10-12 review): her second look can then
+    # withdraw the lesson of a finding it overturned, and a later film confirm only its own.
+    decided["lesson_sources"] = {
+        lesson: source
+        for lesson, source in director_qc.lesson_sources(decided).items()
+        if lesson in decided["lessons_recorded"]
+    }
     storyboard_id = str(reading.get("storyboard_id") or "")
     if review["decision"] == "REPAIR" and storyboard_id:
         # A take bought for her earlier REPAIR of this film, approved and in no film yet
@@ -4534,85 +4541,127 @@ def _carry_out(
         repair["skipped"] = list(repair.get("skipped") or []) + list(
             decided.get("dropped_on_resume") or []
         )
-        bought_so_far = before + [
-            [str(item["redo"]), item.get("scene_index")] for item in repair.get("bought") or []
+        overturned = [
+            entry for entry in repair.get("overturned") or [] if isinstance(entry, Mapping)
         ]
-        # What still waits: this walk's purchases in no film, and the earlier ones whose take
-        # is not approved yet (one approved now was carried on above).
-        waiting = list(repair.get("waiting") or [])
-        seen = {(entry.get("scene_index"), entry.get("kind")) for entry in waiting}
-        # A film still not rejoined keeps the moment it first waited: `BOUGHT_WAIT_DAYS` count
-        # from there, not from each retry.
-        first_waited = {
-            (entry.get("scene_index"), entry.get("kind")): entry.get("waiting_since")
-            for entry in decided.get("waiting_so_far") or []
-            if isinstance(entry, dict) and entry.get("waiting_since")
-        }
-        for entry in waiting:
-            first = first_waited.get((entry.get("scene_index"), entry.get("kind")))
-            if first:
-                entry["waiting_since"] = first
-        storyboard_id = str(reading.get("storyboard_id") or "")
-        with Session(engine) as session:
-            for entry in decided.get("waiting_so_far") or []:
-                if (
-                    isinstance(entry, dict)
-                    and isinstance(entry.get("scene_index"), int)
-                    and (entry["scene_index"], entry.get("kind")) not in seen
-                    and not director_qc.new_approved_take(
-                        session,
-                        storyboard_id,
-                        int(entry["scene_index"]),
-                        str(entry.get("kind") or "still"),
-                        str(entry.get("since") or started_at),
-                    )
-                ):
-                    waiting.append(entry)
-        if repair.get("new_asset"):
-            result = "REPAIRED"
-        elif repair.get("asked"):
-            result = "ASKED"
-        elif repair.get("bought") or waiting:
-            result = "BOUGHT_WAITING"
-        else:
-            result = "NOTHING_DONE"
-        step.update(outcome=result, repair=repair, bought_so_far=bought_so_far)
-        done_lines = _repair_lines(repair)
-        step["event_id"] = director_qc.record_decision(
-            engine,
-            {
-                **decided,
-                "outcome": result,
-                "final": result in director_qc.FINAL_OUTCOMES,
-                "started_at": started_at,
-                "bought_so_far": bought_so_far,
-                "waiting_so_far": waiting,
-                "done": {
-                    key: repair.get(key)
-                    for key in (
-                        "applied",
-                        "bought",
-                        "asked",
-                        "refused",
-                        "limited",
-                        "skipped",
-                        "waiting",
-                        "replaced_his",
-                        # Her second look overturned the refusal: nothing bought for it, and
-                        # the picture is settled for her next reading (2026-10-12).
-                        "overturned",
-                        "card_id",
-                        "new_asset",
-                        "requalified",
-                        "requalified_report_id",
-                    )
-                },
-            },
-            correlation,
+        # Her second looks that found no defect at all: the lessons only those findings taught
+        # are withdrawn (round 3 of the 2026-10-12 review: they were stored before her look, and
+        # stayed). An overturn «minor» keeps its lesson: a small flaw has a cause too, and the
+        # Owner wants it learned («să înțeleagă de ce apar defectele»).
+        cleared = [
+            int(entry["scene_index"])
+            for entry in overturned
+            if isinstance(entry.get("scene_index"), int) and entry.get("severity") == "none"
+        ]
+        if cleared:
+            director_qc.withdraw_overturned_lessons(engine, decided, cleared)
+        # The Owner, 2026-10-12 19:00: «și după ce se uită Directoarea, trebuie să aibă și
+        # puterea de a trece de QC și merge mai departe cu publicarea». Her looks overturned
+        # every REAL finding and nothing else was done: her decision is ACCEPT now, in this
+        # walk, and the film goes on to publication (`director_decides_failed_film`), no film QC
+        # round and no hourly wait in between.
+        by_looks = (
+            director_qc.accepted_by_looks(decided, overturned)
+            if overturned
+            and not any(
+                repair.get(key)
+                for key in (
+                    "applied",
+                    "bought",
+                    "asked",
+                    "limited",
+                    "waiting",
+                    "made",
+                    "new_asset",
+                    "card_id",
+                )
+            )
+            else None
         )
-        # Her lessons whose scenes the film her repair made passes worked: confirmed, hers of
-        # this very decision among them now that it is recorded (2026-10-12 review).
-        _confirm_lessons_quietly(engine, repair.get("requalified_report_id"))
+        if by_looks is not None:
+            accepted = director_qc.accept_film(engine, reading, by_looks, correlation)
+            step.update(decision=by_looks, outcome="ACCEPTED", repair=repair, **accepted)
+            done_lines = _repair_lines(repair)
+        else:
+            bought_so_far = before + [
+                [str(item["redo"]), item.get("scene_index")] for item in repair.get("bought") or []
+            ]
+            # What still waits: this walk's purchases in no film, and the earlier ones whose take
+            # is not approved yet (one approved now was carried on above).
+            waiting = list(repair.get("waiting") or [])
+            seen = {(entry.get("scene_index"), entry.get("kind")) for entry in waiting}
+            # A film still not rejoined keeps the moment it first waited: `BOUGHT_WAIT_DAYS` count
+            # from there, not from each retry.
+            first_waited = {
+                (entry.get("scene_index"), entry.get("kind")): entry.get("waiting_since")
+                for entry in decided.get("waiting_so_far") or []
+                if isinstance(entry, dict) and entry.get("waiting_since")
+            }
+            for entry in waiting:
+                first = first_waited.get((entry.get("scene_index"), entry.get("kind")))
+                if first:
+                    entry["waiting_since"] = first
+            storyboard_id = str(reading.get("storyboard_id") or "")
+            with Session(engine) as session:
+                for entry in decided.get("waiting_so_far") or []:
+                    if (
+                        isinstance(entry, dict)
+                        and isinstance(entry.get("scene_index"), int)
+                        and (entry["scene_index"], entry.get("kind")) not in seen
+                        and not director_qc.new_approved_take(
+                            session,
+                            storyboard_id,
+                            int(entry["scene_index"]),
+                            str(entry.get("kind") or "still"),
+                            str(entry.get("since") or started_at),
+                        )
+                    ):
+                        waiting.append(entry)
+            if repair.get("new_asset"):
+                result = "REPAIRED"
+            elif repair.get("asked"):
+                result = "ASKED"
+            elif repair.get("bought") or waiting:
+                result = "BOUGHT_WAITING"
+            else:
+                result = "NOTHING_DONE"
+            step.update(outcome=result, repair=repair, bought_so_far=bought_so_far)
+            done_lines = _repair_lines(repair)
+            step["event_id"] = director_qc.record_decision(
+                engine,
+                {
+                    **decided,
+                    "outcome": result,
+                    "final": result in director_qc.FINAL_OUTCOMES,
+                    "started_at": started_at,
+                    "bought_so_far": bought_so_far,
+                    "waiting_so_far": waiting,
+                    "done": {
+                        key: repair.get(key)
+                        for key in (
+                            "applied",
+                            "bought",
+                            "asked",
+                            "refused",
+                            "limited",
+                            "skipped",
+                            "waiting",
+                            "replaced_his",
+                            # Her second look overturned the refusal: nothing bought for it, and
+                            # the picture is settled for her next reading (2026-10-12).
+                            "overturned",
+                            "card_id",
+                            "new_asset",
+                            "requalified",
+                            "requalified_report_id",
+                        )
+                    },
+                },
+                correlation,
+            )
+            # Her lessons whose scenes the film her repair made passes worked: confirmed, hers of
+            # this very decision among them now that it is recorded (2026-10-12 review).
+            _confirm_lessons_quietly(engine, repair.get("requalified_report_id"))
     if step["outcome"] in director_qc.FINAL_OUTCOMES:
         try:
             step["letter_id"] = director_qc.director_letter(
@@ -4722,6 +4771,10 @@ def _director_repairs(
             "director_repair_failed", extra={"asset_id": asset_id, "error": type(exc).__name__}
         )
         result["refused"].append({"what": "refacerea", "reason": error_words(exc)[:300]})
+    if _free_fix_spent_on_measured(result, verdicts or []):
+        card_id = _free_fix_card(engine, reading, result)
+        if card_id:
+            result["card_id"] = card_id
     # Recorded once something was applied, bought or made: the film's line then had its free
     # fix (`_repaired_assets`); a redo only asked of him leaves the line as it was.
     if result["applied"] or result["bought"] or result["made"]:
@@ -4740,6 +4793,119 @@ def _director_repairs(
         except SQLAlchemyError:
             logger.warning("qc_repair_not_recorded", extra={"asset_id": asset_id})
     return result
+
+
+def _free_fix_spent_on_measured(result: Mapping[str, Any], verdicts: list[dict[str, Any]]) -> bool:
+    """Whether her REPAIR could do nothing because the film's one free fix was already made,
+    for a defect quality control measured as serious (no audio stream, a frozen clip): nothing
+    applied, bought, asked or made, a free fix skipped FREE_FIX_USED, no card yet, and a REAL
+    verdict of hers on a measured serious finding about the whole film, not a scene (the same
+    rule as `reviews.owner_bound_repair`)."""
+    from app.agents.reviews import measured_serious, scenes_named  # noqa: PLC0415
+
+    if any(result.get(key) for key in ("applied", "bought", "asked", "new_asset", "card_id")):
+        return False
+    if not any(
+        isinstance(item, Mapping) and item.get("status") == "FREE_FIX_USED"
+        for item in result.get("skipped") or []
+    ):
+        return False
+    return any(
+        isinstance(verdict, Mapping)
+        and verdict.get("verdict") == "REAL"
+        and not verdict.get("check_level")
+        and (verdict.get("measured_serious") or measured_serious(verdict.get("text")))
+        and not isinstance(verdict.get("scene_index"), int)
+        and not scenes_named(verdict.get("text"))
+        for verdict in verdicts
+    )
+
+
+def _free_fix_card(
+    engine: Engine, reading: Mapping[str, Any], result: Mapping[str, Any]
+) -> str | None:
+    """The Owner's card when the only fix of a measured serious defect is the free fix already
+    made once for the film (the review of 2026-10-12, round 3: «The film has no audio stream»
+    could be neither ACCEPTED nor repaired, and her answer could not validate): nothing is
+    redone; he publishes the film as it is, closes it, or waits. Once per film, under the same
+    key as the cap's card (`decisions.producers.redo_cap.dedupe_key`), so she is not asked
+    again while it waits (`workflows.passes.director_qc_review`). Never raises."""
+    from app.decisions.producers import redo_cap  # noqa: PLC0415 - decisions import media
+    from app.decisions.services import propose_owner_decision  # noqa: PLC0415
+
+    storyboard_id = str(reading.get("storyboard_id") or "")
+    report_id = str(reading.get("report_id") or "")
+    asset_id = str(reading.get("media_asset_id") or "")
+    if not storyboard_id or not report_id:
+        return None
+    why_parts = [
+        _no_stop(item.get("reason"))
+        for item in result.get("skipped") or []
+        if isinstance(item, Mapping) and item.get("status") == "FREE_FIX_USED"
+    ]
+    try:
+        with Session(engine) as session, session.begin():
+            lock_for_write(session)
+            board = session.get(Storyboard, storyboard_id)
+            title = str(getattr(board, "title", "") or storyboard_id[:8]).strip()[:120]
+            card = propose_owner_decision(
+                session,
+                kind="free_fix_used",
+                dedupe_key=redo_cap.dedupe_key(storyboard_id),
+                source=redo_cap.SOURCE,
+                subject_type="storyboard",
+                subject_id=storyboard_id,
+                title_ro=f"Filmul «{title}»: defectul serios nu se mai poate repara gratuit",
+                why_ro=(
+                    "Controlul calității a măsurat un defect serios pe care Directoarea l-a "
+                    "confirmat, iar singura lui reparație, cea gratuită, s-a făcut deja o dată "
+                    "pentru acest film și nu se repetă singură"
+                    + (f" ({'; '.join(why_parts)[:400]})" if why_parts else "")
+                    + "."
+                ),
+                effect_ro="Nimic nu se reface pentru acest film până nu alegi.",
+                options=[
+                    {
+                        "key": "publish",
+                        "label_ro": "Publică filmul așa cum e",
+                        "effect_ro": (
+                            "Filmul trece controlul de calitate prin decizia ta, cu defectul "
+                            "rămas, și merge la publicare."
+                        ),
+                        "apply": {
+                            "type": redo_cap.FILM_PUBLISH_AS_IS,
+                            "storyboard_id": storyboard_id,
+                            "report_id": report_id,
+                            "media_asset_id": asset_id,
+                        },
+                    },
+                    {
+                        "key": "close",
+                        "label_ro": "Închide filmul",
+                        "effect_ro": (
+                            "Filmul se închide cu registrele lui; nimic nu se mai cumpără."
+                        ),
+                        "apply": {
+                            "type": redo_cap.FILM_CLOSE_CAPPED,
+                            "storyboard_id": storyboard_id,
+                            "report_id": report_id,
+                        },
+                    },
+                    {
+                        "key": "wait",
+                        "label_ro": "Aștept",
+                        "effect_ro": "Filmul rămâne cum e; cardul stă până alegi.",
+                        "apply": {"type": "none"},
+                    },
+                ],
+            )
+            return str(card.id)
+    except Exception as exc:  # noqa: BLE001 - the repair's own words stand without the card
+        logger.warning(
+            "free_fix_card_not_proposed",
+            extra={"storyboard_id": storyboard_id, "error": type(exc).__name__},
+        )
+        return None
 
 
 def _decision_summary(decided: dict[str, Any]) -> dict[str, Any]:
@@ -4969,26 +5135,75 @@ def _confirm_lessons_quietly(engine: Engine, report_id: Any) -> None:
 SECOND_LOOK_OVERTURNED = "OVERTURNED"
 
 
+def _qc_frame_numbers(reading: Mapping[str, Any], scene: int) -> list[int]:
+    """The film frames the span look judged ``scene`` at, as its report recorded them."""
+    checks = (reading.get("report") or {}).get("checks_json") or {}
+    record = checks.get("picture_spans_qc") if isinstance(checks, Mapping) else None
+    entries = record.get("scenes") if isinstance(record, Mapping) else None
+    for entry in entries if isinstance(entries, list) else []:
+        if isinstance(entry, Mapping) and entry.get("scene_index") == scene:
+            return [
+                int(item["frame"])
+                for item in entry.get("frames") or []
+                if isinstance(item, Mapping) and isinstance(item.get("frame"), int)
+            ]
+    return []
+
+
 def _failed_film_frames(
     engine: Engine, reading: Mapping[str, Any], scene: int, ffmpeg_path: str | None, folder: Any
 ) -> list[Any]:
-    """The first, middle and last frames of ``scene`` in the failed film, cut as the film's
-    span look cuts them (`qc.span_picture_qc`): from the scene's own shot beside the film while
-    it is the file the film was joined from, else from the film. Empty when they cannot be cut
-    (no encoder, no file, a composed card)."""
+    """The frames of ``scene`` in the failed film as quality control judged them, without the
+    studio's own subtitles over the picture: `media.second_look.film_scene_view` (the scene's
+    shot at QC's own frame numbers, else the film's frames there with the caption rows cut out,
+    else the bought clip at the span's times, else the still; she is told which, and which
+    caption was on screen, by the view written beside them).
+
+    The review of 2026-10-12, round 3: her second look was shown the film's frames with the
+    studio's burnt-in subtitles on them, confirmed a refusal for «text» that was our own
+    captions, and a still was bought. Should that view be unavailable (an older second look, an
+    error preparing it), the frames are cut here the same way: the scene's own shot, the
+    clip take still the one bought, a still animated locally, else the film's frames with the
+    rows its captions draw in cut out (`picture_qc.cut_caption_rows`). Empty when nothing can
+    be cut (no encoder, no file, a composed card)."""
     from pathlib import Path  # noqa: PLC0415
 
+    try:
+        from app.media.second_look import film_scene_view  # noqa: PLC0415 - optional module
+
+        images, view = film_scene_view(
+            engine,
+            str(reading.get("media_asset_id") or ""),
+            scene,
+            work_dir=Path(folder) / "view",
+            ffmpeg_path=ffmpeg_path,
+            frame_numbers=_qc_frame_numbers(reading, scene),
+        )
+        if images and view:
+            return list(images)
+    except Exception as exc:  # noqa: BLE001 - the frames are cut here instead
+        logger.info("film_scene_view_unavailable", extra={"error": type(exc).__name__})
+
     from app.agents.vision import frames_at  # noqa: PLC0415
-    from app.media.models import MediaAsset, StoryboardScene  # noqa: PLC0415
-    from app.media.picture_qc import clean_shots  # noqa: PLC0415
+    from app.media import director_qc  # noqa: PLC0415 - media imports runbook
+    from app.media.models import MediaAsset, SceneTake, StoryboardScene  # noqa: PLC0415
+    from app.media.picture_qc import (  # noqa: PLC0415
+        _file_sha256,
+        caption_rows,
+        clean_shots,
+        cut_caption_rows,
+    )
     from app.media.qc import (  # noqa: PLC0415 - the span look's own frame cutting
         DEFAULT_TIMELINE_FPS,
         _shot_span_frames,
+        clip_frames,
         span_frame_numbers,
         timeline_spans,
     )
+    from app.media.toolchain import find_ffmpeg  # noqa: PLC0415
 
     production = reading.get("production") or {}
+    takes = director_qc.film_takes(production).get(scene) or {}
     with Session(engine) as session:
         asset = session.get(MediaAsset, str(reading.get("media_asset_id") or ""))
         film = str(asset.uri_or_path or "") if asset is not None else ""
@@ -5000,8 +5215,17 @@ def _failed_film_frames(
                 )
             )
         }
+        #: The takes the film was cut from, (path, sha256) — read while the session is open.
+        files = {
+            layer: (str(row.path), str(row.sha256 or ""))
+            for layer, take_id in takes.items()
+            if take_id
+            and (row := session.get(SceneTake, take_id)) is not None
+            and row.path
+            and row.sha256
+        }
     if not film or not Path(film).is_file():
-        return []
+        film = ""
     span = next(
         (
             item
@@ -5019,16 +5243,53 @@ def _failed_film_frames(
         or DEFAULT_TIMELINE_FPS
     )
     chosen = span_frame_numbers(span["start"], span["end"], fps, span["dissolve_seconds"])
-    shot = clean_shots(production, Path(film).parent).get(scene)
+    shot = clean_shots(production, Path(film).parent).get(scene) if film else None
     if shot is not None:
         taken = _shot_span_frames(
             shot, chosen, float(span["start"]), fps, ffmpeg_path, Path(folder) / "shot"
         )
         if taken:
             return [path for _at, _moment, path in taken]
+
+    def verified(layer: str) -> str | None:
+        path, sha = files.get(layer, ("", ""))
+        return path if path and Path(path).is_file() and _file_sha256(Path(path)) == sha else None
+
+    ffmpeg = find_ffmpeg(ffmpeg_path)
+    clip = verified("motion")
+    if clip is not None:
+        # The clip the film was cut from: the same picture, before any subtitle was burnt in.
+        frames = clip_frames(ffmpeg, clip, Path(folder) / "clip")
+        if frames:
+            return [path for _at, _moment, path in frames]
+    still = verified("still") if not takes.get("motion") else None
+    if still is not None:
+        # A still animated locally (his LOCAL_MOVE): the still is the picture.
+        return [Path(still)]
+    if not film:
+        return []
     cut = frames_at(film, ffmpeg_path, [number for _at, number in chosen], Path(folder) / "film")
     frames = [cut.get(number) for _at, number in chosen]
-    return [frame for frame in frames if frame is not None] if all(frames) else []
+    if not all(frames):
+        return []
+    rows = caption_rows(production)
+    if rows is None:
+        return [frame for frame in frames if frame is not None]
+    # The film burns the narration's subtitles in: shown the picture above the rows they draw
+    # in, never our own words (a frame with the rows painted over would read as a band).
+    above: list[Any] = []
+    for (at, _number), frame in zip(chosen, frames, strict=True):
+        pieces = cut_caption_rows(
+            ffmpeg,
+            Path(frame),
+            rows,
+            Path(folder) / f"film_{at}_deasupra.png",
+            Path(folder) / f"film_{at}_dedesubt.png",
+        )
+        if pieces is None:
+            return []
+        above.append(pieces[0])
+    return above
 
 
 def _second_look_before_redo(
@@ -5109,27 +5370,65 @@ def _second_look_before_redo(
     return {**unavailable, **dict(answer)} if isinstance(answer, Mapping) else unavailable
 
 
+def _scene_real(reading: Mapping[str, Any], scene: int) -> list[Mapping[str, Any]]:
+    """Her REAL verdicts on one scene's findings (its own, or named with a scene word), a whole
+    check's «a picat» left out."""
+    from app.agents.reviews import _names_scene  # noqa: PLC0415 - the same scene words
+
+    return [
+        verdict
+        for verdict in reading.get("verdicts") or []
+        if isinstance(verdict, Mapping)
+        and verdict.get("verdict") == "REAL"
+        and not verdict.get("check_level")
+        and _names_scene(verdict, scene)
+    ]
+
+
+def _measured_serious_scene(reading: Mapping[str, Any], scene: int) -> bool:
+    """Whether a REAL finding of the scene is a defect quality control measured as serious (a
+    face where the bible forbids faces, panels, writing, a frozen clip:
+    `reviews.measured_serious`)."""
+    from app.agents.reviews import measured_serious  # noqa: PLC0415
+
+    return any(
+        verdict.get("measured_serious") or measured_serious(verdict.get("text"))
+        for verdict in _scene_real(reading, scene)
+    )
+
+
 def _overturned_entry(
-    reading: Mapping[str, Any], scene: int, kinds: list[str], look: Mapping[str, Any]
+    engine: Engine,
+    reading: Mapping[str, Any],
+    scene: int,
+    kinds: list[str],
+    look: Mapping[str, Any],
 ) -> dict[str, Any]:
     """What her second look dropped, as the repair records it: the scene, what would have been
-    bought, her verdict and reason, and the takes and checks it settles for her next reading
-    (`picture_qc.earlier_acceptances` reads ``takes`` from the report's film and ``checks``)."""
-    from app.agents.reviews import _names_scene  # noqa: PLC0415 - the same scene words
+    bought, her verdict and reason, the takes, and the families of the REAL findings it
+    overturned (a finding no check claimed is «unattributed») each with the scene's carry key
+    now (``carry_keys``): `picture_qc.earlier_acceptances` settles exactly that picture for those
+    checks, whatever the check (the review of 2026-10-12, round 3: an overturned Motion QC or
+    unattributed finding was not settled, and the film looped every hour)."""
     from app.media import director_qc  # noqa: PLC0415 - media imports runbook
-
-    takes = director_qc.film_takes(reading.get("production") or {}).get(scene) or {}
-    checks = sorted(
-        {
-            str(verdict.get("check"))
-            for verdict in reading.get("verdicts") or []
-            if isinstance(verdict, Mapping)
-            and verdict.get("verdict") == "REAL"
-            and verdict.get("check")
-            and not verdict.get("check_level")
-            and _names_scene(verdict, scene)
-        }
+    from app.media.picture_qc import (  # noqa: PLC0415 - shared render evidence
+        settle_family,
+        storyboard_carry_keys,
     )
+
+    production = reading.get("production") or {}
+    takes = director_qc.film_takes(production).get(scene) or {}
+    families = sorted(
+        {settle_family(verdict.get("check")) for verdict in _scene_real(reading, scene)}
+    )
+    storyboard_id = str(reading.get("storyboard_id") or "")
+    keys: dict[str, Any] = {}
+    if storyboard_id:
+        with Session(engine) as session:
+            for family in families:
+                key = storyboard_carry_keys(session, storyboard_id, production, family).get(scene)
+                if key:
+                    keys[family] = dict(key)
     return {
         "what": f"scena {scene}: " + ", ".join(PAID_REDO_WORDS.get(k, k) for k in kinds),
         "scene_index": scene,
@@ -5140,18 +5439,23 @@ def _overturned_entry(
         "reason": str(look.get("reason_ro") or "")[:300],
         "run_id": look.get("run_id"),
         "takes": {"still": takes.get("still"), "clip": takes.get("motion")},
-        "checks": checks,
+        "checks": families,
+        "carry_keys": keys,
     }
 
 
-def _look_drops_redo(look: Mapping[str, Any]) -> bool:
-    """Whether her second look says nothing is to be bought for the scene: the refusal was
-    wrong (OVERTURNED), or right but for a defect that needs no redo, and in either case it is
-    at most a minor one."""
-    if str(look.get("severity") or "") not in ("none", "minor"):
+def _look_drops_redo(look: Mapping[str, Any], *, measured: bool = False) -> bool:
+    """Whether her second look says nothing is to be bought for the scene: she OVERTURNED the
+    refusal (the defect is not there, or it is minor). For a defect quality control measured as
+    serious (``measured``: a face where faces are forbidden, panels, writing, a frozen clip)
+    only an overturn that finds no defect at all (severity none) drops the purchase (the review
+    of 2026-10-12, round 3: an overturn «minor», or a confirmation with no redo, dropped the
+    redo of a face YuNet counted on a faceless bible, and the face was published). A
+    confirmation always buys, under his caps."""
+    if str(look.get("verdict") or "") != SECOND_LOOK_OVERTURNED:
         return False
-    verdict = str(look.get("verdict") or "")
-    return verdict == SECOND_LOOK_OVERTURNED or (verdict == "CONFIRMED" and not look.get("redo"))
+    severity = str(look.get("severity") or "")
+    return severity == "none" if measured else severity in ("none", "minor")
 
 
 def _apply_repairs(
@@ -5185,9 +5489,10 @@ def _apply_repairs(
 
     Before a scene's paid still or motion is bought, the Director looks at the scene in the
     failed film once more (`_second_look_before_redo`; the Owner, 2026-10-12: the look is free,
-    the purchase is not). Her look overturning the refusal (or finding at most a minor defect
-    that needs no redo) buys nothing for the scene: it is listed in ``result['overturned']``
-    with her reason and the takes it was about, and her next reading counts its findings as
+    the purchase is not). Her look overturning the refusal (no defect, or a minor one; for a
+    defect quality control measured as serious only no defect at all, `_look_drops_redo`) buys
+    nothing for the scene: it is listed in ``result['overturned']`` with her reason, the takes
+    and the carry key of the picture it was about, and her next reading counts its findings as
     settled (`picture_qc.earlier_acceptances`). Her look confirming it adds her words to what
     the rewrite before the purchase reads; no look (no model, no frames) changes nothing."""
     from app.media import director_qc  # noqa: PLC0415 - media imports runbook
@@ -5301,13 +5606,21 @@ def _apply_repairs(
             look = _second_look_before_redo(
                 engine, registry, settings, reading, scene, proposals, correlation
             )
-            if _look_drops_redo(look):
+            if _look_drops_redo(look, measured=_measured_serious_scene(reading, scene)):
                 result.setdefault("overturned", []).append(
-                    _overturned_entry(reading, scene, paid[scene], look)
+                    _overturned_entry(engine, reading, scene, paid[scene], look)
                 )
                 continue
             extra = (
-                [f"Directoarea a privit din nou scena: {look['reason_ro']}"]
+                [
+                    f"Directoarea a privit din nou scena: {look['reason_ro']}"
+                    + (
+                        # An overturn that is not enough for a measured serious defect.
+                        "; defectul măsurat de control ca serios se reface totuși"
+                        if str(look.get("verdict") or "") == SECOND_LOOK_OVERTURNED
+                        else ""
+                    )
+                ]
                 if str(look.get("verdict") or "") != "UNAVAILABLE"
                 and str(look.get("reason_ro") or "").strip()
                 else []

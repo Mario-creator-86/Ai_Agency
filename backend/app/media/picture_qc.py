@@ -202,6 +202,14 @@ _REFERENCES_NOTE = (
     "look like, not frames of this film."
 )
 
+#: Said when the look is asked once more because its answer left shown scenes unjudged (the
+#: review of 2026-10-12, round 3).
+_REASK_NOTE = (
+    "Your previous answer gave no verdict for scenes {missing}.{strangers} The frames are "
+    "scenes {numbers}, in that order: answer every one of them, each with its own scene number "
+    "from that list.\n"
+)
+
 
 # ------------------------------------------------------------ the studio's own writing
 #
@@ -996,51 +1004,31 @@ class EarlierAcceptance:
 
 #: Her verdicts that settle a check's findings on a picture (with ACCEPTED only as minor).
 _SETTLING = frozenset({"FALSE", "ACCEPTED"})
+#: The family of a finding no check claimed (`director_qc._failing_now`): only her second look
+#: settles it, never a verdict (a grab bag of words is no check to settle).
+UNATTRIBUTED = "unattributed"
 
 
-def earlier_acceptances(
-    session: Session, storyboard_id: str, production: Mapping[str, Any], check: str
-) -> dict[int, EarlierAcceptance]:
-    """Per scene of this film, the Director's settling of ``check``'s findings on exactly the
-    takes it has now (2026-10-12 review: a scene she ACCEPTED was judged again and could turn
-    REAL, and a REPAIR followed). Read from her decisions on this storyboard's reports, newest
-    first; the newest decision with a word on (scene, check family, these takes) decides it:
-
-    - her second look before a purchase overturned the refusal (``done.overturned``: nothing was
-      bought for it), for the checks it named; or
-    - every one of her verdicts on that check's findings about the scene is FALSE, OWNER_CHOICE
-      or ACCEPTED as minor, and one of them is FALSE or ACCEPTED.
-
-    A REAL verdict, or an ACCEPTED one with no severity or a serious one (from before the
-    severities, 2026-10-12), settles nothing. Read only."""
+def settle_family(check: Any) -> str:
+    """The family a finding is settled under: its check's (`reviews.check_family`), or
+    `UNATTRIBUTED` for a finding no check claimed."""
     from app.agents.reviews import check_family  # noqa: PLC0415 - agents import media
+
+    return check_family(check) or UNATTRIBUTED
+
+
+def _decisions_newest_first(
+    session: Session, storyboard_id: str
+) -> list[tuple[str, list[Mapping[str, Any]]]]:
+    """Her decisions on this storyboard's reports, newest first, each with every event it wrote
+    (newest first): the events of one decision (one report, one run of hers) are read together
+    — a REPAIR carried on writes the decision again, and what an earlier event of it recorded
+    (her second look's overturns) is not lost (the review of 2026-10-12, round 3)."""
     from app.media.director_qc import DECISION_EVENT  # noqa: PLC0415 - it imports this module
     from app.models import DomainEvent  # noqa: PLC0415
 
-    takes = scene_takes(production)
-    if not takes or not storyboard_id:
-        return {}
-    family = check_family(check)
-    their_takes: dict[str, dict[int, tuple[str, str | None]]] = {}
-
-    def takes_of(report_id: str) -> dict[int, tuple[str, str | None]]:
-        if report_id not in their_takes:
-            report = session.get(QualityControlReport, report_id)
-            job = (
-                session.scalar(
-                    select(VideoRenderJob).where(
-                        VideoRenderJob.output_asset_id == report.media_asset_id
-                    )
-                )
-                if report is not None
-                else None
-            )
-            recorded = job.production_json if job is not None else None
-            their_takes[report_id] = scene_takes(recorded if isinstance(recorded, Mapping) else {})
-        return their_takes[report_id]
-
-    found: dict[int, EarlierAcceptance] = {}
-    decided: set[int] = set()
+    groups: dict[tuple[str, str], list[Mapping[str, Any]]] = {}
+    order: list[tuple[str, str]] = []
     for event in session.scalars(
         select(DomainEvent)
         .where(DomainEvent.event_type == DECISION_EVENT)
@@ -1052,37 +1040,97 @@ def earlier_acceptances(
         report_id = str(payload.get("report_id") or "")
         if not report_id:
             continue
-        theirs = takes_of(report_id)
-        recorded_done = payload.get("done")
-        done: Mapping[str, Any] = recorded_done if isinstance(recorded_done, Mapping) else {}
-        for look in done.get("overturned") or []:
-            if not isinstance(look, Mapping) or not isinstance(look.get("scene_index"), int):
-                continue
-            index = int(look["scene_index"])
-            named = {check_family(name) for name in look.get("checks") or []}
-            if index in decided or theirs.get(index) != takes.get(index) or index not in takes:
-                continue
-            if named and family not in named:
-                continue
-            decided.add(index)
-            found[index] = EarlierAcceptance(
-                report_id=report_id,
-                decided_at=str(event.timestamp),
-                verdicts=("OVERTURNED",),
-                reason=str(look.get("reason") or "")[:300],
-                still_take=takes[index][0],
-                clip_take=takes[index][1],
-            )
+        key = (report_id, str(payload.get("run_id") or event.event_id))
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append({**payload, "_at": str(event.timestamp)})
+    return [(key[0], groups[key]) for key in order]
+
+
+def earlier_acceptances(
+    session: Session,
+    storyboard_id: str,
+    production: Mapping[str, Any],
+    check: str,
+    keys: Mapping[int, Mapping[str, Any]] | None = None,
+) -> dict[int, EarlierAcceptance]:
+    """Per scene of this film, the Director's settling of ``check``'s findings on exactly the
+    picture it has now (2026-10-12 review: a scene she ACCEPTED was judged again and could turn
+    REAL, and a REPAIR followed). Read from her decisions on this storyboard's reports, newest
+    first; the newest decision with a word on (scene, check family, this picture) decides it:
+
+    - her second look before a purchase overturned the refusal (``done.overturned``: nothing was
+      bought for it), for the checks it named — gathered from every event of that decision, and
+      winning over its REAL verdicts (the review's round 3: a REPAIR carried on wrote its REAL
+      verdicts again and lost the overturn, and the film looped every hour); or
+    - every one of her verdicts on that check's findings about the scene is FALSE, OWNER_CHOICE
+      or ACCEPTED as minor, and one of them is FALSE or ACCEPTED (picture checks only: a
+      finding no check claimed is settled only by her look).
+
+    «Exactly this picture» is the scene's carry key (`carry_keys` for the check's family: the
+    takes, the check's version, the bible and look, the span and speed; ``keys`` when the caller
+    has them), recorded on her verdicts and overturns since round 3 of that review: a verdict or
+    an overturn recorded without one settles nothing, as an entry without a key carries nothing.
+    A REAL verdict, or an ACCEPTED one with no severity or a serious one, settles nothing. What
+    YuNet or the flat band measures is never settled by this (`reviews.measured_by_detector`,
+    read where the findings are). Read only."""
+    from app.agents.reviews import PICTURE_FINDING_CHECKS, check_family  # noqa: PLC0415
+
+    takes = scene_takes(production)
+    if not takes or not storyboard_id:
+        return {}
+    family = settle_family(check)
+    if keys is None:
+        keys = storyboard_carry_keys(session, storyboard_id, production, family)
+    verdicts_settle = family in {check_family(name) for name in PICTURE_FINDING_CHECKS}
+
+    def same_picture(index: int, recorded: Any) -> bool:
+        key = keys.get(index) if keys else None
+        return bool(key) and isinstance(recorded, Mapping) and dict(recorded) == dict(key)
+
+    found: dict[int, EarlierAcceptance] = {}
+    decided: set[int] = set()
+    for report_id, events in _decisions_newest_first(session, storyboard_id):
+        newest = events[0]
+        at = str(newest.get("_at") or "")
+        # Her second looks, from every event of this decision: they win over its verdicts.
+        for payload in events:
+            done = payload.get("done") if isinstance(payload.get("done"), Mapping) else {}
+            for look in done.get("overturned") or []:
+                if not isinstance(look, Mapping) or not isinstance(look.get("scene_index"), int):
+                    continue
+                index = int(look["scene_index"])
+                if index in decided or index not in takes:
+                    continue
+                recorded = look.get("carry_keys")
+                if not isinstance(recorded, Mapping) or not same_picture(
+                    index, recorded.get(family)
+                ):
+                    continue
+                decided.add(index)
+                found[index] = EarlierAcceptance(
+                    report_id=report_id,
+                    decided_at=str(payload.get("_at") or at),
+                    verdicts=("OVERTURNED",),
+                    reason=str(look.get("reason") or "")[:300],
+                    still_take=takes[index][0],
+                    clip_take=takes[index][1],
+                )
+        if not verdicts_settle:
+            continue
         by_scene: dict[int, list[Mapping[str, Any]]] = {}
-        for verdict in payload.get("verdicts") or []:
+        for verdict in newest.get("verdicts") or []:
             if not isinstance(verdict, Mapping) or verdict.get("check_level"):
                 continue
             scene = verdict.get("scene_index")
-            if not isinstance(scene, int) or check_family(verdict.get("check")) != family:
+            if not isinstance(scene, int) or settle_family(verdict.get("check")) != family:
                 continue
             by_scene.setdefault(scene, []).append(verdict)
         for index, verdicts in by_scene.items():
-            if index in decided or index not in takes or theirs.get(index) != takes[index]:
+            if index in decided or index not in takes:
+                continue
+            if not all(same_picture(index, item.get("carry_key")) for item in verdicts):
                 continue
             decided.add(index)
             words = [str(item.get("verdict") or "") for item in verdicts]
@@ -1094,7 +1142,7 @@ def earlier_acceptances(
             if settles:
                 found[index] = EarlierAcceptance(
                     report_id=report_id,
-                    decided_at=str(event.timestamp),
+                    decided_at=at,
                     verdicts=tuple(dict.fromkeys(words)),
                     reason=str(verdicts[0].get("reason") or "")[:300],
                     still_take=takes[index][0],
@@ -1114,7 +1162,7 @@ def carried_forward(
     carry key (`earlier_passes`), or settled by the Director on exactly these takes
     (`earlier_acceptances`). A pass is named first when both are there."""
     accepted: dict[int, EarlierPass | EarlierAcceptance] = dict(
-        earlier_acceptances(session, storyboard_id, production, check)
+        earlier_acceptances(session, storyboard_id, production, check, keys)
     )
     accepted.update(earlier_passes(session, storyboard_id, keys, check))
     return {index: earlier for index, earlier in accepted.items() if index in keys}
@@ -1228,8 +1276,11 @@ def evaluate_pictures(
 
     The look is told which scenes its frames are (2026-10-12 review: shown only scene 3, a
     model numbered its one frame «1» and the look certified nothing); numbers it gave by
-    position are read back to the scenes (`_renumbered`), and a look that answered about scenes
-    it was not shown and left a shown scene unanswered fails the check, never passes it.
+    position are read back to the scenes (`_renumbered`). A shown scene its answer left out is
+    asked about once more, free, with the scene numbers stated (`_REASK_NOTE`; round 3 of that
+    review: an omitted scene passed unseen, and an answer about unshown scenes failed the film
+    as a picture finding, which buys); still unanswered, the scene is NOT_RUN — no finding, no
+    redo — and the check does not pass.
     """
     with Session(engine) as session:
         asset = session.get(MediaAsset, media_asset_id)
@@ -1472,7 +1523,7 @@ def evaluate_pictures(
         ],
         "references": [entry["character"] for entry in attached_references],
     }
-    prompt = _INSTRUCTIONS.format(
+    head = _INSTRUCTIONS.format(
         frames=len(frames),
         numbers=", ".join(str(scene["index"]) for scene in looked),
         references_note=(
@@ -1484,28 +1535,33 @@ def evaluate_pictures(
         captions_note=studio_text_note(
             StudioText(source=source, captions_burned_in=burned, headline=headline)
         ),
-    ) + wrap_in_inert_boundary(json.dumps(shown, ensure_ascii=False)[:14000], "the-film")
+    )
+    body = wrap_in_inert_boundary(json.dumps(shown, ensure_ascii=False)[:14000], "the-film")
 
     from app.agents.structured import structured_run  # noqa: PLC0415
 
-    parsed, first, second = structured_run(
-        engine,
-        registry,
-        looker_id,
-        PICTURE_TASK,
-        prompt,
-        TEMPLATE_VERSION,
-        correlation_id,
-        PictureReport,
-        '{"scenes": [...], "characters": [...]}',
-        summary=(
-            f"Mă uit la cele {len(frames)} cadre ale filmului «{title[:80]}» înainte de Director."
-        ),
-        max_tokens=4000,
-        temperature=0.1,
-        extra={"images": frames + [entry["image"] for entry in attached_references]},
-    )
-    run = second or first
+    def look(prompt: str) -> tuple[PictureReport | None, dict[str, Any]]:
+        parsed, first, second = structured_run(
+            engine,
+            registry,
+            looker_id,
+            PICTURE_TASK,
+            prompt,
+            TEMPLATE_VERSION,
+            correlation_id,
+            PictureReport,
+            '{"scenes": [...], "characters": [...]}',
+            summary=(
+                f"Mă uit la cele {len(frames)} cadre ale filmului «{title[:80]}» înainte de "
+                "Director."
+            ),
+            max_tokens=4000,
+            temperature=0.1,
+            extra={"images": frames + [entry["image"] for entry in attached_references]},
+        )
+        return parsed, second or first
+
+    parsed, run = look(head + body)
     run_id = run["id"]
     if parsed is None or not parsed.scenes:
         # A model that answered nothing usable, or was refused under the day's token
@@ -1541,33 +1597,69 @@ def evaluate_pictures(
     answered = {
         (renumber or {}).get(verdict.scene, verdict.scene): verdict for verdict in parsed.scenes
     }
+    #: (scene, character name) -> what the look said, read back the same way.
+    people = {
+        ((renumber or {}).get(verdict.scene, verdict.scene), verdict.character.strip()): verdict
+        for verdict in parsed.characters
+    }
     strangers = sorted(set(answered) - set(shown_indices))
+    missing = [index for index in shown_indices if index not in answered]
+    reask_run_id: str | None = None
+    if missing:
+        # A shown scene the look said nothing about is asked once more, free, with the scene
+        # numbers stated (the review of 2026-10-12, round 3: an omitted scene passed the check
+        # unseen, and an answer about scenes not shown failed the film as a «picture finding»
+        # that bought a redo).
+        again, again_run = look(
+            head
+            + _REASK_NOTE.format(
+                missing=", ".join(map(str, missing)),
+                strangers=(
+                    f" It answered about scenes {', '.join(map(str, strangers))}, which were not "
+                    "shown."
+                    if strangers
+                    else ""
+                ),
+                numbers=", ".join(map(str, shown_indices)),
+            )
+            + body
+        )
+        reask_run_id = again_run.get("id")
+        if again is not None and again.scenes:
+            renumbered = _renumbered([verdict.scene for verdict in again.scenes], shown_indices)
+            for verdict in again.scenes:
+                index = (renumbered or {}).get(verdict.scene, verdict.scene)
+                if index in missing and index not in answered:
+                    answered[index] = verdict
+            for verdict in again.characters:
+                index = (renumbered or {}).get(verdict.scene, verdict.scene)
+                if index in missing:
+                    people.setdefault((index, verdict.character.strip()), verdict)
+    unanswered = [index for index in shown_indices if index not in answered]
     measured_scenes = 0
     for scene in looked:
         verdict = answered.get(scene["index"])
         if verdict is None:
+            # Asked twice and still unmappable: the scene was not judged. NOT_RUN — never a
+            # picture finding, so never a paid redo; and the check does not pass for it.
             scene_records.append(
                 {
                     "scene": scene["index"],
-                    "status": "NOT_APPLICABLE",
+                    "status": "NOT_RUN",
                     "is_a_picture": None,
                     "one_picture": None,
                     "shows_the_scene": None,
                     "reason": (
-                        f"no verdict was returned for this scene; the look answered about "
-                        f"scenes {strangers}, which it was not shown"
-                        if strangers
-                        else "no verdict was returned for this scene"
+                        "no verdict was returned for this scene, even when asked again"
+                        + (
+                            f"; the look answered about scenes {strangers}, which it was not shown"
+                            if strangers
+                            else ""
+                        )
                     ),
                     "carry_key": keys.get(scene["index"]),
                 }
             )
-            if strangers:
-                # Never a pass by omission: the scene shown was not judged at all.
-                failures.append(
-                    f"Scene {scene['index']}: the look gave no verdict for this scene — it "
-                    f"answered about scenes {strangers}, which it was not shown"
-                )
             continue
         measured_scenes += 1
         scene_records.append(
@@ -1615,12 +1707,15 @@ def evaluate_pictures(
     scene_records.sort(key=lambda entry: entry["scene"])
 
     # The scenes shown this time decide whether it measured anything: a look that answered
-    # none of them certifies nothing, whatever an earlier film passed — unless it answered
-    # about scenes it was not shown, which fails the check (2026-10-12 review).
+    # none of them certifies nothing, whatever an earlier film passed; one that left a shown
+    # scene unjudged, even when asked again, passes nothing (round 3 of the 2026-10-12 review).
     decided = bool(measured_scenes or failures)
+    passed: bool | None = (not failures) if decided else None
+    if passed is True and unanswered:
+        passed = None
     picture: dict[str, Any] = {
         "status": "MEASURED" if decided else "NOT_APPLICABLE",
-        "passed": (not failures) if decided else None,
+        "passed": passed,
         "frames": len(frames),
         # SHOT: each scene's own shot, before the captions were burnt in; FILM: the film's.
         "frames_from": source,
@@ -1637,16 +1732,20 @@ def evaluate_pictures(
     }
     if renumber is not None:
         picture["renumbered"] = {str(number): scene for number, scene in renumber.items()}
+    if missing:
+        picture["asked_again"] = {"scenes": missing, "run_id": reask_run_id}
     if not measured_scenes:
         picture["detail"] = f"{looker_name} returned no verdict for any scene that was cut"
+    elif unanswered:
+        picture["detail"] = (
+            f"{looker_name} gave no verdict for scenes {unanswered}, even when asked again: "
+            "they were not judged, and the check certifies nothing for them"
+        )
 
     character_records = list(not_applicable_characters)
     character_failures: list[str] = []
     # A character's scene is read back the same way its frame's was (`_renumbered`).
-    by_pair = {
-        ((renumber or {}).get(verdict.scene, verdict.scene), verdict.character.strip()): verdict
-        for verdict in parsed.characters
-    }
+    by_pair = people
     measured_characters = 0
     observed_characters = 0
     for index, cid, basis in pairs:

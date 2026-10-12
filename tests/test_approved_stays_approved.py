@@ -342,8 +342,17 @@ def test_only_a_measured_or_carried_pass_carries_and_never_the_report_being_read
 
 
 def _her_verdicts(
-    engine, ids: dict[str, str], report_id: str, verdicts: list[dict[str, Any]], **done: Any
+    engine,
+    ids: dict[str, str],
+    report_id: str,
+    verdicts: list[dict[str, Any]],
+    *,
+    run_id: str | None = None,
+    **done: Any,
 ) -> None:
+    """Her decision on an earlier report: ``verdicts`` as recorded, ``done`` (her second looks'
+    ``overturned``) beside them; a decision of its own unless ``run_id`` names one already
+    recorded (a REPAIR carried on writes its decision again)."""
     with Session(engine) as session, session.begin():
         append_event(
             session,
@@ -356,11 +365,19 @@ def _her_verdicts(
                 "storyboard_id": ids["board"],
                 "decided_by": "Director",
                 "decision": "ACCEPT",
+                "run_id": run_id or str(uuid4()),
                 "verdicts": verdicts,
                 **({"done": done} if done else {}),
             },
             str(uuid4()),
         )
+
+
+def _now_keys(engine, ids: dict[str, str], check: str) -> dict[int, dict]:
+    """Each scene's carry key in ``ids``'s film as it is cut now, for ``check``."""
+    with Session(engine) as session:
+        production = session.get(VideoRenderJob, ids["job"]).production_json
+    return _keys(engine, ids["board"], production, check)
 
 
 def test_a_scene_she_settled_on_the_same_takes_is_not_looked_at_again(engine, frames):
@@ -370,6 +387,9 @@ def test_a_scene_she_settled_on_the_same_takes_is_not_looked_at_again(engine, fr
     give_vision(engine, staffed["agents"]["VideoEditor"].id)
     ids = a_film(engine)
     earlier = _earlier_film(engine, ids, SAME, {1}, failed={2, 3})
+    _cut_from(engine, ids["job"], SAME)
+    # Round 3 of the review: her verdict carries the picture's carry key, and settles only it.
+    keys = _now_keys(engine, ids, "picture_qc")
     _her_verdicts(
         engine,
         ids,
@@ -383,6 +403,7 @@ def test_a_scene_she_settled_on_the_same_takes_is_not_looked_at_again(engine, fr
                 "check": "picture_qc",
                 "scene_index": 2,
                 "reason": "a little lighter than asked",
+                "carry_key": keys[2],
             },
             # Scene 3: accepted with a serious defect, from before the severities: settles
             # nothing, it is judged again.
@@ -392,10 +413,10 @@ def test_a_scene_she_settled_on_the_same_takes_is_not_looked_at_again(engine, fr
                 "check": "picture_qc",
                 "scene_index": 3,
                 "reason": "the wrong object",
+                "carry_key": keys[3],
             },
         ],
     )
-    _cut_from(engine, ids["job"], SAME)
     answer = json.dumps({"scenes": [scene_answer(3, "ok")]})
     registry, model = registry_with(staffed, lambda prompt: answer)
 
@@ -414,23 +435,91 @@ def test_a_scene_she_settled_on_the_same_takes_is_not_looked_at_again(engine, fr
         ids,
         earlier["report"],
         [{"finding": 1, "verdict": "REAL", "severity": "serious", "check": "picture_qc",
-          "scene_index": 2, "reason": "seen again: wrong"}],
+          "scene_index": 2, "reason": "seen again: wrong", "carry_key": keys[2]}],
     )  # fmt: skip
     with Session(engine) as session:
         production = session.get(VideoRenderJob, ids["job"]).production_json
         assert earlier_acceptances(session, ids["board"], production, "picture_qc") == {}
-        # Her second look that overturned a refusal settles the checks it named.
+    # Her second look that overturned a refusal settles the checks it named, on the picture
+    # whose carry key it recorded; one recorded without a key settles nothing.
     _her_verdicts(
         engine,
         ids,
         earlier["report"],
         [],
-        overturned=[{"scene_index": 2, "checks": ["picture_qc"], "reason": "the refusal is wrong"}],
+        overturned=[{"scene_index": 2, "checks": ["picture_qc"], "reason": "no key"}],
+    )
+    with Session(engine) as session:
+        assert earlier_acceptances(session, ids["board"], production, "picture_qc") == {}
+    _her_verdicts(
+        engine,
+        ids,
+        earlier["report"],
+        [],
+        overturned=[
+            {
+                "scene_index": 2,
+                "checks": ["picture_qc"],
+                "reason": "the refusal is wrong",
+                "carry_keys": {"picture_qc": keys[2]},
+            }
+        ],
     )
     with Session(engine) as session:
         settled = earlier_acceptances(session, ids["board"], production, "picture_qc")
         spans = earlier_acceptances(session, ids["board"], production, "picture_spans_qc")
     assert settled[2].verdicts == ("OVERTURNED",) and spans == {}
+
+
+def test_her_overturn_survives_her_repair_written_again_and_settles_any_check(engine):
+    """Round 3 of the 2026-10-12 review: a REPAIR carried on writes its decision again, with its
+    REAL verdicts and without the earlier overturn, and the overturn was lost; an overturned
+    Motion QC or unattributed finding was settled by nothing, and the film looped every hour.
+    The events of one decision (one report, one run) are read together, an overturn wins over
+    its REAL verdicts, and it settles every check it names on exactly its picture."""
+    ids = a_film(engine)
+    earlier = _earlier_film(engine, ids, SAME, {1}, failed={2, 3})
+    _cut_from(engine, ids["job"], SAME)
+    pictures = _now_keys(engine, ids, "picture_qc")
+    motion = _now_keys(engine, ids, "motion_qc")
+    real = [
+        {"finding": 1, "verdict": "REAL", "severity": "serious", "check": "picture_qc",
+         "scene_index": 2, "reason": "a lamp", "carry_key": pictures[2]},
+        {"finding": 2, "verdict": "REAL", "severity": "serious", "check": "motion_qc",
+         "scene_index": 3, "reason": "frozen", "carry_key": motion[3]},
+    ]  # fmt: skip
+    _her_verdicts(
+        engine,
+        ids,
+        earlier["report"],
+        real,
+        run_id="her-run",
+        overturned=[
+            {"scene_index": 2, "checks": ["picture_qc"], "reason": "a lamp is asked",
+             "carry_keys": {"picture_qc": pictures[2]}},
+            {"scene_index": 3, "checks": ["motion_qc"], "reason": "it moves",
+             "carry_keys": {"motion_qc": motion[3]}},
+        ],
+    )  # fmt: skip
+    # Carried on: the same decision written again, its REAL verdicts and nothing overturned.
+    _her_verdicts(engine, ids, earlier["report"], real, run_id="her-run")
+    with Session(engine) as session:
+        production = session.get(VideoRenderJob, ids["job"]).production_json
+        looks = earlier_acceptances(session, ids["board"], production, "picture_qc")
+        moves = earlier_acceptances(session, ids["board"], production, "motion_qc")
+    assert looks[2].verdicts == ("OVERTURNED",) and sorted(looks) == [2]
+    assert moves[3].verdicts == ("OVERTURNED",) and sorted(moves) == [3]
+    # Her FALSE on a Motion QC finding is not a look: only her second look settles it.
+    _her_verdicts(
+        engine,
+        ids,
+        earlier["report"],
+        [{"finding": 1, "verdict": "FALSE", "check": "motion_qc", "scene_index": 1,
+          "reason": "x", "carry_key": motion[1]}],
+    )  # fmt: skip
+    with Session(engine) as session:
+        moves = earlier_acceptances(session, ids["board"], production, "motion_qc")
+    assert sorted(moves) == [3]
 
 
 # --------------------------------------------- the look told which scenes its frames are
@@ -460,7 +549,10 @@ def test_a_look_that_numbers_its_frames_by_position_is_read_back_to_the_scenes(e
     assert result["failures"] == ["Scene 3: the picture is not what the scene asked for — a lamp"]
 
 
-def test_a_look_that_answers_about_scenes_it_was_not_shown_fails_the_check(engine, frames):
+def test_a_look_that_answers_about_scenes_it_was_not_shown_is_asked_again(engine, frames):
+    """Round 3 of the 2026-10-12 review: such a look failed the film with a «picture finding»,
+    which buys a redo. It is asked once more, free, with the scene numbers stated; still about
+    scenes it was not shown, the scenes are NOT_RUN: no finding, nothing to buy, no pass."""
     staffed = staff(engine)
     give_vision(engine, staffed["agents"]["VideoEditor"].id)
     ids = a_film(engine)
@@ -468,14 +560,43 @@ def test_a_look_that_answers_about_scenes_it_was_not_shown_fails_the_check(engin
     _cut_from(engine, ids["job"], {1: SAME[1], 2: ("s2", "c2"), 3: ("s3", "c3")})
     # Two frames shown, one answer, about a scene it was not shown: nothing can be read back.
     answer = json.dumps({"scenes": [scene_answer(1, "ok")]})
-    registry, _model = registry_with(staffed, lambda prompt: answer)
+    registry, model = registry_with(staffed, lambda prompt: answer)
 
     result = evaluate_pictures(engine, registry, ids["asset"], str(uuid4()))
 
+    assert len(model.calls) == 2
+    assert "gave no verdict for scenes 2, 3" in model.calls[1]["prompt"]
+    assert "It answered about scenes 1, which were not shown" in model.calls[1]["prompt"]
     picture = result["picture_qc"]
-    assert picture["status"] == "MEASURED" and picture["passed"] is False
-    assert len(result["failures"]) == 2
-    assert all("it was not shown" in failure for failure in result["failures"])
+    assert result["failures"] == [] and picture["passed"] is None
+    scenes = {entry["scene"]: entry for entry in picture["scenes"]}
+    assert scenes[2]["status"] == scenes[3]["status"] == "NOT_RUN"
+    assert "even when asked again" in scenes[2]["reason"]
+    assert picture["asked_again"]["scenes"] == [2, 3]
+
+
+def test_a_shown_scene_the_look_left_out_is_asked_again_and_judged(engine, frames):
+    """Round 3 of the review: a scene the look's answer left out passed the check unseen."""
+    staffed = staff(engine)
+    give_vision(engine, staffed["agents"]["VideoEditor"].id)
+    ids = a_film(engine)
+    _cut_from(engine, ids["job"], {1: ("s1", "c1"), 2: ("s2", "c2"), 3: ("s3", "c3")})
+    answers = iter(
+        [
+            json.dumps({"scenes": [scene_answer(1, "ok"), scene_answer(2, "ok")]}),
+            json.dumps({"scenes": [scene_answer(3, "a lamp", shows_the_scene=False)]}),
+        ]
+    )
+    registry, model = registry_with(staffed, lambda prompt: next(answers))
+
+    result = evaluate_pictures(engine, registry, ids["asset"], str(uuid4()))
+
+    assert len(model.calls) == 2 and "gave no verdict for scenes 3" in model.calls[1]["prompt"]
+    picture = result["picture_qc"]
+    scenes = {entry["scene"]: entry for entry in picture["scenes"]}
+    assert scenes[3]["status"] == "MEASURED" and scenes[3]["shows_the_scene"] is False
+    assert picture["passed"] is False
+    assert result["failures"] == ["Scene 3: the picture is not what the scene asked for — a lamp"]
 
 
 # --------------------------------------------------------------------------- the span look
