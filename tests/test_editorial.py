@@ -21,8 +21,9 @@ from app.agents.editorial import (
     frames_for,
     gather_facts,
     latest_editorial,
+    picture_lesson,
 )
-from app.agents.models import Agent, AgentMessage, ModelRecord, Role
+from app.agents.models import Agent, AgentMessage, MemoryRecord, ModelRecord, Role
 from app.agents.services import seed_initial_workforce
 from app.factual.models import FactualClaim, ScriptDraft, SourceSnapshot, TopicIdea
 from app.media.models import (
@@ -336,6 +337,65 @@ def test_a_rejection_writes_to_each_department_named_and_keeps_the_film_out(engi
             staffed["agents"]["VideoEditor"].id,
         }
         assert session.get(Storyboard, ids["board"]).status == "REJECTED"
+
+
+SPECTRUM = "A spectrum drawn as a rainbow reads as decoration; show dark absorption lines."
+
+
+@pytest.mark.parametrize(
+    ("note", "lesson"),
+    [
+        (f"{SPECTRUM} The mirror is not the story.", SPECTRUM),
+        ("Scene 4's ledger shows digits. Ask for blank pages.", None),
+        ("The rocky world with water is lit differently in every shot.", None),
+        ("x" * 401, None),
+        ("   ", None),
+        (None, None),
+    ],
+)
+def test_only_the_rule_in_her_picture_note_is_a_lesson(note, lesson):
+    """Review of a9f84ea, 2026-10-12: her note to the Video Editor was stored bare — one
+    film's «scene 4» became a rule for every film, a note over 400 characters was refused
+    whole. Its first sentence is the lesson, when it is a rule: no scene by its number, not
+    the film by its title, at most 400 characters."""
+    assert picture_lesson(note, "A rocky world with water") == lesson
+
+
+def test_her_picture_note_is_kept_unverified_for_its_kind_of_film(engine, staffed):
+    from app.media.prompt_agent import prompt_lessons
+
+    notes = {
+        False: SPECTRUM,
+        True: "Two people at one desk drift into profile; keep both turned to the viewer.",
+    }
+    for serial, note in notes.items():
+        title = "The Cut Runs Long" if serial else "A rocky world with water"
+        ids = a_film(engine, voiceover=ENGLISH, with_source=True, serial=serial, title=title)
+
+        def answer(_prompt, note=note):
+            return json.dumps(
+                {
+                    "verdict": "REJECT",
+                    "story": "It never says why the water matters.",
+                    "reasons": ["the pictures decorate"],
+                    "notes_for": {"VideoEditor": f"{note} Scene 2 is the worst of them."},
+                }
+            )
+
+        registry, _ = registry_with(staffed, answer)
+        result = editorial_review(engine, registry, ids["asset"], language="en")
+        scope = "serial" if serial else "factual"
+        with Session(engine) as session:
+            row = session.scalar(
+                select(MemoryRecord).where(
+                    MemoryRecord.source_id == result["run_id"],
+                    MemoryRecord.content.like("prompt lesson:%"),
+                )
+            )
+        assert row is not None and row.content == f"prompt lesson: [{scope}][?] {note}"
+    with Session(engine) as session:
+        assert prompt_lessons(session, scope="serial") == [f"{notes[True]} (unverified)"]
+        assert prompt_lessons(session, scope="factual") == [f"{SPECTRUM} (unverified)"]
 
 
 def test_the_publish_stage_asks_the_director_before_anything_else(engine, settings, staffed):

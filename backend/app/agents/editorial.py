@@ -29,6 +29,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import re
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -54,7 +55,13 @@ from app.media.models import (
     StoryboardScene,
     VideoRenderJob,
 )
-from app.media.prompt_agent import record_prompt_lesson
+from app.media.prompt_agent import (
+    LESSON_MAX_CHARS,
+    SCOPE_FACTUAL,
+    SCOPE_SERIAL,
+    lesson_is_general,
+    record_prompt_lesson,
+)
 from app.media.toolchain import find_ffmpeg
 from app.providers.registry import ProviderRegistry
 from app.services import append_event, utc_now
@@ -389,6 +396,27 @@ def frames_for(
     return frames
 
 
+#: Where a note's first sentence ends: a full stop, a question or an exclamation, then a space.
+_SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
+
+
+def picture_lesson(note: Any, title: Any = None) -> str | None:
+    """The rule in her note to the Video Editor, or None when it holds none: its first
+    sentence, if that sentence is at most `LESSON_MAX_CHARS` and a rule for every next film
+    (`prompt_agent.lesson_is_general`: no scene or shot by its number, no id, not this film's
+    title). 2026-10-12, review of a9f84ea: the note was stored bare, so a note about one
+    film's «scene 4» would have been a rule for every film, and a note over 400 characters
+    was refused whole, its rule with it."""
+    said = " ".join(str(note or "").split())
+    if not said:
+        return None
+    first = _SENTENCE_END.split(said, maxsplit=1)[0].strip()
+    if not first or len(first) > LESSON_MAX_CHARS:
+        return None
+    titles = [str(title)] if title else []
+    return None if lesson_is_general(first, titles) else first
+
+
 def latest_editorial(session: Session, media_asset_id: str) -> EditorialReview | None:
     return session.scalar(
         select(EditorialReview)
@@ -548,11 +576,18 @@ def editorial_review(
         # wording keeps producing the wrong camera move, or a character who changes coat
         # between shots, the next film's prompt agent should know it before it writes.
         picture_note = verdict.notes_for.get("VideoEditor")
-        if picture_note:
-            # The note alone (2026-10-12): a lesson is a rule for every next film, and a lesson
-            # over 400 characters is refused whole — her story sentence (up to 400 of its own)
-            # in front of it would have cost the note itself.
-            record_prompt_lesson(session, picture_note, source_id=run_id)
+        lesson = picture_lesson(picture_note, facts.get("title"))
+        if lesson:
+            # Only the rule in her note, for its kind of film, and unverified until a picture
+            # proves it (2026-10-12, review of a9f84ea): her note is about this film, and stored
+            # bare a scene of it would have become a rule for every film, or been refused whole.
+            record_prompt_lesson(
+                session,
+                lesson,
+                source_id=run_id,
+                scope=SCOPE_SERIAL if facts.get("serial") else SCOPE_FACTUAL,
+                provisional=True,
+            )
         sent = 0
         if verdict.verdict == "REJECT":
             for role_name, note in verdict.notes_for.items():

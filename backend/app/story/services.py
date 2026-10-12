@@ -1517,6 +1517,44 @@ def _measured_refusals(
     ]
 
 
+#: The showrunner's own words before the studio's picture lessons: a beat's "scene" is the
+#: scriptwriter's line every picture of the episode is made from (``writer_visual``).
+_PICTURE_LESSONS_HEAD = (
+    '\nPICTURE LESSONS. Each beat\'s "scene" is the line its picture is made from, and the '
+    "studio has learned how its picture models misread such lines. "
+)
+#: How much of the brief the lessons may take, in characters of JSON (twelve of at most 400).
+_PICTURE_LESSONS_CHARS = 6000
+
+
+def _picture_lessons(session: Session) -> str:
+    """The serial's picture lessons for the showrunner's "scene" lines, as rules and as data
+    (`prompt_agent.lessons_rule`, `fit_with_lessons`); "" when the studio has none.
+
+    2026-10-12 (review of a9f84ea): the lessons reached the shot writer, the visual bible and
+    every rewrite, and never the first words a serial picture is made from — the showrunner's
+    «scene» line, which every shot of the episode is written from as the scriptwriter's own
+    (``visual_description``, read as ``writer_visual``)."""
+    from app.media.prompt_agent import (  # noqa: PLC0415 - the media stage reads the story's rooms
+        SCOPE_SERIAL,
+        fit_with_lessons,
+        lessons_rule,
+        prompt_lessons,
+    )
+
+    lessons = prompt_lessons(session, scope=SCOPE_SERIAL)
+    rule = lessons_rule(lessons)
+    if not rule:
+        return ""
+    data = fit_with_lessons({}, lessons, _PICTURE_LESSONS_CHARS)
+    return (
+        _PICTURE_LESSONS_HEAD
+        + rule
+        + _inert(json.dumps(data, ensure_ascii=False), "picture-lessons")
+        + "\n"
+    )
+
+
 def write_episode(
     engine: Engine,
     registry: ProviderRegistry,
@@ -1609,6 +1647,7 @@ def write_episode(
             left_out(dict(log.event_counts_json or {}), projection),
             recorded_until,
         )
+        picture_lessons = _picture_lessons(session)
 
     def brief(rewrite: str) -> str:
         return audience_language_line(language) + _INSTRUCTIONS.format(
@@ -1630,7 +1669,7 @@ def write_episode(
             events=events,
             previously=previously,
             plan=_plan_block(plan, episode_number),
-            rewrite=rewrite,
+            rewrite=picture_lessons + rewrite,
         )
 
     def ask(prompt: str) -> dict[str, Any]:

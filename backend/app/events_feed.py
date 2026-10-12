@@ -31,11 +31,15 @@ editor's rewrite, her review of it, a still or clip check) is said with its scen
 while it works and when it is done — «Gata: rescrierea scenei 3 din «The Zero Script Club» ✓»,
 «Am refuzat rescrierea scenei 4: nu tratează constatarea.» — read from the run's own summary,
 the brief that names the run and the events of its correlation (`_run_places`).
+
+2026-10-12, evening: her verdict on a rewrite is read from her answer only when her review's
+schema accepts it and nothing asked her again, and it never promises a purchase; her second
+look at a refusal of quality control (`media.director_second_look`) says whether the refusal
+was right and whether the scene is redone, with its scene and its film.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 from collections.abc import Iterable, Mapping
@@ -159,6 +163,7 @@ _TASK_RO: dict[str, str] = {
     "director_scene_brief": "brief-ul de rescriere a unei scene",
     "scene_prompt_rewrite": "rescrierea promptului unei scene",
     "director_rewrite_review": "verificarea unei rescrieri",
+    "director_second_look": "a doua privire asupra unui refuz al controlului",
     "sheet_repair_assignment": "repartizarea remedierii foii",
     "sound_design": "planul de sunet",
     "write_episode": "episodul serialului",
@@ -193,6 +198,7 @@ _SCENE_TASK_RO: dict[str, str] = {
     "scene_prompt_rewrite": "rescrierea scenei {scene}",
     "director_scene_brief": "brief-ul pentru scena {scene}",
     "director_rewrite_review": "verificarea rescrierii scenei {scene}",
+    "director_second_look": "a doua privire asupra scenei {scene}",
     "still_qc": "verificarea imaginii scenei {scene}",
     "clip_qc": "verificarea clipului scenei {scene}",
 }
@@ -204,16 +210,17 @@ _FILM_TASK_RO: dict[str, str] = {
 #: The scene a run's summary names («scena 3», «scenei 5») and the film in its quotes.
 _SUMMARY_SCENE = re.compile(r"\bscen(?:a|ei|ă)\s+(\d{1,3})\b", re.IGNORECASE)
 _SUMMARY_TITLE = re.compile(r"«([^»]{2,200})»")
-#: Her review's verdict and reason as the run's own answer gives them, read only while the
-#: brief that records them (`media.director_scene_brief`) is not written yet. A verdict that
-#: contradicts its findings is the answer `structured_run` asked again, and is not read.
-_REVIEW_VERDICT = re.compile(r'"verdict"\s*:\s*"(TREATS|MISSES)"', re.IGNORECASE)
-_REVIEW_REASON = re.compile(r'"reason_ro"\s*:\s*"((?:[^"\\]|\\.)*)"')
-_UNTREATED = re.compile(r'"treated"\s*:\s*false', re.IGNORECASE)
+#: The template suffixes of `structured_run`'s second attempt: a run followed by one of them
+#: had its answer refused (`agents.structured.REFUSED_SUFFIX`, `THINKING_SUFFIX`).
+_RETRY_SUFFIXES = ("+again", "+think")
 #: The events that record which runs worked on which scene: her brief (her brief's, his
-#: rewrite's and her review's run ids) and the rewrite stored (his run and her review).
+#: rewrite's and her review's run ids, each round's too) and the rewrite stored (his run, her
+#: review and the reviews she refused before it); her second look at a refusal names hers.
 _BRIEF_EVENT = "media.director_scene_brief"
 _REWRITTEN_EVENT = "media.prompts_rewritten"
+_SECOND_LOOK_EVENT = "media.director_second_look"
+#: What her second look looked at (`second_look.second_look`'s ``kind``), in a sentence.
+_LOOK_KIND_RO = {"still": "imaginea", "shot": "clipul", "film_scene": "cadrele"}
 #: How far before a run its correlation is read for the film it worked on: the Director's
 #: ladder and a paid redo's wait at RunPod (up to ~83 min) share one correlation.
 _CORRELATION_HOURS = 12
@@ -579,6 +586,40 @@ def _brief_words(payload: Mapping[str, Any], name: str, film: str, editor: str) 
     return _end(said), bubble
 
 
+def _second_look_words(
+    payload: Mapping[str, Any], name: str, title: str | None
+) -> tuple[str, str | None]:
+    """The Director's second look at a refusal of quality control (`media.director_second_look`,
+    2026-10-12): the Owner, «trece imaginile picate de la QC pe la Directoare și să decidă dacă
+    au picat corect sau nu și dacă trebuie refăcute». Said with the scene and the film: whether
+    the refusal was right, and whether the scene is redone (bought) or accepted as it is."""
+    scene = _scene_number(payload.get("scene_index"))
+    what = _LOOK_KIND_RO.get(str(payload.get("kind") or ""), "imaginea")
+    of_scene = f" scenei {scene}" if scene else ""
+    why = _short(str(payload.get("reason_ro") or "").rstrip("."), 110)
+    because = f" ({why})" if why else ""
+    verdict = str(payload.get("verdict") or "").upper()
+    redo = bool(payload.get("redo"))
+    if verdict not in ("CONFIRMED", "OVERTURNED"):
+        head = _with_film(f"{name} nu s-a putut uita la {what}{of_scene}", " din ", title)
+        return _end(f"{head}: refuzul controlului rămâne{because}"), None
+    if verdict == "OVERTURNED" and not redo:
+        said, tail = "refuzul controlului e greșit — se acceptă, nu se reface", "se acceptă"
+    elif verdict == "CONFIRMED" and redo:
+        said, tail = "refuzul e corect — se reface", "se reface"
+    elif verdict == "CONFIRMED":
+        said = "refuzul e corect, dar defectul e mic — se acceptă, nu se reface"
+        tail = "defect mic, se acceptă"
+    else:
+        said, tail = "refuzul controlului e greșit, dar scena tot se reface", "se reface"
+    head = _with_film(f"{name} s-a uitat la {what}{of_scene}", " din ", title)
+    bubble_head = f"M-am uitat la scena {scene}" if scene else "M-am uitat la refuz"
+    return (
+        _end(f"{head}: {said}{because}"),
+        _with_film(bubble_head, " din ", title, f": {tail}.", BUBBLE_MAX),
+    )
+
+
 def _rewrite_words(
     payload: Mapping[str, Any], scene: Any, film: str, named: str
 ) -> tuple[str, str | None]:
@@ -683,13 +724,25 @@ def _scene_number(value: Any) -> int | None:
 
 
 def _runs_named(kind: str, payload: Mapping[str, Any]) -> list[tuple[str, dict[str, Any]]]:
-    """The runs a brief or a stored rewrite names, each with her review's verdict when the run
-    is her review: [(run_id, {"verdict", "reason_ro"} or {})]."""
+    """The runs a brief, a stored rewrite or her second look names, each with her review's
+    verdict when the run is her review: [(run_id, {"verdict", "reason_ro"} or {})]. A review
+    the record names without a verdict is one whose answer was never accepted, and it is said
+    without one (2026-10-12, review of a9f84ea)."""
     named: list[tuple[str, dict[str, Any]]] = []
     if kind == _BRIEF_EVENT:
         for key in ("brief_run_id", "rewrite_run_id"):
             if payload.get(key):
                 named.append((str(payload[key]), {}))
+        # Each round of his rewrites with her verdict on it (1839dcf): the first round's
+        # MISSES is hers as much as the last round's verdict is.
+        for attempt in payload.get("review_attempts") or []:
+            if not isinstance(attempt, Mapping):
+                continue
+            if attempt.get("rewrite_run_id"):
+                named.append((str(attempt["rewrite_run_id"]), {}))
+            if attempt.get("review_run_id"):
+                said = {"verdict": attempt.get("verdict"), "reason_ro": attempt.get("reason_ro")}
+                named.append((str(attempt["review_run_id"]), said))
         if payload.get("review_run_id"):
             review = {
                 "verdict": payload.get("review_verdict"),
@@ -700,13 +753,16 @@ def _runs_named(kind: str, payload: Mapping[str, Any]) -> list[tuple[str, dict[s
         if payload.get("run_id"):
             named.append((str(payload["run_id"]), {}))
         review = payload.get("review")
-        if isinstance(review, Mapping) and review.get("run_id"):
-            named.append(
-                (
-                    str(review["run_id"]),
-                    {"verdict": review.get("verdict"), "reason_ro": review.get("reason_ro")},
-                )
-            )
+        if isinstance(review, Mapping):
+            for refused in review.get("refused") or []:
+                if isinstance(refused, Mapping) and refused.get("review_run_id"):
+                    said = {"verdict": "MISSES", "reason_ro": refused.get("reason_ro")}
+                    named.append((str(refused["review_run_id"]), said))
+            if review.get("run_id"):
+                said = {"verdict": review.get("verdict"), "reason_ro": review.get("reason_ro")}
+                named.append((str(review["run_id"]), said))
+    elif kind == _SECOND_LOOK_EVENT and payload.get("run_id"):
+        named.append((str(payload["run_id"]), {}))
     return named
 
 
@@ -742,6 +798,7 @@ def _from_correlations(
             place = places.get(run_id)
             if place is None:
                 continue
+            place["named"] = True
             if board:
                 place["board"] = str(board)
             scene = _scene_number(payload.get("scene_index"))
@@ -758,35 +815,82 @@ def _from_correlations(
 
 
 def _review_verdicts(session: Session, places: dict[str, dict[str, Any]]) -> None:
-    """Her verdict on a rewrite from her run's own answer, while no brief records it yet."""
+    """Her verdict on a rewrite from her run's own answer, while no brief or stored rewrite
+    names the run yet — and only an answer her review's own schema accepts
+    (`scene_rewrite.RewriteReview`, read as `structured_run` reads it), from a run that was
+    not asked again (`_RETRY_SUFFIXES`). 2026-10-12, review of a9f84ea: a MISSES was read from
+    an answer the validator had refused, and the office announced a refusal she never made. A
+    run the record names says only what the record says (`_runs_named`)."""
     pending = sorted(
         run_id
         for run_id, place in places.items()
-        if place["task"] == "director_rewrite_review" and not place["verdict"]
+        if place["task"] == "director_rewrite_review"
+        and not place["verdict"]
+        and not place.get("named")
     )
     if not pending:
         return
+    try:
+        from app.agents.identity import read_structured  # noqa: PLC0415
+        from app.media import scene_rewrite  # noqa: PLC0415 - it imports the whole media stage
+    except ImportError:  # pragma: no cover - the review's schema is the only judge of an answer
+        return
+    schema = getattr(scene_rewrite, "RewriteReview", None)
+    if schema is None:
+        return
     rows = session.execute(
-        select(AgentRun.id, AgentRun.output_text).where(AgentRun.id.in_(pending))
+        select(
+            AgentRun.id,
+            AgentRun.agent_id,
+            AgentRun.correlation_id,
+            AgentRun.started_at,
+            AgentRun.output_text,
+            AgentRun.prompt_template_version,
+        ).where(AgentRun.id.in_(pending))
     ).all()
-    for run_id, text in rows:
-        answer = str(text or "")
-        found = _REVIEW_VERDICT.search(answer)
-        if not found:
+    asked_again = _asked_again(session, rows)
+    for row in rows:
+        if str(row.id) in asked_again:
             continue
-        verdict = found.group(1).upper()
-        untreated = bool(_UNTREATED.search(answer))
-        if (verdict == "MISSES") != untreated:
+        try:
+            parsed, _why = read_structured(str(row.output_text or ""), schema)
+        except Exception:  # noqa: BLE001 - an answer the schema cannot read says nothing
             continue
-        reason = ""
-        said = _REVIEW_REASON.search(answer)
-        if said:
-            try:
-                reason = str(json.loads(f'"{said.group(1)}"'))
-            except ValueError:
-                reason = said.group(1)
-        places[str(run_id)]["verdict"] = verdict
-        places[str(run_id)]["reason_ro"] = reason
+        verdict = str(getattr(parsed, "verdict", "") or "").upper() if parsed else ""
+        if verdict not in ("TREATS", "MISSES"):
+            continue
+        places[str(row.id)]["verdict"] = verdict
+        places[str(row.id)]["reason_ro"] = str(getattr(parsed, "reason_ro", "") or "")
+
+
+def _asked_again(session: Session, rows: list[Any]) -> set[str]:
+    """The runs among ``rows`` whose answer `structured_run` refused: the next run of the same
+    employee, task and correlation is its second attempt (`_RETRY_SUFFIXES`)."""
+    correlations = sorted({str(row.correlation_id) for row in rows if row.correlation_id})
+    if not correlations:
+        return set()
+    runs = session.execute(
+        select(
+            AgentRun.id,
+            AgentRun.agent_id,
+            AgentRun.correlation_id,
+            AgentRun.started_at,
+            AgentRun.prompt_template_version,
+        )
+        .where(
+            AgentRun.correlation_id.in_(correlations),
+            AgentRun.task_type == "director_rewrite_review",
+        )
+        .order_by(AgentRun.started_at, AgentRun.id)
+    ).all()
+    following: dict[str, str] = {}
+    last: dict[tuple[str, str], str] = {}
+    for run in runs:
+        key = (str(run.agent_id), str(run.correlation_id))
+        if key in last:
+            following[last[key]] = str(run.prompt_template_version or "")
+        last[key] = str(run.id)
+    return {str(row.id) for row in rows if following.get(str(row.id), "").endswith(_RETRY_SUFFIXES)}
 
 
 def _place_titles(
@@ -854,6 +958,7 @@ def _run_places(session: Session, events: Iterable[Mapping[str, Any]]) -> dict[s
             "title": None,
             "verdict": None,
             "reason_ro": "",
+            "named": False,
         }
         title = _SUMMARY_TITLE.search(summary)
         if title:
@@ -905,7 +1010,10 @@ def _placed_run_words(
 ) -> tuple[str, str]:
     """A finished run of one scene or one film, said with them; her review of a rewrite says
     whether it treats the finding («Directoarea a refuzat rescrierea scenei 4: nu tratează
-    constatarea»), which is what the office needs to hear before anything is bought."""
+    constatarea»), which is what the office needs to hear before anything is bought. Never
+    that anything «can be bought»: whether it is depends on money and the Owner's GPU hold,
+    which her review does not know (2026-10-12, review of a9f84ea: the register would have
+    said «se poate cumpăra» even while the Owner's «Oprește GPU acum» held)."""
     phrase, joiner, title = placed
     scene = place.get("scene")
     if task == "director_rewrite_review" and status == "reușită" and scene:
@@ -918,7 +1026,7 @@ def _placed_run_words(
         if verdict == "TREATS":
             said = _with_film(f"{name} a verificat rescrierea scenei {scene}", " din ", title)
             return (
-                said + ": tratează constatarea, se poate cumpăra.",
+                said + ": tratează constatarea.",
                 f"Rescrierea scenei {scene} tratează constatarea ✓",
             )
     by = f" (cu {model})" if model else ""
@@ -1069,6 +1177,8 @@ def _words(
         return _judged_words(payload, name, title)
     if kind == "media.director_scene_brief":
         return _brief_words(payload, name, film, editor)
+    if kind == _SECOND_LOOK_EVENT:
+        return _second_look_words(payload, name, title)
     if kind == "media.clip_qc_checked":
         attempt = payload.get("attempt")
         again = f" la încercarea {attempt}" if isinstance(attempt, int) and attempt > 1 else ""

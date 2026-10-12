@@ -433,6 +433,74 @@ def test_the_serial_motion_carries_the_ending_frame_and_the_rewrites_feeling():
     assert "Nadia calm, Sarah attentive." in felt and "Nadia composed, Sarah curious." not in felt
 
 
+#: Scene 3 of f06808c9 as its rewrites planned it (2026-10-12), its action at 45 words.
+LONG_ACTION = (
+    "Marcus opens both hands as if starting a pitch, the gesture stalls halfway and dies, he "
+    "restarts his sentence with a small head shake and glances at the window; Sarah holds "
+    "still, then lets one dry corner of her mouth move as she answers him."
+)
+LONG_ENDING = (
+    "Marcus's hands fallen to his sides, Sarah's dry half-smile just forming, both of them "
+    "facing the viewer across the desk"
+)
+
+
+def test_the_ending_survives_a_long_action_whose_later_moments_give_way():
+    """2026-10-12, f06808c9 scene 3: the rewrite's ending did not fit 95 words beside a
+    45-word action; the composer kept the action whole and dropped the ending, two rewrites
+    composed to the same prompt, and her review found «finalul cerut … a fost șters». The
+    ending is where the clip must arrive: the action's later moments give way first — the
+    person with the most moments loses their last one — never anyone's first moment."""
+    assert len(LONG_ACTION.split()) == 45
+    beat = {
+        "action": LONG_ACTION,
+        "ending_frame": LONG_ENDING,
+        "camera_move": "dolly in",
+        "seconds": 6.0,
+        "shot_size": "two_shot",
+        "in_frame": [{"name": "Marcus Writer"}, {"name": "Sarah Director"}],
+    }
+    whole = " ".join(
+        [
+            MOVE_SENTENCES["dolly in"],
+            LONG_ACTION,
+            f"The shot ends on {LONG_ENDING}.",
+            MOTION_CLOSING,
+        ]
+    )
+    assert len(whole.split()) > MOTION_WORDS[1], "the whole action and the ending do not fit"
+
+    prompt = compose_serial_motion(beat, {})
+
+    assert f"The shot ends on {LONG_ENDING}." in prompt, prompt
+    assert prompt.startswith(MOVE_SENTENCES["dolly in"]) and prompt.endswith(MOTION_CLOSING)
+    assert "Marcus opens both hands as if starting a pitch, the gesture stalls halfway" in prompt
+    assert "Sarah holds still, then lets one dry corner of her mouth move" in prompt
+    assert "restarts his sentence" not in prompt, "his last moment gave way first"
+    assert prompt.index("Sarah holds still") < prompt.index("The shot ends on")
+    assert len(prompt.split()) <= MOTION_WORDS[1]
+    assert [m for m, _ in camera_moves(prompt)] == ["dolly in"]
+    assert not _blocks(lint_motion_prompt(prompt, scene=3, model_id="LTX-2.5"))
+    # Two rewrites of the ending compose to two prompts (the same prompt twice was the bug).
+    other = compose_serial_motion(
+        {**beat, "ending_frame": "both of them facing the viewer, Marcus slumped in his chair"}, {}
+    )
+    assert other != prompt and "Marcus slumped in his chair." in other
+    # An action that fits beside its ending is said whole, as before.
+    short = compose_serial_motion({**beat, "action": BEAT["action"]}, {})
+    assert "then lays the pen flat" in short and "The shot ends on" in short
+
+
+def test_an_ending_that_fits_beside_nothing_leaves_the_action_whole():
+    """When not even each person's first moment fits beside the ending, the action is kept
+    whole, as before, and the ending is the one left out."""
+    ending = " ".join(["the desk lamp glowing over a stack of folders"] * 6)
+    beat = {"action": LONG_ACTION, "ending_frame": ending, "camera_move": "dolly in"}
+    prompt = compose_serial_motion(beat, {})
+    assert "The shot ends" not in prompt
+    assert "he restarts his sentence with a small head shake" in prompt
+
+
 # ------------------------------------------------------- 4. the Video Editor's brief
 
 

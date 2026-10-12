@@ -39,7 +39,7 @@ import json
 import logging
 import re
 import unicodedata
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from typing import Any
@@ -121,24 +121,55 @@ LESSON_MARKER = "prompt lesson:"
 #: films still failed QC: «DIRECTOAREA ACCEPTĂ DEFECTELE MICI! DAR TREBUIE SĂ ÎNȚELEAGĂ DE CE
 #: APAR DEFECTELE ȘI LA VIITOARELE PROMPTURI SĂ SE ASIGURE CĂ NU MAI SUNT!» A lesson is how the
 #: studio remembers why a defect happened; these numbers decide how it reaches the next prompt.
-#: How many lessons a writer is given, newest first, once near-duplicates are left out.
+#: How many lessons a writer is given: the confirmed ones first, then the unverified, each
+#: newest first, once near-duplicates are left out.
 LESSONS_GIVEN = 12
-#: How many of the newest lessons a new one is compared with before it is kept.
+#: How many of the newest live lessons of its scope a new one is compared with before it is
+#: kept, and how many of the newest live lessons are read at all.
 LESSONS_COMPARED = 40
+LESSONS_SCANNED = 200
 #: A lesson longer than this is a report, not a rule: refused whole, never cut (a cut rule
 #: says half of what it meant and is then obeyed as written).
 LESSON_MAX_CHARS = 400
-#: Two lessons sharing this share of the shorter one's words say the same thing
-#: (`lesson_overlap`): the newer is kept, the older is not given a second time.
+#: A new lesson whose content words are at least this share inside an older one says the
+#: same thing (`lesson_overlap`, measured from the NEW lesson's words): it replaces the older
+#: (a correction wins, a recurring lesson comes back to the top), never the reverse.
 LESSON_OVERLAP = 0.6
+#: A new lesson this much inside a LONGER older one says nothing the older does not: the
+#: older is said again (refreshed, back to the top) instead of being replaced by less.
+LESSON_CONTAINED = 0.9
+#: The kinds of film a lesson is for (review of a9f84ea, 2026-10-12): a factual film's «show
+#: people only from behind, small and distant» would have reached the serial's beat writer,
+#: whose fixed rule is «in frame, facing the viewer». A lesson learned on an episode of the
+#: serial is the serial's, one learned on a factual short the factual films', and "all" is
+#: both — as every lesson stored before scopes existed reads.
+SCOPE_SERIAL = "serial"
+SCOPE_FACTUAL = "factual"
+SCOPE_ALL = "all"
+LESSON_SCOPES = (SCOPE_SERIAL, SCOPE_FACTUAL, SCOPE_ALL)
+#: Said after a lesson whose fix no picture has proven yet (`confirm_prompt_lessons`).
+UNVERIFIED_SUFFIX = " (unverified)"
+#: Why an older lesson stopped being given: a newer one corrected it or said it again.
+SUPERSEDED_RO = "înlocuită de o lecție mai nouă"
+#: Why an unverified lesson was stored again as a confirmed one.
+CONFIRMED_RO = "confirmată: imaginea făcută după ea a trecut controlul"
+#: Why an unverified lesson was withdrawn, when its caller gives no words of its own.
+WITHDRAWN_RO = "retrasă: defectul a rămas în imaginea făcută după ea"
 #: What every writer of words a picture is made from is told about the lessons in its data.
 #: The data is inside the inert boundary, so the instructions name the lessons as rules, the
 #: way the serial brief names its series_look (2026-10-12: the lessons were sent as one more
-#: data field nobody named, and the first to be dropped when the payload was too long).
+#: data field nobody named, and the first to be dropped when the payload was too long). A
+#: lesson never overrides the brief's fixed rules (review of a9f84ea: a lesson learned on one
+#: kind of film can contradict the other kind's look); the writer decides where one applies.
 LESSONS_RULE = (
     "The studio's lessons from earlier defects are rules: follow every one. They are given "
     "first in the data below as lessons; each was learned from a picture that failed quality "
-    "control, and words that break one make the same defect again and pay for it twice.\n"
+    "control, and words that break one make the same defect again and pay for it twice. A "
+    'lesson marked "(unverified)" comes from the newest defects and no picture has proven '
+    "its fix yet: follow it too, unless a confirmed lesson says otherwise. A lesson never "
+    "overrides this brief's fixed rules (the look it gives, who faces the viewer and how, the "
+    "visual bible, no writing in the picture): where one contradicts them, the brief wins and "
+    "that lesson does not apply here.\n"
 )
 
 
@@ -1006,8 +1037,9 @@ def build_visual_bible(
         editor_id = editor.id if editor else None
         # The bible's words open every prompt of the film: a lesson about how a model reads
         # them (a code in capitals, a hex colour, a light that contradicts the place) is the
-        # bible's to follow too, not only the shot plan's (2026-10-12).
-        lessons = prompt_lessons(session)
+        # bible's to follow too, not only the shot plan's (2026-10-12) — the lessons of its
+        # kind of film only (a serial's «facing the viewer» is not a factual film's rule).
+        lessons = prompt_lessons(session, scope=_scope_of(bool(facts.get("serial"))))
 
     bible: VisualBible | None = None
     run_id = None
@@ -1115,7 +1147,10 @@ def write_shot_prompts(
         facts = _film_facts(session, board)
         editor = agent_for_role(session, PROMPT_ROLE)
         editor_id = editor.id if editor else None
-        lessons = prompt_lessons(session)
+        # The lessons of this kind of film (review of a9f84ea, 2026-10-12): a factual short's
+        # «show people only from behind» never reaches the serial's beats, whose people face
+        # the viewer, and the serial's lessons never reach a factual film's shots.
+        lessons = prompt_lessons(session, scope=_scope_of(bool(facts.get("serial"))))
     serial = bool(facts.get("serial"))
     # An episode of the serial does not decide a look: it has the series' one, read from the
     # Owner's proposal and written onto the storyboard every time, never asked of a model.
@@ -1900,13 +1935,79 @@ _ENDING_PREPOSITION = re.compile(r"^(?:on|with|at|in|as)\b", re.IGNORECASE)
 _POSSESSIVE = re.compile(r"['’]s$")
 
 
+def _action_moments(action: str) -> list[list[str]]:
+    """A serial beat's action as each person's clause («;») cut into its moments, in order:
+    a clause's comma that opens a new moment (`_first_moment`) begins the next one."""
+    clauses: list[list[str]] = []
+    for clause in re.split(r";\s*", " ".join(str(action or "").split()).rstrip(". ")):
+        rest = clause.strip()
+        moments: list[str] = []
+        while rest:
+            head = _first_moment(rest)
+            if not head:
+                break
+            moments.append(head)
+            rest = rest[len(head) :].lstrip(" ,")
+        if moments:
+            clauses.append(moments)
+    return clauses
+
+
+def _shorter_actions(action: str) -> list[str]:
+    """The action said with fewer of its later moments, longest first: one later moment
+    taken off at a time — from the person with the most left, the later person on a tie —
+    never anyone's first moment; then each person's first moment alone (`_still_moment`)."""
+    clauses = _action_moments(action)
+    found: list[str] = []
+    while clauses and any(len(moments) > 1 for moments in clauses):
+        most = max(len(moments) for moments in clauses)
+        cut = max(index for index, moments in enumerate(clauses) if len(moments) == most)
+        clauses[cut] = clauses[cut][:-1]
+        said = "; ".join(
+            ", ".join(_clean_cut(moment) for moment in moments if _clean_cut(moment))
+            for moments in clauses
+        )
+        found.append(_sentence(said))
+    first = _still_moment(action)
+    if first:
+        found.append(_sentence(first))
+    return [said for index, said in enumerate(found) if said and said not in found[:index]]
+
+
+def _action_for_ending(raw: str, action: str, kept: tuple[str, ...]) -> str:
+    """The action as it may be said beside the shot's ending and its move: whole when they
+    fit the motion prompt's word budget and the vendor cap together, else with its later
+    moments left out, down to each person's first moment, before the ending would be.
+
+    2026-10-12, f06808c9 scene 3: the rewrite's ending («Marcus's hands fallen to his sides,
+    Sarah's dry half-smile just forming») and a 45-word action did not fit 95 words together;
+    the composer kept the action whole and dropped the ending, two rewrites composed to the
+    same prompt, and her review found «finalul cerut … a fost șters». The ending is where the
+    clip must arrive, and the moments before it are what the clip can reach on its own: when
+    one of them has to go, a later moment goes first. When not even the first moments fit
+    beside the ending, the action is kept whole, as before, and the ending is left out."""
+    fixed = [*kept, lint.MOTION_CLOSING]
+
+    def fits(said: str) -> bool:
+        whole = " ".join([*fixed, said])
+        return (
+            len(whole.split()) <= MOTION_MAX_WORDS
+            and lint.utf16_units(whole) <= lint.DEFAULT_PROMPT_MAX_UTF16
+        )
+
+    if not action or fits(action):
+        return action
+    return next((said for said in _shorter_actions(raw) if fits(said)), action)
+
+
 def compose_serial_motion(package: dict[str, Any], look: dict[str, Any]) -> str:
     """The movement of a serial shot: the shot's own camera move (``camera_move``, a held
     camera when none) with its path and tempo, the beat's whole action as movement (its
     chain of moments included: a still is one moment, a clip is the chain), where the shot
-    ends (``ending_frame``, since 2026-10-12), the people's faces kept, the life of their
-    bodies and of the room, the feeling, a second beat of camera on a beat of
-    TWO_BEAT_SECONDS or more, and the closing every motion prompt carries.
+    ends (``ending_frame``, since 2026-10-12; when the two do not fit together, the action's
+    later moments give way before the ending does, `_action_for_ending`), the people's faces
+    kept, the life of their bodies and of the room, the feeling, a second beat of camera on a
+    beat of TWO_BEAT_SECONDS or more, and the closing every motion prompt carries.
 
     The feeling is ``motion_emotion`` when the Director's motion rewrite gave one
     (`scene_rewrite`: the still is composed from ``emotion`` too, so a rewrite of the
@@ -1944,8 +2045,13 @@ def compose_serial_motion(package: dict[str, Any], look: dict[str, Any]) -> str:
         )
     move = str(package.get("camera_move") or "static")
     two_beats = move != "static" and _seconds_of(package) >= TWO_BEAT_SECONDS
+    move_sentence = MOVE_SENTENCES.get(move, MOVE_SENTENCES["static"])
+    if ending_sentence:
+        action = _action_for_ending(
+            str(package.get("action") or ""), action, (move_sentence, ending_sentence)
+        )
     items = [
-        (0, 0, MOVE_SENTENCES.get(move, MOVE_SENTENCES["static"])),
+        (0, 0, move_sentence),
         (1, 1, action),
         (2, 2, ending_sentence),
         (3, 3, SERIAL_FACES_SENTENCE),
@@ -2988,6 +3094,12 @@ def _run(
 #: The words two lessons are compared by: letters and digits, accents taken off, lower case.
 _LESSON_WORD = re.compile(r"[a-z0-9]+")
 #: Words that say nothing about a defect: two lessons do not repeat each other by sharing them.
+#: «unverified» is what `prompt_lessons` says after an unproven lesson, so a lesson read back
+#: from it compares as written. The last two lines are the scaffold every picture lesson is
+#: written in (review of a9f84ea,
+#: 2026-10-12): any two lessons share «camera», «prompt», «clip» or «scene» whatever they
+#: mean, and that shared scaffold let «Keep the camera static.» pass for the lesson that
+#: corrected it.
 _LESSON_FILLER = frozenset(
     {
         "the", "and", "for", "with", "that", "this", "are", "was", "were", "not", "but", "its",
@@ -2995,6 +3107,9 @@ _LESSON_FILLER = frozenset(
         "when", "then", "than", "who", "what", "which", "they", "them", "there", "every",
         "any", "all", "each", "never", "only", "also", "must", "should", "will", "can",
         "does", "did", "out", "over", "under", "same", "too", "very", "more", "less", "own",
+        "unverified",
+        "model", "prompt", "still", "clip", "motion", "picture", "image", "scene", "shot",
+        "frame", "describe", "camera", "movement",
     }
 )  # fmt: skip
 #: An id in a lesson: a whole UUID, or eight or more hexadecimal characters that may be the
@@ -3004,70 +3119,282 @@ _LESSON_UUID = re.compile(
     r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.IGNORECASE
 )
 _LESSON_HEX = re.compile(r"\b[0-9a-f]{8,32}\b", re.IGNORECASE)
+#: A scene or a shot named by its number, in English or Romanian, read on the lesson without
+#: its accents: «Scene 5 repeats the lab bench», «scenei 4», «shot 3», «scenes 1, 4» are notes
+#: on one film (review of a9f84ea, 2026-10-12). A length is not a number of a scene: «a shot
+#: 5 seconds long», «every shot 2-3 s» stay rules.
+_LESSON_SCENE_NUMBER = re.compile(
+    r"\b(?:scenes?|scena|scenei|scenele|scenelor|shots?|beats?|cadrul|cadrului|cadrele)"
+    r"\s*(?:no\.?|nr\.?|number|numarul|#)?\s*\d{1,3}\b"
+    r"(?!(?:\s*(?:-|to|or|sau|la)\s*\d+)?\s*"
+    r"(?:s|sec|secs|seconds?|secunde|%|px|mm|fps|frames?|cadre|x)\b)"
+)
+#: The head of a stored lesson after the marker: its scope, and «[?]» while no picture has
+#: proven it («prompt lesson: [serial][?] …»). A row written before scopes has neither and
+#: reads as "all", confirmed.
+_LESSON_PREFIX = re.compile(r"^\[(serial|factual|all)\]\s*(\[\?\])?\s*", re.IGNORECASE)
+
+
+def _plain(text: str) -> str:
+    """The text without accents, in lower case: how lessons are compared and read."""
+    return unicodedata.normalize("NFKD", str(text or "")).encode("ascii", "ignore").decode().lower()
+
+
+def _fold(word: str) -> str:
+    """A word's singular, as two lessons said in other words should match («stills», «still»)."""
+    if len(word) > 4 and word.endswith("ies"):
+        return word[:-3] + "y"
+    if len(word) > 3 and word.endswith("s") and not word.endswith(("ss", "us", "is")):
+        return word[:-1]
+    return word
 
 
 def lesson_words(text: str) -> frozenset[str]:
-    """The words of a lesson that carry its meaning, normalised (accents, case, punctuation
-    and filler words taken out) so a lesson said again in other order still matches."""
-    plain = unicodedata.normalize("NFKD", str(text or "")).encode("ascii", "ignore").decode()
-    return frozenset(
-        word
-        for word in _LESSON_WORD.findall(plain.lower())
-        if len(word) > 2 and word not in _LESSON_FILLER
+    """The words of a lesson that carry its meaning, normalised (accents, case, punctuation,
+    plurals, filler and the scaffold of every picture lesson taken out) so a lesson said again
+    in other order still matches."""
+    found: set[str] = set()
+    for word in _LESSON_WORD.findall(_plain(text)):
+        if len(word) <= 2 or word in _LESSON_FILLER:
+            continue
+        folded = _fold(word)
+        if folded not in _LESSON_FILLER:
+            found.add(folded)
+    return frozenset(found)
+
+
+def lesson_overlap(a: str, b: str) -> float:
+    """How much of lesson ``a`` lesson ``b`` already says: the share of ``a``'s content words
+    found in ``b`` (1.0 when ``a`` is ``b`` said again or a part of it, 0.0 when they share
+    nothing). Measured from the NEW lesson (``a``): a short older rule that shares two words
+    with a longer correction does not say the correction (review of a9f84ea, 2026-10-12: the
+    shorter one's share let «Keep the camera static.» block the lesson that corrected it).
+
+    A lesson with no meaningful words matches only a lesson that is the same text."""
+    ours, theirs = lesson_words(a), lesson_words(b)
+    if not ours:
+        same = " ".join(_plain(a).split()) == " ".join(_plain(b).split())
+        return 1.0 if same else 0.0
+    return len(ours & theirs) / len(ours)
+
+
+def _scope_of(serial: bool) -> str:
+    return SCOPE_SERIAL if serial else SCOPE_FACTUAL
+
+
+def _checked_scope(scope: str) -> str:
+    said = str(scope or "").strip().lower()
+    if said not in LESSON_SCOPES:
+        raise ValueError(f"A prompt lesson's scope is one of {LESSON_SCOPES}, not {scope!r}")
+    return said
+
+
+def lesson_scope(session: Session, storyboard_id: str | None) -> str:
+    """The scope a lesson learned on this film is kept under: "serial" for an episode of the
+    office serial, "factual" for any other film, "all" when the film is not found."""
+    board = session.get(Storyboard, storyboard_id) if storyboard_id else None
+    if board is None:
+        return SCOPE_ALL
+    return _scope_of(_is_serial(board, session.get(ScriptDraft, board.script_draft_id)))
+
+
+@dataclass(frozen=True)
+class _StoredLesson:
+    """One lesson row as the store reads it: its text, scope, whether it is proven yet."""
+
+    id: str
+    text: str
+    scope: str
+    provisional: bool
+    source_id: str | None
+    created_at: str
+
+
+def _read_lesson(row: Any) -> _StoredLesson | None:
+    body = str(row.content or "")[len(LESSON_MARKER) :].strip()
+    found = _LESSON_PREFIX.match(body)
+    scope, provisional = SCOPE_ALL, False
+    if found:
+        scope, provisional = found.group(1).lower(), bool(found.group(2))
+        body = body[found.end() :].strip()
+    if not body:
+        return None
+    return _StoredLesson(
+        id=str(row.id),
+        text=body,
+        scope=scope,
+        provisional=provisional,
+        source_id=str(row.source_id) if row.source_id else None,
+        created_at=str(row.created_at or ""),
     )
 
 
-def lesson_overlap(first: str, second: str) -> float:
-    """How much two lessons say the same thing: the share of the shorter one's words the
-    other has too (1.0 when one is the other said again, 0.0 when they share nothing).
-
-    Two lessons with no meaningful words match only when they are the same text."""
-    ours, theirs = lesson_words(first), lesson_words(second)
-    if not ours or not theirs:
-        same = " ".join(str(first).lower().split()) == " ".join(str(second).lower().split())
-        return 1.0 if same else 0.0
-    return len(ours & theirs) / min(len(ours), len(theirs))
+def _lesson_content(text: str, scope: str, provisional: bool) -> str:
+    return f"{LESSON_MARKER} [{scope}]{'[?]' if provisional else ''} {text}"
 
 
-def _newest_lessons(session: Session, count: int) -> list[str]:
-    """The newest ``count`` live lessons as written, newest first."""
+def _lesson_rows(session: Session, *, live: bool = True, count: int | None = None) -> Any:
     from app.agents.models import MemoryRecord  # noqa: PLC0415
 
-    rows = session.scalars(
-        select(MemoryRecord.content)
+    query = select(MemoryRecord).where(
+        MemoryRecord.memory_class == "STRATEGY",
+        MemoryRecord.content.like(f"{LESSON_MARKER}%"),
+    )
+    if live:
+        query = query.where(MemoryRecord.invalidated_at.is_(None))
+    query = query.order_by(MemoryRecord.created_at.desc(), MemoryRecord.id.desc())
+    if count is not None:
+        query = query.limit(count)
+    return session.scalars(query)
+
+
+def _live_lessons(session: Session, scopes: set[str] | None = None) -> list[_StoredLesson]:
+    """The newest `LESSONS_SCANNED` live lessons, newest first, of ``scopes`` (all if None)."""
+    lessons = (_read_lesson(row) for row in _lesson_rows(session, count=LESSONS_SCANNED))
+    return [
+        lesson
+        for lesson in lessons
+        if lesson is not None and (scopes is None or lesson.scope in scopes)
+    ]
+
+
+def _lesson_stamp(session: Session) -> str:
+    """A moment later than every lesson row's own, written with its microseconds: the store
+    orders lessons by it, and a lesson that replaced another carries the moment the other was
+    retired (`withdraw_prompt_lessons` gives the older back by it). Two lessons recorded in
+    one tick of the clock would otherwise be newest in no defined order."""
+    from datetime import UTC, datetime, timedelta  # noqa: PLC0415
+
+    from app.agents.models import MemoryRecord  # noqa: PLC0415
+
+    now = datetime.now(UTC)
+    newest = session.scalar(
+        select(MemoryRecord.created_at)
         .where(
             MemoryRecord.memory_class == "STRATEGY",
             MemoryRecord.content.like(f"{LESSON_MARKER}%"),
-            MemoryRecord.invalidated_at.is_(None),
         )
         .order_by(MemoryRecord.created_at.desc())
-        .limit(count)
+        .limit(1)
     )
-    lessons = (str(content)[len(LESSON_MARKER) :].strip() for content in rows)
-    return [lesson for lesson in lessons if lesson]
+    try:
+        last = datetime.fromisoformat(str(newest)) if newest else None
+    except ValueError:
+        last = None
+    if last is not None and last.tzinfo is not None and last >= now:
+        now = last + timedelta(microseconds=1)
+    return now.isoformat(timespec="microseconds")
 
 
-def prompt_lessons(session: Session, limit: int = LESSONS_GIVEN) -> list[str]:
-    """What the studio has learned about how its picture models read instructions: the newest
-    ``limit`` lessons, newest first, each said once.
+def _retire(session: Session, lesson: _StoredLesson, reason: str, stamp: str) -> None:
+    from app.agents.memory import invalidate  # noqa: PLC0415
+
+    row = invalidate(session, lesson.id, reason)
+    row.invalidated_at = stamp
+
+
+def _store_lesson(
+    session: Session,
+    text: str,
+    scope: str,
+    provisional: bool,
+    source_id: str | None,
+    stamp: str,
+) -> bool:
+    stored = remember(
+        session,
+        memory_class="STRATEGY",
+        content=_lesson_content(text, scope, provisional),
+        source_type="run" if source_id else "system",
+        source_id=source_id,
+        agent_id=None,
+    )
+    if stored is None:
+        return False
+    stored.created_at = stamp
+    session.flush()
+    return True
+
+
+def prompt_lessons(
+    session: Session, limit: int = LESSONS_GIVEN, *, scope: str | None = None
+) -> list[str]:
+    """What the studio has learned about how its picture models read instructions, for the
+    writers of ``scope`` ("serial" or "factual", each with the "all" lessons; None: every
+    scope): the confirmed lessons first, then the unverified ones (said with
+    `UNVERIFIED_SUFFIX`), each newest first, each said once, ``limit`` in all.
 
     Written after a picture failed quality control and the Director understood why: if a
     wording keeps producing the wrong camera move, a stacked still or lettering on a ledger,
     that is a fact about the model, and every next prompt must know it (2026-10-12, the Owner:
     «trebuie să înțeleagă de ce apar defectele și la viitoarele prompturi să se asigure că nu
-    mai sunt»). A lesson that repeats a newer one (`lesson_overlap` at least `LESSON_OVERLAP`)
-    is left out, so twelve places hold twelve different rules, not one rule twelve times.
+    mai sunt»). Of two lessons that say the same thing (`lesson_overlap` at least
+    `LESSON_OVERLAP` either way) only the newer is given — a narrower lesson that corrects a
+    studio-wide one is given in its place to its own kind of film — so twelve places hold
+    twelve different rules, not one rule twelve times.
     """
-    kept: list[str] = []
     if limit <= 0:
-        return kept
-    for lesson in _newest_lessons(session, max(limit * 4, LESSONS_COMPARED)):
-        if any(lesson_overlap(lesson, newer) >= LESSON_OVERLAP for newer in kept):
+        return []
+    scopes = None if scope is None else {_checked_scope(scope), SCOPE_ALL}
+    kept: list[_StoredLesson] = []
+    for lesson in _live_lessons(session, scopes):
+        if any(
+            lesson_overlap(newer.text, lesson.text) >= LESSON_OVERLAP
+            or lesson_overlap(lesson.text, newer.text) >= LESSON_OVERLAP
+            for newer in kept
+        ):
             continue
         kept.append(lesson)
-        if len(kept) >= limit:
-            break
-    return kept
+    ordered = [item for item in kept if not item.provisional] + [
+        item for item in kept if item.provisional
+    ]
+    return [item.text + (UNVERIFIED_SUFFIX if item.provisional else "") for item in ordered[:limit]]
+
+
+def _title_words(title: str) -> list[str]:
+    said = " ".join(str(title or "").split())
+    if said.lower().startswith("storyboard:"):
+        said = said.split(":", 1)[1]
+    return _LESSON_WORD.findall(_plain(said))
+
+
+def _title_named(text: str, titles: Iterable[str]) -> str | None:
+    """The title of a film the lesson names: three of the title's words in a row, two of
+    them words of meaning («the zero script» of «The Zero Script Club»). A title of fewer
+    than three words is not looked for: «Higgs» alone is a word a rule may use."""
+    said = f" {' '.join(_LESSON_WORD.findall(_plain(text)))} "
+    for title in titles:
+        words = _title_words(title)
+        for start in range(len(words) - 2):
+            window = words[start : start + 3]
+            meaningful = [w for w in window if len(w) > 2 and w not in _LESSON_FILLER]
+            if len(meaningful) >= 2 and f" {' '.join(window)} " in said:
+                return " ".join(str(title).split()).removeprefix("Storyboard:").strip()
+    return None
+
+
+def lesson_is_general(text: str, titles: Iterable[str] = ()) -> str | None:
+    """Why ``text`` is not a rule for every next prompt, in words; None when it is one.
+
+    Not a rule: an empty lesson; one longer than `LESSON_MAX_CHARS` (a report, refused whole
+    and never cut: a cut rule is obeyed as written); one that names a record by its whole id;
+    one that names a scene or a shot by its number («Scene 5 repeats the lab bench» is a note
+    on one film, and «scene 5» in a prompt is read literally); one that names a film of
+    ``titles`` (2026-10-12, review of a9f84ea: the Director's picture note, stored bare, made
+    one film's scene a rule for every film)."""
+    said = " ".join(str(text or "").split())
+    if not said:
+        return "lecția e goală"
+    if len(said) > LESSON_MAX_CHARS:
+        return f"lecția are peste {LESSON_MAX_CHARS} de caractere: e un raport, nu o regulă"
+    if _LESSON_UUID.search(said):
+        return "lecția numește o înregistrare după id; nu e o regulă pentru orice prompt"
+    if _LESSON_SCENE_NUMBER.search(_plain(said)):
+        return "lecția numește o scenă sau un cadru după număr; nu e o regulă pentru orice prompt"
+    title = _title_named(said, titles)
+    if title:
+        return f"lecția numește filmul «{title}»; nu e o regulă pentru orice prompt"
+    return None
 
 
 def _names_an_id(session: Session, text: str) -> bool:
@@ -3085,37 +3412,156 @@ def _names_an_id(session: Session, text: str) -> bool:
     return False
 
 
-def record_prompt_lesson(session: Session, lesson: str, *, source_id: str | None = None) -> bool:
-    """Keep one lesson about prompting, studio-wide, with where it came from.
+def lesson_refusal(session: Session, lesson: str) -> str | None:
+    """Why `record_prompt_lesson` would refuse ``lesson``, in words; None when it would keep
+    it: `lesson_is_general` against every storyboard's title, and the head of a storyboard's
+    id («f06808c9»)."""
+    said = " ".join(str(lesson or "").split())
+    titles = [str(title) for title in session.scalars(select(Storyboard.title)) if title]
+    why = lesson_is_general(said, titles)
+    if why:
+        return why
+    if _names_an_id(session, said):
+        return "lecția numește un film după id; nu e o regulă pentru orice prompt"
+    return None
 
-    Returns True when it was kept. Refused (False): an empty lesson; one longer than
-    `LESSON_MAX_CHARS` once its spaces are trimmed (a report, not a rule, and never cut: a cut
-    rule is obeyed as written); one that names a storyboard by its id (a rule for every next
-    film cannot be about one film, and an id in a prompt is read literally by the picture
-    model, as the Nepal bible's codes were). Skipped (False): a lesson that says again what one
-    of the newest `LESSONS_COMPARED` already says (`lesson_overlap` at least `LESSON_OVERLAP`),
-    so the same defect does not fill the twelve places writers are given.
+
+def record_prompt_lesson(
+    session: Session,
+    lesson: str,
+    *,
+    source_id: str | None = None,
+    scope: str = SCOPE_ALL,
+    provisional: bool = False,
+) -> bool:
+    """Keep one lesson about prompting for every next film of ``scope``, with where it came
+    from (``source_id``: the run that learned it, by which `confirm_prompt_lessons` and
+    `withdraw_prompt_lessons` find it). ``provisional``: no picture has proven it yet.
+
+    Refused (False): what `lesson_refusal` refuses — empty, over `LESSON_MAX_CHARS`, a scene
+    or shot by its number, a storyboard's id or title. Otherwise the lesson is compared with
+    the newest `LESSONS_COMPARED` live lessons of its scope and of "all" (2026-10-12, review of
+    a9f84ea: the older lesson used to win, so «Keep the camera static.» kept out the lesson
+    that corrected it, and a lesson learned again never came back into the twelve given):
+
+    - none says it (`lesson_overlap` of the new one under `LESSON_OVERLAP`): it is stored;
+    - the closest one says it all (at least `LESSON_CONTAINED`): the lesson is learned again
+      and stored as the newest (refreshed) — in the older words when they are longer or reach
+      more films ("all"), proven if either was;
+    - else the new one SUPERSEDES the closest (a correction): that one is retired
+      (`SUPERSEDED_RO`) and the new text stored. A studio-wide ("all") lesson corrected by a
+      narrower one stays for the other kind of film, and `prompt_lessons` gives the correction
+      in its place to its own.
+
+    Returns True when a row was stored or refreshed. Inside the caller's transaction.
     """
+    scope = _checked_scope(scope)
     text = " ".join(str(lesson or "").split())
-    if not text or len(text) > LESSON_MAX_CHARS:
-        logger.info("prompt_lesson_refused", extra={"chars": len(text)})
+    why = lesson_refusal(session, text)
+    if why:
+        logger.info("prompt_lesson_refused", extra={"reason": why, "chars": len(text)})
         return False
-    if _names_an_id(session, text):
-        logger.info("prompt_lesson_refused", extra={"reason": "names an id"})
-        return False
-    for known in _newest_lessons(session, LESSONS_COMPARED):
-        if lesson_overlap(text, known) >= LESSON_OVERLAP:
-            logger.info("prompt_lesson_known", extra={"source_id": source_id})
-            return False
-    stored = remember(
-        session,
-        memory_class="STRATEGY",
-        content=f"{LESSON_MARKER} {text}",
-        source_type="run" if source_id else "system",
-        source_id=source_id,
-        agent_id=None,
+    known = _live_lessons(session, {scope, SCOPE_ALL})[:LESSONS_COMPARED]
+    closest: _StoredLesson | None = None
+    share = 0.0
+    for older in known:  # newest first: on a tie the newest is the one replaced
+        said = lesson_overlap(text, older.text)
+        if said >= LESSON_OVERLAP and said > share:
+            closest, share = older, said
+    stamp = _lesson_stamp(session)
+    if closest is None:
+        return _store_lesson(session, text, scope, provisional, source_id, stamp)
+    if share >= LESSON_CONTAINED:
+        # Nothing new in it: the older lesson is learned again and comes back to the top, in
+        # its own words when they say more or reach more films, proven if either was.
+        longer = len(lesson_words(closest.text)) > len(lesson_words(text))
+        said = closest.text if longer or closest.scope != scope else text
+        _retire(session, closest, SUPERSEDED_RO, stamp)
+        logger.info("prompt_lesson_refreshed", extra={"source_id": source_id})
+        return _store_lesson(
+            session,
+            said,
+            closest.scope,
+            closest.provisional and provisional,
+            source_id or closest.source_id,
+            stamp,
+        )
+    if closest.scope == scope:
+        _retire(session, closest, SUPERSEDED_RO, stamp)
+    logger.info("prompt_lesson_supersedes", extra={"source_id": source_id})
+    return _store_lesson(session, text, scope, provisional, source_id, stamp)
+
+
+def _provisional_from(session: Session, source_ids: Iterable[Any]) -> list[_StoredLesson]:
+    """The live unverified lessons stored with one of ``source_ids``, oldest first."""
+    from app.agents.models import MemoryRecord  # noqa: PLC0415
+
+    wanted = sorted({str(source) for source in source_ids if source})
+    if not wanted:
+        return []
+    rows = session.scalars(
+        select(MemoryRecord)
+        .where(
+            MemoryRecord.memory_class == "STRATEGY",
+            MemoryRecord.content.like(f"{LESSON_MARKER}%"),
+            MemoryRecord.invalidated_at.is_(None),
+            MemoryRecord.source_id.in_(wanted),
+        )
+        .order_by(MemoryRecord.created_at, MemoryRecord.id)
     )
-    return stored is not None
+    lessons = (_read_lesson(row) for row in rows)
+    return [lesson for lesson in lessons if lesson is not None and lesson.provisional]
+
+
+def confirm_prompt_lessons(session: Session, source_ids: Iterable[Any]) -> int:
+    """The unverified lessons stored with one of ``source_ids`` become confirmed: a picture
+    made from the rewrite that taught them passed with every finding gone. Each is stored
+    again without its «[?]» (`CONFIRMED_RO` on the old row). Returns how many.
+
+    2026-10-12 (review of a9f84ea): a lesson was never verified and never retired — the
+    review's guess of a cause was a rule for every next film from the moment it was said."""
+    confirmed = 0
+    for lesson in _provisional_from(session, source_ids):
+        stamp = _lesson_stamp(session)
+        _retire(session, lesson, CONFIRMED_RO, stamp)
+        _store_lesson(session, lesson.text, lesson.scope, False, lesson.source_id, stamp)
+        confirmed += 1
+    return confirmed
+
+
+def withdraw_prompt_lessons(session: Session, source_ids: Iterable[Any], reason: str) -> int:
+    """The unverified lessons stored with one of ``source_ids`` are withdrawn (``reason``, or
+    `WITHDRAWN_RO`): the picture made after them still shows the finding, so what they said
+    was not why the defect appeared. A lesson one of them had replaced is given back (stored
+    again as it was); a confirmed lesson is never withdrawn by this. Returns how many."""
+    from app.agents.models import MemoryRecord  # noqa: PLC0415
+
+    withdrawn = 0
+    for lesson in _provisional_from(session, source_ids):
+        stamp = _lesson_stamp(session)
+        _retire(session, lesson, " ".join(str(reason or "").split()) or WITHDRAWN_RO, stamp)
+        withdrawn += 1
+        replaced = session.scalars(
+            select(MemoryRecord).where(
+                MemoryRecord.memory_class == "STRATEGY",
+                MemoryRecord.content.like(f"{LESSON_MARKER}%"),
+                MemoryRecord.invalidation_reason == SUPERSEDED_RO,
+                MemoryRecord.invalidated_at == lesson.created_at,
+            )
+        ).all()
+        for row in replaced:
+            older = _read_lesson(row)
+            if older is None or lesson_overlap(lesson.text, older.text) >= LESSON_CONTAINED:
+                continue  # the same lesson learned again: withdrawn with it
+            _store_lesson(
+                session,
+                older.text,
+                older.scope,
+                older.provisional,
+                older.source_id,
+                _lesson_stamp(session),
+            )
+    return withdrawn
 
 
 def production_package(engine: Engine, storyboard_id: str) -> dict[str, Any]:
