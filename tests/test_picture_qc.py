@@ -1107,10 +1107,12 @@ def test_the_still_verdict_has_no_field_that_passes_by_default():
     # one_picture and shows_scene are asked of the model like every other field (the report a
     # model's answer is read into refuses an entry without them, below); only a verdict built
     # in code, the stills step's fakes written before the questions, may leave them out.
+    # `fixes` (2026-10-12) is asked only of a still whose scene was rewritten, and then the
+    # report bound to its items requires every one (tests/test_fix_is_verified.py).
     assert all(
         field.is_required()
         for name, field in StillVerdict.model_fields.items()
-        if name not in ("one_picture", "shows_scene")
+        if name not in ("one_picture", "shows_scene", "fixes")
     )
     assert set(StillVerdict.model_fields) >= {
         "faces_visible",

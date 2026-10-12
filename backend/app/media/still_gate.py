@@ -111,6 +111,17 @@ up to 68 credits a second. So the still is checked first, twice, at no credit co
    2026-10-09 it asks whether the still is ONE continuous photograph (one_picture), and tells
    the model a still is one moment, the shot's first frame: a plan that lists several
    moments is judged on its first, and a picture of several moments does not match it.
+3. The fix check (2026-10-12, `app.media.fix_check`). A still bought after the Director had
+   the scene's words rewritten carries what the rewrite was written to fix
+   (`StillPlan.must_fix`: her review's findings with the sentence that treats each, and the
+   film QC's words about the scene). The vision checklist answers, item by item, whether the
+   new still still shows the mistake, and a still that repeats one is refused here
+   («Imaginea repetă greșeala pe care rescrierea trebuia să o corecteze», violation
+   ``finding_persists``) before any clip is bought on it; another candidate that fixes
+   everything is chosen instead. The Owner, 16:50: «să se asigure că ce a fost greșit este
+   acum corectat. Nu să facă aceeași greșeală la nesfârșit!» — on f06808c9 scene 4 the
+   rewrite answered «two women face to face instead of a single on Nadia» in words, and only
+   the film's QC, after the money, looked for the two women again.
 
 Everything fails closed. A check that could not run is NOT_RUN, and a NOT_RUN of a
 required check blocks in PRODUCTION and warns in TEST — except the vision checklist, whose
@@ -232,6 +243,9 @@ POSITIVE_WORDS: dict[str, str] = {
     "plan": "the subject exactly as the scene's plan describes it",
     "technical": "natural anatomy, clean edges, clean texture",
     "bible": "every rule of the visual bible kept",
+    # A still that repeats what the rewrite was meant to correct (`StillPlan.must_fix`): the
+    # corrected words are already in the prompt; the re-roll leans on them.
+    "finding_persists": "the picture exactly as the scene's corrected words describe it",
 }
 
 _NONE_WORDS = frozenset(
@@ -257,9 +271,19 @@ class StillPlan:
     #: only against its prompt, so a still that matched a prompt which had lost the scene's
     #: subject was bought a clip for, assembled and failed — five paid rounds of scene 5 of
     #: «The Particle That Shouldn't Exist (And Briefly Didn't)».
+    #: Since the evening of 2026-10-12 the stills step gives the scriptwriter's own line here
+    #: (the package's ``writer_visual``), not ``visual_prompt``: the shot-prompt writer stores
+    #: the compiled still prompt there, so the «scene» shown was the plan again and
+    #: shows_scene could only repeat matches_plan (read on the database copy: equal on
+    #: 1c038a99 scene 5, aa170155 scene 1 and f06808c9 scene 4).
     scene_picture: str = ""
     narration: str = ""
     purpose: str = ""
+    #: What the scene's current words were rewritten to fix (`fix_check.open_findings`): each
+    #: {"finding", "expected"}. Empty when no rewrite is open, and then nothing about the
+    #: check changes. Otherwise the vision checklist answers each item (`picture_qc.judge_still`)
+    #: and a still that repeats one is refused (`decide`, ``finding_persists``).
+    must_fix: tuple[dict[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -289,6 +313,9 @@ class StillReport:
     unmeasured: tuple[str, ...]
     score: float
     measured: dict[str, Any] = field(default_factory=dict)
+    #: The vision checklist's answer to each `StillPlan.must_fix` item, in its order:
+    #: {"finding", "fixed", "seen"}; empty when nothing was asked (or nobody looked).
+    fixes: tuple[dict[str, Any], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -783,6 +810,42 @@ def _score(checks: Sequence[CheckResult], judgement: StillJudgement | None) -> f
     return round(score, 4)
 
 
+def _excerpt(text: Any, limit: int) -> str:
+    """At most ``limit`` characters of ``text``, cut at a word with an ellipsis."""
+    said = " ".join(str(text or "").split())
+    if len(said) <= limit:
+        return said
+    return said[: limit - 1].rsplit(" ", 1)[0].rstrip(",;:") + "…"
+
+
+def _fix_answers(plan: StillPlan, verdict: Any) -> list[dict[str, Any]]:
+    """The model's answer to each `StillPlan.must_fix` item, by its number (1-based), as
+    {"finding", "fixed", "seen"}: ``fixed`` True only when every answer for the item says so,
+    None when the item was not answered. Empty when nothing was asked."""
+    asked = tuple(getattr(plan, "must_fix", ()) or ())
+    if not asked:
+        return []
+    given: dict[int, list[Any]] = {}
+    for fix in getattr(verdict, "fixes", None) or []:
+        given.setdefault(int(fix.item), []).append(fix)
+    answers: list[dict[str, Any]] = []
+    for number, item in enumerate(asked, start=1):
+        finding = str((item or {}).get("finding") or "")
+        said = given.get(number) or []
+        if not said:
+            answers.append({"finding": finding, "fixed": None, "seen": ""})
+            continue
+        wrong = [fix for fix in said if not fix.fixed]
+        answers.append(
+            {
+                "finding": finding,
+                "fixed": not wrong,
+                "seen": str((wrong or said)[0].seen or ""),
+            }
+        )
+    return answers
+
+
 def decide(
     path: Path | str,
     plan: StillPlan,
@@ -796,6 +859,7 @@ def decide(
     warnings: list[str] = []
     violations: list[str] = []
     unmeasured: list[str] = []
+    fixes: list[dict[str, Any]] = []
     faces_found = False
     for check in checks:
         if (
@@ -830,6 +894,29 @@ def decide(
         unmeasured.append("vision")
     else:
         said = f"«{verdict.reason}»"
+        # First among the model's answers: the refusal's words land on the take's failure
+        # detail (500 characters), which the Director's ladder reads back by its phrases.
+        fixes = _fix_answers(plan, verdict)
+        for fix in fixes:
+            if fix["fixed"] is None:
+                # Only a verdict built in code can leave an item out: the report a model's
+                # answer is read into refuses it (`picture_qc.still_report_schema`).
+                reasons.append(
+                    "Modelul de vedere nu a spus dacă imaginea corectează greșeala "
+                    f"«{_excerpt(fix['finding'], 160)}»"
+                )
+                unmeasured.append("vision")
+            elif not fix["fixed"]:
+                # «nu arată ce cere scena» is the gate's content phrase
+                # (`scene_rewrite.CONTENT_REFUSAL_PHRASES`): when the scene reaches the
+                # Director's ladder it goes to her brief, never to the serial's re-roll of
+                # the same words (`scene_rewrite.refusal_kind`).
+                reasons.append(
+                    "Imaginea repetă greșeala pe care rescrierea trebuia să o corecteze: "
+                    f"«{_excerpt(fix['finding'], 160)}»; nu arată ce cere scena după rescriere"
+                    + (f" (se vede: {_excerpt(fix['seen'], 120)})" if fix["seen"] else "")
+                )
+                violations.append("finding_persists")
         if verdict.faces_visible:
             faces_found = True
             if plan.faces_forbidden:
@@ -893,6 +980,7 @@ def decide(
         unmeasured=tuple(dict.fromkeys(unmeasured)),
         score=0.0 if blocked else _score(checks, judgement),
         measured=measured,
+        fixes=tuple(fixes),
     )
 
 

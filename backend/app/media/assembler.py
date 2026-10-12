@@ -16105,6 +16105,7 @@ def _redo_still(
         scene_picture=getattr(scene, "picture", ""),
         narration=getattr(scene, "narration", ""),
         purpose=getattr(scene, "purpose", ""),
+        must_fix=getattr(scene, "must_fix", ()),  # 2026-10-12: the redo's still is fix-checked
     )
     work_dir = (storage_root or DEFAULT_STORAGE_ROOT) / storyboard_id / "stills"
     work_dir.mkdir(parents=True, exist_ok=True)

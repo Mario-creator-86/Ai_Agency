@@ -72,9 +72,17 @@ import tempfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictInt,
+    field_validator,
+    model_validator,
+)
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
@@ -1119,7 +1127,18 @@ def evaluate_pictures(
 
 STILL_TASK = "still_qc"
 #: v2 (2026-10-09): one_picture, and a still is judged as ONE moment, the shot's first frame.
-STILL_TEMPLATE_VERSION = "still-qc-v2"
+#: v3 (2026-10-12, evening): `scene_picture` is the scriptwriter's line (`writer_visual`), no
+#: longer the compiled prompt again, and a script's line describes a movement or several
+#: moments ("A slow drift through a dark particle-detector cavern…", "…dissolving into a
+#: glowing spiral of particles, then a vast laboratory complex…" on the database copy): the
+#: still is judged against its first moment, as against the plan's.
+STILL_TEMPLATE_VERSION = "still-qc-v3"
+#: The same, for a still bought after its scene's words were rewritten: it is also asked, item
+#: by item, whether each mistake the rewrite answered is gone (`StillPlan.must_fix`,
+#: `_FIXES_NOTE`). Only such a still is asked this way; any other is asked as above.
+STILL_FIX_TEMPLATE_VERSION = "still-qc-v3-fixes"
+#: The most `must_fix` items one look answers (`fix_check.MAX_ITEMS` gives at most 4).
+MAX_FIXES = 8
 #: The width the still is shown at. A 2K still (1530x2720) is scaled down to it.
 STILL_WIDTH = 1080
 #: The largest still read for judging; a vendor still is a few megabytes.
@@ -1143,6 +1162,22 @@ def _every_entry_answers(entries: Any, question: str) -> Any:
     ):
         raise ValueError(f"every entry must answer {question}")
     return entries
+
+
+class StillFix(BaseModel):
+    """The model's answer to one `StillPlan.must_fix` item: is the mistake the rewrite was
+    meant to correct gone from this still? ``item`` is the item's number as shown (1-based);
+    ``finding`` is replaced by the studio's own words for it once read (`judge_still`), so a
+    refusal quotes what quality control said, not the model's paraphrase."""
+
+    model_config = ConfigDict(extra="ignore")
+    item: StrictInt = Field(ge=1)
+    finding: str = Field(default="", max_length=300)
+    fixed: StrictBool
+    #: A few words on what the model sees where the mistake was.
+    seen: str = Field(min_length=1, max_length=300)
+    _clip_finding = field_validator("finding", mode="before")(clipped(300))
+    _clip_seen = field_validator("seen", mode="before")(clipped(300))
 
 
 class StillVerdict(BaseModel):
@@ -1171,18 +1206,67 @@ class StillVerdict(BaseModel):
     bible_violations: str = Field(min_length=1, max_length=300)
     verdict: StillAction
     reason: str = Field(min_length=1, max_length=300)
+    #: The answer to each `StillPlan.must_fix` item (2026-10-12). Asked only of a still whose
+    #: scene was rewritten, and then required for every item (`still_report_schema`); a still
+    #: with nothing to verify is asked nothing and reads none.
+    fixes: list[StillFix] = Field(default_factory=list, max_length=MAX_FIXES)
     _clip_violations = field_validator("bible_violations", mode="before")(clipped(300))
     _clip_reason = field_validator("reason", mode="before")(clipped(300))
 
 
 class StillJudgeReport(BaseModel):
     model_config = ConfigDict(extra="ignore")
+    #: How many `must_fix` items this report must answer for every still (`still_report_schema`).
+    #: 0: none were asked, and a ``fixes`` the model volunteers is not read, so a look with
+    #: nothing to verify validates exactly as it did before the question existed.
+    fixes_asked: ClassVar[int] = 0
     stills: list[StillVerdict] = Field(default_factory=list, max_length=4)
 
     @field_validator("stills", mode="before")
     @classmethod
     def _one_picture_answered(cls, value: Any) -> Any:
-        return _every_entry_answers(_every_entry_answers(value, ONE_PICTURE), SHOWS_SCENE)
+        value = _every_entry_answers(_every_entry_answers(value, ONE_PICTURE), SHOWS_SCENE)
+        if cls.fixes_asked or not isinstance(value, list):
+            return value
+        return [
+            {key: answer for key, answer in entry.items() if key != "fixes"}
+            if isinstance(entry, dict)
+            else entry
+            for entry in value
+        ]
+
+
+def still_report_schema(asked: int) -> type[StillJudgeReport]:
+    """The report a look is read into when it was asked about ``asked`` `must_fix` items:
+    every still must answer each of them by its number, fixed true or false with what it sees.
+    An answer that leaves one out is refused and asked again (`structured_run`), like an entry
+    without one_picture or shows_scene: silence never reads as «fixed»."""
+    if asked <= 0:
+        return StillJudgeReport
+
+    class FixesReport(StillJudgeReport):
+        fixes_asked: ClassVar[int] = asked
+
+        @model_validator(mode="after")
+        def _every_fix_answered(self) -> FixesReport:
+            if not self.stills:
+                # `read_structured` tries every «{» of the answer: the still's own entry,
+                # nested in the refused report, would otherwise validate as an empty report
+                # and read as «no answer for this scene» without the model being asked again.
+                raise ValueError(
+                    "the answer must carry the still's entry, with `fixes` for every must_fix item"
+                )
+            for entry in self.stills:
+                answered = {fix.item for fix in entry.fixes}
+                missing = [number for number in range(1, asked + 1) if number not in answered]
+                if missing:
+                    raise ValueError(
+                        f"the still of scene {entry.scene} must answer `fixes` for every "
+                        f"must_fix item: items {missing} are not answered"
+                    )
+            return self
+
+    return FixesReport
 
 
 @dataclass(frozen=True)
@@ -1218,7 +1302,9 @@ _STILL_INSTRUCTIONS = (
     "the narration spoken over it, under `scene_picture` and `narration`? The plan is how "
     "the still was asked for; the scene is what the film needs. A picture that matches the "
     "plan's words but shows another place, another object or none of the scene's subject "
-    "does not show the scene. When no scene picture is given, judge by the plan.\n"
+    "does not show the scene. The scene's written picture is the script's line and may "
+    "describe a movement or several moments: the still is its first moment, so judge it "
+    "against that moment. When no scene picture is given, judge by the plan.\n"
     "- look_ok: does it match the film's look (light, palette, grain)?\n"
     "- technical_ok: is it sharp where it should be, free of warped anatomy, smears, "
     "stripes or artefacts?\n"
@@ -1230,6 +1316,24 @@ _STILL_INSTRUCTIONS = (
     '"readable_text": false, "one_picture": true, "matches_plan": true, "shows_scene": true, '
     '"look_ok": true, "technical_ok": true, "bible_violations": "none", "verdict": '
     '"buy_motion", "reason": "one short sentence saying what you actually see"}}]}}\n'
+)
+
+#: Added to `_STILL_INSTRUCTIONS` only for a still with `must_fix` items (2026-10-12): the
+#: scene's words were rewritten to correct mistakes quality control found, and this look says
+#: whether the new picture still shows them, before any clip is bought on it.
+_FIXES_NOTE = (
+    "This still was bought after the scene's words were rewritten to correct mistakes quality "
+    "control found in the scene's earlier pictures. Each item under `must_fix` is one of them: "
+    "`finding` is what was wrong, `expected` the words that were written to correct it (empty "
+    "when only the finding is known). For EVERY item, look at this still and answer in the "
+    "still's `fixes`, by the item's number: fixed true only when the mistake is gone from this "
+    "picture and, when `expected` is given, the picture shows what it describes; fixed false "
+    "when the still shows the mistake again, even in part. An item about the movement or the "
+    "cut, which one still cannot show, is fixed true with seen saying so. `seen` is a few "
+    "words on what you see where the mistake was. A still with any item fixed false does not "
+    "get buy_motion.\n"
+    'Each entry then also carries: "fixes": [{"item": 1, "finding": "the finding in a few '
+    'words", "fixed": false, "seen": "what you see"}], one object per item.\n'
 )
 
 
@@ -1303,6 +1407,11 @@ def judge_still(
     Returns MEASURED with the verdict only when the model answered for exactly this scene
     with every field; anything else is NOT_RUN ("nu a fost privită"), which the stills gate
     treats as a block. Nothing here passes a still by silence.
+
+    A plan with `must_fix` items (2026-10-12, `fix_check.open_findings`) is shown them and
+    asked, per item, whether the mistake is gone (`_FIXES_NOTE`, STILL_FIX_TEMPLATE_VERSION);
+    the answer must cover every item (`still_report_schema`) and its ``fixes`` carry the
+    studio's words for each finding. A plan without them is asked exactly as before.
     """
     if registry is None or not registry.registered_ids():
         return _still_not_run("niciun furnizor de modele nu este înregistrat")
@@ -1317,19 +1426,38 @@ def judge_still(
             "imaginea nu a putut fi pregătită la 1080 px (lipsește codorul sau fișierul)",
             looked_by=looker_name,
         )
-    shown = {
+    # What the scene's words were rewritten to fix (`fix_check.open_findings`); empty for a
+    # still with nothing open, which is then asked exactly as before (STILL_TEMPLATE_VERSION).
+    must_fix = [
+        {
+            "finding": str((item or {}).get("finding") or ""),
+            "expected": str((item or {}).get("expected") or ""),
+        }
+        for item in (getattr(plan, "must_fix", ()) or ())
+    ][:MAX_FIXES]
+    shown: dict[str, Any] = {
         "scene": plan.scene,
         "plan": plan.still_prompt,
         "scene_picture": getattr(plan, "scene_picture", "") or "",
         "narration": getattr(plan, "narration", "") or "",
         "purpose": getattr(plan, "purpose", "") or "",
-        "look": plan.look_block,
-        "camera_move": plan.camera_move,
-        "faces_forbidden": plan.faces_forbidden,
-        "bible_rules": list(plan.bible_rules),
     }
-    prompt = _STILL_INSTRUCTIONS.format(scene=plan.scene) + wrap_in_inert_boundary(
-        json.dumps(shown, ensure_ascii=False)[:8000], "the-still"
+    if must_fix:
+        # Before the look and the rules: the shown JSON is cut at 8000 characters, and these
+        # items are what this look is for.
+        shown["must_fix"] = [{"item": number, **item} for number, item in enumerate(must_fix, 1)]
+    shown.update(
+        {
+            "look": plan.look_block,
+            "camera_move": plan.camera_move,
+            "faces_forbidden": plan.faces_forbidden,
+            "bible_rules": list(plan.bible_rules),
+        }
+    )
+    prompt = (
+        _STILL_INSTRUCTIONS.format(scene=plan.scene)
+        + (_FIXES_NOTE if must_fix else "")
+        + wrap_in_inert_boundary(json.dumps(shown, ensure_ascii=False)[:8000], "the-still")
     )
 
     from app.agents.structured import structured_run  # noqa: PLC0415
@@ -1340,12 +1468,20 @@ def judge_still(
         looker_id,
         STILL_TASK,
         prompt,
-        STILL_TEMPLATE_VERSION,
+        STILL_FIX_TEMPLATE_VERSION if must_fix else STILL_TEMPLATE_VERSION,
         correlation_id,
-        StillJudgeReport,
+        still_report_schema(len(must_fix)),
         '{"stills": [...]}',
-        summary=f"Mă uit la imaginea scenei {plan.scene} înainte să se cumpere mișcarea.",
-        max_tokens=800,
+        summary=(
+            f"Mă uit la imaginea scenei {plan.scene} înainte să se cumpere mișcarea"
+            + (
+                f" și verific dacă au dispărut greșelile pentru care scena a fost rescrisă "
+                f"({len(must_fix)})."
+                if must_fix
+                else "."
+            )
+        ),
+        max_tokens=800 + 150 * len(must_fix),
         temperature=0.1,
         extra={"images": [image]},
     )
@@ -1368,9 +1504,22 @@ def judge_still(
             looked_by=looker_name,
             width=STILL_WIDTH,
         )
+    verdict = entries[0]
+    if must_fix:
+        # The studio's own words for each item, not the model's echo of them; an item number
+        # beyond the list answers nothing.
+        verdict = verdict.model_copy(
+            update={
+                "fixes": [
+                    fix.model_copy(update={"finding": must_fix[fix.item - 1]["finding"][:300]})
+                    for fix in verdict.fixes
+                    if fix.item <= len(must_fix)
+                ]
+            }
+        )
     return StillJudgement(
         status="MEASURED",
-        verdict=entries[0],
+        verdict=verdict,
         detail_ro=entries[0].reason,
         run_id=run_id,
         looked_by=looker_name,

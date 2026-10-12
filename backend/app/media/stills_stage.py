@@ -146,6 +146,7 @@ from app.media.cost_plan import (
 )
 from app.media.disk import LOW_DISK, disk_refusal
 from app.media.faces import FaceCounter
+from app.media.fix_check import open_findings
 from app.media.mode_guard import PurchaseGuard, unasked_refusal
 from app.media.models import SceneTake, Storyboard, StoryboardScene
 from app.media.picture_qc import StillJudgement, judge_still
@@ -351,10 +352,14 @@ class _Scene:
     #: What the still must not become (`still_negative`), for the model's negative channel.
     negative: str = ""
     #: What the scene asks for beside its prompt — its written picture, the narration over
-    #: it, its purpose — for the gate's `shows_scene` question (`still_gate.StillPlan`).
+    #: it, its purpose — for the gate's `shows_scene` question (`still_gate.StillPlan`). The
+    #: written picture is the scriptwriter's line (`_scene_picture`), never the compiled prompt.
     picture: str = ""
     narration: str = ""
     purpose: str = ""
+    #: What the scene's current words were rewritten to fix (`fix_check.open_findings`), for
+    #: the gate to verify on every still bought for it (`still_gate.StillPlan.must_fix`).
+    must_fix: tuple[dict[str, str], ...] = ()
 
 
 @dataclass
@@ -387,6 +392,45 @@ def _usd_ro(amount: float) -> str:
 
 def _canonical(data: Any) -> str:
     return json.dumps(data, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+
+
+def _scene_picture(package: Mapping[str, Any], visual: str, words: str) -> str:
+    """The scene's written picture, for the gate's shows_scene: the scriptwriter's line
+    (``writer_visual``, kept on the package by the shot-prompt writer for the factual films and
+    the serial alike), else ``visual_prompt`` when it is not the still prompt itself, else
+    nothing (the gate then judges by the plan, as its instructions say).
+
+    2026-10-12, read on the database copy: ``visual_prompt`` equals the compiled still prompt
+    on 1c038a99 scene 5, aa170155 scene 1 and f06808c9 scene 4 (`prompt_agent` stores what it
+    composed there), so the «scene» the gate was shown was the plan again, and a prompt that
+    had lost the scene's subject — the detector cavern of 1c038a99 scene 5, whose writer's
+    line is «Return to the dark detector cavern from the opening shot…» — matched itself."""
+    writer = " ".join(str(package.get("writer_visual") or "").split())
+    if writer:
+        return writer
+    visual = " ".join(visual.split())
+    return visual if visual != " ".join(words.split()) else ""
+
+
+def _still_plan(scene: _Scene, *, faces_forbidden: bool, rules: tuple[str, ...]) -> StillPlan:
+    """What the gate judges one candidate of ``scene`` against: its words, look and move, the
+    bible, the scene itself (its written picture, narration and purpose) and what its words
+    were rewritten to fix. The one place a still's plan is built, for every still bought or
+    collected — the per-request path, the RunPod rounds and the scene redo — so none of them
+    can leave the fix check out."""
+    return StillPlan(
+        scene=scene.index,
+        still_prompt=scene.words,
+        camera_move=scene.camera_move,
+        faces_forbidden=faces_forbidden,
+        bible_rules=rules,
+        look_block=scene.look_block,
+        palette_words=_palette_words(scene.look_block),
+        scene_picture=scene.picture,
+        narration=scene.narration,
+        purpose=scene.purpose,
+        must_fix=scene.must_fix,
+    )
 
 
 def _read_scenes(engine: Engine, storyboard_id: str) -> tuple[dict[str, Any], list[_Scene]]:
@@ -442,10 +486,12 @@ def _read_scenes(engine: Engine, storyboard_id: str) -> tuple[dict[str, Any], li
                 reference=reference,
                 needs_reference=missing,
                 negative=still_negative(package, bible),
-                picture=" ".join(visual.split()),
+                picture=_scene_picture(package, visual, words),
                 narration=" ".join(str(row.voiceover_segment or "").split()),
                 purpose=str(row.story_purpose or ""),
             )
+            if kind == LIVE_KIND:
+                scene.must_fix = tuple(open_findings(session, storyboard_id, scene.index))
             if kind == LIVE_KIND and missing is None:
                 found = usable_take(
                     session, storyboard_id, scene.index, "still", [identity], statuses=("APPROVED",)
@@ -916,18 +962,7 @@ def _settle_pending(
         if take.status == "PAID" and take.path and Path(str(take.path)).is_file()
     ]
     if unjudged:
-        plan = StillPlan(
-            scene=scene.index,
-            still_prompt=scene.words,
-            camera_move=scene.camera_move,
-            faces_forbidden=faces_forbidden,
-            bible_rules=rules,
-            look_block=scene.look_block,
-            palette_words=_palette_words(scene.look_block),
-            scene_picture=scene.picture,
-            narration=scene.narration,
-            purpose=scene.purpose,
-        )
+        plan = _still_plan(scene, faces_forbidden=faces_forbidden, rules=rules)
         verdicts = [
             (
                 take.id,
@@ -1425,22 +1460,16 @@ class _StillRounds:
             state = _SceneRound(
                 scene=scene,
                 entry=entry,
-                still_plan=StillPlan(
-                    scene=scene.index,
-                    still_prompt=scene.words,
-                    camera_move=scene.camera_move,
-                    faces_forbidden=self.faces_forbidden,
-                    bible_rules=self.rules,
-                    look_block=scene.look_block,
-                    palette_words=_palette_words(scene.look_block),
-                    scene_picture=scene.picture,
-                    narration=scene.narration,
-                    purpose=scene.purpose,
+                still_plan=_still_plan(
+                    scene, faces_forbidden=self.faces_forbidden, rules=self.rules
                 ),
                 identity=take_hash(scene.identity, self.model_id),
                 requests=scene.attempts,
                 committed_before=self.ledger.committed,
             )
+            if scene.must_fix:
+                # What each still of this scene is checked to have corrected (the register).
+                entry["must_fix"] = [item["finding"] for item in scene.must_fix]
             self.states[scene.index] = state
             if (
                 scene.index != self.first_live
@@ -1823,18 +1852,10 @@ def run_stills_stage(
                 "paleta și granulația filmului, așa că restul scenelor nu se cumpără fără ea.",
             )
             continue
-        still_plan = StillPlan(
-            scene=scene.index,
-            still_prompt=scene.words,
-            camera_move=scene.camera_move,
-            faces_forbidden=faces_forbidden,
-            bible_rules=rules,
-            look_block=scene.look_block,
-            palette_words=_palette_words(scene.look_block),
-            scene_picture=scene.picture,
-            narration=scene.narration,
-            purpose=scene.purpose,
-        )
+        still_plan = _still_plan(scene, faces_forbidden=faces_forbidden, rules=rules)
+        if scene.must_fix:
+            # What each still of this scene is checked to have corrected (the register).
+            entry["must_fix"] = [item["finding"] for item in scene.must_fix]
         references, with_character, with_figure = _references(
             scene, figure_one, image_adapter, first=scene.index == first_live
         )
