@@ -1977,6 +1977,13 @@ def snapshot(
         recent = session.scalars(
             select(DomainEvent).order_by(DomainEvent.sequence.desc()).limit(20)
         ).all()
+        # The snapshot's events reach the page first and are the copies it keeps, so they carry
+        # the register's words too (2026-10-12; `read_events` has them since 2026-10-11).
+        from app.events_feed import enrich  # noqa: PLC0415 - the feed reads models only
+
+        recent_events = enrich(
+            session, [EventView.model_validate(e).model_dump() for e in reversed(recent)]
+        )
         return {
             "schema_version": 1,
             "cursor": cursor,
@@ -2031,7 +2038,7 @@ def snapshot(
                 "analytics": "PARTIAL",
                 "story": "PARTIAL",
             },
-            "events": [EventView.model_validate(e).model_dump() for e in reversed(recent)],
+            "events": recent_events,
             # The name tags in the headquarters read each employee's last task from here,
             # not only from the events the page happened to replay (W12).
             "last_tasks": last_task_per_agent(session),

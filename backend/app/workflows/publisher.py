@@ -81,7 +81,7 @@ def claim_pending_outbox(engine: Engine, limit: int = 100) -> list[dict[str, Any
         return []
 
     now_str = utc_now()
-    messages: list[dict[str, Any]] = []
+    claimed: list[dict[str, Any]] = []
     with Session(engine) as session, session.begin():
         lock_for_write(session)
         records = session.scalars(
@@ -93,9 +93,27 @@ def claim_pending_outbox(engine: Engine, limit: int = 100) -> list[dict[str, Any
         for record in records:
             record.status = "PUBLISHED"
             record.published_at = now_str
-            messages.append({"type": "event", "data": record.payload})
-    # Only here, after the commit, are the messages anybody's to send.
-    return messages
+            # A copy: the words added below are the socket's, never written back into the row.
+            claimed.append(dict(record.payload or {}))
+    # Only here, after the commit, are the messages anybody's to send — with the register's
+    # words for people (2026-10-12: the page keeps the first copy of an event it receives, and
+    # the live one reached it as «run paused — endpoint_id: …» while the paged record spoke).
+    return [{"type": "event", "data": data} for data in _with_words(engine, claimed)]
+
+
+def _with_words(engine: Engine, events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The events with the register's words (`events_feed.enrich`), read in their own session;
+    a failure to find words is logged and loses no event — the words are an addition."""
+    if not events:
+        return events
+    from app.events_feed import enrich  # noqa: PLC0415 - the feed reads models only
+
+    try:
+        with Session(engine) as session:
+            return enrich(session, events)
+    except Exception as exc:  # noqa: BLE001 - the words must never cost the event
+        logger.warning("event_words_unavailable", extra={"error": type(exc).__name__})
+        return events
 
 
 async def _broadcast_all(manager: ConnectionManager, messages: list[dict[str, Any]]) -> None:
@@ -148,7 +166,9 @@ def replay_events(
     after_sequence: int = 0,
     limit: int = 100,
 ) -> list[dict]:
-    """Retrieve historical events from domain_event starting after sequence cursor."""
+    """Retrieve historical events from domain_event starting after sequence cursor, each with
+    the register's words (the socket's catch-up after a drop reads the same page the live
+    events and the paged record do)."""
     with Session(engine) as session:
         events = session.scalars(
             select(DomainEvent)
@@ -156,4 +176,5 @@ def replay_events(
             .order_by(DomainEvent.sequence.asc())
             .limit(limit)
         ).all()
-        return [EventView.model_validate(e).model_dump() for e in events]
+        views = [EventView.model_validate(e).model_dump() for e in events]
+    return _with_words(engine, views)

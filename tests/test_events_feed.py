@@ -18,7 +18,10 @@ from app.agents.models import Agent, Role
 from app.agents.services import seed_initial_workforce
 from app.factual.models import ScriptDraft, TopicIdea
 from app.media.models import Storyboard
-from app.services import append_event, read_events, utc_now
+from app.services import append_event, read_events, snapshot, utc_now
+from app.workflows.models import OutboxRecord
+from app.workflows.publisher import ConnectionManager, publish_pending_outbox, replay_events
+from app.workflows.services import append_event_with_outbox
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -114,7 +117,8 @@ def test_a_take_sent_and_one_that_arrived_are_said_with_the_film_and_the_editor(
         "role_ro": "Video Editor",
     }
     assert sent["film_title"] == TITLE
-    assert "bubble_ro" not in sent
+    # The office hears the editor send it (2026-10-12: the wait on RunPod used to be silent).
+    assert sent["bubble_ro"] == "Am trimis imaginea scenei 3 la RunPod."
 
     record(
         engine,
@@ -257,7 +261,8 @@ def test_a_finished_run_is_said_as_a_sentence_with_the_task_in_words(engine):
     assert run["actor"]["agent_id"] == kael["id"]
 
 
-def test_money_spent_names_the_film_from_its_reference_and_an_unknown_event_keeps_no_words(engine):
+def test_money_spent_names_the_film_from_its_reference_and_an_unknown_event_says_its_name(engine):
+    """A kind nobody has words for is said by its name alone (2026-10-12): never its fields."""
     ids = studio(engine)
     record(
         engine,
@@ -272,10 +277,11 @@ def test_money_spent_names_the_film_from_its_reference_and_an_unknown_event_keep
     record(engine, "office.room_created", ("office", str(uuid4())), {"room": "render bay"})
     got = page(engine)
     spent = got["economy.spend_reservation_closed"]
-    assert spent["words_ro"] == f"Cheltuit: 4.2 USD pe imagini din «{TITLE}» (settled)."
+    assert spent["words_ro"] == f"Cheltuit: 4.2 USD pe imagini din «{TITLE}»."
     assert spent["film_title"] == TITLE and spent["actor"]["role"] == "Accountant"
     unknown = got["office.room_created"]
-    assert "words_ro" not in unknown and "actor" not in unknown and "film_title" not in unknown
+    assert unknown["words_ro"] == "Birou: room created."
+    assert "actor" not in unknown and "film_title" not in unknown and "bubble_ro" not in unknown
 
 
 def test_the_directors_editorial_note_is_hers_and_says_the_score_and_the_outcome(engine):
@@ -330,3 +336,555 @@ def test_the_directors_editorial_note_is_hers_and_says_the_score_and_the_outcome
         "cele mai slabe: cârligul și poanta; brief la scenarist."
     )
     assert sent_back["bubble_ro"] == "Versiunea 1: 25/50, brief la scenarist."
+
+
+# ---------------------------------------------------------------------------------------------
+# 2026-10-12, the Director's repair loop on RunPod. The live register (10:27) read «run paused —
+# endpoint_id: u07hiqhesi015d · items: 2 · seconds: 1.33», «gpu session opened — endpoint_id …
+# purpose: image · step: scene_redo», «spend reserved — purpose: sheet:scene_redo · usd: 0.84»,
+# «qc paid redo — scene_index: 4 · of_asset: c00866fc-…». The payloads below are those events'.
+
+
+def test_the_runpod_round_and_the_gpu_are_said_without_endpoint_ids(engine):
+    ids = studio(engine)
+    kael = ids["agents"]["VideoEditor"]
+    gpu_session = str(uuid4())
+    record(
+        engine,
+        "runpod.gpu_session_opened",
+        ("gpu_session", gpu_session),
+        {
+            "endpoint_id": "u07hiqhesi015d",
+            "purpose": "image",
+            "step": "scene_redo",
+            "storyboard_id": ids["board"],
+            "workers_max": 1,
+            "shared": False,
+        },
+    )
+    record(
+        engine,
+        "runpod.run_paused",
+        ("gpu_session", gpu_session),
+        {
+            "endpoint_id": "u07hiqhesi015d",
+            "items": 2,
+            "cleared": True,
+            "seconds": 1.332,
+            "paused_answers": 1,
+            "ended": None,
+            "budget_seconds": 180.0,
+        },
+    )
+    off_reading = {
+        "endpoint_id": "u07hiqhesi015d",
+        "off": True,
+        "workers_max": 0,
+        "running": 0,
+        "in_progress": 0,
+        "in_queue": 0,
+        "idle": 1,
+        "reason_ro": None,
+        "read_at": "2026-10-12T06:41:23.962201+00:00",
+    }
+    record(
+        engine,
+        "runpod.gpu_off_verified",
+        ("gpu_session", gpu_session),
+        {**off_reading, "reason": "STEP_DONE"},
+    )
+    record(
+        engine,
+        "runpod.gpu_forced_off",
+        ("gpu_session", "u07hiqhesi015d"),
+        {**off_reading, "reason": "SHUTDOWN", "fast": False, "errors": []},
+    )
+    got = page(engine)
+    opened = got["runpod.gpu_session_opened"]
+    assert opened["words_ro"] == (
+        f"{kael['name']} a pornit GPU-ul RunPod pentru imagini din «{TITLE}» (refacerea unei "
+        "scene); modelul se încarcă (~10 min)."
+    )
+    assert opened["bubble_ro"] == "GPU pornit: aștept imaginile."
+    assert opened["actor"]["role"] == "VideoEditor" and opened["film_title"] == TITLE
+    paused = got["runpod.run_paused"]
+    assert paused["words_ro"] == (
+        f"{kael['name']} a trimis la RunPod o rundă de 2 lucrări; RunPod a pornit după 1 s."
+    )
+    assert paused["bubble_ro"] == "Runda a plecat la RunPod; aștept."
+    off = got["runpod.gpu_off_verified"]
+    assert off["words_ro"] == "GPU-ul RunPod s-a oprit (pasul s-a încheiat); nu mai costă nimic."
+    forced = got["runpod.gpu_forced_off"]
+    assert forced["words_ro"] == "GPU-ul RunPod a fost oprit forțat (studioul s-a oprit)."
+    # The GPU going off is the studio's housekeeping, nobody's portrait.
+    assert "actor" not in off and "actor" not in forced
+    for row in (opened, paused, off, forced):
+        assert "u07hiqhesi015d" not in row["words_ro"]
+
+
+def test_money_reserved_estimated_and_closed_names_the_film_and_the_redo(engine):
+    ids = studio(engine)
+    nadia = ids["agents"]["Accountant"]
+    board = ids["board"]
+    record(
+        engine,
+        "economy.spend_reserved",
+        ("spend_reservation", str(uuid4())),
+        {"purpose": "sheet:scene_redo", "usd": "0.84"},
+    )
+    record(
+        engine,
+        "economy.provider_cost_recorded",
+        ("provider_cost", str(uuid4())),
+        {
+            "provider": "runpod",
+            "reference": f"redo:{board}:still:1:dee80830-8a30-4d7e-b1c1-ab92ae40a52f",
+            "status": "ESTIMATED",
+            "vr": "0.28",
+            "posted": False,
+        },
+    )
+    record(
+        engine,
+        "economy.spend_reservation_closed",
+        ("spend_reservation", str(uuid4())),
+        {
+            "status": "SETTLED",
+            "reference": f"redo:{board}:motion:3:dee80830-8a30-4d7e-b1c1-ab92ae40a52f",
+            "usd": "0.66",
+        },
+    )
+    got = page(engine)
+    reserved = got["economy.spend_reserved"]
+    assert reserved["words_ro"] == (
+        f"{nadia['name']} a pus deoparte 0.84 USD pentru refacerea unei scene."
+    )
+    assert reserved["bubble_ro"] == "Am pus deoparte 0.84 USD."
+    assert reserved["actor"]["role"] == "Accountant"
+    cost = got["economy.provider_cost_recorded"]
+    assert cost["words_ro"] == (
+        f"Cost estimat la RunPod: 0.28 VR$ pentru refacerea imaginii scenei 1 din «{TITLE}»."
+    )
+    assert cost["film_title"] == TITLE
+    settled = got["economy.spend_reservation_closed"]
+    assert settled["words_ro"] == (
+        f"Cheltuit: 0.66 USD pe refacerea clipului scenei 3 din «{TITLE}»."
+    )
+
+    record(
+        engine,
+        "economy.spend_reservation_closed",
+        ("spend_reservation", str(uuid4())),
+        {"status": "RELEASED", "reference": f"redo:{board}:still:5:7b8c", "usd": "0.84"},
+    )
+    released = next(
+        e for e in read_events(engine, 0, 100)["events"] if e["payload"].get("status") == "RELEASED"
+    )
+    assert released["words_ro"] == (
+        f"Rezervarea de 0.84 USD pentru refacerea imaginii scenei 5 din «{TITLE}» a fost "
+        "eliberată: nu s-a cheltuit."
+    )
+
+
+def test_the_directors_brief_names_the_layer_and_whether_the_rewrite_landed(engine):
+    ids = studio(engine)
+    sarah = ids["agents"]["Director"]
+    kael = ids["agents"]["VideoEditor"]
+    board = ("storyboard", ids["board"])
+    record(
+        engine,
+        "media.director_scene_brief",
+        board,
+        {
+            "scene_index": 5,
+            "layer": "still",
+            "asked_layer": "still",
+            "rewritten": True,
+            "same_prompt": False,
+            "reason": "",
+            "diagnosis": "The still prompt still contains the sentence 'There are no people'.",
+            "avoid": ["the words 'people', 'person'"],
+            "keep": ["medium shot, 50mm lens"],
+        },
+    )
+    record(
+        engine,
+        "media.director_scene_brief",
+        board,
+        {
+            "scene_index": 4,
+            "layer": "motion",
+            "asked_layer": "motion",
+            "rewritten": False,
+            "same_prompt": True,
+            "reason": "Rescrierea a dat același prompt; nimic nou de cumpărat.",
+        },
+    )
+    for scene, reason, layer in ((5, "director_brief", "still"), (3, "serial_recompose", "still")):
+        record(
+            engine,
+            "media.prompts_rewritten",
+            board,
+            {
+                "storyboard_id": ids["board"],
+                "scene_index": scene,
+                "reason": reason,
+                "decided_by": "director",
+                "layer": layer,
+            },
+        )
+    record(
+        engine,
+        "media.prompts_rewritten",
+        board,
+        {
+            "scene_index": 6,
+            "reason": "serial_reroll",
+            "decided_by": "director",
+            "layer": "motion",
+            "refused_code": "QC.CLIP",
+        },
+    )
+    events = read_events(engine, 0, 100)["events"]
+
+    def by_scene(kind: str) -> dict[int, dict[str, Any]]:
+        return {e["payload"]["scene_index"]: e for e in events if e["event_type"] == kind}
+
+    briefs = by_scene("media.director_scene_brief")
+    assert briefs[5]["actor"]["role"] == "Director"
+    assert briefs[5]["words_ro"] == (
+        f"{sarah['name']} a dat brief de rescriere pentru imaginea scenei 5 din «{TITLE}»; "
+        f"{kael['name']} a rescris-o."
+    )
+    assert briefs[5]["bubble_ro"] == "Brief pentru scena 5: imaginea."
+    assert briefs[4]["words_ro"] == (
+        f"{sarah['name']} a dat brief de rescriere pentru mișcarea scenei 4 din «{TITLE}»; "
+        "rescrierea a dat același prompt, nimic nou de cumpărat."
+    )
+    rewrites = by_scene("media.prompts_rewritten")
+    assert rewrites[5]["actor"]["role"] == "Director"
+    assert rewrites[5]["words_ro"] == (
+        f"Promptul imaginii scenei 5 din «{TITLE}» a fost rescris la brief-ul Directoarei."
+    )
+    assert rewrites[5]["bubble_ro"] == "Promptul scenei 5 e rescris."
+    assert rewrites[3]["words_ro"] == (
+        f"Scena 3 a serialului «{TITLE}» a fost compusă din nou cu cuvintele de azi; imaginea "
+        "se reface."
+    )
+    assert rewrites[6]["words_ro"] == (
+        f"Scena 6 a serialului «{TITLE}»: cadrul se reface pe aceleași cuvinte, cu altă sămânță."
+    )
+
+
+def test_the_repair_loop_speaks_of_scenes_and_films_never_of_assets(engine):
+    ids = studio(engine)
+    sarah = ids["agents"]["Director"]
+    board = ids["board"]
+    asset, report = str(uuid4()), str(uuid4())
+    record(
+        engine,
+        "runbook.qc_paid_redo",
+        ("storyboard", board),
+        {
+            "scene_index": 5,
+            "of_asset": asset,
+            "kinds": ["still"],
+            "open_motion": True,
+            "continues": None,
+            "started_at": "2026-10-12T06:50:42.518752+00:00",
+        },
+    )
+    record(
+        engine,
+        "runbook.qc_repair",
+        ("storyboard", board),
+        {
+            "report_id": report,
+            "storyboard_id": board,
+            "of_asset": asset,
+            "new_asset": str(uuid4()),
+            "decided_by": "Director",
+            "applied": [],
+            "bought": [
+                {"redo": "still", "scene_index": 1, "credits": 28.0},
+                {"redo": "motion", "scene_index": 1, "credits": 58.1598},
+                {"redo": "still", "scene_index": 3, "credits": 63.3533},
+                {"redo": "motion", "scene_index": 3, "credits": 33.0},
+                {"redo": "still", "scene_index": 5, "credits": 14.0},
+            ],
+            "asked": [],
+            "refused": [],
+            "limited": [],
+            "skipped": [],
+            "waiting": [
+                {
+                    "scene_index": 5,
+                    "kind": "still",
+                    "status": "NOT_BOUGHT",
+                    "since": "2026-10-12T05:54:36.626712+00:00",
+                    "next_ro": "Refacerea scenei 5 nu a adus nimic folosibil.",
+                }
+            ],
+            "replaced_his": [],
+            "made": [str(uuid4())],
+            "requalified": "FAILED",
+            "requalified_report_id": str(uuid4()),
+        },
+    )
+    record(
+        engine,
+        "media.clip_qc_checked",
+        ("scene_take", str(uuid4())),
+        {
+            "storyboard_id": board,
+            "scene_number": 4,
+            "take_id": str(uuid4()),
+            "seed": 580970440,
+            "attempt": 1,
+            "scene": 4,
+            "passed": True,
+            "verdict": "PASSED",
+            "checks": [{"code": "motion", "status": "PASSED", "blocking": False}],
+            "blocks_ro": [],
+            "warnings_ro": [],
+        },
+    )
+    failure = (
+        "Scene 5: the picture is not what the scene asked for — The frame shows a rough bare-rock "
+        "tunnel with drifting orange sparks or embers, not the metallic detector cavern with "
+        "flickering amber indicator points on its rings that the scene asks for."
+    )
+    record(
+        engine,
+        "media.qc_evaluated",
+        ("quality_control_report", report),
+        {"media_asset_id": asset, "status": "FAILED", "score": 0.5, "failures": [failure]},
+    )
+    kept_reason = "îl folosește un film mai nou, încă necitit de controlul calității"
+    record(
+        engine,
+        "media.intermediates_released",
+        ("media_asset", asset),
+        {
+            "files": ["shot_03_redo_85623e91.mp4"],
+            "bytes": 47294502,
+            "kept": [{"file": f"shot_0{n}_c75050fa.mp4", "reason": kept_reason} for n in range(4)],
+        },
+    )
+    record(
+        engine,
+        "media.video_rendered",
+        ("media_asset", str(uuid4())),
+        {
+            "storyboard_id": board,
+            "render_engine": "FFMPEG",
+            "remade_from": asset,
+            "redo": "motion",
+            "scene_index": 4,
+            "provenance_hash": "5b173221a9022e2a57632b8ad30857c108fc24cfd5080e0d197ff12c4991d943",
+            "file_size_bytes": 33827099,
+            "duration_seconds": 38.249999,
+        },
+    )
+    record(
+        engine,
+        "media.scene_take_restored",
+        ("scene_take", str(uuid4())),
+        {
+            "storyboard_id": board,
+            "scene_number": 5,
+            "kind": "still",
+            "status": "APPROVED",
+            "retired_event_id": str(uuid4()),
+            "retired_code": "REDO.OWNER",
+            "cause": "redo_delivered_nothing",
+            "prompt_matches": False,
+            "bound_to_picture": False,
+            "package_restored": False,
+        },
+    )
+    got = page(engine)
+    redo = got["runbook.qc_paid_redo"]
+    assert redo["words_ro"] == (
+        f"Refacerea plătită a scenei 5 din «{TITLE}»: imaginea cumpărată; mișcarea poate urma."
+    )
+    assert redo["bubble_ro"] == "Scena 5: imaginea cumpărată."
+    assert redo["actor"]["role"] == "VideoEditor"
+    repair = got["runbook.qc_repair"]
+    assert repair["actor"]["role"] == "Director"
+    assert repair["words_ro"] == (
+        f"{sarah['name']} a aplicat refacerea filmului «{TITLE}»: 5 refaceri cumpărate (imaginea "
+        "scenei 1, mișcarea scenei 1, imaginea scenei 3…); scena 5 încă așteaptă; filmul "
+        "refăcut a picat din nou la control."
+    )
+    clip = got["media.clip_qc_checked"]
+    assert clip["words_ro"] == f"Clipul scenei 4 din «{TITLE}» a trecut controlul."
+    assert clip["bubble_ro"] == "Clipul scenei 4 a trecut ✓"
+    assert clip["actor"]["role"] == "VideoEditor"
+    judged = got["media.qc_evaluated"]
+    assert judged["words_ro"].startswith(
+        "Controlul calității a picat filmul (scor 0,50): Scene 5: the picture is not what"
+    )
+    # A shortened quotation trails off; no full stop after the ellipsis.
+    assert judged["words_ro"].endswith("…") and not judged["words_ro"].endswith("….")
+    assert judged["bubble_ro"] == "Filmul a picat la control."
+    released = got["media.intermediates_released"]
+    assert released["words_ro"] == (
+        "Fișierele intermediare ale unei randări vechi au fost șterse: 47,3 MB eliberați; "
+        f"4 fișiere păstrate ({kept_reason})."
+    )
+    rendered = got["media.video_rendered"]
+    assert rendered["words_ro"] == (
+        f"Filmul «{TITLE}» a fost asamblat din nou după refacerea mișcării scenei 4 (38 s)."
+    )
+    assert rendered["bubble_ro"] == "Filmul e asamblat din nou."
+    restored = got["media.scene_take_restored"]
+    assert restored["words_ro"] == (
+        f"Imaginea scenei 5 din «{TITLE}» a fost pusă la loc: refacerea n-a adus nimic."
+    )
+    for row in (redo, repair, clip, judged, released, rendered, restored):
+        assert asset not in row["words_ro"] and report not in row["words_ro"]
+
+
+def test_a_refused_take_a_lost_one_and_a_sent_one_speak_for_the_editor(engine):
+    ids = studio(engine)
+    kael = ids["agents"]["VideoEditor"]
+    base = {"storyboard_id": ids["board"], "kind": "motion", "model_id": "LTX-2.5"}
+    record(
+        engine,
+        "media.scene_take_recorded",
+        ("scene_take", str(uuid4())),
+        {
+            **base,
+            "scene_number": 6,
+            "status": "REFUSED",
+            "failure_code": "RUNPOD.CANCELLED",
+            "failure_detail": "Lucrarea a fost anulată de studio la oprire.",
+        },
+    )
+    record(
+        engine,
+        "media.scene_take_recorded",
+        ("scene_take", str(uuid4())),
+        {**base, "scene_number": 7, "status": "LOST", "failure_code": "RUNPOD.EXPIRED"},
+    )
+    record(
+        engine,
+        "media.scene_take_recorded",
+        ("scene_take", str(uuid4())),
+        {**base, "scene_number": 8, "status": "SUBMITTED", "credits_quoted": 24.0},
+    )
+    by_scene = {
+        e["payload"]["scene_number"]: e
+        for e in read_events(engine, 0, 100)["events"]
+        if e["event_type"] == "media.scene_take_recorded"
+    }
+    assert by_scene[6]["words_ro"] == (
+        f"RunPod a refuzat clipul scenei 6 din «{TITLE}»: Lucrarea a fost anulată de studio la "
+        "oprire."
+    )
+    assert "RUNPOD.CANCELLED" not in by_scene[6]["words_ro"]
+    assert by_scene[7]["words_ro"] == (
+        f"Clipul scenei 7 din «{TITLE}» s-a pierdut: RunPod a primit lucrarea, dar rezultatul a "
+        "expirat înainte să fie preluat."
+    )
+    sent = by_scene[8]
+    assert sent["words_ro"] == f"{kael['name']} a trimis la RunPod clipul scenei 8 din «{TITLE}»."
+    assert sent["bubble_ro"] == "Am trimis clipul scenei 8 la RunPod."
+
+
+def test_an_agent_at_work_says_so_in_a_bubble_and_an_unknown_kind_shows_no_ids(engine):
+    ids = studio(engine)
+    kael = ids["agents"]["VideoEditor"]
+    record(
+        engine,
+        "agent.state_changed",
+        ("agent", kael["id"]),
+        {"runtime_state": "THINKING", "task_type": "clip_qc", "run_id": str(uuid4())},
+    )
+    record(
+        engine,
+        "runpod.gpu_guard_off",
+        ("gpu_session", "u07hiqhesi015d"),
+        {"endpoint_id": "u07hiqhesi015d", "workers_max": 0, "running": 0},
+    )
+    record(
+        engine,
+        "media.scene_take_collected",
+        ("scene_take", str(uuid4())),
+        {
+            "storyboard_id": ids["board"],
+            "scene_number": 2,
+            "remote_task_id": "65106659-77d9-46ea-8729-5605affc8e88-e2:0",
+        },
+    )
+    got = page(engine)
+    working = got["agent.state_changed"]
+    assert working["words_ro"] == f"{kael['name']} lucrează la verificarea unui clip."
+    assert working["bubble_ro"] == "Lucrez la verificarea unui clip."
+    assert working["actor"]["agent_id"] == kael["id"]
+    guard = got["runpod.gpu_guard_off"]
+    assert guard["words_ro"] == "RunPod: gpu guard off."
+    assert "u07hiqhesi015d" not in guard["words_ro"] and "actor" not in guard
+    collected = got["media.scene_take_collected"]
+    assert collected["words_ro"] == f"«{TITLE}», scena 2: scene take collected."
+    assert "65106659" not in collected["words_ro"] and collected["actor"]["role"] == "VideoEditor"
+
+
+class _Recorder(ConnectionManager):
+    """A connection manager that keeps what it was asked to send."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.sent: list[dict[str, Any]] = []
+
+    async def broadcast(self, message: dict[str, Any]) -> int:
+        self.sent.append(message)
+        return 1
+
+
+def test_the_snapshot_and_the_live_socket_carry_the_same_words_as_the_record(engine):
+    """The page keeps the first copy of an event it receives — the snapshot's twenty, then the
+    socket's live ones — so those copies must carry the words too (2026-10-12: the newest
+    rows of the live register were the raw ones while the paged history spoke)."""
+    ids = studio(engine)
+    kael = ids["agents"]["VideoEditor"]
+    with Session(engine) as session, session.begin():
+        append_event_with_outbox(
+            session,
+            "media.scene_take_recorded",
+            "scene_take",
+            str(uuid4()),
+            1,
+            {
+                "storyboard_id": ids["board"],
+                "scene_number": 3,
+                "kind": "still",
+                "status": "SUBMITTED",
+                "model_id": "Qwen-Image-2512",
+            },
+            str(uuid4()),
+        )
+    expected = f"{kael['name']} a trimis la RunPod imaginea scenei 3 din «{TITLE}»."
+
+    newest = snapshot(engine)["events"][-1]
+    assert newest["event_type"] == "media.scene_take_recorded"
+    assert newest["words_ro"] == expected and newest["film_title"] == TITLE
+    assert newest["actor"]["agent_id"] == kael["id"]
+
+    manager = _Recorder()
+    assert publish_pending_outbox(engine, manager) >= 1
+    live = next(
+        m["data"] for m in manager.sent if m["data"]["event_type"] == "media.scene_take_recorded"
+    )
+    assert live["words_ro"] == expected and live["actor"]["name"] == kael["name"]
+    assert live["bubble_ro"] == "Am trimis imaginea scenei 3 la RunPod."
+    # The socket's catch-up after a drop reads the same words.
+    replayed = next(
+        e for e in replay_events(engine) if e["event_type"] == "media.scene_take_recorded"
+    )
+    assert replayed["words_ro"] == expected and replayed["payload"] == live["payload"]
+    # The outbox row itself keeps only the event: the words are the socket's, never written back.
+    with Session(engine) as session:
+        row = session.scalars(select(OutboxRecord).order_by(OutboxRecord.sequence.desc())).first()
+    assert row is not None and "words_ro" not in row.payload
