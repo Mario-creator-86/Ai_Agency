@@ -40,7 +40,7 @@ against the real services or reports why it could not.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from datetime import date
 from typing import Any
 from uuid import uuid4
@@ -3763,6 +3763,8 @@ def _edit_and_qc(
         from app.media.assembler import release_after_qc  # noqa: PLC0415 - media imports runbook
 
         release_after_qc(engine, asset_id, str(uuid4()))
+        # The Director's lessons whose scenes this film passes worked (2026-10-12 review).
+        _confirm_lessons_quietly(engine, report.get("id"))
         if report["status"] == "PASSED":
             passed += 1
             passed_assets.append(asset_id)
@@ -4143,9 +4145,12 @@ def director_decides_failed_film(
                 report, asset = new_report, new_asset
                 continue
             break
-        if kind == "NOTHING_DONE" and not read_again:
+        if kind == "NOTHING_DONE" and not read_again and not (repair or {}).get("card_id"):
             # Nothing of her list could be done (his approved takes, the limits, a free fix
-            # already made): she reads the report once more, knowing why.
+            # already made, her second look overturning the refusal): she reads the report once
+            # more, knowing why. Not when his cap stopped it and his card asks him what becomes
+            # of the film (2026-10-12): she is not asked again until he answers, as the
+            # review pass does (`workflows.passes.director_qc_review`).
             read_again = True
             continue
         break
@@ -4281,7 +4286,13 @@ def _director_reads(
     correlation: str,
 ) -> dict[str, Any]:
     """`_director_round` once her looks are done: a decision that stands, one carried on, or
-    her reading of the report (``standing``: `director_qc.decision_state`)."""
+    her reading of the report (``standing``: `director_qc.decision_state`).
+
+    A REPAIR carried on is first read again under today's rules (2026-10-12 review: one decided
+    before that day's rules was carried out as it was): her reading of the report is rebuilt,
+    the redos those rules refuse are dropped and said (`director_qc.resume_repairs`), and when
+    nothing of her list is left she reads the report again. Before she reads a report, her
+    earlier lessons whose scenes it passes are confirmed (`director_qc.confirm_lessons`)."""
     from app.media import director_qc  # noqa: PLC0415 - media imports runbook
 
     if standing["final"]:
@@ -4293,26 +4304,42 @@ def _director_reads(
                 for key, value in decided.items()
                 if key not in ("outcome", "final", "done", "passed_report_id")
             }
-            return _carry_out(
-                engine,
-                settings,
-                vault,
-                registry,
-                reading,
-                {**carried, "resumed": True},
-                correlation,
+            dropped: list[dict[str, Any]] = []
+            if str(carried.get("decision") or "") == "REPAIR":
+                limits, free_used = _redo_allowance(engine, settings, reading)
+                context = director_qc.film_qc_context(
+                    engine, reading, limits=limits, free_used=free_used
+                )
+                kept, dropped = director_qc.resume_repairs(carried, context)
+                carried["repairs"] = kept
+            if str(carried.get("decision") or "") != "REPAIR" or carried["repairs"]:
+                return _carry_out(
+                    engine,
+                    settings,
+                    vault,
+                    registry,
+                    reading,
+                    {**carried, "resumed": True, "dropped_on_resume": dropped},
+                    correlation,
+                )
+            # Nothing of her list is left under today's rules: the report is hers again.
+            logger.info(
+                "director_repair_dropped_on_resume",
+                extra={"report_id": report_id, "dropped": len(dropped)},
             )
-        return {
-            "outcome": standing["outcome"],
-            "decision": decided,
-            "standing": True,
-            "reason": (
-                "Refacerea hotărâtă de Directoare așteaptă răspunsul tău sau aprobarea preluării "
-                "cumpărate."
-                if standing["pending"]
-                else "Directoarea a decis deja acest raport."
-            ),
-        }
+        else:
+            return {
+                "outcome": standing["outcome"],
+                "decision": decided,
+                "standing": True,
+                "reason": (
+                    "Refacerea hotărâtă de Directoare așteaptă răspunsul tău sau aprobarea "
+                    "preluării cumpărate."
+                    if standing["pending"]
+                    else "Directoarea a decis deja acest raport."
+                ),
+            }
+    _confirm_lessons_quietly(engine, report_id)
     reading = failed_render_reading(engine, report_id)
     limits, free_used = _redo_allowance(engine, settings, reading)
     context = director_qc.film_qc_context(
@@ -4339,6 +4366,8 @@ def _director_reads(
         "verdicts": director_qc.annotate_verdicts(review["verdicts"], context),
         "repairs": review["repairs"],
         "resumed": False,
+        # The scope of the lessons she writes (serial or factual).
+        "film_kind": (context.get("film") or {}).get("kind"),
     }
     # Her lessons are kept before anything is rewritten or bought (2026-10-12, the Owner: «să
     # înțeleagă de ce apar defectele»): the rewrite of her REPAIR's scenes already reads them.
@@ -4498,6 +4527,12 @@ def _carry_out(
             list(decided.get("repairs") or []),
             already=[(pair[0], pair[1]) for pair in before],
             since=started_at,
+            verdicts=list(decided.get("verdicts") or []),
+        )
+        # What a resumption dropped under today's rules is said with what was not carried out
+        # (2026-10-12 review, `director_qc.resume_repairs`).
+        repair["skipped"] = list(repair.get("skipped") or []) + list(
+            decided.get("dropped_on_resume") or []
         )
         bought_so_far = before + [
             [str(item["redo"]), item.get("scene_index")] for item in repair.get("bought") or []
@@ -4563,6 +4598,10 @@ def _carry_out(
                         "skipped",
                         "waiting",
                         "replaced_his",
+                        # Her second look overturned the refusal: nothing bought for it, and
+                        # the picture is settled for her next reading (2026-10-12).
+                        "overturned",
+                        "card_id",
                         "new_asset",
                         "requalified",
                         "requalified_report_id",
@@ -4571,6 +4610,9 @@ def _carry_out(
             },
             correlation,
         )
+        # Her lessons whose scenes the film her repair made passes worked: confirmed, hers of
+        # this very decision among them now that it is recorded (2026-10-12 review).
+        _confirm_lessons_quietly(engine, repair.get("requalified_report_id"))
     if step["outcome"] in director_qc.FINAL_OUTCOMES:
         try:
             step["letter_id"] = director_qc.director_letter(
@@ -4601,6 +4643,7 @@ def _director_repairs(
     *,
     already: list[tuple[Any, Any]] | None = None,
     since: str | None = None,
+    verdicts: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Her REPAIR: only what she listed, through the paid redo path (`_apply_repairs`, every
     purchase by `redo_scene` with ``unasked``: his paid-media rule, the caps, the lease and his
@@ -4608,8 +4651,9 @@ def _director_repairs(
     them, and `_apply_repairs` refuses a plan that would retire one), never against his choice
     on the sheet (a scene he chose to animate locally gets no paid motion), then measured once
     more. ``already``: what was bought for this decision before (it is not bought again);
-    ``since``: when the decision began to be carried out. Recorded as a `QC_REPAIR_EVENT` like
-    every repair. Never raises."""
+    ``since``: when the decision began to be carried out; ``verdicts``: her annotated verdicts
+    (what a scene's REAL findings said and why they appeared reach the rewrite and her second
+    look before a purchase). Recorded as a `QC_REPAIR_EVENT` like every repair. Never raises."""
     from app.media import director_qc  # noqa: PLC0415 - media imports runbook
 
     correlation = str(uuid4())
@@ -4630,6 +4674,7 @@ def _director_repairs(
         "skipped": [],
         "waiting": [],
         "replaced_his": [],
+        "overturned": [],
         "made": [],
         "requalified": None,
     }
@@ -4665,7 +4710,7 @@ def _director_repairs(
                 settings,
                 vault,
                 registry,
-                {**reading, "proposals": proposals},
+                {**reading, "proposals": proposals, "verdicts": list(verdicts or [])},
                 result,
                 not free_used,
                 correlation,
@@ -4738,6 +4783,14 @@ SAME_PROMPT_NOTE = (
     "The movement of this scene was rewritten before and came back with the same words; the "
     "picture itself must change now."
 )
+#: Told to her when the movement's rewrite cannot treat what was found (``layer_exhausted``,
+#: `scene_rewrite.rewrite_for_redo`): the findings are about the picture, so the picture is
+#: rewritten (2026-10-12 review: a MOTION redo she picked for a picture finding stayed
+#: PROMPT_NOT_CORRECTED every hour, no motion words being able to fix a picture).
+LAYER_EXHAUSTED_NOTE = (
+    "What was found in this scene cannot be fixed by the movement's words: it is in the "
+    "picture, so the picture itself must change now."
+)
 
 
 def _still_newer_than_film(session: Session, storyboard_id: str, scene: int, asset_id: str) -> bool:
@@ -4797,15 +4850,33 @@ def _correct_before_redo(
     proposals: list[Any],
     reading: dict[str, Any],
     correlation: str,
+    *,
+    extra_reasons: Sequence[str] = (),
 ) -> dict[str, Any] | None:
     """The scene's prompt corrected before its paid redo (`scene_rewrite.rewrite_for_redo`):
-    the Director reads it with her reasons and the report's words about the scene, the Video
+    the Director reads it with her reasons, the report's words about the scene, why each REAL
+    defect of hers appeared («cauza: …», her verdict's cause: 2026-10-12 review, it was read by
+    nobody) and ``extra_reasons`` (her second look's words before the purchase), and the Video
     Editor rewrites the picture (a still redo) or the movement (a motion redo). None when it was
     rewritten, or is not a scene the studio rewrites (its redo goes on as before); the refusal
-    when it could not be corrected: nothing is bought, and her decision waits to be read again."""
+    when it could not be corrected: nothing is bought, and her decision waits to be read again.
+
+    A movement whose rewrite came back with the same words (``same_prompt``), or that cannot
+    treat what was found because it is in the picture (``layer_exhausted``), turns to the
+    picture: the still is rewritten and bought with its motion — unless a newer approved still
+    is already waiting (`_still_newer_than_film`), and then the motion is bought from it."""
+    from app.agents.reviews import _names_scene  # noqa: PLC0415 - agents read the same words
     from app.media.scene_rewrite import rewrite_for_redo  # noqa: PLC0415 - media imports runbook
 
     layer = "still" if "still" in kinds else "motion"
+    real = [
+        verdict
+        for verdict in reading.get("verdicts") or []
+        if isinstance(verdict, Mapping)
+        and verdict.get("verdict") == "REAL"
+        and not verdict.get("check_level")
+        and _names_scene(verdict, scene)
+    ]
     reasons = [
         str(proposal.reason)
         for proposal in proposals
@@ -4815,9 +4886,20 @@ def _correct_before_redo(
         for finding in reading.get("findings") or []
         if isinstance(finding, dict) and finding.get("scene_index") == scene
     ]
+    for verdict in real:
+        said = " ".join(str(verdict.get("text") or "").split())
+        if said and said not in reasons:
+            reasons.append(said)
+    reasons += [
+        f"cauza: {' '.join(str(verdict['cause']).split())}"
+        for verdict in real
+        if str(verdict.get("cause") or "").strip()
+    ]
+    reasons += [str(reason) for reason in extra_reasons if str(reason).strip()]
     try:
         done = rewrite_for_redo(engine, registry, storyboard_id, scene, layer, reasons, correlation)
-        if layer == "motion" and done.get("same_prompt") and "still" not in kinds:
+        turn = done.get("same_prompt") or done.get("layer_exhausted")
+        if layer == "motion" and turn and "still" not in kinds:
             with Session(engine) as session:
                 new_picture = _still_newer_than_film(
                     session, storyboard_id, scene, str(reading.get("media_asset_id") or "")
@@ -4827,17 +4909,19 @@ def _correct_before_redo(
                 # look's, approved and in no film yet): the movement's words need not, and the
                 # clip is bought from the new still as they are.
                 return None
-            # The movement's words came back unchanged on a picture that stays: the picture's
-            # turn (MOTION_REWRITES_BEFORE_STILL). 2026-10-12, the cyclotron's scene 5: the
-            # same motion brief was asked every hour and refused PROMPT_NOT_CORRECTED each
-            # time. The redo then buys the new still and its motion (``kinds`` is the caller's).
+            # The movement's words came back unchanged, or cannot treat what is in the picture,
+            # on a picture that stays: the picture's turn (MOTION_REWRITES_BEFORE_STILL).
+            # 2026-10-12, the cyclotron's scene 5: the same motion brief was asked every hour
+            # and refused PROMPT_NOT_CORRECTED each time. The redo then buys the new still and
+            # its motion (``kinds`` is the caller's).
+            note = SAME_PROMPT_NOTE if done.get("same_prompt") else LAYER_EXHAUSTED_NOTE
             escalated = rewrite_for_redo(
                 engine,
                 registry,
                 storyboard_id,
                 scene,
                 "still",
-                [*reasons, SAME_PROMPT_NOTE],
+                [*reasons, note],
                 correlation,
             )
             if escalated.get("rewritten"):
@@ -4863,6 +4947,211 @@ def _correct_before_redo(
             "din nou aceleași cuvinte"
         )[:300],
     }
+
+
+def _confirm_lessons_quietly(engine: Engine, report_id: Any) -> None:
+    """`director_qc.confirm_lessons` for a report just measured or about to be read: her
+    lessons whose scenes it passes stop being provisional. Never raises into the walk."""
+    if not report_id:
+        return
+    from app.media import director_qc  # noqa: PLC0415 - media imports runbook
+
+    try:
+        director_qc.confirm_lessons(engine, str(report_id))
+    except Exception as exc:  # noqa: BLE001 - the lessons wait; the film does not
+        logger.warning(
+            "director_lessons_not_confirmed",
+            extra={"report_id": str(report_id), "error": type(exc).__name__},
+        )
+
+
+#: Her second look before a paid redo (`_second_look_before_redo`): the refusal was wrong.
+SECOND_LOOK_OVERTURNED = "OVERTURNED"
+
+
+def _failed_film_frames(
+    engine: Engine, reading: Mapping[str, Any], scene: int, ffmpeg_path: str | None, folder: Any
+) -> list[Any]:
+    """The first, middle and last frames of ``scene`` in the failed film, cut as the film's
+    span look cuts them (`qc.span_picture_qc`): from the scene's own shot beside the film while
+    it is the file the film was joined from, else from the film. Empty when they cannot be cut
+    (no encoder, no file, a composed card)."""
+    from pathlib import Path  # noqa: PLC0415
+
+    from app.agents.vision import frames_at  # noqa: PLC0415
+    from app.media.models import MediaAsset, StoryboardScene  # noqa: PLC0415
+    from app.media.picture_qc import clean_shots  # noqa: PLC0415
+    from app.media.qc import (  # noqa: PLC0415 - the span look's own frame cutting
+        DEFAULT_TIMELINE_FPS,
+        _shot_span_frames,
+        span_frame_numbers,
+        timeline_spans,
+    )
+
+    production = reading.get("production") or {}
+    with Session(engine) as session:
+        asset = session.get(MediaAsset, str(reading.get("media_asset_id") or ""))
+        film = str(asset.uri_or_path or "") if asset is not None else ""
+        planned = {
+            int(row.scene_index): float(row.duration_seconds or 0.0)
+            for row in session.scalars(
+                select(StoryboardScene).where(
+                    StoryboardScene.storyboard_id == str(reading.get("storyboard_id") or "")
+                )
+            )
+        }
+    if not film or not Path(film).is_file():
+        return []
+    span = next(
+        (
+            item
+            for item in timeline_spans(dict(production), planned)
+            if item["scene_index"] == scene and not item["composed"]
+        ),
+        None,
+    )
+    if span is None:
+        return []
+    timeline = production.get("timeline")
+    fps = float(
+        (timeline.get("fps") if isinstance(timeline, dict) else None)
+        or production.get("fps")
+        or DEFAULT_TIMELINE_FPS
+    )
+    chosen = span_frame_numbers(span["start"], span["end"], fps, span["dissolve_seconds"])
+    shot = clean_shots(production, Path(film).parent).get(scene)
+    if shot is not None:
+        taken = _shot_span_frames(
+            shot, chosen, float(span["start"]), fps, ffmpeg_path, Path(folder) / "shot"
+        )
+        if taken:
+            return [path for _at, _moment, path in taken]
+    cut = frames_at(film, ffmpeg_path, [number for _at, number in chosen], Path(folder) / "film")
+    frames = [cut.get(number) for _at, number in chosen]
+    return [frame for frame in frames if frame is not None] if all(frames) else []
+
+
+def _second_look_before_redo(
+    engine: Engine,
+    registry: ProviderRegistry | None,
+    settings: Settings,
+    reading: Mapping[str, Any],
+    scene: int,
+    proposals: list[Any],
+    correlation: str,
+) -> dict[str, Any]:
+    """The Director looks again at the scene in the failed film before a paid still or motion
+    is bought for it (the Owner, 2026-10-12: «trece imaginile picate de la QC pe la Directoare
+    și să decidă dacă au picat corect sau nu și dacă trebuie refăcute»; «LLM-ul este pe
+    abonament! NU COSTĂ BANI»). She is shown the scene's first, middle and last frames
+    (`_failed_film_frames`) with quality control's words about it, her REAL findings' and her
+    redo's reasons (`media.second_look.second_look`, kind «film_scene»). Returns its answer
+    {verdict CONFIRMED | OVERTURNED | UNAVAILABLE, severity, redo, reason_ro, run_id};
+    UNAVAILABLE (no model, no frames, no second look, an error) leaves the purchase as before.
+    Never raises."""
+    import tempfile  # noqa: PLC0415
+    from pathlib import Path  # noqa: PLC0415
+
+    from app.agents.reviews import _names_scene  # noqa: PLC0415 - the same scene words
+    from app.media import director_qc  # noqa: PLC0415 - media imports runbook
+
+    unavailable: dict[str, Any] = {
+        "verdict": "UNAVAILABLE",
+        "severity": "none",
+        "redo": True,
+        "reason_ro": "",
+        "run_id": None,
+    }
+    if registry is None or not _has_language_model(registry):
+        return {**unavailable, "reason_ro": "niciun model de limbaj nu este configurat"}
+    try:
+        from app.media.second_look import second_look  # noqa: PLC0415 - optional module
+    except ImportError:
+        return {**unavailable, "reason_ro": "a doua privire a Directoarei nu este disponibilă"}
+    refusal = [
+        " ".join(str(verdict.get("text") or "").split())
+        for verdict in reading.get("verdicts") or []
+        if isinstance(verdict, Mapping)
+        and verdict.get("verdict") == "REAL"
+        and not verdict.get("check_level")
+        and _names_scene(verdict, scene)
+        and str(verdict.get("text") or "").strip()
+    ] + [
+        str(proposal.reason)
+        for proposal in proposals
+        if proposal.scene_index == scene and not proposal.free and proposal.reason
+    ]
+    takes = director_qc.film_takes(reading.get("production") or {}).get(scene) or {}
+    try:
+        with tempfile.TemporaryDirectory(prefix="second_look_") as work:
+            frames = _failed_film_frames(
+                engine, reading, scene, getattr(settings, "ffmpeg_path", None), Path(work)
+            )
+            if not frames:
+                return {**unavailable, "reason_ro": "cadrele scenei nu s-au putut tăia din film"}
+            answer = second_look(
+                engine,
+                registry,
+                storyboard_id=str(reading.get("storyboard_id") or ""),
+                scene_index=scene,
+                kind="film_scene",
+                images=[str(frame) for frame in frames],
+                refusal=refusal,
+                correlation_id=correlation,
+                take_ids=[take for take in (takes.get("still"), takes.get("motion")) if take],
+            )
+    except Exception as exc:  # noqa: BLE001 - without her look the purchase goes on as before
+        logger.warning(
+            "director_second_look_failed",
+            extra={"scene_index": scene, "error": type(exc).__name__},
+        )
+        return {**unavailable, "reason_ro": error_words(exc)[:300]}
+    return {**unavailable, **dict(answer)} if isinstance(answer, Mapping) else unavailable
+
+
+def _overturned_entry(
+    reading: Mapping[str, Any], scene: int, kinds: list[str], look: Mapping[str, Any]
+) -> dict[str, Any]:
+    """What her second look dropped, as the repair records it: the scene, what would have been
+    bought, her verdict and reason, and the takes and checks it settles for her next reading
+    (`picture_qc.earlier_acceptances` reads ``takes`` from the report's film and ``checks``)."""
+    from app.agents.reviews import _names_scene  # noqa: PLC0415 - the same scene words
+    from app.media import director_qc  # noqa: PLC0415 - media imports runbook
+
+    takes = director_qc.film_takes(reading.get("production") or {}).get(scene) or {}
+    checks = sorted(
+        {
+            str(verdict.get("check"))
+            for verdict in reading.get("verdicts") or []
+            if isinstance(verdict, Mapping)
+            and verdict.get("verdict") == "REAL"
+            and verdict.get("check")
+            and not verdict.get("check_level")
+            and _names_scene(verdict, scene)
+        }
+    )
+    return {
+        "what": f"scena {scene}: " + ", ".join(PAID_REDO_WORDS.get(k, k) for k in kinds),
+        "scene_index": scene,
+        "redo": list(kinds),
+        "status": SECOND_LOOK_OVERTURNED,
+        "verdict": str(look.get("verdict") or ""),
+        "severity": str(look.get("severity") or ""),
+        "reason": str(look.get("reason_ro") or "")[:300],
+        "run_id": look.get("run_id"),
+        "takes": {"still": takes.get("still"), "clip": takes.get("motion")},
+        "checks": checks,
+    }
+
+
+def _look_drops_redo(look: Mapping[str, Any]) -> bool:
+    """Whether her second look says nothing is to be bought for the scene: the refusal was
+    wrong (OVERTURNED), or right but for a defect that needs no redo, and in either case it is
+    at most a minor one."""
+    if str(look.get("severity") or "") not in ("none", "minor"):
+        return False
+    verdict = str(look.get("verdict") or "")
+    return verdict == SECOND_LOOK_OVERTURNED or (verdict == "CONFIRMED" and not look.get("redo"))
 
 
 def _apply_repairs(
@@ -4892,7 +5181,15 @@ def _apply_repairs(
     that still's paid round (`_open_still_rounds`), so a still approved later can still reach a
     film. Every take bought that is in no film yet is listed in ``result['waiting']``, with
     ``since`` (when her REPAIR began to be carried out: a take of its scene approved after it
-    is the one it waits for, `director_qc.new_approved_take`)."""
+    is the one it waits for, `director_qc.new_approved_take`).
+
+    Before a scene's paid still or motion is bought, the Director looks at the scene in the
+    failed film once more (`_second_look_before_redo`; the Owner, 2026-10-12: the look is free,
+    the purchase is not). Her look overturning the refusal (or finding at most a minor defect
+    that needs no redo) buys nothing for the scene: it is listed in ``result['overturned']``
+    with her reason and the takes it was about, and her next reading counts its findings as
+    settled (`picture_qc.earlier_acceptances`). Her look confirming it adds her words to what
+    the rewrite before the purchase reads; no look (no model, no frames) changes nothing."""
     from app.media import director_qc  # noqa: PLC0415 - media imports runbook
     from app.media.assembler import (  # noqa: PLC0415 - media imports runbook
         SceneRedoRefused,
@@ -4998,10 +5295,35 @@ def _apply_repairs(
             )
             continue
         if continues is None:
+            # She looks at the scene once more before anything is bought for it (2026-10-12):
+            # free, and the purchase is not. The motion that continues a new still was looked
+            # at with that still.
+            look = _second_look_before_redo(
+                engine, registry, settings, reading, scene, proposals, correlation
+            )
+            if _look_drops_redo(look):
+                result.setdefault("overturned", []).append(
+                    _overturned_entry(reading, scene, paid[scene], look)
+                )
+                continue
+            extra = (
+                [f"Directoarea a privit din nou scena: {look['reason_ro']}"]
+                if str(look.get("verdict") or "") != "UNAVAILABLE"
+                and str(look.get("reason_ro") or "").strip()
+                else []
+            )
             # Not the same words bought again: she reads the prompt, he rewrites it (the Owner,
             # 2026-10-11). The motion that continues a new still was rewritten with it.
             uncorrected = _correct_before_redo(
-                engine, registry, storyboard_id, scene, paid[scene], proposals, reading, correlation
+                engine,
+                registry,
+                storyboard_id,
+                scene,
+                paid[scene],
+                proposals,
+                reading,
+                correlation,
+                extra_reasons=extra,
             )
             if uncorrected is not None:
                 result["refused"].append(uncorrected)
@@ -5393,6 +5715,15 @@ def _repair_lines(result: dict[str, Any]) -> list[str]:
         )
     for item in result.get("refused") or []:
         done.append(f"- {str(item['what']).capitalize()}: {_no_stop(item['reason'])}.")
+    for item in result.get("overturned") or []:
+        # Her second look before the purchase (2026-10-12): nothing bought for the scene.
+        why = _no_stop(item.get("reason"))
+        done.append(
+            f"- Scena {item['scene_index']}: Directoarea s-a uitat din nou la scenă înainte de "
+            "cumpărare: refuzul controlului nu se confirmă"
+            + (f" ({why})" if why else "")
+            + "; nu se cumpără nimic pentru ea."
+        )
     for item in result.get("waiting") or []:
         if item.get("kind") == "rejoin":
             done.append(

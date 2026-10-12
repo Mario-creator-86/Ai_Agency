@@ -1,4 +1,4 @@
-"""Approved stays approved: a scene that passed is not judged again while its takes are the same.
+"""Approved stays approved: a scene that passed is not judged again while its picture is the same.
 
 2026-10-12, film aa170155 («Why Ernest Lawrence's First Cyclotron Barely Fit on a Desk»): scene 1
 was cut from the same still (7a0be480) and the same clip (843617b8) in four films. The one-frame
@@ -8,10 +8,18 @@ credits for a new still). That day 19.50 USD of RunPod went out, 11.05 on redos,
 stopped the studio: «Nu putem permite loopuri pe bani și picarea QC dacă deja a fost aprobată».
 
 What is asserted: the film's one-frame look (`picture_qc.evaluate_pictures`) and its span look
-(`qc.span_picture_qc`) do not judge a scene whose still take and clip take are those of an earlier
-film of the storyboard whose same check passed it: the judge is not called for it, its entry
-passes with the report it came from and «trecută la controlul din …, aceleași preluări»; a scene
-with a new clip, or one the earlier check refused, is judged as before. Every model is faked.
+(`qc.span_picture_qc`) do not show the model a scene whose picture is exactly that of an earlier
+film of the storyboard whose same check passed it: its entry passes with the report it came from
+and «trecută la controlul din …, aceleași preluări»; a scene with a new clip, or one the earlier
+check refused, is judged as before.
+
+The review of that change (the same evening) is asserted too: the carry key is the takes AND the
+check's version, the bible and look, and the scene's span and speed (`picture_qc.carry_keys`), so
+a verdict of another version or another cut is not carried; only the model's look is carried,
+while YuNet and the flat band still read a carried scene's frames; what the Director judged FALSE
+or accepted as minor on the same takes is not looked at again (`earlier_acceptances`); and a look
+that numbered its frames by position is read back to the scenes it was shown, or fails. Every
+model is faked.
 """
 
 from __future__ import annotations
@@ -21,8 +29,16 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
+from app.media.director_qc import DECISION_EVENT
 from app.media.models import MediaAsset, QualityControlReport, VideoRenderJob
-from app.media.picture_qc import CARRIED_STATUS, earlier_passes, evaluate_pictures
+from app.media.picture_qc import (
+    CARRIED_STATUS,
+    earlier_acceptances,
+    earlier_passes,
+    evaluate_pictures,
+    storyboard_carry_keys,
+)
+from app.services import append_event
 from sqlalchemy.orm import Session
 from test_picture_qc import (
     FRAMES,
@@ -77,8 +93,16 @@ def _cut_from(engine, job_id: str, takes: dict[int, tuple[str, str | None]]) -> 
         job.production_json = _production(takes, job.production_json)
 
 
-def _picture_checks(passed: set[int], failed: set[int] = frozenset()) -> dict[str, Any]:
-    """What an earlier film's report said, scene by scene, in both picture checks."""
+def _keys(engine, board_id: str, production: dict, check: str) -> dict[int, dict]:
+    with Session(engine) as session:
+        return storyboard_carry_keys(session, board_id, production, check)
+
+
+def _picture_checks(
+    keys: dict[str, dict[int, dict]], passed: set[int], failed: set[int] = frozenset()
+) -> dict[str, Any]:
+    """What an earlier film's report said, scene by scene, in both picture checks, with the
+    carry key each entry was recorded with (``keys`` per check)."""
     scenes = sorted(set(passed) | set(failed))
     return {
         "picture_qc": {
@@ -86,7 +110,7 @@ def _picture_checks(passed: set[int], failed: set[int] = frozenset()) -> dict[st
             "passed": not failed,
             "scenes": [
                 scene_answer(index, "as asked", shows_the_scene=index in passed)
-                | {"status": "MEASURED"}
+                | {"status": "MEASURED", "carry_key": keys["picture_qc"].get(index)}
                 for index in scenes
             ],
         },
@@ -100,6 +124,7 @@ def _picture_checks(passed: set[int], failed: set[int] = frozenset()) -> dict[st
                     "kind": "LIVE",
                     "status": "PASSED" if index in passed else "FAILED",
                     "passed": index in passed,
+                    "carry_key": keys["picture_spans_qc"].get(index),
                 }
                 for index in scenes
             ],
@@ -109,18 +134,34 @@ def _picture_checks(passed: set[int], failed: set[int] = frozenset()) -> dict[st
 
 def _earlier_film(
     engine,
-    board_id: str,
+    ids: dict[str, str],
     takes: dict[int, tuple[str, str | None]],
-    checks: dict[str, Any],
+    passed: set[int],
+    failed: set[int] = frozenset(),
+    *,
+    tamper=None,
 ) -> dict[str, str]:
-    """A film of the same storyboard, cut from ``takes``, with one QC report of ``checks``."""
-    ids = {k: str(uuid4()) for k in ("asset", "job", "report")}
+    """A film of the same storyboard cut as ``ids``'s film is now, from ``takes``, with one QC
+    report whose picture checks passed ``passed`` and refused ``failed``, each entry with the
+    carry key it was measured with. ``tamper`` changes those keys (another version, span…)."""
+    earlier = {k: str(uuid4()) for k in ("asset", "job", "report")}
+    with Session(engine) as session:
+        base = session.get(VideoRenderJob, ids["job"]).production_json
+    production = _production(takes, base if isinstance(base, dict) else None)
+    keys = {
+        check: _keys(engine, ids["board"], production, check)
+        for check in ("picture_qc", "picture_spans_qc")
+    }
+    if tamper is not None:
+        for check_keys in keys.values():
+            for key in check_keys.values():
+                tamper(key)
     with Session(engine) as session, session.begin():
         session.add(
             MediaAsset(
-                id=ids["asset"],
+                id=earlier["asset"],
                 asset_type="RENDERED_VIDEO",
-                uri_or_path=f"storage/{ids['asset']}.mp4",
+                uri_or_path=f"storage/{earlier['asset']}.mp4",
                 file_size_bytes=10,
                 mime_type="video/mp4",
                 width=1080,
@@ -135,27 +176,27 @@ def _earlier_film(
         session.flush()
         session.add(
             VideoRenderJob(
-                id=ids["job"],
-                storyboard_id=board_id,
+                id=earlier["job"],
+                storyboard_id=ids["board"],
                 status="COMPLETED",
-                output_asset_id=ids["asset"],
+                output_asset_id=earlier["asset"],
                 started_at=EARLIER,
-                production_json=_production(takes),
+                production_json=production,
             )
         )
         session.flush()
         session.add(
             QualityControlReport(
-                id=ids["report"],
-                media_asset_id=ids["asset"],
+                id=earlier["report"],
+                media_asset_id=earlier["asset"],
                 status="FAILED",
                 score=0.75,
-                checks_json=checks,
+                checks_json=_picture_checks(keys, passed, failed),
                 failure_reasons_json=[],
                 verified_at=EARLIER,
             )
         )
-    return ids
+    return earlier
 
 
 SAME = {1: ("still-1", "clip-1"), 2: ("still-2", "clip-2"), 3: ("still-3", "clip-3")}
@@ -168,7 +209,7 @@ def test_an_unchanged_scene_that_passed_before_is_not_looked_at_again(engine, fr
     staffed = staff(engine)
     give_vision(engine, staffed["agents"]["VideoEditor"].id)
     ids = a_film(engine)
-    earlier = _earlier_film(engine, ids["board"], SAME, _picture_checks({1, 2, 3}))
+    earlier = _earlier_film(engine, ids, SAME, {1, 2, 3})
     # Scenes 1 and 2 as they were; scene 3 has a new clip.
     _cut_from(engine, ids["job"], {1: SAME[1], 2: SAME[2], 3: ("still-3", "clip-3-new")})
     answer = json.dumps({"scenes": [scene_answer(3, "the planet against its star")]})
@@ -176,12 +217,14 @@ def test_an_unchanged_scene_that_passed_before_is_not_looked_at_again(engine, fr
 
     result = evaluate_pictures(engine, registry, ids["asset"], str(uuid4()))
 
-    # One look, at scene 3 alone: its frame is the only one sent, its words the only ones asked.
+    # One look, at scene 3 alone: its frame is the only one sent, its words the only ones asked,
+    # and the look is told which scene the frame is.
     assert len(model.calls) == 1
     assert model.calls[0]["extra"]["images"] == [FRAMES[2]]
     prompt = model.calls[0]["prompt"]
     assert "The planet turning against its star" in prompt
     assert "golden mirror" not in prompt and "water line" not in prompt
+    assert "scenes 3, in that order" in prompt
     picture = result["picture_qc"]
     assert picture["passed"] is True and result["failures"] == []
     assert picture["frames"] == 1 and picture["scenes_carried"] == 2
@@ -196,13 +239,16 @@ def test_an_unchanged_scene_that_passed_before_is_not_looked_at_again(engine, fr
             "trecută la controlul din 2026-10-11 14:45 UTC, aceleași preluări"
         )
     assert scenes[3]["status"] == "MEASURED"
+    # Every entry keeps the key a later film must match to carry it.
+    assert scenes[3]["carry_key"]["clip"] == "clip-3-new"
+    assert scenes[3]["carry_key"]["version"] == picture["template_version"]
 
 
 def test_a_film_whose_every_scene_passed_before_is_not_looked_at_at_all(engine, frames):
     staffed = staff(engine)
     give_vision(engine, staffed["agents"]["VideoEditor"].id)
     ids = a_film(engine)
-    _earlier_film(engine, ids["board"], SAME, _picture_checks({1, 2, 3}))
+    _earlier_film(engine, ids, SAME, {1, 2, 3})
     _cut_from(engine, ids["job"], SAME)
 
     def looked_again(prompt):
@@ -223,7 +269,7 @@ def test_a_scene_the_earlier_look_refused_or_a_new_still_is_judged_again(engine,
     staffed = staff(engine)
     give_vision(engine, staffed["agents"]["VideoEditor"].id)
     ids = a_film(engine)
-    _earlier_film(engine, ids["board"], SAME, _picture_checks({1, 2}, failed={3}))
+    _earlier_film(engine, ids, SAME, {1, 2}, failed={3})
     # Scene 2: a new still (its clip id kept); scene 3: refused before, unchanged.
     _cut_from(engine, ids["job"], {1: SAME[1], 2: ("still-2-new", "clip-2"), 3: SAME[3]})
     answer = json.dumps({"scenes": [scene_answer(2, "ok"), scene_answer(3, "ok")]})
@@ -236,56 +282,258 @@ def test_a_scene_the_earlier_look_refused_or_a_new_still_is_judged_again(engine,
     assert statuses == {1: CARRIED_STATUS, 2: "MEASURED", 3: "MEASURED"}
 
 
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        # The look's version changed since: its questions are not the ones answered then.
+        lambda key: key.update(version="picture-qc-v1"),
+        # The scene sat elsewhere in the film, or was slowed: another picture on screen.
+        lambda key: key.update(start=(key["start"] or 0.0) + 0.5),
+        lambda key: key.update(speed=1.2),
+        # The bible or the scene's look changed: the picture is judged against other rules.
+        lambda key: key.update(look="0" * 16),
+        # Recorded before the key existed (until 2026-10-12): it carries nothing.
+        lambda key: key.clear(),
+    ],
+    ids=["version", "span", "speed", "bible", "no-key"],
+)
+def test_a_verdict_of_another_version_or_cut_is_not_carried(engine, frames, tamper):
+    """The review of 2026-10-12: the carry was keyed by the takes alone."""
+    staffed = staff(engine)
+    give_vision(engine, staffed["agents"]["VideoEditor"].id)
+    ids = a_film(engine)
+    _earlier_film(engine, ids, SAME, {1, 2, 3}, tamper=tamper)
+    _cut_from(engine, ids["job"], SAME)
+    answer = json.dumps({"scenes": [scene_answer(n, "ok") for n in (1, 2, 3)]})
+    registry, model = registry_with(staffed, lambda prompt: answer)
+
+    result = evaluate_pictures(engine, registry, ids["asset"], str(uuid4()))
+
+    assert model.calls[0]["extra"]["images"] == FRAMES
+    assert result["picture_qc"]["scenes_carried"] == 0
+
+
 def test_only_a_measured_or_carried_pass_carries_and_never_the_report_being_read(engine):
     ids = a_film(engine)
-    earlier = _earlier_film(engine, ids["board"], SAME, _picture_checks({1, 2}, failed={3}))
-    production = _production(SAME)
+    earlier = _earlier_film(engine, ids, SAME, {1, 2}, failed={3})
+    _cut_from(engine, ids["job"], SAME)
     with Session(engine) as session:
-        spans = earlier_passes(session, ids["board"], production, "picture_spans_qc")
-        both = earlier_passes(session, ids["board"], production, None)
+        production = session.get(VideoRenderJob, ids["job"]).production_json
+        keys = storyboard_carry_keys(session, ids["board"], production, "picture_spans_qc")
+        spans = earlier_passes(session, ids["board"], keys, "picture_spans_qc")
+        looks = earlier_passes(
+            session,
+            ids["board"],
+            storyboard_carry_keys(session, ids["board"], production, "picture_qc"),
+            "picture_qc",
+        )
         none_before = earlier_passes(
-            session, ids["board"], production, None, before="2026-10-11T00:00:00+00:00"
+            session, ids["board"], keys, "picture_spans_qc", before="2026-10-11T00:00:00+00:00"
         )
         excluded = earlier_passes(
-            session, ids["board"], production, None, exclude_report_ids=[earlier["report"]]
+            session, ids["board"], keys, "picture_spans_qc", exclude_report_ids=[earlier["report"]]
         )
-    assert sorted(spans) == [1, 2] and sorted(both) == [1, 2]
+    assert sorted(spans) == [1, 2] and sorted(looks) == [1, 2]
     assert spans[1].report_id == earlier["report"] and spans[1].clip_take == "clip-1"
     assert none_before == {} and excluded == {}
+
+
+# ------------------------------------------------------ what the Director settled stays settled
+
+
+def _her_verdicts(
+    engine, ids: dict[str, str], report_id: str, verdicts: list[dict[str, Any]], **done: Any
+) -> None:
+    with Session(engine) as session, session.begin():
+        append_event(
+            session,
+            DECISION_EVENT,
+            "quality_control_report",
+            report_id,
+            1,
+            {
+                "report_id": report_id,
+                "storyboard_id": ids["board"],
+                "decided_by": "Director",
+                "decision": "ACCEPT",
+                "verdicts": verdicts,
+                **({"done": done} if done else {}),
+            },
+            str(uuid4()),
+        )
+
+
+def test_a_scene_she_settled_on_the_same_takes_is_not_looked_at_again(engine, frames):
+    """The review of 2026-10-12: a scene she ACCEPTED was judged again and could turn REAL,
+    and a REPAIR followed. FALSE, or ACCEPTED as minor, on exactly these takes stays so."""
+    staffed = staff(engine)
+    give_vision(engine, staffed["agents"]["VideoEditor"].id)
+    ids = a_film(engine)
+    earlier = _earlier_film(engine, ids, SAME, {1}, failed={2, 3})
+    _her_verdicts(
+        engine,
+        ids,
+        earlier["report"],
+        [
+            # Scene 2: a small light drift she accepted.
+            {
+                "finding": 1,
+                "verdict": "ACCEPTED",
+                "severity": "minor",
+                "check": "picture_qc",
+                "scene_index": 2,
+                "reason": "a little lighter than asked",
+            },
+            # Scene 3: accepted with a serious defect, from before the severities: settles
+            # nothing, it is judged again.
+            {
+                "finding": 2,
+                "verdict": "ACCEPTED",
+                "check": "picture_qc",
+                "scene_index": 3,
+                "reason": "the wrong object",
+            },
+        ],
+    )
+    _cut_from(engine, ids["job"], SAME)
+    answer = json.dumps({"scenes": [scene_answer(3, "ok")]})
+    registry, model = registry_with(staffed, lambda prompt: answer)
+
+    result = evaluate_pictures(engine, registry, ids["asset"], str(uuid4()))
+
+    assert model.calls[0]["extra"]["images"] == [FRAMES[2]]
+    scenes = {entry["scene"]: entry for entry in result["picture_qc"]["scenes"]}
+    assert scenes[1]["carried_from"]["kind"] == "passed"
+    assert scenes[2]["carried_from"]["kind"] == "accepted"
+    assert scenes[2]["reason"].startswith("acceptată de Directoare la")
+    assert scenes[3]["status"] == "MEASURED"
+
+    # Her newer word on the same takes decides: REAL on scene 2 unsettles it.
+    _her_verdicts(
+        engine,
+        ids,
+        earlier["report"],
+        [{"finding": 1, "verdict": "REAL", "severity": "serious", "check": "picture_qc",
+          "scene_index": 2, "reason": "seen again: wrong"}],
+    )  # fmt: skip
+    with Session(engine) as session:
+        production = session.get(VideoRenderJob, ids["job"]).production_json
+        assert earlier_acceptances(session, ids["board"], production, "picture_qc") == {}
+        # Her second look that overturned a refusal settles the checks it named.
+    _her_verdicts(
+        engine,
+        ids,
+        earlier["report"],
+        [],
+        overturned=[{"scene_index": 2, "checks": ["picture_qc"], "reason": "the refusal is wrong"}],
+    )
+    with Session(engine) as session:
+        settled = earlier_acceptances(session, ids["board"], production, "picture_qc")
+        spans = earlier_acceptances(session, ids["board"], production, "picture_spans_qc")
+    assert settled[2].verdicts == ("OVERTURNED",) and spans == {}
+
+
+# --------------------------------------------- the look told which scenes its frames are
+
+
+def test_a_look_that_numbers_its_frames_by_position_is_read_back_to_the_scenes(engine, frames):
+    """Scene 1 carried, scenes 2 and 3 shown: the look answered «1» and «2» for its two frames
+    (2026-10-12 review: until then the shown scenes were left unjudged and the check certified
+    nothing, silently)."""
+    staffed = staff(engine)
+    give_vision(engine, staffed["agents"]["VideoEditor"].id)
+    ids = a_film(engine)
+    _earlier_film(engine, ids, SAME, {1})
+    _cut_from(engine, ids["job"], {1: SAME[1], 2: ("s2", "c2"), 3: ("s3", "c3")})
+    answer = json.dumps(
+        {"scenes": [scene_answer(1, "ok"), scene_answer(2, "a lamp", shows_the_scene=False)]}
+    )
+    registry, _model = registry_with(staffed, lambda prompt: answer)
+
+    result = evaluate_pictures(engine, registry, ids["asset"], str(uuid4()))
+
+    picture = result["picture_qc"]
+    assert picture["renumbered"] == {"1": 2, "2": 3}
+    scenes = {entry["scene"]: entry for entry in picture["scenes"]}
+    assert scenes[2]["status"] == "MEASURED" and scenes[3]["shows_the_scene"] is False
+    assert picture["passed"] is False
+    assert result["failures"] == ["Scene 3: the picture is not what the scene asked for — a lamp"]
+
+
+def test_a_look_that_answers_about_scenes_it_was_not_shown_fails_the_check(engine, frames):
+    staffed = staff(engine)
+    give_vision(engine, staffed["agents"]["VideoEditor"].id)
+    ids = a_film(engine)
+    _earlier_film(engine, ids, SAME, {1})
+    _cut_from(engine, ids["job"], {1: SAME[1], 2: ("s2", "c2"), 3: ("s3", "c3")})
+    # Two frames shown, one answer, about a scene it was not shown: nothing can be read back.
+    answer = json.dumps({"scenes": [scene_answer(1, "ok")]})
+    registry, _model = registry_with(staffed, lambda prompt: answer)
+
+    result = evaluate_pictures(engine, registry, ids["asset"], str(uuid4()))
+
+    picture = result["picture_qc"]
+    assert picture["status"] == "MEASURED" and picture["passed"] is False
+    assert len(result["failures"]) == 2
+    assert all("it was not shown" in failure for failure in result["failures"])
 
 
 # --------------------------------------------------------------------------- the span look
 
 
-def test_the_span_look_keeps_every_scene_that_passed_with_the_same_takes(engine, tmp_path):
-    """No frame is cut and no judge is asked when every filmed scene passed before: the file
-    on disk is not even a film."""
+@requires_ffmpeg
+def test_the_span_look_keeps_its_verdict_and_still_reads_faces_and_the_band(engine, tmp_path):
+    """No judge is asked for a scene whose picture passed before; its three frames are still
+    cut, YuNet still counts their faces and the band still reads them (the review of 2026-10-12:
+    both free detectors were skipped on a carried scene)."""
     from app.media.qc import span_picture_qc
 
     staff(engine)
-    film = tmp_path / "film.mp4"
-    film.write_bytes(b"not a film: nothing is cut from it")
-    ids = _spanned_film(engine, tmp_path, bible=NO_FACES_BIBLE, film=film)
+    ids = _spanned_film(engine, tmp_path, bible=NO_FACES_BIBLE, film=_span_film(tmp_path))
     takes = {1: SAME[1], 2: SAME[2]}
     _cut_from(engine, ids["job"], takes)
-    earlier = _earlier_film(engine, ids["board"], takes, _picture_checks({1, 2}))
+    earlier = _earlier_film(engine, ids, takes, {1, 2})
     judge, faces = _Judge(), _Faces()
 
     record = span_picture_qc(
         engine, None, ids["asset"], str(uuid4()), judge=judge, face_counter=faces
     )
 
-    assert judge.calls == [] and faces.seen == []
+    assert judge.calls == [], "the look is carried"
+    assert len(faces.seen) == 6, "YuNet counted the three frames of both carried scenes"
     assert record["passed"] is True and record["failures"] == []
-    assert record["status"] == CARRIED_STATUS and record["carried_scenes"] == [1, 2]
+    assert record["status"] == "MEASURED" and record["carried_scenes"] == [1, 2]
     scenes = {entry["scene_index"]: entry for entry in record["scenes"]}
     for index in (1, 2):
         assert scenes[index]["status"] == "PASSED" and scenes[index]["passed"] is True
         assert scenes[index]["carried_from"]["report_id"] == earlier["report"]
-        assert "aceleași preluări" in scenes[index]["reason"]
         assert scenes[index]["picture"]["status"] == CARRIED_STATUS
+        assert scenes[index]["panels"]["status"] == "PASSED"
+        assert scenes[index]["faces"]["status"] == "PASSED"
+        assert scenes[index]["carry_key"]["clip"] == f"clip-{index}"
     assert scenes[3]["status"] == "NOT_APPLICABLE"
     assert "aceleași preluări" in record["detail"]
+
+
+@requires_ffmpeg
+def test_a_face_yunet_counts_fails_a_carried_scene(engine, tmp_path):
+    from app.media.qc import span_picture_qc
+
+    staff(engine)
+    ids = _spanned_film(engine, tmp_path, bible=NO_FACES_BIBLE, film=_span_film(tmp_path))
+    takes = {1: SAME[1], 2: SAME[2]}
+    _cut_from(engine, ids["job"], takes)
+    _earlier_film(engine, ids, takes, {1, 2})
+    judge, faces = _Judge(), _Faces(faces={"scene_01_middle": 1})
+
+    record = span_picture_qc(
+        engine, None, ids["asset"], str(uuid4()), judge=judge, face_counter=faces
+    )
+
+    assert judge.calls == []
+    scenes = {entry["scene_index"]: entry for entry in record["scenes"]}
+    assert scenes[1]["passed"] is False and "YuNet a găsit fețe" in scenes[1]["reason"]
+    assert record["passed"] is False
 
 
 @requires_ffmpeg
@@ -294,7 +542,7 @@ def test_the_span_look_judges_a_scene_with_a_new_clip(engine, tmp_path):
 
     staff(engine)
     ids = _spanned_film(engine, tmp_path, bible=NO_FACES_BIBLE, film=_span_film(tmp_path))
-    _earlier_film(engine, ids["board"], {1: SAME[1], 2: SAME[2]}, _picture_checks({1, 2}))
+    _earlier_film(engine, ids, {1: SAME[1], 2: SAME[2]}, {1, 2})
     _cut_from(engine, ids["job"], {1: SAME[1], 2: ("still-2", "clip-2-new")})
     judge, faces = _Judge(), _Faces()
 
@@ -303,7 +551,7 @@ def test_the_span_look_judges_a_scene_with_a_new_clip(engine, tmp_path):
     )
 
     assert [scene for scene, _widths in judge.calls] == [2]
-    assert len(faces.seen) == 3, "only the new clip's three frames are counted"
+    assert len(faces.seen) == 6, "every filmed scene's three frames are counted"
     scenes = {entry["scene_index"]: entry for entry in record["scenes"]}
     assert scenes[1]["carried_from"] is not None and scenes[1]["passed"] is True
     assert "carried_from" not in scenes[2] and scenes[2]["status"] == "PASSED"

@@ -1859,10 +1859,14 @@ def _his_look(engine, take_id: str, decision: str) -> None:
 
 
 def _accepting(film: dict[str, Any]) -> str:
-    """Her ACCEPT of the film as it is: the panels a flaw she lets through."""
+    """Her ACCEPT of the film as it is: the panels a minor flaw she lets through. (Since
+    2026-10-12 a serious defect is never ACCEPTED; the fixture's panels are her own reading,
+    not words quality control measured as serious, so she may call them minor.)"""
     return answer(
         [
-            {**verdict, "verdict": "ACCEPTED"} if verdict["verdict"] == "REAL" else verdict
+            {**verdict, "verdict": "ACCEPTED", "severity": "minor"}
+            if verdict["verdict"] == "REAL"
+            else verdict
             for verdict in verdicts_for(film)
         ],
         "ACCEPT",
@@ -2120,29 +2124,6 @@ def test_with_his_limits_spent_she_is_told_repair_is_not_possible_and_accepts(
     assert not [
         e for e in events(engine, DECISION_EVENT) if (e.payload.get("done") or {}).get("limited")
     ]
-
-
-def test_a_repair_that_cannot_be_carried_out_is_refused_and_never_churns(
-    engine, settings, studio, monkeypatch
-):
-    """She insists on a REPAIR nothing of which can be done: the answer does not validate, she
-    is asked once more, the film waits; no ``limited`` round, no NOTHING_DONE re-read."""
-    from app.runbook import stages
-
-    film = failed_film(engine)
-    _incident_limits(engine, film, settings)
-    repairs = [{"scene_index": 5, "redo": "still", "reason": "three stacked panels"}]
-    registry, model = director_says(studio, answer(verdicts_for(film), "REPAIR", repairs))
-    no_redo(monkeypatch)
-
-    outcome = stages.director_decides_failed_film(
-        engine, settings, None, registry, film["report"], film["asset"]
-    )
-
-    assert len(model.asked) == 2
-    assert outcome["outcome"] == "WAITING"
-    assert events(engine, DECISION_EVENT) == []
-    assert len(events(engine, WAITING_EVENT)) == 1
 
 
 def test_a_repair_with_one_redo_that_can_be_done_is_valid():
@@ -2908,7 +2889,7 @@ def _decision(**verdict: Any) -> dict[str, Any]:
 
 
 def test_a_minor_defect_is_accepted_never_real_and_every_defect_says_why():
-    from app.agents.reviews import DirectorQcDecision
+    from app.agents.reviews import DirectorQcDecision, decision_schema
     from pydantic import ValidationError
 
     why = {"cause": "the prompt asked for a busy desk", "lesson": "Keep the desk to two objects."}
@@ -2916,8 +2897,10 @@ def test_a_minor_defect_is_accepted_never_real_and_every_defect_says_why():
         DirectorQcDecision.model_validate(_decision(severity="minor", **why))
     with pytest.raises(ValidationError, match="names its severity"):
         DirectorQcDecision.model_validate(_decision(**why))
+    # Without her reading of the report every REAL or ACCEPTED finding writes its lesson; with
+    # it, only one a picture or motion prompt can act on (`reviews.prompt_actionable`).
     with pytest.raises(ValidationError, match="lesson"):
-        DirectorQcDecision.model_validate(_decision(severity="serious", cause=why["cause"]))
+        decision_schema({1}, {2}).model_validate(_decision(severity="serious", cause=why["cause"]))
     with pytest.raises(ValidationError, match="cause"):
         DirectorQcDecision.model_validate(_decision(severity="serious", lesson=why["lesson"]))
     decided = DirectorQcDecision.model_validate(_decision(severity=" Serious", **why))
@@ -2934,6 +2917,20 @@ def test_a_minor_defect_is_accepted_never_real_and_every_defect_says_why():
     with pytest.raises(ValidationError, match="none REAL"):
         DirectorQcDecision.model_validate(accepted)
     DirectorQcDecision.model_validate({**accepted, "decision": "ACCEPT", "repairs": []})
+    # A serious defect is never ACCEPTED (the review of 2026-10-12: «ACCEPTED, serious» was
+    # published silently).
+    serious = {
+        **accepted,
+        "decision": "ACCEPT",
+        "repairs": [],
+        "verdicts": [{**accepted["verdicts"][0], "severity": "serious"}],
+    }
+    with pytest.raises(ValidationError, match="a serious defect is never ACCEPTED"):
+        DirectorQcDecision.model_validate(serious)
+    # A minor defect may be REAL for a free fix (audio, encode, card), never for a still.
+    DirectorQcDecision.model_validate(
+        {**_decision(severity="minor", **why), "repairs": [{"redo": "audio", "reason": "x"}]}
+    )
     # A finding the control misread, or his choice, needs none of it.
     DirectorQcDecision.model_validate(
         {
@@ -2965,11 +2962,51 @@ def _minor_verdicts(film: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
+class LessonDesk:
+    """`prompt_agent`'s shared lesson contract (2026-10-12: `record_prompt_lesson` with a source,
+    a scope and a provisional flag, `confirm_prompt_lessons`, `prompt_lessons`), faked: what is
+    asserted here is what the Director's decision hands it and when, not how it stores."""
+
+    def __init__(self, monkeypatch, *, refuse: tuple[str, ...] = ()):
+        self.rows: list[dict[str, Any]] = []
+        self.confirmed: list[list[str]] = []
+        self.refuse = refuse
+        monkeypatch.setattr("app.media.prompt_agent.record_prompt_lesson", self.record)
+        monkeypatch.setattr(
+            "app.media.prompt_agent.confirm_prompt_lessons", self.confirm, raising=False
+        )
+        monkeypatch.setattr("app.media.prompt_agent.prompt_lessons", self.lessons)
+
+    def record(self, session, lesson, *, source_id=None, scope="all", provisional=False):
+        text = " ".join(str(lesson or "").split())
+        if not text or any(word in text for word in self.refuse):
+            return False
+        self.rows.append(
+            {"lesson": text, "source_id": source_id, "scope": scope, "provisional": provisional}
+        )
+        return True
+
+    def confirm(self, session, source_ids):
+        ids = list(source_ids)
+        self.confirmed.append(ids)
+        changed = [row for row in self.rows if row["source_id"] in ids and row["provisional"]]
+        for row in changed:
+            row["provisional"] = False
+        return len(changed)
+
+    def lessons(self, session=None, limit=12, *, scope=None):
+        return [
+            row["lesson"] + (" (unverified)" if row["provisional"] else "")
+            for row in reversed(self.rows)
+        ][:limit]
+
+
 def test_a_film_whose_defects_are_all_minor_is_accepted_and_nothing_is_bought(
     engine, settings, studio, monkeypatch
 ):
     from app.runbook import stages
 
+    LessonDesk(monkeypatch)
     film = failed_film(engine, panels=False)
     registry, model = director_says(studio, answer(_minor_verdicts(film), "ACCEPT"))
     no_redo(monkeypatch)
@@ -2980,8 +3017,9 @@ def test_a_film_whose_defects_are_all_minor_is_accepted_and_nothing_is_bought(
 
     assert outcome["outcome"] == "ACCEPTED" and outcome["passed_asset"] == film["asset"]
     nothing_bought(engine)
-    # She was told what minor and serious are, and that a minor defect is never REAL.
-    assert "A minor defect is never REAL" in model.asked[-1]
+    # She was told what minor and serious are, and that a minor defect is accepted.
+    assert "A minor defect is ACCEPTED" in model.asked[-1]
+    assert "A serious defect is never ACCEPTED" in model.asked[-1]
     assert "background figures a bit larger than asked" in model.asked[-1]
     (decided,) = events(engine, DECISION_EVENT)
     tunnel = [item for item in decided.payload["verdicts"] if TUNNEL in str(item["text"])]
@@ -2991,11 +3029,17 @@ def test_a_film_whose_defects_are_all_minor_is_accepted_and_nothing_is_bought(
     assert "defect mic" in letter.body_text
 
 
-def test_her_lessons_are_stored_once_for_the_prompt_writers(engine, settings, studio, monkeypatch):
+def test_her_lessons_go_to_the_shared_desk_once_scoped_and_provisional(
+    engine, settings, studio, monkeypatch
+):
+    """The review of 2026-10-12: her lessons were compared by a word overlap of their own and
+    stored for every film alike. Now each goes through `prompt_agent.record_prompt_lesson` once,
+    with the run of her decision as its source, the film's kind as its scope, provisional; only
+    a lesson a prompt can act on is handed over, and what the desk refuses is not counted."""
     from app.media.director_qc import DIRECTOR, learn_from_decision
-    from app.media.prompt_agent import prompt_lessons
     from app.runbook import stages
 
+    desk = LessonDesk(monkeypatch)
     film = failed_film(engine, panels=False)
     registry, _model = director_says(studio, answer(_minor_verdicts(film), "ACCEPT"))
     no_redo(monkeypatch)
@@ -3005,52 +3049,77 @@ def test_her_lessons_are_stored_once_for_the_prompt_writers(engine, settings, st
     )
 
     lesson = "Name the background as near-black before any light source."
-    with Session(engine) as session:
-        # Two tunnel findings taught the same lesson: it is kept once.
-        assert prompt_lessons(session, limit=40).count(lesson) == 1
     (decided,) = events(engine, DECISION_EVENT)
     assert decided.payload["lessons_recorded"] == [lesson]
+    assert decided.payload["film_kind"] == "factual"
+    # Two tunnel findings taught the same lesson: handed over once, never again when her
+    # decision's event was written.
+    assert desk.rows == [
+        {
+            "lesson": lesson,
+            "source_id": decided.payload["run_id"],
+            "scope": "factual",
+            "provisional": True,
+        }
+    ]
 
     payload = {
         "decided_by": DIRECTOR,
         "resumed": False,
-        "run_id": str(uuid4()),
+        "run_id": "run-1",
+        "film_kind": "serial",
         "verdicts": [
-            # The same rule in other words: already known.
-            {"verdict": "REAL", "lesson": "Name the near-black background before any light."},
+            {"verdict": "REAL", "check": "picture_spans_qc", "scene_index": 3,
+             "lesson": "Keep the ledger page blank."},
+            # The same rule from another scene: handed over once.
+            {"verdict": "REAL", "check": "picture_qc", "scene_index": 4,
+             "lesson": "Keep the ledger page blank."},
             # His choice teaches nothing.
-            {"verdict": "OWNER_CHOICE", "lesson": "Use warm amber light on brass."},
-            {"verdict": "ACCEPTED", "lesson": "Show people only from behind, small in frame."},
+            {"verdict": "OWNER_CHOICE", "check": "picture_qc", "scene_index": 2,
+             "lesson": "Use warm amber light on brass."},
+            # The sound, and a whole check's «a picat», are not a rule for a picture.
+            {"verdict": "ACCEPTED", "check": "audio_mix_qc", "lesson": "Keep the music low."},
+            {"verdict": "REAL", "check": "picture_qc", "check_level": True,
+             "lesson": "Look harder at every frame."},
+            # A picture already settled for its check (her reading said so).
+            {"verdict": "ACCEPTED", "check": "picture_qc", "scene_index": 5, "teaches": False,
+             "lesson": "Keep the desk lamp off."},
+            {"verdict": "ACCEPTED", "check": "picture_qc", "scene_index": 1,
+             "lesson": "Show people only from behind, small in frame."},
         ],
-    }
+    }  # fmt: skip
     with Session(engine) as session, session.begin():
         assert learn_from_decision(session, payload) == [
-            "Show people only from behind, small in frame."
+            "Keep the ledger page blank.",
+            "Show people only from behind, small in frame.",
         ]
+    assert [row["scope"] for row in desk.rows[-2:]] == ["serial", "serial"]
+    assert {row["source_id"] for row in desk.rows[-2:]} == {"run-1"}
     with Session(engine) as session, session.begin():
-        # Recorded once: the same decision read again, carried on, or his card teaches nothing.
-        assert learn_from_decision(session, payload) == []
-        fresh = {
+        # What the desk refuses (a lesson naming a scene) is not counted as learned.
+        desk.refuse = ("scene 3",)
+        named = {
             **payload,
-            "verdicts": [{"verdict": "REAL", "lesson": "Keep every caption off the picture."}],
-        }
-        assert learn_from_decision(session, {**fresh, "resumed": True}) == []
-        assert learn_from_decision(session, {**fresh, "decided_by": "owner"}) == []
-    with Session(engine) as session:
-        known = prompt_lessons(session, limit=40)
-    assert known.count("Show people only from behind, small in frame.") == 1
-    assert "Use warm amber light on brass." not in known
-    assert "Keep every caption off the picture." not in known
+            "verdicts": [
+                {"verdict": "REAL", "check": "picture_qc", "scene_index": 3,
+                 "lesson": "Keep scene 3 dark."}
+            ],
+        }  # fmt: skip
+        assert learn_from_decision(session, named) == []
+        # A decision carried on, or his card that publishes a film, teaches nothing.
+        assert learn_from_decision(session, {**payload, "resumed": True}) == []
+        assert learn_from_decision(session, {**payload, "decided_by": "owner"}) == []
 
 
 def test_her_lesson_is_kept_before_her_repair_rewrites_or_buys_anything(
     engine, settings, studio, monkeypatch
 ):
     """The rewrite of the scenes her REPAIR redoes reads `prompt_lessons`: her lesson about the
-    panels is there before the first step of the repair, and named in her decision's event."""
-    from app.media.prompt_agent import prompt_lessons
+    panels is there before the first step of the repair, and named in her decision's event; the
+    film her repair made passed scene 5, so the lesson is confirmed (2026-10-12 review)."""
     from app.runbook import stages
 
+    desk = LessonDesk(monkeypatch)
     film = failed_film(engine)
     repairs = [{"scene_index": 5, "redo": "still", "reason": "three stacked panels"}]
     registry, _model = director_says(studio, answer(verdicts_for(film), "REPAIR", repairs))
@@ -3059,8 +3128,7 @@ def test_her_lesson_is_kept_before_her_repair_rewrites_or_buys_anything(
     carry_out = stages._carry_out
 
     def carry_out_reading_lessons(engine_, *args, **kwargs):
-        with Session(engine_) as session:
-            seen.append(prompt_lessons(session))
+        seen.append(desk.lessons())
         return carry_out(engine_, *args, **kwargs)
 
     monkeypatch.setattr(stages, "_carry_out", carry_out_reading_lessons)
@@ -3070,20 +3138,120 @@ def test_her_lesson_is_kept_before_her_repair_rewrites_or_buys_anything(
     )
 
     assert outcome["outcome"] == "REPAIRED" and redo.calls[0] == ("still", 5, True)
-    assert seen and PANELS_LESSON in seen[0]
+    assert seen and f"{PANELS_LESSON} (unverified)" in seen[0]
     (decided,) = events(engine, DECISION_EVENT)
     assert decided.payload["lessons_recorded"] == [PANELS_LESSON]
     (panels,) = [item for item in decided.payload["verdicts"] if item["verdict"] == "REAL"]
     assert panels["severity"] == "serious" and "three moments" in panels["cause"]
-    with Session(engine) as session:
-        assert prompt_lessons(session, limit=40).count(PANELS_LESSON) == 1
+    assert panels["teaches"] is True
+    assert [row["lesson"] for row in desk.rows] == [PANELS_LESSON]
+    # The new film passed the scene her lesson was about: it worked.
+    assert desk.confirmed == [[decided.payload["run_id"]]]
+    assert desk.rows[0]["provisional"] is False
 
 
-def _earlier_passing_film(engine, film: dict[str, Any], passed: set[int], failed: set[int]) -> str:
+def test_a_lesson_whose_scene_fails_again_is_not_confirmed(engine, settings, studio, monkeypatch):
+    from app.runbook import stages
+
+    desk = LessonDesk(monkeypatch)
+    film = failed_film(engine)
+    repairs = [{"scene_index": 5, "redo": "still", "reason": "three stacked panels"}]
+    registry, _model = director_says(studio, answer(verdicts_for(film), "REPAIR", repairs))
+    FakeRedoPath(engine, monkeypatch, verdict="FAILED")  # the new film fails on «Scena 5: x»
+
+    stages.director_decides_failed_film(
+        engine, settings, None, registry, film["report"], film["asset"]
+    )
+
+    assert [row["lesson"] for row in desk.rows] == [PANELS_LESSON]
+    assert desk.confirmed == [] and desk.rows[0]["provisional"] is True
+
+
+def test_a_failure_storing_her_lessons_keeps_her_decision(engine, settings, studio, monkeypatch):
+    """The review of 2026-10-12: a failure while storing her lessons discarded her validated
+    decision, and the film waited for an answer she had already given."""
+    from app.media import director_qc
+    from app.runbook import stages
+
+    def broken(*_args, **_kwargs):
+        raise RuntimeError("the lesson store is down")
+
+    monkeypatch.setattr("app.media.prompt_agent.record_prompt_lesson", broken)
+    film = failed_film(engine, panels=False)
+    registry, _model = director_says(studio, answer(_minor_verdicts(film), "ACCEPT"))
+    no_redo(monkeypatch)
+
+    outcome = stages.director_decides_failed_film(
+        engine, settings, None, registry, film["report"], film["asset"]
+    )
+
+    assert outcome["outcome"] == "ACCEPTED" and outcome["passed_asset"] == film["asset"]
+    (decided,) = events(engine, DECISION_EVENT)
+    assert "lessons_recorded" not in decided.payload
+    # Written without having been read first, the decision is not lost to its lessons either.
+    payload = {
+        **{k: v for k, v in decided.payload.items() if k != "lessons_recorded"},
+        "report_id": film["report"],
+        "outcome": "NOTHING_DONE",
+    }
+    assert director_qc.record_decision(engine, payload, str(uuid4()))
+    assert len(events(engine, DECISION_EVENT)) == 2
+
+
+def _earlier_passing_film(
+    engine,
+    film: dict[str, Any],
+    passed: set[int],
+    failed: set[int],
+    checks: tuple[str, ...] = ("picture_qc", "picture_spans_qc"),
+) -> str:
     """A film of the same storyboard cut from the same takes, measured before ``film``: its
-    picture checks passed the scenes in ``passed`` and refused those in ``failed``."""
+    picture ``checks`` passed the scenes in ``passed`` and refused those in ``failed``, each
+    entry recorded with the carry key it was measured with (`picture_qc.carry_keys`)."""
+    from app.media.picture_qc import storyboard_carry_keys
+
     ids = {k: str(uuid4()) for k in ("asset", "job", "report")}
     scenes = sorted(passed | failed)
+    with Session(engine) as session:
+        made = session.scalars(
+            select(VideoRenderJob).where(VideoRenderJob.output_asset_id == film["asset"])
+        ).one()
+        production = dict(made.production_json)
+        keys = {
+            check: storyboard_carry_keys(session, film["board"], production, check)
+            for check in ("picture_qc", "picture_spans_qc")
+        }
+    recorded = {
+        "picture_qc": {
+            "passed": not failed,
+            "status": "MEASURED",
+            "scenes": [
+                {
+                    "scene": index,
+                    "status": "MEASURED",
+                    "is_a_picture": True,
+                    "one_picture": True,
+                    "shows_the_scene": index in passed,
+                    "reason": "as asked" if index in passed else "something else",
+                    "carry_key": keys["picture_qc"].get(index),
+                }
+                for index in scenes
+            ],
+        },
+        "picture_spans_qc": {
+            "passed": not failed,
+            "status": "MEASURED",
+            "scenes": [
+                {
+                    "scene_index": index,
+                    "status": "PASSED" if index in passed else "FAILED",
+                    "passed": index in passed,
+                    "carry_key": keys["picture_spans_qc"].get(index),
+                }
+                for index in scenes
+            ],
+        },
+    }
     with Session(engine) as session, session.begin():
         session.add(
             MediaAsset(
@@ -3102,9 +3270,6 @@ def _earlier_passing_film(engine, film: dict[str, Any], passed: set[int], failed
             )
         )
         session.flush()
-        made = session.scalars(
-            select(VideoRenderJob).where(VideoRenderJob.output_asset_id == film["asset"])
-        ).one()
         session.add(
             VideoRenderJob(
                 id=ids["job"],
@@ -3113,7 +3278,7 @@ def _earlier_passing_film(engine, film: dict[str, Any], passed: set[int], failed
                 output_asset_id=ids["asset"],
                 started_at="2000-01-01T00:00:00+00:00",
                 finished_at="2000-01-01T00:00:00+00:00",
-                production_json=dict(made.production_json),
+                production_json=production,
             )
         )
         session.flush()
@@ -3123,35 +3288,7 @@ def _earlier_passing_film(engine, film: dict[str, Any], passed: set[int], failed
                 media_asset_id=ids["asset"],
                 status="FAILED" if failed else "PASSED",
                 score=1.0,
-                checks_json={
-                    "picture_qc": {
-                        "passed": not failed,
-                        "status": "MEASURED",
-                        "scenes": [
-                            {
-                                "scene": index,
-                                "status": "MEASURED",
-                                "is_a_picture": True,
-                                "one_picture": True,
-                                "shows_the_scene": index in passed,
-                                "reason": "as asked" if index in passed else "something else",
-                            }
-                            for index in scenes
-                        ],
-                    },
-                    "picture_spans_qc": {
-                        "passed": not failed,
-                        "status": "MEASURED",
-                        "scenes": [
-                            {
-                                "scene_index": index,
-                                "status": "PASSED" if index in passed else "FAILED",
-                                "passed": index in passed,
-                            }
-                            for index in scenes
-                        ],
-                    },
-                },
+                checks_json={name: recorded[name] for name in checks},
                 failure_reasons_json=[],
                 verified_at="2000-01-01T00:00:00+00:00",
             )
@@ -3159,11 +3296,21 @@ def _earlier_passing_film(engine, film: dict[str, Any], passed: set[int], failed
     return ids["report"]
 
 
+def _schema_of(context: dict[str, Any]):
+    from app.agents.reviews import decision_schema
+
+    return decision_schema(
+        {item["id"] for item in context["findings"]},
+        {scene["scene_index"] for scene in context["scenes"]},
+        context,
+    )
+
+
 def test_a_scene_that_passed_before_with_the_same_takes_is_never_real_nor_redone(engine):
     """aa170155, 2026-10-12: scene 1 (still 7a0be480, clip 843617b8) passed the film QCs of
     14:45 and 15:03 (10-11) and 08:15 UTC, failed the one of 10:35 UTC unchanged, and her REPAIR
     bought a new still and clip for it."""
-    from app.agents.reviews import decision_schema, failed_render_reading
+    from app.agents.reviews import failed_render_reading
     from app.media.director_qc import film_qc_context
     from pydantic import ValidationError
 
@@ -3174,37 +3321,122 @@ def test_a_scene_that_passed_before_with_the_same_takes_is_never_real_nor_redone
 
     scenes = {scene["scene_index"]: scene for scene in context["scenes"]}
     assert scenes[5]["passed_before_unchanged"] is True
-    assert scenes[5]["passed_before"]["report_id"] == earlier
-    assert "aceleași preluări" in scenes[5]["passed_before"]["note"]
+    assert scenes[5]["passed_before"]["picture_spans_qc"]["report_id"] == earlier
+    assert "aceleași preluări" in scenes[5]["passed_before"]["picture_qc"]["note"]
+    assert scenes[5]["failing_now"] == ["picture_spans_qc"]
     # Refused before (scene 1), or never looked at (2-4): judged on what this report says.
     assert [scenes[index]["passed_before_unchanged"] for index in (1, 2, 3, 4)] == [False] * 4
     assert "passed_before" not in scenes[1]
 
-    schema = decision_schema({item["id"] for item in context["findings"]}, set(scenes), context)
+    schema = _schema_of(context)
     repairs = [{"scene_index": 5, "redo": "still", "reason": "three stacked panels"}]
-    with pytest.raises(ValidationError, match="passed_before_unchanged"):
+    with pytest.raises(ValidationError, match="passed_before"):
         schema.model_validate_json(answer(verdicts_for(film), "REPAIR", repairs))
-    # The same picture read differently is not a defect: accepted as minor, the film is published.
+    # The same picture read differently is FALSE: no cause, no lesson to invent (the review of
+    # 2026-10-12), and the film is published.
     calm = [
-        {
-            **verdict,
-            "verdict": "ACCEPTED",
-            "severity": "minor",
-            "cause": "the look read the same picture differently",
-            "lesson": "Describe one continuous photograph in the still prompt.",
-        }
+        {"finding": verdict["finding"], "verdict": "FALSE", "reason": "the same picture passed"}
         if verdict["verdict"] == "REAL"
         else verdict
         for verdict in verdicts_for(film)
     ]
     assert schema.model_validate_json(answer(calm, "ACCEPT")).decision == "ACCEPT"
+    # Accepted as minor it needs no lesson either: there is nothing for a prompt to learn.
+    minor = [
+        {**verdict, "verdict": "ACCEPTED", "severity": "minor", "cause": "read differently"}
+        if verdict["verdict"] == "REAL"
+        else verdict
+        for verdict in verdicts_for(film)
+    ]
+    for verdict in minor:
+        verdict.pop("lesson", None)
+    parsed = schema.model_validate(json.loads(answer(minor, "ACCEPT")) | {"verdicts": minor})
+    assert parsed.decision == "ACCEPT"
+
+
+def test_what_passed_before_is_settled_check_by_check(engine):
+    """The review of 2026-10-12: «passed before» covered every check of the scene, and a
+    finding no check claimed. A finding of the span look on a scene only the one-frame look
+    passed is the span look's own, judged as any other; what she settled stays settled."""
+    from app.agents.reviews import failed_render_reading
+    from app.media.director_qc import film_qc_context
+    from pydantic import ValidationError
+
+    film = failed_film(engine, local_move=False)
+    earlier = _earlier_passing_film(engine, film, {5}, set(), checks=("picture_qc",))
+    context = film_qc_context(engine, failed_render_reading(engine, film["report"]))
+
+    scene = next(item for item in context["scenes"] if item["scene_index"] == 5)
+    assert set(scene["passed_before"]) == {"picture_qc"}
+    assert scene["failing_now"] == ["picture_spans_qc"]
+    assert scene["passed_before_unchanged"] is False
+    panels = [{"scene_index": 5, "redo": "still", "reason": "three stacked panels"}]
+    assert _schema_of(context).model_validate_json(answer(verdicts_for(film), "REPAIR", panels))
+
+    # Her FALSE, or her minor ACCEPTED, on the span look's findings of these very takes.
+    with Session(engine) as session, session.begin():
+        append_event(
+            session,
+            DECISION_EVENT,
+            "quality_control_report",
+            earlier,
+            1,
+            {
+                "report_id": earlier,
+                "storyboard_id": film["board"],
+                "decided_by": "Director",
+                "decision": "ACCEPT",
+                "verdicts": [
+                    {
+                        "finding": 1,
+                        "verdict": "ACCEPTED",
+                        "severity": "minor",
+                        "check": "picture_spans_qc",
+                        "scene_index": 5,
+                        "reason": "a faint seam, accepted",
+                    }
+                ],
+            },
+            str(uuid4()),
+        )
+    context = film_qc_context(engine, failed_render_reading(engine, film["report"]))
+    scene = next(item for item in context["scenes"] if item["scene_index"] == 5)
+    assert scene["accepted_before"]["picture_spans_qc"]["verdicts"] == ["ACCEPTED"]
+    assert scene["accepted_before_unchanged"] is True
+    assert scene["passed_before_unchanged"] is True
+    with pytest.raises(ValidationError, match="accepted_before"):
+        _schema_of(context).model_validate_json(answer(verdicts_for(film), "REPAIR", panels))
+
+
+def test_a_finding_no_check_claimed_is_never_settled():
+    context = {
+        "findings": [{"id": 1, "text": "Scena 5: odd", "check": None, "scene_index": 5}],
+        "scenes": [
+            {
+                "scene_index": 5,
+                "kind": "LIVE",
+                "paid_redos_left": 1,
+                "passed_before": {"picture_qc": {"report_id": "r"}},
+                "failing_now": ["unattributed"],
+                "passed_before_unchanged": False,
+            }
+        ],
+    }
+    decided = _schema_of(context).model_validate_json(
+        answer(
+            [{"finding": 1, "verdict": "REAL", "reason": "odd"}],
+            "REPAIR",
+            [{"scene_index": 5, "redo": "still", "reason": "odd"}],
+        )
+    )
+    assert decided.repairs[0].scene_index == 5
 
 
 def test_only_a_scene_a_real_finding_names_is_redone(engine):
     """aa170155, 08:18 UTC: scenes 4 and 5 had passed that very report; her REPAIR of scene 3
     listed their stills too (to join takes bought for an earlier repair) and new motion was
     bought for both."""
-    from app.agents.reviews import decision_schema, failed_render_reading
+    from app.agents.reviews import failed_render_reading
     from app.media.director_qc import film_qc_context
     from pydantic import ValidationError
 
@@ -3214,14 +3446,563 @@ def test_only_a_scene_a_real_finding_names_is_redone(engine):
         failed_render_reading(engine, film["report"]),
         limits={"per_scene": 2, "per_film": 4},
     )
-    schema = decision_schema(
-        {item["id"] for item in context["findings"]},
-        {scene["scene_index"] for scene in context["scenes"]},
-        context,
-    )
+    schema = _schema_of(context)
     panels = [{"scene_index": 5, "redo": "still", "reason": "three stacked panels"}]
     also_4 = panels + [{"scene_index": 4, "redo": "still", "reason": "join the new still"}]
 
     with pytest.raises(ValidationError, match=r"scenes \[4\] are named by no REAL finding"):
         schema.model_validate_json(answer(verdicts_for(film), "REPAIR", also_4))
     assert schema.model_validate_json(answer(verdicts_for(film), "REPAIR", panels)).repairs
+
+
+# ------------------------------------------- the review of 2026-10-12, finding by finding
+#
+# The adversarial review of the four commits of 2026-10-12 confirmed what follows; each test
+# names the defect it holds shut. Every model and provider is faked; nothing is bought.
+
+#: Today's words of the checks (aa170155 and 1c038a99, read on a copy of the studio's database).
+YUNET = "Scena 4: YuNet a găsit fețe în cadrul first (1), deși biblia vizuală interzice fețele"
+NO_SOUND = "The film has no audio stream"
+CAVERN = (
+    "Scena 5: privit la 1080 px: nu arată ce cere planul; încalcă biblia vizuală: The detector "
+    "cavern in scenes 1, 4 and 5 is the same location with identical ring structure («a tower "
+    "in a shaft, unlike scene 2»)"
+)
+FROZEN = "Motion QC: Scena 2, Scena 3: imagine fixă (fallback) fără alegerea Proprietarului."
+
+
+def _context_of_words(*texts: str, scenes=(1, 2, 3, 4, 5), checks=None) -> dict[str, Any]:
+    findings = report_findings({"failure_reasons_json": list(texts), "checks_json": checks or {}})
+    return {
+        "findings": findings,
+        "scenes": [
+            {"scene_index": index, "kind": "LIVE", "paid_redos_left": 1} for index in scenes
+        ],
+    }
+
+
+def test_what_quality_control_measured_as_serious_is_never_accepted():
+    """Finding 1: «ACCEPTED» (minor or serious) published a serious defect silently."""
+    from pydantic import ValidationError
+
+    context = _context_of_words(YUNET, NO_SOUND)
+    first, second = context["findings"]
+    assert first["measured_serious"] == "a face where the visual bible forbids faces"
+    assert second["measured_serious"] == "no audio stream" and second["check"] == "audio_qc"
+    schema = _schema_of(context)
+    small = {"verdict": "ACCEPTED", "reason": "barely visible", "severity": "minor"}
+    with pytest.raises(ValidationError, match="a serious defect is never ACCEPTED"):
+        schema.model_validate_json(
+            answer(
+                [{"finding": 1, **small}, {"finding": 2, "verdict": "FALSE", "reason": "x"}],
+                "ACCEPT",
+            )
+        )
+    # REAL «minor» is serious all the same, and its still and the sound are redone.
+    decided = schema.model_validate_json(
+        answer(
+            [
+                {"finding": 1, "verdict": "REAL", "reason": "a face", "severity": "minor"},
+                {"finding": 2, "verdict": "REAL", "reason": "silent", "severity": "minor"},
+            ],
+            "REPAIR",
+            [{"scene_index": 4, "redo": "still", "reason": "a face"}, {"redo": "audio",
+              "reason": "no sound"}],
+        )
+    )  # fmt: skip
+    assert [verdict.severity for verdict in decided.verdicts] == ["serious", "serious"]
+    # Quality control can misread a film: her FALSE stands.
+    assert schema.model_validate_json(
+        answer(
+            [
+                {"finding": 1, "verdict": "FALSE", "reason": "a statue's profile"},
+                {"finding": 2, "verdict": "FALSE", "reason": "the probe failed"},
+            ],
+            "ACCEPT",
+        )
+    )
+
+
+def test_with_his_limits_spent_a_serious_defect_goes_to_his_card_and_nothing_is_bought(
+    engine, settings, studio, monkeypatch
+):
+    """Finding 1, the money side: a serious defect may not be ACCEPTED, and with his cap spent a
+    REPAIR could not validate either — the film waited in her inbox and he heard nothing. Now
+    her REPAIR is carried out to his cap: nothing bought, his card asks him, she is not asked
+    again while it waits."""
+    from app.decisions.models import OwnerDecision
+    from app.decisions.producers.redo_cap import dedupe_key
+    from app.runbook import stages
+
+    film = failed_film(engine)
+    _incident_limits(engine, film, settings)
+    rounds_before = len(events(engine, "runbook.qc_paid_redo"))  # the two that spent his cap
+    repairs = [{"scene_index": 5, "redo": "still", "reason": "three stacked panels"}]
+    registry, model = director_says(studio, answer(verdicts_for(film), "REPAIR", repairs))
+    redo = FakeRedoPath(engine, monkeypatch)
+
+    outcome = stages.director_decides_failed_film(
+        engine, settings, None, registry, film["report"], film["asset"]
+    )
+
+    assert len(model.asked) == 1
+    assert "REPAIR is not possible" in model.asked[0] and "REPAIR it anyway" in model.asked[0]
+    assert redo.calls == [] and outcome["passed_asset"] is None
+    assert outcome["outcome"] == "NOTHING_DONE"
+    (decided,) = events(engine, DECISION_EVENT)
+    assert decided.payload["done"]["limited"] and decided.payload["done"]["card_id"]
+    with Session(engine) as session:
+        card = session.scalar(
+            select(OwnerDecision).where(OwnerDecision.dedupe_key == dedupe_key(film["board"]))
+        )
+        assert card is not None and card.status == "PENDING"
+    assert len(events(engine, "runbook.qc_paid_redo")) == rounds_before
+
+
+def test_a_repair_that_cannot_be_carried_out_is_refused_and_never_churns(
+    engine, settings, studio, monkeypatch
+):
+    """She insists on a REPAIR nothing of which can be done (a paid motion for his LOCAL_MOVE
+    scene): the answer does not validate, she is asked once more, the film waits; no round, no
+    NOTHING_DONE re-read. (A REPAIR his cap alone stops goes to his card, above.)"""
+    from app.runbook import stages
+
+    film = failed_film(engine)
+    repairs = [{"scene_index": 5, "redo": "motion", "reason": "animate the panels away"}]
+    registry, model = director_says(studio, answer(verdicts_for(film), "REPAIR", repairs))
+    no_redo(monkeypatch)
+
+    outcome = stages.director_decides_failed_film(
+        engine, settings, None, registry, film["report"], film["asset"]
+    )
+
+    assert len(model.asked) == 2
+    assert outcome["outcome"] == "WAITING"
+    assert events(engine, DECISION_EVENT) == []
+    assert len(events(engine, WAITING_EVENT)) == 1
+
+
+def test_controlul_a_picat_is_real_only_with_its_scenes():
+    """Finding 2: on 2026-10-12 she marked «Controlul «picture_qc» a picat» REAL every time;
+    it named no scene and bypassed the minor rule and the scene-naming rule."""
+    from pydantic import ValidationError
+
+    look = "Scene 5: the picture is not what the scene asked for — a tower in a shaft"
+    checks = {
+        "picture_qc": {
+            "passed": False,
+            "status": "MEASURED",
+            "scenes": [{"scene": 5, "status": "MEASURED", "is_a_picture": True,
+                        "one_picture": True, "shows_the_scene": False}],
+        },
+        "picture_spans_qc": {
+            "passed": False,
+            "scenes": [{"scene_index": 5, "passed": False, "status": "FAILED", "reason": "?"}],
+        },
+    }  # fmt: skip
+    context = _context_of_words(look, scenes=(5,), checks=checks)
+    own, whole = context["findings"]
+    # The one-frame look's own words are its own (they were filed under the span look, or no
+    # check, and «Controlul «picture_qc» a picat» was added beside them).
+    assert own["check"] == "picture_qc" and own["scene_index"] == 5
+    assert whole["text"] == "Controlul «picture_spans_qc» a picat"
+    assert whole["check_level"] is True and whole["scenes_of_check"] == [5]
+    schema = _schema_of(context)
+    redo_5 = [{"scene_index": 5, "redo": "still", "reason": "a tower"}]
+    with pytest.raises(ValidationError, match="only says that the check"):
+        schema.model_validate_json(
+            answer(
+                [
+                    {"finding": 1, "verdict": "FALSE", "reason": "it is the cavern"},
+                    {"finding": 2, "verdict": "REAL", "reason": "the check failed"},
+                ],
+                "REPAIR",
+                redo_5,
+            )
+        )
+    assert schema.model_validate_json(
+        answer(
+            [
+                {"finding": 1, "verdict": "REAL", "reason": "a tower"},
+                {"finding": 2, "verdict": "REAL", "reason": "the same tower"},
+            ],
+            "REPAIR",
+            redo_5,
+        )
+    )
+    # Every REAL finding about no scene: only a free fix.
+    alone = {
+        "findings": [
+            {"id": 1, "text": "Controlul «editorial_qc» a picat", "check": "editorial_qc",
+             "scene_index": None, "check_level": True, "scenes_of_check": []}
+        ],
+        "scenes": [{"scene_index": 5, "kind": "LIVE", "paid_redos_left": 1}],
+    }  # fmt: skip
+    real = [{"finding": 1, "verdict": "REAL", "reason": "the cuts are off"}]
+    with pytest.raises(ValidationError, match="no REAL finding is about a scene"):
+        _schema_of(alone).model_validate_json(answer(real, "REPAIR", redo_5))
+    assert _schema_of(alone).model_validate_json(
+        answer(real, "REPAIR", [{"redo": "encode", "reason": "the cuts"}])
+    )
+
+
+def test_a_scene_is_named_by_its_index_or_scene_words_never_a_bare_digit():
+    """Finding 3, on today's words: «cadrul first (1)» named scene 1, «Frames 1-2» scenes 1 and
+    2, and the bible's rule quoted on scene 5 named scenes 1 and 4."""
+    from app.agents.reviews import _names_scene, scenes_named
+
+    yunet = {"scene_index": 4, "text": YUNET}
+    assert _names_scene(yunet, 4) and not _names_scene(yunet, 1)
+    assert scenes_named("Frames 1-2 are darker than the plan") == set()
+    assert scenes_named(CAVERN, own=5) == {5}
+    assert scenes_named(FROZEN, own=2) == {2, 3}
+    assert scenes_named("Scenele 1, 2: imagine fixă") == {1, 2}
+    assert scenes_named("scenes 1, 4 and 5 are frozen") == {1, 4, 5}
+    assert scenes_named("scenele 2-4 au aceeași lampă") == {2, 3, 4}
+    assert scenes_named("lumina scenei 4 e prea caldă") == {4}
+    findings = report_findings({"failure_reasons_json": [YUNET, FROZEN, CAVERN], "checks_json": {}})
+    assert [item["scenes"] for item in findings] == [[4], [2, 3], [5]]
+    assert findings[1]["measured_serious"] == "a frozen or broken clip"
+    assert findings[2]["measured_serious"] is None
+
+
+def test_a_minor_defect_gets_its_free_fix_but_never_a_paid_redo():
+    """Finding 13: REAL «minor» was refused even for a free fix."""
+    from pydantic import ValidationError
+
+    context = _context_of_words(MUSIC_LEVEL, "Scena 2: a small mark on the wall", "Scena 3: a face")
+    schema = _schema_of(context)
+    music = {"finding": 1, "verdict": "REAL", "reason": "too loud", "severity": "minor"}
+    mark = {"finding": 2, "verdict": "ACCEPTED", "reason": "a mark", "severity": "minor"}
+    face = {"finding": 3, "verdict": "FALSE", "reason": "a statue"}
+    assert schema.model_validate_json(
+        answer([music, mark, face], "REPAIR", [{"redo": "audio", "reason": "lower the music"}])
+    )
+    with pytest.raises(ValidationError, match="a minor defect is ACCEPTED"):
+        schema.model_validate_json(
+            answer(
+                [music, {**mark, "verdict": "REAL"}, face],
+                "REPAIR",
+                [{"scene_index": 2, "redo": "still", "reason": "the mark"}],
+            )
+        )
+    # With a serious defect elsewhere, a minor one still buys nothing for its own scene.
+    with pytest.raises(ValidationError, match=r"scenes \[2\] are named by no REAL finding"):
+        schema.model_validate_json(
+            answer(
+                [music, {**mark, "verdict": "REAL"}, {**face, "verdict": "REAL"}],
+                "REPAIR",
+                [
+                    {"scene_index": 2, "redo": "still", "reason": "the mark"},
+                    {"scene_index": 3, "redo": "still", "reason": "the face"},
+                ],
+            )
+        )
+
+
+def test_the_rewrite_before_a_redo_reads_why_her_defect_appeared(engine, monkeypatch):
+    """Finding 8: her verdict's cause was read by nobody. The rewrite before the purchase now
+    reads, for the scene, the REAL findings' words, «cauza: …» and her second look's words."""
+    from app.media import scene_rewrite
+    from app.runbook import stages
+
+    asked: list[tuple[str, list[str]]] = []
+
+    def fake_rewrite(engine_, registry, storyboard_id, scene, layer, reasons, correlation):
+        asked.append((layer, list(reasons)))
+        return {"rewritten": True, "rewritable": True, "layer": layer, "reason": ""}
+
+    monkeypatch.setattr(scene_rewrite, "rewrite_for_redo", fake_rewrite)
+    reading = {
+        "verdicts": [
+            {"verdict": "REAL", "text": "Scena 5: a tower, not the cavern", "scene_index": 5,
+             "check": "picture_spans_qc", "cause": "the prompt named a shaft before the cavern"},
+            {"verdict": "REAL", "text": "Scena 4: a face", "scene_index": 4,
+             "cause": "a person at the desk"},
+            {"verdict": "FALSE", "text": "Scena 5: apare text sau un logo", "scene_index": 5},
+        ]
+    }  # fmt: skip
+
+    refusal = stages._correct_before_redo(
+        engine,
+        None,
+        "board-1",
+        5,
+        ["still"],
+        [],
+        reading,
+        "c-1",
+        extra_reasons=["Directoarea a privit din nou scena: turnul e acolo."],
+    )
+
+    assert refusal is None
+    ((layer, reasons),) = asked
+    assert layer == "still"
+    assert "Scena 5: a tower, not the cavern" in reasons
+    assert "cauza: the prompt named a shaft before the cavern" in reasons
+    assert not any("a person at the desk" in reason or "logo" in reason for reason in reasons)
+    assert reasons[-1] == "Directoarea a privit din nou scena: turnul e acolo."
+
+
+def test_a_motion_redo_the_motion_layer_cannot_treat_turns_to_the_picture(engine, monkeypatch):
+    """Finding 9: a MOTION redo she picked for a finding about the picture could never be
+    rewritten (every untreated finding was the picture's), and stayed PROMPT_NOT_CORRECTED."""
+    from app.media import scene_rewrite
+    from app.runbook import stages
+
+    asked: list[tuple[str, list[str]]] = []
+
+    def fake_rewrite(engine_, registry, storyboard_id, scene, layer, reasons, correlation):
+        asked.append((layer, list(reasons)))
+        if layer == "motion":
+            return {"rewritten": False, "rewritable": True, "layer_exhausted": True,
+                    "reason": "Cuvintele mișcării nu pot trata ce e în imagine."}  # fmt: skip
+        return {"rewritten": True, "rewritable": True, "layer": "still", "reason": ""}
+
+    monkeypatch.setattr(scene_rewrite, "rewrite_for_redo", fake_rewrite)
+    kinds = ["motion"]
+
+    refusal = stages._correct_before_redo(
+        engine, None, "board-1", 5, kinds, [], {"findings": []}, "c-3"
+    )
+
+    assert refusal is None and kinds == ["still", "motion"]
+    assert [layer for layer, _ in asked] == ["motion", "still"]
+    assert stages.LAYER_EXHAUSTED_NOTE in asked[1][1]
+
+    # A newer approved still already waits: the motion is bought from it as its words are.
+    film = failed_film(engine, local_move=False)
+    with Session(engine) as session, session.begin():
+        _take(session, film["board"], 5, "still", None)
+    asked.clear()
+    kinds = ["motion"]
+    reading = {"findings": [], "media_asset_id": film["asset"]}
+    assert (
+        stages._correct_before_redo(engine, None, film["board"], 5, kinds, [], reading, "c-4")
+        is None
+    )
+    assert kinds == ["motion"] and [layer for layer, _ in asked] == ["motion"]
+
+
+def _standing(film: dict[str, Any], repairs: list[dict[str, Any]]) -> dict[str, Any]:
+    """Her REPAIR as a decision from before 2026-10-12 recorded it (no severities), waiting on
+    his answer, which has now come (`decision_state` ``ready``)."""
+    return {
+        "final": True,
+        "pending": True,
+        "ready": True,
+        "look": False,
+        "lapsed": False,
+        "outcome": "ASKED",
+        "tries": 1,
+        "last_at": utc_now(),
+        "decision": {
+            "report_id": film["report"],
+            "media_asset_id": film["asset"],
+            "storyboard_id": film["board"],
+            "decided_by": "Director",
+            "run_id": "old-run",
+            "decision": "REPAIR",
+            "summary": "Refac scenele.",
+            "verdicts": [
+                {
+                    "finding": number,
+                    "text": text,
+                    "check": "picture_spans_qc",
+                    "scene_index": int(text.split(":")[0].split()[-1]),
+                    "verdict": "REAL" if PANELS in text else "FALSE",
+                    "reason": "x",
+                }
+                for number, text in enumerate(film["failures"], start=1)
+            ],  # fmt: skip
+            "repairs": repairs,
+            "bought_so_far": [],
+            "started_at": utc_now(),
+            "outcome": "ASKED",
+            "final": True,
+        },
+    }
+
+
+def test_a_resumed_repair_is_carried_out_only_as_todays_rules_allow(
+    engine, settings, studio, monkeypatch
+):
+    """Finding 14: a REPAIR decided before the rules of 2026-10-12, resumed after his answer,
+    was carried out as it was. Its still of scene 4 (no REAL finding names it) is dropped and
+    said; its still of scene 5 (the panels) is bought; she is not asked again."""
+    from app.media import director_qc
+    from app.runbook import stages
+
+    film = failed_film(engine, local_move=False)
+    repairs = [
+        {"scene_index": 5, "redo": "still", "reason": "three stacked panels"},
+        {"scene_index": 4, "redo": "still", "reason": "join the new still"},
+    ]
+    monkeypatch.setattr(director_qc, "decision_state", lambda *_a: _standing(film, repairs))
+    registry, model = director_says(studio, lambda prompt: pytest.fail("she was asked again"))
+    redo = FakeRedoPath(engine, monkeypatch)
+
+    outcome = stages.director_decides_failed_film(
+        engine, settings, None, registry, film["report"], film["asset"]
+    )
+
+    assert model.asked == []
+    assert ("still", 5, True) in redo.calls and ("still", 4, True) not in redo.calls
+    assert outcome["outcome"] == "REPAIRED"
+    (decided,) = events(engine, DECISION_EVENT)
+    (dropped,) = [item for item in decided.payload["done"]["skipped"] if item["scene_index"] == 4]
+    assert dropped["status"] == director_qc.DROPPED_ON_RESUME
+    assert "nicio constatare reală a unui defect serios" in dropped["reason"]
+
+
+def test_a_resumed_repair_with_nothing_left_is_read_by_her_again(
+    engine, settings, studio, monkeypatch
+):
+    from app.media import director_qc
+    from app.runbook import stages
+
+    film = failed_film(engine, local_move=False)
+    repairs = [{"scene_index": 4, "redo": "still", "reason": "join the new still"}]
+    monkeypatch.setattr(director_qc, "decision_state", lambda *_a: _standing(film, repairs))
+    registry, model = director_says(studio, _accepting(film))
+    no_redo(monkeypatch)
+
+    outcome = stages.director_decides_failed_film(
+        engine, settings, None, registry, film["report"], film["asset"]
+    )
+
+    assert len(model.asked) == 1 and outcome["outcome"] == "ACCEPTED"
+
+
+class SecondLook:
+    """`media.second_look.second_look` (2026-10-12, the shared contract), faked with the
+    answer it gives; the frames of the failed film are faked too (its file is not on disk)."""
+
+    def __init__(self, monkeypatch, answer: dict[str, Any]):
+        import sys
+        import types
+
+        self.answer = answer
+        self.calls: list[dict[str, Any]] = []
+        module = types.ModuleType("app.media.second_look")
+        module.second_look = self  # type: ignore[attr-defined]
+        monkeypatch.setitem(sys.modules, "app.media.second_look", module)
+        monkeypatch.setattr(
+            "app.runbook.stages._failed_film_frames",
+            lambda *_a, **_k: ["first.png", "middle.png", "last.png"],
+        )
+
+    def __call__(self, engine, registry, **kwargs):
+        self.calls.append(kwargs)
+        return dict(self.answer)
+
+
+def test_her_second_look_overturning_the_refusal_buys_nothing(
+    engine, settings, studio, monkeypatch
+):
+    """Finding 15, the Owner's rule: «LLM-ul este pe abonament! NU COSTĂ BANI»; «trece
+    imaginile picate de la QC pe la Directoare și să decidă dacă au picat corect». Before the
+    paid still of scene 5 is bought she looks at the scene in the failed film: the refusal is
+    wrong, so nothing is bought; she reads the report again with the scene settled, and the
+    film is published."""
+    from app.runbook import stages
+
+    look = SecondLook(
+        monkeypatch,
+        {"verdict": "OVERTURNED", "severity": "minor", "redo": False,
+         "reason_ro": "Imaginea e o singură fotografie; banda e cerul nopții.",
+         "run_id": "look-1"},
+    )  # fmt: skip
+    film = failed_film(engine)
+    repairs = [{"scene_index": 5, "redo": "still", "reason": "three stacked panels"}]
+    calm = [
+        {"finding": verdict["finding"], "verdict": "FALSE", "reason": "her look: one picture"}
+        if verdict["verdict"] == "REAL"
+        else verdict
+        for verdict in verdicts_for(film)
+    ]
+    registry, model = director_says(
+        studio,
+        lambda prompt: (
+            answer(calm, "ACCEPT")
+            if '"accepted_before"' in prompt
+            else answer(verdicts_for(film), "REPAIR", repairs)
+        ),
+    )
+    redo = FakeRedoPath(engine, monkeypatch)
+
+    outcome = stages.director_decides_failed_film(
+        engine, settings, None, registry, film["report"], film["asset"]
+    )
+
+    assert redo.calls == [], "nothing was bought for a refusal her look overturned"
+    ((asked),) = look.calls
+    assert asked["kind"] == "film_scene" and asked["scene_index"] == 5
+    assert asked["images"] == ["first.png", "middle.png", "last.png"]
+    assert any(PANELS in words for words in asked["refusal"])
+    assert film["takes"][5]["still"] in asked["take_ids"]
+    first, second = events(engine, DECISION_EVENT)
+    (overturned,) = first.payload["done"]["overturned"]
+    assert overturned["scene_index"] == 5 and overturned["checks"] == ["picture_spans_qc"]
+    assert "cerul nopții" in overturned["reason"]
+    assert len(model.asked) == 2 and second.payload["decision"] == "ACCEPT"
+    assert outcome["outcome"] == "ACCEPTED" and outcome["passed_asset"] == film["asset"]
+    nothing_bought(engine)
+
+
+def test_her_second_look_confirming_the_refusal_buys_with_her_words(
+    engine, settings, studio, monkeypatch
+):
+    from app.media import scene_rewrite
+    from app.runbook import stages
+
+    SecondLook(
+        monkeypatch,
+        {"verdict": "CONFIRMED", "severity": "serious", "redo": True,
+         "reason_ro": "Trei panouri, se reface.", "run_id": "look-2"},
+    )  # fmt: skip
+    asked: list[list[str]] = []
+
+    def fake_rewrite(engine_, registry, storyboard_id, scene, layer, reasons, correlation):
+        asked.append(list(reasons))
+        return {"rewritten": True, "rewritable": True, "layer": layer, "reason": ""}
+
+    monkeypatch.setattr(scene_rewrite, "rewrite_for_redo", fake_rewrite)
+    film = failed_film(engine)
+    repairs = [{"scene_index": 5, "redo": "still", "reason": "three stacked panels"}]
+    registry, _model = director_says(studio, answer(verdicts_for(film), "REPAIR", repairs))
+    redo = FakeRedoPath(engine, monkeypatch)
+
+    outcome = stages.director_decides_failed_film(
+        engine, settings, None, registry, film["report"], film["asset"]
+    )
+
+    assert redo.calls[0] == ("still", 5, True) and outcome["outcome"] == "REPAIRED"
+    (reasons,) = asked
+    assert "Directoarea a privit din nou scena: Trei panouri, se reface." in reasons
+    assert any(
+        reason.startswith("cauza: the still prompt listed three moments") for reason in reasons
+    )
+
+
+def test_without_her_second_look_the_purchase_goes_on_as_before(
+    engine, settings, studio, monkeypatch
+):
+    from app.runbook import stages
+
+    SecondLook(
+        monkeypatch,
+        {"verdict": "UNAVAILABLE", "severity": "none", "redo": True, "reason_ro": "",
+         "run_id": None},
+    )  # fmt: skip
+    film = failed_film(engine)
+    repairs = [{"scene_index": 5, "redo": "still", "reason": "three stacked panels"}]
+    registry, _model = director_says(studio, answer(verdicts_for(film), "REPAIR", repairs))
+    redo = FakeRedoPath(engine, monkeypatch)
+
+    outcome = stages.director_decides_failed_film(
+        engine, settings, None, registry, film["report"], film["asset"]
+    )
+
+    assert redo.calls == [("still", 5, True), ("rejoin", None, False)]
+    assert outcome["outcome"] == "REPAIRED"

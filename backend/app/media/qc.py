@@ -57,15 +57,17 @@ from app.media.models import (
 )
 from app.media.picture_qc import (
     CARRIED_STATUS,
+    CLIP_TEMPLATE_VERSION,
     FRAME_SOURCES,
     MAX_SUBTITLE_LINES,
     CleanShot,
     FrameSource,
     StudioText,
     caption_rows,
+    carried_forward,
+    carry_keys,
     clean_shots,
     cut_caption_rows,
-    earlier_passes,
     evaluate_pictures,
     film_captions,
     film_scene_prompts,
@@ -3444,10 +3446,18 @@ def span_picture_qc(
     film's frames as they are (no captions burnt in, nobody to look, or the cut failed). The
     look is told which, and that the narration's subtitles are the studio's own. A ``judge``
     passed in is handed the three frames alone (above the caption rows, on FILM_CROPPED).
+
+    Approved stays approved (2026-10-12, aa170155; `picture_qc.carried_forward`): a scene whose
+    picture is exactly that of an earlier film whose span look passed it (the same carry key:
+    takes, this look's version, the bible and look, the span and speed), or whose findings of
+    this look the Director settled on the same takes, is not shown to the look again; its
+    verdict is carried with where it came from. Only the look is carried (the review of that
+    change): its frames are still cut and YuNet and the flat band still read them, for free.
     """
     from app.media.still_gate import StillPlan  # noqa: PLC0415 - still_gate imports this module
 
     record: dict[str, Any] = {
+        "template_version": CLIP_TEMPLATE_VERSION,
         "status": "NOT_APPLICABLE",
         "passed": None,
         "detail": None,
@@ -3493,10 +3503,17 @@ def span_picture_qc(
                 "look_block": str(package.get("look_block") or ""),
             }
         film_path = str(asset.uri_or_path or "")
-        # Approved stays approved (2026-10-12, aa170155, `picture_qc.earlier_passes`): a scene
-        # cut from the same still and clip as an earlier film whose span look passed it is not
-        # looked at, counted or read again; its entry passes on that report.
-        carried = earlier_passes(session, job.storyboard_id, production, "picture_spans_qc")
+        # Approved stays approved (2026-10-12, aa170155, `picture_qc.carried_forward`): a scene
+        # whose picture an earlier film's span look passed, or the Director settled, is not
+        # shown to the look again. Its frames are still cut and read by YuNet and the band.
+        keys = carry_keys(
+            production,
+            "picture_spans_qc",
+            bible=bible,
+            looks={index: row["look_block"] for index, row in rows.items()},
+            planned={index: row["planned"] for index, row in rows.items()},
+        )
+        carried = carried_forward(session, job.storyboard_id, production, "picture_spans_qc", keys)
 
     faces_forbidden = bible_face_rule(bible) is not None
     record["faces_forbidden"] = faces_forbidden
@@ -3536,12 +3553,14 @@ def span_picture_qc(
         or production.get("fps")
         or DEFAULT_TIMELINE_FPS
     )
+    # Every filmed scene's frames are cut, a carried one's too: YuNet and the band are free
+    # and read the frame itself (the review of 2026-10-12: they were skipped on carried scenes).
     picks = {
         span["scene_index"]: span_frame_numbers(
             span["start"], span["end"], fps, span["dissolve_seconds"]
         )
         for span in spans
-        if not span["composed"] and span["scene_index"] not in carried
+        if not span["composed"]
     }
     if face_counter is None:
         from app.media.faces import count_faces  # noqa: PLC0415 - opencv loads lazily
@@ -3593,17 +3612,11 @@ def span_picture_qc(
             if span["composed"]:
                 entry["reason"] = "card compus de studio: nu se judecă drept fotografie"
                 continue
+            # What a later film with the same picture must match to keep this verdict.
+            entry["carry_key"] = keys.get(index)
             earlier = carried.get(index)
             if earlier is not None:
-                entry.update(
-                    status="PASSED",
-                    passed=True,
-                    reason=earlier.note_ro,
-                    frames_from=None,
-                    picture={"status": CARRIED_STATUS, "detail_ro": earlier.note_ro},
-                    carried_from=earlier.as_dict(),
-                )
-                continue
+                entry["carried_from"] = earlier.as_dict()
             frames: list[tuple[str, float, Path]] = clean.get(index, [])
             source: FrameSource = "SHOT" if frames else "FILM"
             if not frames:
@@ -3623,7 +3636,13 @@ def span_picture_qc(
             # as they always were: a cut could take a face or a blank strip out of their sight.
             looked_at = frames
             strips: tuple[Path, ...] = ()
-            if source == "FILM" and frames and rows_burnt is not None and judge is not None:
+            if (
+                source == "FILM"
+                and frames
+                and rows_burnt is not None
+                and judge is not None
+                and earlier is None
+            ):
                 if not _captions_on_frames(cues, [moment for _at, moment, _p in frames], fps):
                     source = "FILM_CLEAR"
                 else:
@@ -3671,18 +3690,22 @@ def span_picture_qc(
                 frames, face_counter, faces_forbidden=faces_forbidden, measured=measured
             )
             judgement = None
-            if judge is not None and frames:
-                asked = rows.get(index, {})
-                plan = StillPlan(
-                    scene=index,
-                    still_prompt=str(asked.get("still_prompt") or ""),
-                    camera_move=str(asked.get("camera_move") or ""),
-                    faces_forbidden=faces_forbidden,
-                    bible_rules=rules,
-                    look_block=str(asked.get("look_block") or ""),
-                )
-                judgement = judge([path for _at, _moment, path in looked_at], plan)
-            picture = _picture_check(judgement, faces_forbidden=faces_forbidden)
+            if earlier is not None:
+                # Only the look is carried: what it said of this very picture before.
+                picture = ClipCheck("picture", "PASSED", False, None, earlier.note_ro)
+            else:
+                if judge is not None and frames:
+                    asked = rows.get(index, {})
+                    plan = StillPlan(
+                        scene=index,
+                        still_prompt=str(asked.get("still_prompt") or ""),
+                        camera_move=str(asked.get("camera_move") or ""),
+                        faces_forbidden=faces_forbidden,
+                        bible_rules=rules,
+                        look_block=str(asked.get("look_block") or ""),
+                    )
+                    judgement = judge([path for _at, _moment, path in looked_at], plan)
+                picture = _picture_check(judgement, faces_forbidden=faces_forbidden)
             # The same flat-band reading as the still's and the clip's: the scene's frames
             # are one picture each, or the scene is panels (2026-10-09, scene 5).
             panels = _panels_check(band_reader, frames, measured=measured)
@@ -3691,12 +3714,16 @@ def span_picture_qc(
                 "detail_ro": faces.detail_ro,
                 **(measured.get("faces") or {}),
             }
-            entry["picture"] = {
-                "status": picture.status,
-                "detail_ro": picture.detail_ro,
-                "run_id": getattr(judgement, "run_id", None),
-                "looked_by": getattr(judgement, "looked_by", None),
-            }
+            entry["picture"] = (
+                {"status": CARRIED_STATUS, "detail_ro": earlier.note_ro}
+                if earlier is not None
+                else {
+                    "status": picture.status,
+                    "detail_ro": picture.detail_ro,
+                    "run_id": getattr(judgement, "run_id", None),
+                    "looked_by": getattr(judgement, "looked_by", None),
+                }
+            )
             entry["panels"] = {
                 "status": panels.status,
                 "detail_ro": panels.detail_ro,
@@ -3714,7 +3741,9 @@ def span_picture_qc(
                 problems.append(panels.detail_ro)
             if picture.status == "FAILED":
                 problems.append(picture.detail_ro)
-            if any(item.status in ("PASSED", "FAILED") for item in (faces, picture, panels)):
+            # A carried look measured nothing today; the faces and the band did, if they ran.
+            today = (faces, panels) if earlier is not None else (faces, picture, panels)
+            if any(item.status in ("PASSED", "FAILED") for item in today):
                 measured_any = True
             if problems:
                 entry.update(status="FAILED", passed=False, reason="; ".join(problems))
@@ -3741,20 +3770,14 @@ def span_picture_qc(
         record["passed"] = True
     kept = sorted(entry["scene_index"] for entry in filmed if entry.get("carried_from"))
     record["carried_scenes"] = kept
-    record["status"] = (
-        "MEASURED"
-        if measured_any
-        else CARRIED_STATUS
-        if kept and record["passed"] is True
-        else "NOT_RUN"
-        if filmed
-        else "NOT_APPLICABLE"
-    )
+    record["status"] = "MEASURED" if measured_any else "NOT_RUN" if filmed else "NOT_APPLICABLE"
     sources = [entry.get("frames_from") for entry in filmed]
     record["frames_from"] = {name: sources.count(name) for name in FRAME_SOURCES if name in sources}
     carried_words = (
         f"; {len(kept)} {'trecută' if len(kept) == 1 else 'trecute'} la un control anterior cu "
-        f"aceleași preluări, {'neprivită' if len(kept) == 1 else 'neprivite'} din nou"
+        f"aceleași preluări (sau acceptate de Directoare), "
+        f"{'neprivită' if len(kept) == 1 else 'neprivite'} din nou de model, dar citite de "
+        "YuNet și de banda plată"
         if kept
         else ""
     )
@@ -3775,7 +3798,8 @@ def span_picture_qc(
     looked = sum(
         1
         for entry in filmed
-        if entry["status"] in ("PASSED", "FAILED") and not entry.get("carried_from")
+        if (entry.get("picture") or {}).get("status") in ("PASSED", "FAILED")
+        and not entry.get("carried_from")
     )
     # Where the frames the look saw came from, in the Owner's words (2026-10-10, babcf272: the
     # look had been shown the studio's own subtitles and nobody could tell from the report).

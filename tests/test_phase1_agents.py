@@ -701,7 +701,8 @@ def test_director_qc_both_attempts_send_doubled_limit_to_ollama(seeded, monkeypa
         registry,
         {
             "film": {"title": "A film", "report_id": "test-report"},
-            "findings": [{"id": 1, "text": "Wrong image"}],
+            # A still is redone only for a scene a REAL serious finding names (2026-10-12).
+            "findings": [{"id": 1, "text": "Scena 1: wrong image", "scene_index": 1}],
             "scenes": [{"scene_index": 1, "kind": "LIVE", "paid_redos_left": 1}],
         },
     )
