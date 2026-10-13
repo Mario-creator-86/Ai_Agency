@@ -5614,7 +5614,16 @@ def _apply_repairs(
     nothing for the scene: it is listed in ``result['overturned']`` with her reason, the takes
     and the carry key of the picture it was about, and her next reading counts its findings as
     settled (`picture_qc.earlier_acceptances`). Her look confirming it adds her words to what
-    the rewrite before the purchase reads; no look (no model, no frames) changes nothing."""
+    the rewrite before the purchase reads; no look (no model, no frames) changes nothing.
+
+    Money spent again on a layer the film already paid for once (a second still, a second
+    clip of the scene) passes the Accountant after the correction and before the purchase
+    (`economy.repurchase_gate.before_paid_redo`, the Owner's rule of 2026-10-13): her refusal
+    is discussed with the Director, who insists (bought, both opinions recorded), accepts the
+    defect as minor (listed ``overturned``, like her look) or closes the scene (held, in
+    ``result['refused']``); no verdict holds the scene for the next try. The first purchase of
+    a layer, a redo his ceiling or the day's budget refuses, and a resumed walk on a plan they
+    already decided are not asked of her."""
     from app.media import director_qc  # noqa: PLC0415 - media imports runbook
     from app.media.assembler import (  # noqa: PLC0415 - media imports runbook
         SceneRedoRefused,
@@ -5683,6 +5692,7 @@ def _apply_repairs(
         propose_redo_cap_card,
         redo_allowance,
     )
+    from app.economy import repurchase_gate  # noqa: PLC0415 - economy imports media
 
     with Session(engine) as session:
         allowed_more = redo_allowance(session, storyboard_id)
@@ -5799,6 +5809,32 @@ def _apply_repairs(
                         "refacere nepornită de tine nu o retrage.",
                     )
                 replacing = sorted(retiring & his_all)
+                # Money spent again on a layer this film already paid for passes the Accountant
+                # first, and her refusal is discussed with the Director (the Owner, 2026-10-13:
+                # «Nadia și Sarah discută … ei să hotărască»; `economy.repurchase_gate`). A
+                # hold raises the redo's refusal; her ACCEPT_MINOR comes back as a look that
+                # buys nothing; what they agreed, or decided for this plan before, buys below.
+                accepted = repurchase_gate.before_paid_redo(
+                    engine,
+                    registry,
+                    settings,
+                    reading,
+                    proposals,
+                    scene,
+                    kind,
+                    plan,
+                    rounds=rounds,
+                    per_scene=per_scene,
+                    per_film=per_film,
+                    environment=environment,
+                    measured=_measured_serious_scene(reading, scene),
+                    correlation=correlation,
+                )
+                if accepted is not None:
+                    result.setdefault("overturned", []).append(
+                        _overturned_entry(engine, reading, scene, paid[scene], accepted)
+                    )
+                    break
                 done = redo_scene(
                     engine,
                     storyboard_id,

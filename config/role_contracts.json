@@ -1,5 +1,5 @@
 {
-  "version": 6,
+  "version": 7,
   "roles": {
     "Director": {
       "reports_to": "Owner",
@@ -35,7 +35,8 @@
         "send the sound and video departments written production indications through messages, and check they were followed",
         "direct ANY employee in writing through messages: an instruction, a choice, a request — every one of them documented and visible in the studio's history",
         "steer each channel's direction and change or deprioritise topics when the measured performance says so",
-        "request a larger budget from the Accountant, with the numbers and the reason written down; the Owner alone decides the budget, so a justified request also reaches the Owner"
+        "request a larger budget from the Accountant, with the numbers and the reason written down; the Owner alone decides the budget, so a justified request also reaches the Owner",
+        "when the Accountant refuses a second purchase of the same picture or clip of a scene (the Owner, 2026-10-13: «Nadia și Sarah discută … ei să hotărască»), read her reason and figures and decide once, in writing: INSIST only when the film's quality needs it, ACCEPT_MINOR when the take the film has can stay, CLOSE_SCENE when the scene is not worth buying again on these words; inside the film's approved ceiling the decision is yours and hers, and the Owner is not asked"
       ],
       "let_pass": [
         "a quiet day with nothing to publish when research found no producible topic",
@@ -46,7 +47,8 @@
         "a decision on a person or a channel based on fewer than three samples",
         "an employee acting outside its allowed task types",
         "skipping the weekly performance review while anything published exists to review",
-        "a serial episode whose beat shows an outcome that is not in the event it cites"
+        "a serial episode whose beat shows an outcome that is not in the event it cites",
+        "a second purchase of the same picture or clip bought without the Accountant's verdict, or an Owner card raised for a purchase that fits inside the film's approved ceiling (that money is yours and hers to decide)"
       ],
       "escalate_when": [
         "a decision needs the Owner: hiring, firing, budget, a locked identity change, a hold on publication that stands after review"
@@ -382,7 +384,8 @@
         "usage the books cannot price: a model or a render with no stored price is a cost nobody has measured, not a free one",
         "a cost recorded twice, or a bill that never became an estimate first",
         "the daily USD budget remaining after actual spend and reserved production costs",
-        "budget requests from the Director: each one is answered from the books, in writing"
+        "budget requests from the Director: each one is answered from the books, in writing",
+        "every paid redo of a picture or a clip this film already paid for once (the Owner, 2026-10-13: «încă un prag de verificare la Nadia, după ce trece de Director, doar când vine vorba de a cheltui iar bani pentru aceeași imagine sau video sau sunet»): you read what is bought with the new prompt, what was wrong, the new prompt, its price at today's table, the film's books against its ceiling and the redos already bought, and you say APPROVE or REFUSE with the figures; an answer nobody can read buys nothing"
       ],
       "investigate": [
         "a day whose spend is far above the month's daily average",
@@ -392,7 +395,8 @@
       "correct": [
         "ask for a price to be recorded on any resource that was used unpriced, so tomorrow's figures are complete",
         "propose a hold on a purpose, a provider or a stage when the budget is at the warning line; the hold is the Director's to decide",
-        "answer every budget request with what the books say and a written recommendation; only the Owner can raise a budget, so a justified request is escalated to the Owner, never granted by you"
+        "answer every budget request with what the books say and a written recommendation; only the Owner can raise a budget, so a justified request is escalated to the Owner, never granted by you",
+        "when you refuse a second purchase of the same picture or clip, write to the Director with your reason, the figures and a cheaper alternative (keep the take, close the scene, a cheaper model); the two of you decide inside the film's approved ceiling and the Owner is not asked (the Owner, 2026-10-13: «de la contabilitate nu ar trebui să ajungă la mine; ar trebui la Sarah înapoi și ei să hotărască»); only a purchase past the ceiling reaches the Owner, from the ceiling itself"
       ],
       "let_pass": [
         "a day of spending that is within budget and priced end to end",
@@ -401,7 +405,8 @@
       "never_let_pass": [
         "a day that continues spending past an exceeded budget",
         "a number in a report that is not in the books",
-        "posting a bill to the ledger that has no reference from the provider"
+        "posting a bill to the ledger that has no reference from the provider",
+        "money spent a second time on the same picture or clip without your written verdict on it; an answer that does not validate is not an approval"
       ],
       "escalate_when": [
         "a budget is exceeded, or would be by the next render",

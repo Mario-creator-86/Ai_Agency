@@ -17,6 +17,37 @@
   pregătit de filmare», «așteaptă aprobarea ta», «respins de Director: …», «respins de
   verificările calculate: …», «ziua și-a folosit cele 3 ciorne» (`tellOutcomeMessage`).
 - Tests: `tests/test_serial_tell_now.py`, `frontend/tests/serial_room.test.js`.
+## 2026-10-13 — Nadia's threshold before money is spent again on the same picture
+
+- New `backend/app/economy/repurchase_gate.py`, hooked in `runbook.stages._apply_repairs`
+  after the Director's second look and her correction, after the redo is priced and before
+  `redo_scene` buys it (the Owner: «încă un prag de verificare la Nadia, după ce trece de
+  Director, doar când vine vorba de a cheltui iar bani pentru aceeași imagine sau video sau
+  sunet»). Gated: a PAID redo of a still or a clip the film already paid credits for once
+  (`paid_takes`). Not gated: a layer's first purchase, a re-roll inside an approved plan's
+  cap, a redo the film's ceiling (OVER_FILM_BUDGET, the Owner's, unchanged) or the day's
+  budget refuses.
+- Nadia reads, as inert data: the film, the scene and the layer, what was wrong (quality
+  control's and the Director's words, her brief's diagnosis and the old words), the corrected
+  prompt, the redo's price at today's table (cap, USD), the film's books against its ceiling
+  and what remains, the redos bought on the scene and the film with the caps (5/20), the
+  day's budget when one is set, and the rule. Her answer is structured
+  (`{verdict APPROVE|REFUSE, reason, cheaper_alternative}`) and validated; an answer nobody
+  can read is not an approval: nothing is bought on that walk, the scene is held
+  (`REPURCHASE_UNDECIDED`) for the next try, and the event says so.
+- On REFUSE she writes to the Director (a HANDOFF with her reason, figures and alternative)
+  and the Director decides once (`{decision ACCEPT_MINOR|CLOSE_SCENE|INSIST, reason}`):
+  INSIST buys within the ceiling with both opinions recorded; ACCEPT_MINOR keeps the take
+  through the path her second look's overturn has (`result['overturned']`, the findings
+  settled; never for a defect measured serious); CLOSE_SCENE holds the scene
+  (`REPURCHASE_REFUSED`) with their words. No Owner card: «de la contabilitate nu ar trebui
+  să ajungă la mine». Both remember their verdict (AGENT_OPINION).
+- Durable and idempotent: `economy.repurchase_gate` on the film's record, keyed by film,
+  scene, layer and plan hash; a walk resumed on the same plan (his yes under the ask-me rule,
+  the next reading) reads it instead of asking again. The contracts of the Accountant and the
+  Director say the rule (`config/role_contracts.json`, version 7).
+- Tests: `tests/test_accountant_gates_the_repurchase.py` (scripted agents, the vendor spy;
+  nothing proves a live model). Narration is not gated: the path has no paid narration redo.
 
 ## 2026-10-13 — Office serial: words per beat is a recommendation; a computed rejection is signed by the checks
 
