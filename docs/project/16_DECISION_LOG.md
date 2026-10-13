@@ -27,6 +27,32 @@ fault). Compatibility/migration: none; `/story/episodes/write` is unchanged and 
 ladder, the limits, the stop, the replay, the route); `frontend/tests/serial_room.test.js`
 (the words' tone). Rollback: point the button back at `/story/episodes/write` (`main.js
 tellDay`), drop the route and `tell_day_now`; stored `TellDay` command records are inert.
+## 2026-10-13 — Money spent again on the same picture needs the Accountant's agreement too
+
+Reason: the Owner («ar fi bine să avem încă un prag de verificare la Nadia, după ce trece de
+Director, asta doar când vine vorba de a cheltui iar bani pentru aceeași imagine sau video sau
+sunet. Nadia primește: ce se cumpără cu promptul nou, ce era greșit, promptul nou. Atunci și
+Sarah și Nadia trebuie să fie de acord că e necesar»; «Nadia și Sarah discută. De la
+contabilitate nu ar trebui să ajungă la mine … La mine ajunge doar dacă este peste bugetul
+filmului aprobat»). Decision: `economy.repurchase_gate.before_paid_redo`, called by
+`_apply_repairs` for a paid redo of a layer the film already paid credits for, after the
+correction and before the purchase: Nadia's structured verdict, validated; on REFUSE a
+HANDOFF to the Director and her one structured decision (INSIST buys within the ceiling,
+ACCEPT_MINOR reuses the overturned path of her second look, CLOSE_SCENE holds the scene);
+an unreadable answer buys nothing and holds the scene; the outcome is an event keyed by
+film, scene, layer and plan hash, reused by a resumed walk. The ceiling, the daily budget,
+the caps, the Policy Kernel, his paid-media rule and the lease are unchanged, and the gate
+steps aside where they refuse. Alternatives: a per-redo Owner card (refused: «de la
+contabilitate nu ar trebui să ajungă la mine»); gating by paid-redo rounds instead of paid
+takes (refused: the first paid redo of a bought still is already money spent again); a
+scene-level close (deferred: none exists but his LOCAL_MOVE, which is his; CLOSE_SCENE holds
+the scene and her next reading decides). Compatibility/migration: none — a new event type,
+no schema change, no new setting; a film whose takes carry no credits (a local model, the
+older fixtures) is never gated. Test impact: `tests/test_accountant_gates_the_repurchase.py`;
+`test_redo_resume_spends_his_yes.py`, `test_director_rewrites_failed_scene.py` and
+`test_director_decides_qc.py` unchanged. Rollback: delete the module and the hook in
+`_apply_repairs` (the `repurchase_gate.before_paid_redo` call and its `overturned` branch);
+the contracts' three new lines read as advice only.
 
 ## 2026-10-13 — The serial's words-per-beat band is a recommendation the Director decides
 
