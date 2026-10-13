@@ -108,6 +108,7 @@ def weekly_digest(engine: Engine, geo: str | None = None) -> dict[str, Any]:
             channel_name = channel.channel_name if channel else "necunoscut"
             likes = metric.likes if metric else 0
             entry = {
+                "publication_id": publication.id,
                 "title": publication.title,
                 "channel": channel_name,
                 "channel_id": publication.channel_id,
@@ -179,13 +180,24 @@ def _digest_as_text(digest: dict[str, Any]) -> str:
             f"- {channel}: {totals['videos']} videouri publicate, {totals['views']} vizualizări, "
             f"{totals['likes']} aprecieri (în total, până azi)."
         )
+    # What each film said and how long it ran (2026-10-13), so her indications for the
+    # writer can name the hook that held and the one that lost — the newest row per film.
+    stories: dict[str, dict[str, Any]] = {}
+    for row in accuracy.get("videos") or []:
+        key = str(row.get("publication_id"))
+        if key not in stories or str(row.get("measured_at") or "") > str(
+            stories[key].get("measured_at") or ""
+        ):
+            stories[key] = row
     for video in digest["videos"][:15]:
         average = video["average_view_percentage"]
         retention = f", reținere medie {average}%" if average is not None else ""
         ctr = f", CTR {video['ctr_percentage']}%" if video["ctr_percentage"] is not None else ""
         lines.append(
             f"- „{video['title']}” ({video['channel']}): {video['views']} vizualizări, "
-            f"{video['likes']} aprecieri{retention}{ctr}."
+            f"{video['likes']} aprecieri{retention}{ctr}"
+            + _written_as_text(stories.get(str(video.get("publication_id"))))
+            + "."
         )
     for rec in digest["open_recommendations"]:
         lines.append(f"- Recomandare deschisă: {rec['type']} {rec['target']} — {rec['evidence']}")
@@ -194,6 +206,22 @@ def _digest_as_text(digest: dict[str, Any]) -> str:
 
         lines.append(trends_as_text(digest["trends"], "săptămâna aceasta"))
     return "\n".join(lines)
+
+
+def _written_as_text(story: dict[str, Any] | None) -> str:
+    """A film's hook, call-to-action kind, length and editorial total, as a clause of its
+    digest line; empty when the film has no script behind it."""
+    if not story:
+        return ""
+    hook = " ".join(str(story.get("hook") or "").split())[:100]
+    seconds = story.get("seconds")
+    total = story.get("editorial_total")
+    return (
+        (f", cârlig «{hook}»" if hook else "")
+        + (f", CTA {story['cta_kind']}" if story.get("cta_kind") else "")
+        + (f", {float(seconds):.0f} s" if isinstance(seconds, int | float) else "")
+        + (f", notă editorială {total}/50" if isinstance(total, int | float) else "")
+    )
 
 
 class WeeklyReviewAnswer(BaseModel):
@@ -208,6 +236,10 @@ class WeeklyReviewAnswer(BaseModel):
     video: str = Field(default="", max_length=2000)
     #: Channel direction and topic changes, for research and writing.
     topics: str = Field(default="", max_length=2000)
+    #: Written indications for the Scriptwriter (2026-10-13), from the numbers: which hooks,
+    #: call-to-action kinds, lengths and openings kept or lost viewers. Distinct from
+    #: ``topics``: what to write about is research's steer, how to write it is his.
+    writing: str = Field(default="", max_length=2000)
     #: A budget increase she is requesting from the Accountant, with the reason. The Owner
     #: alone decides budgets; the request documents the need and reaches them.
     budget_request_amount_usd: float | None = Field(default=None, gt=0)
@@ -233,6 +265,10 @@ _REVIEW_INSTRUCTIONS = (
     ' "topics": "channel direction and topic changes: what to chase, what to drop, why — '
     "this is how you steer the channels; when the digest lists what people are searching for, "
     'say which of it the channels can honestly cover and which is noise",\n'
+    ' "writing": "written indications for the SCRIPTWRITER (Marcus), from the numbers only: '
+    "which hooks (quote them) kept viewers past the first seconds and which lost them, which "
+    "call-to-action kinds earned comments, which lengths held to the end, which openings to "
+    'repeat and which to avoid — how to write, not what to write about (that is topics)",\n'
     ' "budget_request_amount_usd": null,\n'
     ' "budget_request_justification": "only when the measured plan needs more money than the '
     'budget allows: how much, and the reason, written for the Accountant and the Owner",\n'
@@ -242,7 +278,7 @@ _REVIEW_INSTRUCTIONS = (
     "(fewer than three videos of a kind), say so in the verdict instead of guessing.\n\n"
 )
 
-_WEEKLY_PROMPT_VERSION = "weekly-review-v2"
+_WEEKLY_PROMPT_VERSION = "weekly-review-v3"
 
 
 def _agent_for_role(session: Session, role_name: str) -> Agent | None:
@@ -372,6 +408,8 @@ def execute_weekly_review(
             ("video", departments["VideoEditor"], answer.video),
             ("cercetare și subiecte", departments["LeadResearcher"], answer.topics),
             ("scenarii", departments["ScriptWriter"], answer.topics),
+            # How to write, measured (2026-10-13): his own letter, apart from the topics.
+            ("scris", departments["ScriptWriter"], answer.writing),
         ]
         wants_budget = bool(
             answer.budget_request_amount_usd and answer.budget_request_justification.strip()
@@ -393,7 +431,11 @@ def execute_weekly_review(
                 subject=(
                     f"Indicațiile Directorului pentru departamentul de {department} — {week_label}"
                 ),
-                body={"instructions": instructions.strip(), "week": week_label},
+                body={
+                    "instructions": instructions.strip(),
+                    "week": week_label,
+                    "department": department,
+                },
                 from_agent_id=director_id,
                 to_agent_id=agent_id,
                 run_id=result["id"],
@@ -432,8 +474,10 @@ def execute_weekly_review(
             run_id=result["id"],
             correlation_id=correlation_id,
         )
-        # A direction the Director sets is strategy: it stays with her and shapes the next
-        # choices even after the message is resolved.
+        # A direction the Director sets is strategy: it shapes the next choices even after
+        # the message is resolved. Studio-wide (2026-10-13, the Owner: «toți agenții trebuie
+        # să fie conștienți»): written on her own id, `memory.recall` showed it to nobody but
+        # her — the researcher and the writer, whom the direction is for, never recalled it.
         if strategy_text.strip():
             remember(
                 session,
@@ -441,7 +485,7 @@ def execute_weekly_review(
                 content=f"Week {week_label}: {strategy_text.strip()[:400]}",
                 source_type="run",
                 source_id=result["id"],
-                agent_id=director_id,
+                agent_id=None,
             )
     _announce(
         engine,

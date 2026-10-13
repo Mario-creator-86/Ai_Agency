@@ -48,6 +48,38 @@
   Director say the rule (`config/role_contracts.json`, version 7).
 - Tests: `tests/test_accountant_gates_the_repurchase.py` (scripted agents, the vendor spy;
   nothing proves a live model). Narration is not gated: the path has no paid narration redo.
+## 2026-10-13 — The Scriptwriter's brief: the platform, the judge, the idea, the money, her letters
+
+- The factual writer's brief (`factual.agent_pipeline._write_instructions`) says where the
+  film plays and for whom — a vertical YouTube Short on the studio's channel (named from the
+  publishing record when one exists), on a phone, often muted at first, in a loop, never over
+  60 s; a stranger with no context — and the hook window once, as the judge scores it (two
+  seconds; the brief said three). It carries the Director's five criteria in her own words
+  and her bar (`editorial_judgement.criteria_lines`, `PASS_TOTAL`, `CRITERION_FLOOR`, the
+  rounds setting), the idea she chose as inert data with the research scores under 0,70
+  named first, what the cover (`hook`, at most about 8 words) and the published title
+  (`title`: subject first, at most 60 characters, no clickbait) are made from, what one LIVE
+  scene costs from the price table on the model the studio films with and the film's ceiling
+  (no price line when no model is selected or the table cannot price it; cards cost 0;
+  «preferă N scene LIVE puternice față de 12 slabe»), and, with at least three measured films
+  on the channel, the three best and the three worst by average view percentage with hook,
+  CTA kind, length and editorial total (`MĂSURAT PE ACEST CANAL`; absent otherwise).
+- `analytics.story_performance` rows carry `measured_at`, `hook`, `cta_kind`, `seconds` and
+  `editorial_scores`; the weekly digest names each film's hook, CTA kind, length and total.
+- The story review's REVISE/REJECT letter is a REQUEST_REVIEW addressed to the Scriptwriter
+  (it was posted to the Director's own inbox, `to_agent_id=None`), with her retention row and
+  the span where she loses the viewer in its words, and is resolved when a later draft of the
+  story passes. When a story ships, one AGENT_OPINION on his memory keeps the title, the
+  versions read, the shipped scores and her last note (`story_review.remember_shipped_story`).
+- The weekly review's «topics» direction is studio-wide STRATEGY memory (it was on the
+  Director's own id, which `memory.recall` showed to nobody else); a `writing` field — how to
+  write, from the numbers — is routed as its own HANDOFF to the Scriptwriter («departamentul
+  de scris»), apart from the topics letter; HANDOFF bodies name their `department`; prompt
+  version `weekly-review-v3`.
+- ScriptWriter contract (`config/role_contracts.json` v7): the platform and the money in
+  `watch_for`, «merge two scenes that show the same thing» in `correct`.
+- Tests: `tests/test_writer_brief.py`. Offline only, scripted models; nothing proves a live
+  model, vendor or publication.
 
 ## 2026-10-13 — Office serial: words per beat is a recommendation; a computed rejection is signed by the checks
 

@@ -53,6 +53,35 @@ older fixtures) is never gated. Test impact: `tests/test_accountant_gates_the_re
 `test_director_decides_qc.py` unchanged. Rollback: delete the module and the hook in
 `_apply_repairs` (the `repurchase_gate.before_paid_redo` call and its `overturned` branch);
 the contracts' three new lines read as advice only.
+## 2026-10-13 — The Scriptwriter is briefed on the platform, the judge, the idea and the money
+
+Reason: the Owner («Marcus care scrie scriptul știe că trebuie să fie pentru un short pe
+YouTube? Știe că trebuie să atragă vizualizări? Știe că trebuie să aibă un conținut mesajul
+lui?»; «Directorul comunică cu fiecare și poate întoarce către el indicații noi? … toți
+agenții trebuie să fie conștienți că trebuie să economisim bani și să avem calitate»). The
+audit of 2026-10-13: the brief named the length and the claims; the platform, the audience,
+the five criteria the Director scores, the thesis she chose, the cover and title rules and
+the price of a filmed scene lived in other modules; her REVISE letter went to her own inbox;
+the weekly direction was recalled by her alone; nothing he wrote was measured back to him.
+Decision: the brief is computed from the studio's own data — the channel record, the judge's
+`criteria_lines` and bar, the topic's thesis and scores (inert data), the price table and the
+film ceiling (never a guess: no price line when unpriced), `story_performance` under the
+analytics' own N ≥ 3 rule — and the hook window is the judge's two seconds, said once. Her
+letter is a REQUEST_REVIEW to the writer, resolved on a later PASS of the story; the weekly
+«topics» is studio-wide STRATEGY; a `writing` field goes to him as its own HANDOFF; a shipped
+story is one AGENT_OPINION on his memory. Alternatives: a model call to summarise the measured
+films (refused: the numbers are deterministic and cost nothing); resolving a REJECT letter at
+once (refused: it is the reason the story closed, and the ten-newest cap bounds his prompt);
+pricing the sheet's per-scene choice (deferred: no storyboard exists at brief time, so the
+model `motion_clip_limit` names is priced and named in the line). Compatibility/migration:
+none — new keys on `story_performance` rows and on the HANDOFF body, a new optional field
+with a default on the weekly answer, contract v7 seeds only roles without a contract (an
+edited contract keeps the Owner's text). Test impact: `tests/test_writer_brief.py`;
+`test_weekly_review` unchanged (a review without `writing` files four letters as before);
+`test_editorial_quality`'s brief tests unchanged (`_write_instructions(30)` still renders).
+Rollback: revert the five sections of `_write_instructions` and its call site, the letter's
+addressee and `_settle_writer_letters` in `review_story`, `remember_shipped_story`,
+`agent_id=None` on the weekly STRATEGY and the `writing` handoff; stored rows keep their shape.
 
 ## 2026-10-13 — The serial's words-per-beat band is a recommendation the Director decides
 
