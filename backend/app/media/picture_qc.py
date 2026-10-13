@@ -91,6 +91,7 @@ from app.agents.identity import clipped
 from app.agents.vision import frames_at, frames_for, vision_agent
 from app.factual.sanitizer import wrap_in_inert_boundary
 from app.media.cards import CAPTION_BAND_TOP, FRAME_HEIGHT
+from app.media.markings import markings_note
 from app.media.models import (
     CharacterBible,
     MediaAsset,
@@ -2284,9 +2285,15 @@ def judge_still(
             "bible_rules": list(plan.bible_rules),
         }
     )
+    # An object the plan asks for with its own markings (`markings.planned_markings`,
+    # 2026-10-13): the look is told its scale is not writing, and asked only about the rest.
+    marked = tuple(getattr(plan, "expected_markings", ()) or ())
+    if marked:
+        shown["planned_markings"] = list(marked)
     prompt = (
         _STILL_INSTRUCTIONS.format(scene=plan.scene)
         + (_FIXES_NOTE if must_fix else "")
+        + (markings_note(marked) + "\n" if marked else "")
         + wrap_in_inert_boundary(json.dumps(shown, ensure_ascii=False)[:8000], "the-still")
     )
 
@@ -2609,6 +2616,11 @@ def judge_clip(
         shown["scene_picture"] = getattr(plan, "scene_picture", "") or ""
         shown["narration"] = getattr(plan, "narration", "") or ""
         shown["must_fix"] = [{"item": number, **item} for number, item in enumerate(must_fix, 1)]
+    # An object the plan asks for with its own markings (`markings.planned_markings`,
+    # 2026-10-13): the look is told its scale is not writing, in the clip as in the still.
+    marked = tuple(getattr(plan, "expected_markings", ()) or ())
+    if marked:
+        shown["planned_markings"] = list(marked)
     prompt = (
         _CLIP_INSTRUCTIONS.format(
             scene=plan.scene,
@@ -2616,6 +2628,7 @@ def judge_clip(
             studio_note=studio_text_note(studio_text),
         )
         + (_CLIP_FIXES_NOTE if must_fix else "")
+        + (markings_note(marked) + "\n" if marked else "")
         + wrap_in_inert_boundary(json.dumps(shown, ensure_ascii=False)[:8000], "the-clip")
     )
 

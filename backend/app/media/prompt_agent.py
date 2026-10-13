@@ -55,6 +55,7 @@ from app.factual.editorial import SCENE_PURPOSES
 from app.factual.models import FactualClaim, ScriptDraft
 from app.factual.sanitizer import wrap_in_inert_boundary
 from app.media import prompt_lint as lint
+from app.media.markings import markings_kept, planned_markings, still_exclusions
 from app.media.models import CharacterBible, Storyboard, StoryboardScene
 from app.media.series_look import (
     LIGHT_SLOTS,
@@ -404,6 +405,11 @@ _SHOTS_INSTRUCTIONS = (
     "emotion, at a believable intensity; the background life, which must not compete with the "
     "subject; what must match the previous shot (continuity); what the last frame should be "
     "left on; the audio intent; the transition into the next shot; and what to avoid.\n\n"
+    "The still is drawn from the subject, the action, the environment, the camera's framing, "
+    "the lighting and the composition at the shot's FIRST moment, so those fields describe "
+    "what is seen then — a pose, a state, a place — never a camera move, a speed or a span of "
+    "the clip's seconds: those belong only in the camera's move, in motion and in "
+    "ending_frame.\n\n"
     "Show the information rather than narrating it twice: if the narration says a storm grew "
     "stronger, the picture shows cloud, wind, water and a reaction, not a caption. Never ask "
     "for writing in the picture — no text overlay, title, label, caption or written number: a "
@@ -1841,7 +1847,8 @@ def _still_moment(action: str) -> str:
         ]
         if marks:
             part = _then_head(part, min(marks))
-        part = _clean_cut(_first_moment(part))
+        # The camera's path and a tempo are the clip's, never the picture's (2026-10-13).
+        part = _clean_cut(lint.without_tempo(lint.static_clause(_first_moment(part))))
         if part:
             kept.append(part)
     return "; ".join(kept)
@@ -2639,6 +2646,14 @@ def _clauses_of(text: Any, *, motion: bool = False) -> list[str]:
 
     def usable(part: str) -> str:
         part = without_scene_reference(part)
+        if not motion:
+            # A still is one frozen moment (the Owner, 2026-10-13: «în promptul de imagine nu
+            # are ce să caute indicații de mișcare»): the camera's movement leaves the clause
+            # (a clause that only moves the camera is the motion's alone), and so do a tempo
+            # and a span of the clip.
+            part = lint.without_tempo(lint.static_clause(part))
+            if not part:
+                return ""
         if (
             not re.search(r"[A-Za-z]", part)
             or lint.NONE_WORD.match(part)
@@ -3135,6 +3150,14 @@ def compile_prompts(
             light = f"light {light}"
     cast = _cast_sentence(package.get("characters"), faces_banned)
     people = _shows_people(" ".join((subject, action, environment, cast)))
+    # An object that carries its own markings (a thermometer's scale, `markings`): the still
+    # keeps them and says so instead of «No text» (the Owner, 2026-10-13).
+    marked = planned_markings(
+        package.get("subject"),
+        package.get("action"),
+        package.get("environment"),
+        package.get("writer_visual"),
+    )
     items = [
         (0, 0, block),
         (0, 1, frame),
@@ -3153,7 +3176,7 @@ def compile_prompts(
         # words literally (config/factual_look.json's note; the lint refuses them on veo).
         # They stay in the package's `avoid` and reach a model's negative channel where it
         # has one (`render_motion`).
-        (0, 9, STILL_EXCLUSIONS if still_family != "gen4" else ""),
+        (0, 9, still_exclusions(marked) if still_family != "gen4" else markings_kept(marked)),
     ]
     still = _fit_sentences(items, lint.prompt_cap(contract, "still"), STILL_MAX_WORDS)
     # People kept faceless are shown from behind: an orbit around them turns their faces to

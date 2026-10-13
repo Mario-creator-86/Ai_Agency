@@ -76,6 +76,7 @@ from sqlalchemy.orm import Session
 
 from app.agents.identity import clipped
 from app.factual.sanitizer import wrap_in_inert_boundary
+from app.media.markings import markings_note, planned_markings
 from app.media.models import (
     MediaAsset,
     SceneTake,
@@ -170,17 +171,21 @@ _HARD_RO = {
 }
 
 
-def hard_limits(refusal: Iterable[Any], *, faces_forbidden: bool) -> list[str]:
+def hard_limits(
+    refusal: Iterable[Any], *, faces_forbidden: bool, markings: Sequence[str] = ()
+) -> list[str]:
     """Which of the bible's hard limits quality control's words read («faces» only where the
     bible forbids faces; «panels» for panels, a collage or a flat band; «writing» for readable
-    or garbled writing), in that order; empty when none."""
+    or garbled writing — unless the plan names an object that carries its own markings,
+    ``markings``, when the writing is hers to judge: a thermometer's scale is the object, the
+    Owner, 2026-10-13), in that order; empty when none."""
     text = _NEGATED.sub(" ", " ".join(" ".join(str(part or "").split()) for part in refusal))
     found: list[str] = []
     if faces_forbidden and _FACE_WORDS.search(text):
         found.append("faces")
     if _PANEL_WORDS.search(text):
         found.append("panels")
-    if _WRITING_WORDS.search(text):
+    if _WRITING_WORDS.search(text) and not markings:
         found.append("writing")
     return found
 
@@ -420,7 +425,13 @@ _SUMMARY_RO = {
 
 
 def _instructions(
-    kind: str, scene: int, title: str, layout: str, writing: str, hard_rule: str | None
+    kind: str,
+    scene: int,
+    title: str,
+    layout: str,
+    writing: str,
+    hard_rule: str | None,
+    markings: Sequence[str] = (),
 ) -> str:
     lines = [
         f"You are the Director. Quality control refused {_WHAT[kind]} of scene {scene} of the "
@@ -460,6 +471,14 @@ def _instructions(
             "never a small defect: OVERTURNED only with severity none, when the defect is NOT in "
             "the picture at all (quality control misread it); if any of it is there, CONFIRMED, "
             "severity serious, redo true."
+        )
+    if markings:
+        # The Owner, 2026-10-13: «Nu ai cum să ai un termometru fără scris, grade, Celsius.»
+        lines.append(
+            markings_note(markings) + " Writing that is only such an object's own scale is no "
+            "defect: say OVERTURNED with severity none when that is all the writing you see, "
+            "minor when a small trace of other writing is there, and CONFIRMED only for writing "
+            "elsewhere that draws the eye."
         )
     lines += [
         "- cause (required with minor or serious): one sentence, why the defect appears — what "
@@ -664,6 +683,11 @@ def scene_intent(
         "camera_move": package.get("camera_move") or None,
         "look": _short(package.get("look_block"), 400) or None,
     }
+    # The plan's objects that carry their own markings (`markings.planned_markings`): writing
+    # on them is hers to judge, never a hard limit (2026-10-13).
+    marked = planned_markings(still_prompt, writer)
+    if marked:
+        intent["plan"]["planned_markings"] = list(marked)
     if bought:
         _plan_as_bought(session, storyboard_id, scene_index, bought, intent["plan"])
     avoid = bible.get("avoid")
@@ -1437,6 +1461,13 @@ def _record(
                     "layer": outcome.get("layer"),
                     "source": outcome.get("source"),
                     "hard_limits": list(context.get("hard_limits") or []),
+                    # Only when the plan names an object with its own markings (2026-10-13):
+                    # the event of a plain scene reads as it always did.
+                    **(
+                        {"planned_markings": list(context["planned_markings"])}
+                        if context.get("planned_markings")
+                        else {}
+                    ),
                     "fail_closed": bool(context.get("fail_closed")),
                     "plan_as_bought": list(context.get("plan_as_bought") or []),
                     "plan_may_be_newer": bool(context.get("plan_may_be_newer")),
@@ -1644,13 +1675,17 @@ def _look(
         said_plan, said_bible = intent.get("plan"), intent.get("bible")
         plan: dict[str, Any] = said_plan if isinstance(said_plan, dict) else {}
         bible: dict[str, Any] = said_bible if isinstance(said_bible, dict) else {}
-        limits = hard_limits(refusal, faces_forbidden=bool(bible.get("faces_forbidden")))
+        marked = tuple(str(name) for name in plan.get("planned_markings") or [])
+        limits = hard_limits(
+            refusal, faces_forbidden=bool(bible.get("faces_forbidden")), markings=marked
+        )
         context.update(
             title=title,
             serial=intent.get("serial") if "serial" in intent else None,
             plan_as_bought=list(plan.get("as_bought") or []),
             plan_may_be_newer=bool(plan.get("plan_may_be_newer")),
             hard_limits=limits,
+            planned_markings=list(marked),
         )
         director = agent_for_role(session, "Director")
         if director is None:
@@ -1682,10 +1717,12 @@ def _look(
     }
     if limits:
         shown["hard_limits"] = limits
+    if marked:
+        shown["planned_markings"] = list(marked)
     layout = str((view or {}).get("layout") or _LAYOUT[kind])
     writing = str((view or {}).get("writing") or _WRITING[kind])
     prompt = _instructions(
-        kind, scene_index, title[:80], layout, writing, rule
+        kind, scene_index, title[:80], layout, writing, rule, marked
     ) + wrap_in_inert_boundary(_fit_shown(shown), "second-look")
     try:
         parsed, first, second = structured_run(
