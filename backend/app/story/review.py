@@ -15,7 +15,8 @@ already has for films:
   counted); cast (a v3 episode: two to four speakers, each acting in the events the episode
   cites — the Owner's rule of 2026-09-24; a v2 episode: every active roster member appears);
   structure (a v3 episode runs hook, situation, turn, payoff, button, in the studio's own
-  rooms); words per beat (a v3 beat holds 8-22 spoken words, a scene's nine seconds);
+  rooms); words per beat (a v3 beat holds 8-22 spoken words, a scene's nine seconds — since
+  2026-10-13 a recommendation: measured and shown, decided by the Director, never a refusal);
   concentration (no event carries more than half the beats unless it is the day's only
   one — the episode on his data cites one event in all eight); language (the title and every
   line in the publishing language, before any paid render); new-viewer accessibility
@@ -25,7 +26,8 @@ already has for films:
   The writer is measured by these same checks before a draft is stored (`draft_checks`).
   A check certifies only what it measured: an episode with nothing to measure (no citation,
   no line, no title) fails it rather than passing by absence.
-  Any failure is the verdict, with its reasons, and the Director is not asked.
+  Any failure of a rule is the verdict, with its reasons, and the Director is not asked; a
+  check that only recommends (``advisory``) hands her its measure, and she decides.
 - **Then the Director's verdict** (review v2, 2026-09-24), through `run_agent_task` with the
   episode as data: each beat with the events it cites (id, the record's words, who acts),
   the speakers' voices from their bibles, and the serial's memory. The facts are fitted to a
@@ -191,8 +193,9 @@ _INSTRUCTIONS = (
     "room, scene and lines, and the events it cites (what the studio's record says "
     "happened, and who acted in it); the voices of the people who speak, from their "
     "character bibles; the serial's memory (the last summaries and the open threads); and "
-    "what the computed checks measured. Every computed check passed; you judge what they "
-    "cannot.\n"
+    "what the computed checks measured. Every computed rule passed; what the checks only "
+    'recommend and this episode is outside of is listed under "recommendations", for you to '
+    "decide.\n"
     "1. Truth. A beat may dramatise its events: jokes, pauses, reactions, compressed talk. "
     "FAIL the episode if any beat shows an outcome that is not in the event it cites: a "
     "decision, a verdict, a success or a failure, a publication, a hire or a departure, "
@@ -207,6 +210,11 @@ _INSTRUCTIONS = (
     "3. Voices. Does each speaker sound like their bible (register, cadence, habits, their "
     "own phrases) and like a person, not a status report.\n"
     "4. Continuity. Does it continue or close the open threads it claims to.\n"
+    f"5. Recommendations. A beat outside the {WORDS_PER_BEAT[0]}-{WORDS_PER_BEAT[1]} "
+    "spoken-word band is flagged, not refused: the filmable rule has already measured that "
+    "its lines fit one clip. Keep it when it reads well at 2.5 words a second; FAIL only when "
+    "the beat would be cut off or is too fast to follow, naming the beat and its words in the "
+    "notes.\n"
     "A dramatisation is not a factual film: it makes no claims about the world and needs no "
     "sources, and you do not reject it for that.\n"
     "Score each part 1-5: 1 missing, 3 works, 5 could not be better. A PASS carries all six "
@@ -306,13 +314,20 @@ def _beat_numbers(beats: list[dict]) -> list[int]:
 def _words_per_beat(
     beats: list[dict], lines_by_beat: list[list[dict[str, Any]]], v3: bool
 ) -> dict[str, Any]:
-    """Spoken words in each beat, inside the brief's `WORDS_PER_BEAT`.
+    """Spoken words in each beat, against the brief's `WORDS_PER_BEAT` — a recommendation.
 
     A scene is at most nine seconds on the storyboard, and 22 words are 8.8 seconds at the
     studio's rate; a beat of 40 words is either cut off or read too fast to follow. Only the
     spoken words count: a name, a label or an acting note is never said. A v2 episode was
     never told the rule and is measured but not held to it; a beat with no line fails, since
     nothing in it was measured.
+
+    Since 2026-10-13 the band is ``advisory`` (the Owner: «nu trebuie să fie ceva fix, este
+    ceva recomandat, dar nici să respingi serialul de la asta»): a beat outside it is measured
+    and shown, the writer is not asked again for it (`services._ask_again`), and the Director
+    reads the episode and decides (`review_episode`). Until then a 23-word beat was REJECTED
+    before she read it («The Ninth Rewrite», 13.10.2026). The clip's own limit stays the
+    `filmable` rule.
     """
     per_beat = [_words(spoken_text(lines)) for lines in lines_by_beat]
     low, high = WORDS_PER_BEAT
@@ -321,7 +336,12 @@ def _words_per_beat(
         for number, words in zip(_beat_numbers(beats), per_beat, strict=True)
         if not low <= words <= high
     ]
-    measured: dict[str, Any] = {"per_beat": per_beat, "outside": outside}
+    measured: dict[str, Any] = {
+        "per_beat": per_beat,
+        "outside": outside,
+        "advisory": True,
+        "recommended": [low, high],
+    }
     if not beats:
         return {**measured, "passed": False, "reason": "episodul nu are niciun beat de măsurat"}
     if not v3:
@@ -331,12 +351,25 @@ def _words_per_beat(
         **measured,
         "passed": not outside,
         "reason": (
-            f"beat-urile {', '.join(map(str, outside))} nu au între {low} și {high} cuvinte "
-            f"rostite (au {', '.join(map(str, counted))})"
+            f"beat-urile {', '.join(map(str, outside))} ies din recomandarea de {low}-{high} "
+            f"cuvinte rostite (au {', '.join(map(str, counted))}); decide Directoarea"
             if outside
             else ""
         ),
     }
+
+
+def failed_rules(checks: dict[str, dict[str, Any]]) -> list[str]:
+    """The checks that refuse the episode on their own: failed, and not a recommendation."""
+    return [
+        name for name, check in checks.items() if not check["passed"] and not check.get("advisory")
+    ]
+
+
+def outside_recommendations(checks: dict[str, dict[str, Any]]) -> list[str]:
+    """The recommendations the episode is outside of: measured and shown, the Director's to
+    decide (2026-10-13)."""
+    return [name for name, check in checks.items() if not check["passed"] and check.get("advisory")]
 
 
 def motion_clip_limit(session: Session) -> dict[str, Any] | None:
@@ -811,6 +844,19 @@ def review_facts(
             name: {k: v for k, v in check.items() if k != "reason"}
             for name, check in checks.items()
         },
+        # What the checks only recommend and this episode is outside of (2026-10-13): hers to
+        # decide, with the measure in words. Never shed by `fit_to_budget`: a few short lines.
+        "recommendations": [
+            {
+                "check": name,
+                **{
+                    key: value
+                    for key, value in checks[name].items()
+                    if key not in ("reason", "passed", "advisory")
+                },
+            }
+            for name in outside_recommendations(checks)
+        ],
     }
 
 
@@ -975,7 +1021,8 @@ def review_episode(
         facts = review_facts(session, episode, checks)
         title = episode.title
 
-    failed = [name for name, check in checks.items() if not check["passed"]]
+    failed = failed_rules(checks)
+    advised = outside_recommendations(checks)
     run_id: str | None = None
     if failed:
         reasons = [checks[name]["reason"] for name in failed if checks[name]["reason"]]
@@ -1058,6 +1105,7 @@ def review_episode(
                 "log_id": episode.log_id,
                 "verdict": verdict.verdict,
                 "checks_failed": failed,
+                "recommendations_outside": advised,
                 "model_used": run_id is not None,
             },
             correlation,
@@ -1065,14 +1113,18 @@ def review_episode(
         if verdict.verdict == "FAIL":
             episode.status = "REJECTED"
             episode.notes = (verdict.notes or "; ".join(verdict.reasons))[:2000] or None
-            episode.reviewed_by = "director"
+            # A FAIL the computed rules gave without her reading is signed by the checks
+            # (2026-10-13): the cover and the list said «respins de Director» for a verdict
+            # she never gave («The Ninth Rewrite», 9 din 10 verificări, fără rubrică).
+            by = "director" if run_id is not None else "checks"
+            episode.reviewed_by = by
             episode.event_id = append_event(
                 session,
                 "story.episode_rejected",
                 "story_episode",
                 episode.id,
                 3,
-                {"log_id": episode.log_id, "reviewed_by": "director"},
+                {"log_id": episode.log_id, "reviewed_by": by},
                 correlation,
             ).event_id
             showrunner = agent_for_role(session, PREFERRED_SHOWRUNNER_ROLE)

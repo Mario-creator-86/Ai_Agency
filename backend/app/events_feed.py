@@ -1444,6 +1444,8 @@ def _words(
     if kind == "story.episode_approved":
         return "Episodul serialului e aprobat; se pregătește filmarea.", "Episodul e aprobat!"
     if kind == "story.episode_rejected":
+        if payload.get("reviewed_by") == "checks":
+            return "Episodul serialului nu a trecut verificările calculate; se rescrie.", None
         return "Episodul serialului nu a trecut; se rescrie.", None
     if kind == "story.daily_log_closed":
         safe = int(payload.get("public_safe_events") or 0)

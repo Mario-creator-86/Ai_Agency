@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-10-13 — Office serial: words per beat is a recommendation; a computed rejection is signed by the checks
+
+- `words_per_beat` is `advisory` (the Owner: «nu trebuie să fie ceva fix, este ceva recomandat,
+  dar nici să respingi serialul de la asta»): a beat outside 8-22 spoken words is measured and
+  shown, the showrunner is not asked again for it, and the Director reads the episode with the
+  measure under «recommendations» and decides; the brief says the band is a recommendation.
+  The clip's own limit (`filmable`) and the episode's length stay rules. Before: «The Ninth
+  Rewrite» (13.10.2026) was REJECTED for a 23-word beat before she read it.
+- A FAIL the computed rules gave without her reading is `reviewed_by: checks` (the episode row
+  and `story.episode_rejected`): the journal's cover says «Verificările calculate · RESPINS ·
+  Directorul nu a citit episodul», the list «Respins de verificările calculate», the feed «nu a
+  trecut verificările calculate». The check list counts rules apart from recommendations
+  («9 din 9 trecute · 1 recomandare de decis»).
+- Tests: `tests/test_words_per_beat_is_a_recommendation.py`, `frontend/tests/serial_room.test.js`.
+
 ## 2026-10-13 — Prompt path repair: static stills, planned markings, the resumed redo
 
 - The still (image) prompt carries no movement: a clause of the plan that moves the camera is

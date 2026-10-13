@@ -913,9 +913,10 @@ in an event you cite, is "background" in a room or is mentioned in a line, and s
 the words said aloud and nothing else, "direction": an optional acting note}}. A voice \
 reads "text" exactly as written, so it never holds a name, a colon, a bracket or a stage \
 direction.
-4. Length. Each beat is {min_words} to {max_words} spoken words (a scene holds at most 9 \
-seconds); the whole episode is {min_episode_words} to {max_episode_words} spoken words, 45 \
-to 70 seconds at 2.5 words a second.
+4. Length. Aim for {min_words} to {max_words} spoken words in each beat (a scene holds at \
+most 9 seconds): a recommendation the Director weighs, not a rule that refuses the episode. \
+The whole episode is {min_episode_words} to {max_episode_words} spoken words, 45 to 70 \
+seconds at 2.5 words a second.
 5. Language. The title, the lines, the summary and the logline are in English. Some event \
 texts (letter subjects, titles) are in Romanian: say what they mean in English, never quote \
 the Romanian.
@@ -994,9 +995,9 @@ PLAN FOR THIS EPISODE:
 FINAL SPOKEN-LENGTH CHECK, including on a rewrite:
 Only words inside lines[].text count; scene descriptions, directions, summaries and plans \
 do not fill the spoken duration. Count each beat and the total before returning your JSON: \
-{min_words} to {max_words} spoken words per beat and {min_episode_words} to \
-{max_episode_words} across the episode. The hook's first line is short, but the whole hook \
-beat still meets its word range: another person may answer it. The button is one line \
+{min_words} to {max_words} spoken words per beat (recommended) and {min_episode_words} to \
+{max_episode_words} across the episode (the rule). The hook's first line is short, but the whole \
+hook beat still meets its word range: another person may answer it. The button is one line \
 within that same range. Expand the intervening dialogue with grounded reactions and \
 consequences, without adding events or repeating filler. A collection of very short \
 punchlines is too short even when it has enough beats. Return the episode JSON only, \
@@ -1513,7 +1514,9 @@ def _measured_refusals(
     return [
         (name, str(check.get("reason") or name))
         for name, check in checks.items()
-        if not check["passed"] and name != "offered_speakers"
+        # A recommendation (words per beat, 2026-10-13) is measured for the Director, never a
+        # reason to ask the writer again: a beat a little over the band reaches her.
+        if not check["passed"] and name != "offered_speakers" and not check.get("advisory")
     ]
 
 

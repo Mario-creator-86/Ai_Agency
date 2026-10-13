@@ -26,6 +26,7 @@ import {
   serialStageNotes,
   journalCoverHtml,
   coverVerdict,
+  checksCount,
   dayWords,
   splitName,
   textParts,
@@ -124,7 +125,8 @@ test('the checks come in reading order, with the labels the serial asked for and
   assert.equal(rows[1].word, 'structură (cârlig → poantă, camere din studio)');
   assert.equal(rows[1].passed, false);
   assert.equal(rows[1].reason, 'Beat-ul 3 nu are o parte.', 'the backend reason, as it came');
-  assert.equal(rows[2].word, 'cuvinte pe beat (8-22 rostite)');
+  assert.equal(rows[2].word, 'cuvinte pe beat (8-22 rostite, recomandare)');
+  assert.equal(rows[2].advisory, false, 'a review written before 2026-10-13 carries no advisory key');
   assert.equal(rows[2].measure, '14 · 18 · 12');
   assert.equal(rows[3].measure, '10 din 10 replici');
   assert.equal(rows[4].word, 'shiny new rule', 'a check the page does not know keeps its own name');
@@ -307,8 +309,73 @@ test('an unnumbered, unread draft says so, and no episode is a cover that says n
   const none = journalCoverHtml(null, null);
   assert.ok(none.includes('Niciun episod încă'));
   assert.ok(!none.includes('episoade aprobate'), 'a serial not read says no count');
-  assert.deepEqual(coverVerdict(null), { verdict: '—', mean: '', checks: '', read: false });
+  assert.deepEqual(coverVerdict(null), { verdict: '—', mean: '', checks: '', read: false, computed: false });
   assert.equal(coverVerdict({ verdict: 'FAIL', scores: {}, checks: {} }).mean, '', 'a computed FAIL has no scores to average');
   assert.equal(dayWords('2026-09-12'), '12.09.2026');
   assert.equal(dayWords(''), '');
+});
+
+test('a recommendation is shown apart from the rules and refuses nothing (2026-10-13)', () => {
+  const review = {
+    ...REVIEW,
+    checks: {
+      ...REVIEW.checks,
+      structure: { passed: true, reason: '' },
+      words_per_beat: {
+        passed: false,
+        advisory: true,
+        per_beat: [14, 23, 12],
+        outside: [2],
+        reason: 'beat-urile 2 ies din recomandarea de 8-22 cuvinte rostite (au 23); decide Directoarea',
+      },
+    },
+  };
+  const rows = checkRows(review);
+  const words = rows.find((r) => r.key === 'words_per_beat');
+  assert.equal(words.advisory, true);
+  assert.equal(words.passed, false);
+  assert.equal(checksCount(rows), '4 din 4 trecute · 1 recomandare de decis');
+  assert.equal(checksCount(checkRows(REVIEW)), '4 din 5 trecute', 'a recommendation kept is not counted either way');
+  const html = episodeHtml(
+    { id: 'ep-3', title: 'T', status: 'DRAFT', beats: [V3_BEAT], grounded_event_ids: ['e1'], review, continuity: {} },
+    { open: true },
+  );
+  assert.ok(html.includes('check-row is-advice'));
+  assert.ok(html.includes('1 recomandare de decis'));
+  assert.ok(!html.includes('check-row is-fail'), 'nothing is picată');
+  assert.ok(html.includes('decide Directoarea'));
+});
+
+test('the cover signs a computed rejection by the checks, not by the Director', () => {
+  const computed = {
+    verdict: 'FAIL',
+    model_used: false,
+    scores: {},
+    reasons: ['Titlul nu e în engleză.'],
+    checks: {
+      grounding: { passed: true, reason: '' },
+      language: { passed: false, reason: 'Titlul nu e în engleză.' },
+      words_per_beat: { passed: false, advisory: true, per_beat: [23], outside: [1], reason: 'r' },
+    },
+  };
+  const v = coverVerdict(computed);
+  assert.equal(v.computed, true);
+  assert.equal(v.checks, '1 din 2 verificări trecute', 'the recommendation is not a rule');
+  const cover = journalCoverHtml(
+    { id: 'c', status: 'REJECTED', reviewed_by: 'checks', title: 'The Ninth Rewrite', beats: [], grounded_event_ids: [], review: computed, continuity: { episode_number: 2, business_date: '2026-10-13' } },
+    { canon_episode_number: 1 },
+  );
+  assert.ok(cover.includes('Verificările calculate'));
+  assert.ok(!cover.includes('Verdictul Directorului'));
+  assert.ok(cover.includes('cover-verdict-word">RESPINS<'));
+  assert.ok(cover.includes('Directorul nu a citit episodul.'));
+  const hers = coverVerdict({ ...computed, model_used: true, scores: { hook: 2 } });
+  assert.equal(hers.computed, false);
+  const herCover = journalCoverHtml(
+    { id: 'd', status: 'REJECTED', reviewed_by: 'director', title: 'T', beats: [], grounded_event_ids: [], review: { ...computed, model_used: true }, continuity: {} },
+    null,
+  );
+  assert.ok(herCover.includes('Verdictul Directorului') && herCover.includes('cover-verdict-word">FAIL<'));
+  const page = episodeHtml({ id: 'e', title: 'T', status: 'REJECTED', reviewed_by: 'checks', beats: [], review: computed, continuity: {} });
+  assert.ok(page.includes('Respins de verificările calculate'), page.slice(0, 400));
 });
