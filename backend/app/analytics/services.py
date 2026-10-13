@@ -27,7 +27,7 @@ from app.analytics.schemas import (
     DirectorRecommendationView,
 )
 from app.factual.models import HookOption, ScriptDraft, StoryReview, TopicIdea
-from app.media.models import Storyboard, VideoRenderJob
+from app.media.models import MediaAsset, Storyboard, VideoRenderJob
 from app.providers.analytics_base import AnalyticsProvider
 from app.providers.youtube_analytics import MetricsUnavailable, YouTubeAnalyticsProvider
 from app.publishing.models import ChannelRecord, PublicationRecord
@@ -504,18 +504,37 @@ def _resolve_publication_metadata(session: Session, pub: PublicationRecord) -> t
     return topic, hook
 
 
-def _editorial_total(session: Session, script: ScriptDraft) -> int | None:
-    """The Director's editorial total (0-50) of the version that shipped (2026-10-11), to lay
-    beside the views: a factual script carries it in its story_json; the serial's script stands
-    for an episode (`storyboard_from_episode`), whose review holds it. None when never judged."""
+def _shipped_editorial(session: Session, script: ScriptDraft) -> dict[str, Any] | None:
+    """The Director's editorial record of the version that shipped (2026-10-11): a factual
+    script carries it in its story_json; the serial's script stands for an episode
+    (`storyboard_from_episode`), whose review holds it. None when never judged."""
     story = script.story_json if isinstance(script.story_json, dict) else {}
     editorial = story.get("editorial")
     if not isinstance(editorial, dict) and story.get("episode_id"):
         episode = session.get(StoryEpisode, str(story["episode_id"]))
         editorial = (episode.review_json or {}).get("editorial") if episode is not None else None
     shipped = editorial.get("shipped") if isinstance(editorial, dict) else None
-    total = shipped.get("total") if isinstance(shipped, dict) else None
+    return shipped if isinstance(shipped, dict) else None
+
+
+def _editorial_total(session: Session, script: ScriptDraft) -> int | None:
+    """Her editorial total (0-50) of the version that shipped, to lay beside the views."""
+    shipped = _shipped_editorial(session, script)
+    total = shipped.get("total") if shipped is not None else None
     return int(total) if isinstance(total, int | float) and not isinstance(total, bool) else None
+
+
+def _editorial_scores(session: Session, script: ScriptDraft) -> dict[str, int] | None:
+    """Her five scores of the version that shipped, or None when never judged."""
+    shipped = _shipped_editorial(session, script)
+    scores = shipped.get("scores") if shipped is not None else None
+    if not isinstance(scores, dict):
+        return None
+    return {
+        str(key): int(value)
+        for key, value in scores.items()
+        if isinstance(value, int | float) and not isinstance(value, bool)
+    }
 
 
 def story_performance(engine: Engine, channel_id: str | None = None) -> dict[str, Any]:
@@ -561,10 +580,25 @@ def story_performance(engine: Engine, channel_id: str | None = None) -> dict[str
                 if snapshot.views
                 else None
             )
+            # What the writer wrote and how long the film ran (2026-10-13): his brief lists
+            # this channel's best and worst by these, beside her scores; the film's own
+            # length when the asset recorded it, else the script's estimate.
+            story = script.story_json if isinstance(script.story_json, dict) else {}
+            asset = session.get(MediaAsset, pub.media_asset_id)
+            seconds = (
+                asset.duration_seconds
+                if asset is not None and asset.duration_seconds
+                else story.get("estimated_seconds") or script.target_duration_seconds
+            )
             rows.append(
                 {
                     "publication_id": pub.id,
                     "title": pub.title,
+                    "measured_at": snapshot.snapshot_at,
+                    "hook": story.get("hook"),
+                    "cta_kind": story.get("cta_kind"),
+                    "seconds": seconds,
+                    "editorial_scores": _editorial_scores(session, script),
                     "predicted_hook": scores.get("hook_potential"),
                     "predicted_retention": scores.get("retention_potential"),
                     "predicted_cta": scores.get("cta_opportunity"),

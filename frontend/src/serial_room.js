@@ -393,6 +393,29 @@ export function approvalMessage(decided) {
 }
 
 /**
+ * What the Owner's «Scrie episodul» did, from the tell answer (router.py post_tell,
+ * serial_stage.py tell_day_now, 2026-10-13). Until then the button only drafted, and the
+ * Director read the draft at the next run; now the press writes, reads, approves under the
+ * policy and readies, and the backend says where the episode ended in its own words
+ * (`words`: approved and readied, passed and waiting for him, rejected by the Director or by
+ * the computed checks, written but unread). The page decides only the tone: a rejection and
+ * an unread draft take the error tone so they are not missed, and a replay of the same press
+ * (the same command id, answered once already) says so.
+ *
+ * @param {{words?: string, reason?: string, episode_status?: string | null, verdict?: string | null, replayed?: boolean} | null | undefined} result
+ * @returns {{text: string, error: boolean}}
+ */
+export function tellOutcomeMessage(result) {
+  const words = String((result && (result.words || result.reason)) || '').trim();
+  if (!words) return { text: 'Studioul nu a spus ce s-a întâmplat cu episodul; reîncarcă lista.', error: true };
+  const status = String((result && result.episode_status) || '');
+  const verdict = String((result && result.verdict) || '');
+  const error = !status || status === 'REJECTED' || (status === 'DRAFT' && verdict !== 'PASS');
+  const text = result && result.replayed ? `${words} (aceeași apăsare, răspunsul de atunci)` : words;
+  return { text, error };
+}
+
+/**
  * The serial's facts on a run card, under the stage's own reason (which already names the
  * episode and its date). Only what the artefacts carry, and nothing for a count of zero.
  *
