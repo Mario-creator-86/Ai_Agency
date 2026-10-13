@@ -1,0 +1,147 @@
+```json
+{
+  "shots": [
+    {
+      "scene_index": 1,
+      "story_purpose": "HOOK",
+      "subject": "Himalayan mountain range, remote village nestled in valley",
+      "action": "Storm clouds rolling in rapidly, darkening the sky; wind whipping through the valley, bending sparse vegetation",
+      "environment": "Rugged Himalayan terrain, steep slopes, sparse alpine vegetation, overcast sky with thick storm clouds approaching from the west",
+      "camera": "Aerial wide shot, static, 24mm lens (slightly wide to emphasize scale), no movement",
+      "lighting": "Direction: top-down (overcast sky); Quality: diffused, high contrast; Colour: cool blues (#2E4A66) in shadows, muted gold (#F4A460) in fading light",
+      "composition": "Vertical frame: 60% sky (storm clouds), 30% mountains, 10% village at bottom; rule of thirds with village in lower third",
+      "motion": "Clouds moving left to right, wind animating grass and prayer flags; no camera movement",
+      "emotion": "Foreboding, urgency (storm approaching), isolation (village dwarfed by landscape)",
+      "background": "Distant peaks partially obscured by clouds, no human activity visible",
+      "continuity": "Sky palette matches visual bible (#2E4A66 to #87CEEB); no harsh shadows (overcast light)",
+      "ending_frame": "Storm clouds fully covering the sun, village in silhouette",
+      "audio_intent": "Low rumble of distant thunder, wind howling, no narration yet",
+      "transition": "Hard cut to next shot (floodwaters)",
+      "avoid": [
+        "Bright sunlight or clear skies",
+        "Modern infrastructure (power lines, roads)",
+        "Human faces or detailed figures",
+        "Camera movement (keep static)",
+        "On-screen text or captions"
+      ]
+    },
+    {
+      "scene_index": 2,
+      "story_purpose": "SETUP",
+      "subject": "Raging floodwaters, debris (wooden beams, furniture, livestock carcasses)",
+      "action": "Water surging through narrow valley, debris tumbling violently; houses partially submerged, roofs collapsing under force",
+      "environment": "Mountain valley, steep sides, terraced fields now underwater, muddy water churning",
+      "camera": "Medium-wide shot, static, 35mm lens (slightly telephoto to compress depth), low angle (emphasizes water’s power)",
+      "lighting": "Direction: ambient (overcast); Quality: diffused, high contrast; Colour: muddy browns (#8B4513) in water, cool grays (#1A1A1A) in shadows",
+      "composition": "Vertical frame: 70% water/debris, 20% submerged houses, 10% sky; leading lines from water flow toward camera",
+      "motion": "Water rushing left to right, debris spinning in eddies; no camera movement",
+      "emotion": "Chaos, devastation, helplessness (water overwhelming structures)",
+      "background": "Distant mountains blurred by rain, no visible human activity",
+      "continuity": "Storm clouds from previous shot still visible; palette matches (#D2691E to #F4A460 for earth, #2E4A66 for sky)",
+      "ending_frame": "A house roof collapsing into the floodwaters",
+      "audio_intent": "Roaring water, debris crashing, distant thunder, no narration yet",
+      "transition": "Match cut to mudslide (same storm energy)",
+      "avoid": [
+        "Clear water or calm surfaces",
+        "Human faces or identifiable figures",
+        "Modern vehicles or infrastructure",
+        "Camera movement (keep static)",
+        "Bright greens or unnatural colors"
+      ]
+    },
+    {
+      "scene_index": 3,
+      "story_purpose": "EVIDENCE",
+      "subject": "Mudslide covering terraced farmland, two indistinct figures (farmer and child) salvaging belongings from a collapsed home",
+      "action": "Mud flowing downhill, burying crops; figures moving slowly, pulling a wooden chest from debris, clothes caked in mud",
+      "environment": "Terraced farmland, now buried under thick mud; collapsed stone walls, no standing structures",
+      "camera": "Medium shot, static, 50mm lens (neutral perspective), eye-level angle",
+      "lighting": "Direction: ambient (overcast); Quality: soft, low contrast; Colour: muted browns (#8B4513) in mud, cool grays (#1A1A1A) in shadows",
+      "composition": "Vertical frame: 50% mudslide, 30% figures, 20% sky; figures centered, mud leading lines toward them",
+      "motion": "Mud oozing downhill, figures moving in slow motion; no camera movement",
+      "emotion": "Exhaustion, resignation, quiet desperation (figures’ slumped postures)",
+      "background": "Distant mountains obscured by rain, no other activity",
+      "continuity": "Storm clouds and palette match previous shots; clothing consistent (pre-2010 farming attire, no logos)",
+      "ending_frame": "Figures carrying the chest away, mud still flowing behind them",
+      "audio_intent": "Mud squelching, distant rain, no dialogue (figures indistinct)",
+      "transition": "Hard cut to farmer in field (contrast devastation with source of emissions)",
+      "avoid": [
+        "Bright sunlight or clear skies",
+        "Modern tools or clothing",
+        "Human faces (keep figures indistinct)",
+        "Camera movement (keep static)",
+        "On-screen text or captions"
+      ]
+    },
+    {
+      "scene_index": 4,
+      "story_purpose": "REVEAL",
+      "subject": "Farmer (indistinct, wearing traditional Nepali topi hat and patuka sash) working a small terraced field; smoke rising from distant forest",
+      "action": "Farmer hoeing soil, turning earth slowly; smoke drifting upward from forest fire in background",
+      "environment": "Terraced farmland, pre-2010 tools (wooden plow, no machinery), distant forest on fire (controlled burn, not wildfire)",
+      "camera": "Medium close-up, static, 85mm lens (shallow depth of field), low angle (emphasizes farmer’s labor)",
+      "lighting": "Direction: ambient (overcast); Quality: soft, low contrast; Colour: warm browns (#D2691E) in soil, cool grays (#1A1A1A) in shadows, smoke (#5D8AA8)",
+      "composition": "Vertical frame: 60% farmer/field, 30% smoke, 10% sky; farmer centered, smoke leading lines upward",
+      "motion": "Farmer’s slow, rhythmic movements; smoke drifting left to right; no camera movement",
+      "emotion": "Quiet determination, dignity (farmer’s focus on work)",
+      "background": "Distant mountains, no modern infrastructure",
+      "continuity": "Palette matches visual bible (#D2691E for earth, #5D8AA8 for smoke); no harsh shadows (overcast)",
+      "ending_frame": "Farmer pausing, looking toward the smoke, then resuming work",
+      "audio_intent": "Distant crackling of fire, wind rustling crops, no narration yet",
+      "transition": "Hard cut to bar chart (contrast labor with global promise)",
+      "avoid": [
+        "Factories or industrial infrastructure",
+        "Modern vehicles or technology",
+        "Bright greens or unnatural colors",
+        "Human faces (keep farmer indistinct)",
+        "Camera movement (keep static)"
+      ]
+    },
+    {
+      "scene_index": 5,
+      "story_purpose": "ENDING",
+      "subject": "Two vertical bars side by side: left bar (#FFD700) fills to top (100B), right bar (#FF4500) stops short (83B)",
+      "action": "Bars animate upward simultaneously; left bar reaches top, right bar stops noticeably short, then holds",
+      "environment": "Abstract black background, no context (focus on bars)",
+      "camera": "Extreme close-up, static, 100mm lens (sharp focus on bars), centered angle",
+      "lighting": "Direction: front (flat); Quality: hard, high contrast; Colour: #FFD700 (left bar), #FF4500 (right bar), #FFFFFF (background)",
+      "composition": "Vertical frame: bars centered, equal width, top-aligned; no other elements",
+      "motion": "Bars growing upward at same speed, then freezing; no camera movement",
+      "emotion": "Disappointment, injustice (right bar’s shortfall)",
+      "background": "Black, no distractions",
+      "continuity": "Bars use visual bible’s accent colors (#FFD700, #FF4500); dimensions identical to previous shots if any",
+      "ending_frame": "Bars frozen, right bar visibly shorter",
+      "audio_intent": "Subtle metallic "ping" as bars stop, then silence",
+      "transition": "Fade to black (CTA)",
+      "avoid": [
+        "On-screen text or labels",
+        "Decorative elements (keep abstract)",
+        "Camera movement (keep static)",
+        "Bright or distracting colors"
+      ]
+    },
+    {
+      "scene_index": 6,
+      "story_purpose": "CTA",
+      "subject": "Black screen, no visuals",
+      "action": "No movement, complete stillness",
+      "environment": "None",
+      "camera": "N/A (black screen)",
+      "lighting": "None (pure black)",
+      "composition": "N/A",
+      "motion": "None",
+      "emotion": "Reflection, solemnity (silence invites audience to think)",
+      "background": "None",
+      "continuity": "N/A",
+      "ending_frame": "Black screen, no change",
+      "audio_intent": "Silence, then narration (CTA question)",
+      "transition": "Hold until end of narration, then fade out",
+      "avoid": [
+        "Any visuals (keep pure black)",
+        "Text or graphics",
+        "Background noise"
+      ]
+    }
+  ]
+}
+```

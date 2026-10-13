@@ -1,0 +1,555 @@
+import { runtimeLabel } from './ledger.js';
+import { studioPlace } from './office_clock.js';
+import { WeatherManager } from './hq_weather.js';
+import { OUTDOORS, outdoorWeather, outdoorMoment, drawOutdoorLight, drawOutdoorClock, drawOutdoorWeather, outdoorReadout, weatherMoves } from './pixel_environment.js';
+
+import { PIXEL_LAYOUT, staffPositions, restoreFurniture } from './pixel_desks.js';
+import { identitySeed, characterProfile, characterMotion, drawSeatedPerson, drawDeskGesture } from './pixel_people.js';
+import { bubblePages, bubbleFrame } from './speech_bubble.js';
+import { sceneFrame } from './pixel_navigation.js';
+import { drawOutdoorSky } from './pixel_sky.js';
+import { ambientMoves, drawOutdoorLife } from './pixel_life.js';
+import { loadActorAtlases, actorAtlasStatus, clearEmptyChair } from './pixel_actor_atlas.js';
+import { depthOrder, foregroundStatus } from './pixel_depth.js';
+import { PRESENTATION, presentationAction } from './pixel_presentation.js';
+import { RoomPhysics, drawRoomLife } from './pixel_room_life.js';
+import { StudioAudio } from './pixel_sound.js';
+import { StudioScreens } from './pixel_screens.js';
+import {drawAgentPortrait,loadPortraitAtlas,portraitInfo} from './pixel_portraits.js';
+export { staffPositions, identitySeed, characterMotion, actorAtlasStatus };
+
+export const WORLD_W = PIXEL_LAYOUT.world.width;
+export const WORLD_H = PIXEL_LAYOUT.world.height;
+export const BUILDING = PIXEL_LAYOUT.building;
+export const PIXEL_BACKGROUND = PIXEL_LAYOUT.background;
+const ZERO = { left: 0, right: 0, top: 0, bottom: 0 };
+
+export function acting(agent, live, reduced) {
+  return Boolean(live && !reduced && agent.lifecycle === 'ACTIVE' && ['WORKING', 'THINKING'].includes(agent.runtime_state));
+}
+
+/** A small canvas view: one background, real staff, actual state badges, pointer/keyboard input. */
+export class OfficeEngine {
+  constructor(canvas, options = {}) {
+    this.canvas = canvas;
+    this.options = /** @type {any} */ (options);
+    this.ctx = canvas.getContext('2d');
+    this.worldW = WORLD_W;
+    this.worldH = WORLD_H;
+    this.building = BUILDING;
+    this.dpr = 1;
+    this.agents = [];
+    this.bubbles = [];
+    this.positions = [];
+    this.pixelLayout = PIXEL_LAYOUT;
+    this.characters = new Map();
+    this.presentation = new Map();this.presentationReceived = 0;this.presentationAt = 0;this.presentationPending=false;this.presentationEpoch=0;
+    this.presentationRevision='';this.presentationDirty=false;this.presentationRefreshTimer=0;
+    this.roomPhysics=new RoomPhysics();this.audio=new StudioAudio();this.screens=new StudioScreens(this.options.fetchMedia);
+    this.page = 0;
+    this.tickTimer = 0;
+    this.environmentTimer = 0;
+    this.weatherReceivedAt = 0;
+    this.weatherEpoch = 0;
+    this.weatherObservedUtc = null;
+    this.weatherElapsed = 0;
+    this.weatherFrameAt = null;
+    this.lifeElapsed = 0;
+    this.lifeFrameAt = null;
+    this.nextFrameAt = null;
+    this.weather = new WeatherManager(async () => {
+      const epoch = this.weatherEpoch;
+      const data = await this.options.fetchWeather?.();
+      if (epoch !== this.weatherEpoch) return { available: false, reason: 'changed_context' };
+      this.weatherReceivedAt = Date.now();
+      this.weatherObservedUtc = data?.observed_at_utc || null;
+      this.weatherSource = data?.source || 'serviciul meteo';
+      return data;
+    }, { refreshMs: OUTDOORS.weather_refresh_ms });
+    this.selected = null;
+    this.hover = null;
+    this.insets = { ...ZERO };
+    this.zoom = 1;
+    this.pan = { x: 0, y: 0 };
+    this.drag = null;
+    this.suppressClick = false;
+    this.parked = Boolean(this.options.parked);
+    this.replay = false;
+    this.replayStill = null;
+    this.hitsOnly = false;
+    this.raf = 0;
+    this.last = 0;
+    this.assets = { manifest: null };
+    this.renderer = {
+      hits: [], captionBoxes: [], m: { seats: {} },
+      drawPortrait: (ctx, agent, _win = null, _frame = null) => {
+        return drawAgentPortrait(ctx,this.profileFor(agent));
+      },
+      portraitInfo: agent=>portraitInfo(this.profileFor(agent)),
+    };
+    this.viewport = {
+      zoom: 1, panX: 0, panY: 0, insets: { ...ZERO }, floor: { ...ZERO },
+      worldToScreen: (x, y) => ({ x: x * this.viewport.zoom + this.viewport.panX, y: y * this.viewport.zoom + this.viewport.panY }),
+      screenToWorld: (x, y) => ({ x: (x - this.viewport.panX) / this.viewport.zoom, y: (y - this.viewport.panY) / this.viewport.zoom }),
+    };
+    this.background = new Image();
+    const backgroundReady = new Promise((resolve) => {
+      this.background.onload = () => { this.draw(); resolve(true); };
+      this.background.onerror = () => { this.draw(); resolve(false); };
+      this.background.src = PIXEL_BACKGROUND;
+    });
+    this.ready=Promise.all([backgroundReady,loadActorAtlases(),this.screens.loadArtwork(),loadPortraitAtlas()]).then(([background])=>{this.draw();return background;});
+    this.themeReady = this.ready;
+    this.warmed = false;
+    this.bindInput();
+    this.bindLivingControls();
+    this.resizeObserver = new ResizeObserver(() => this.resize());
+    this.resizeObserver.observe(canvas);
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) this.stop();
+      else if (!this.parked) { this.startEnvironment(); this.schedule(); }
+    });
+    this.resize();
+  }
+
+  view() { return { cw: this.canvas.width, ch: this.canvas.height, dpr: this.dpr, worldW: WORLD_W, worldH: WORLD_H, ...this.viewport }; }
+  diagnostics(){return {coordinates:'origin top-left, x right, y down; floor depth increases toward viewer',elapsed_ms:this.lifeElapsed,
+    agents:this.visiblePositions().map(p=>({id:p.id,state:p.agent.runtime_state,lifecycle:p.agent.lifecycle,action:this.motionFor(p.agent).action,authorized:this.motionFor(p.agent).authorized})),
+    room:this.roomFrame,screens:this.monitorFrames,media:this.screens.status(),audio:this.audio.status(),environment:this.environment,connection:this.options.connectionStatus?.()};}
+  frameBox() {
+    const v = this.viewport;
+    const a = v.worldToScreen(BUILDING.x, BUILDING.y);
+    return { room: { left: this.insets.left, right: this.canvas.width / this.dpr - this.insets.right, top: this.insets.top, bottom: this.canvas.height / this.dpr - this.insets.bottom }, building: { x: a.x / this.dpr, y: a.y / this.dpr, w: BUILDING.width * v.zoom / this.dpr, h: BUILDING.height * v.zoom / this.dpr } };
+  }
+  resize() {
+    const box = this.canvas.getBoundingClientRect();
+    if (!box.width || !box.height) return;
+    this.prewarm(box.width, box.height);
+  }
+  prewarm(w, h) {
+    this.dpr = Math.min(2, window.devicePixelRatio || 1);
+    this.canvas.width = Math.round(w * this.dpr);
+    this.canvas.height = Math.round(h * this.dpr);
+    this.plan();
+    this.warmed = true;
+  }
+  plan() {
+    const d = this.dpr;
+    const w = this.canvas.width / d - this.insets.left - this.insets.right;
+    const h = this.canvas.height / d - this.insets.top - this.insets.bottom;
+    const frame = sceneFrame({ width: w, height: h, worldWidth: WORLD_W, worldHeight: WORLD_H, zoom: this.zoom, panX: this.pan.x, panY: this.pan.y });
+    this.pan = { x: frame.panX, y: frame.panY }; this.movable = frame.movable;
+    const k = frame.scale * d;
+    Object.assign(this.viewport, { zoom: k, panX: (this.insets.left + (w - WORLD_W * frame.scale) / 2 + this.pan.x) * d, panY: (this.insets.top + (h - WORLD_H * frame.scale) / 2 + this.pan.y) * d, insets: Object.fromEntries(Object.entries(this.insets).map(([key, n]) => [key, n * d])) });
+    this.canvas.style.touchAction = this.movable ? 'none' : 'pan-y';
+    this.canvas.style.cursor = this.drag?.moved ? 'grabbing' : this.hover ? 'pointer' : this.movable ? 'grab' : 'default';
+    this.options.onView?.(this.view());
+    this.draw();
+  }
+  setInsets(insets, _options = {}) {
+    this.insets = { ...ZERO, ...insets };
+    const roster = document.getElementById('pixel-roster');
+    if (roster) { roster.style.left = `${this.insets.left + 12}px`; roster.style.right = `${this.insets.right + 12}px`; }
+    if(this.livingControls)this.livingControls.style.left=`${this.insets.left+14}px`;
+    this.plan();
+  }
+  zoomBy(factor) { this.zoomTo(this.zoom * factor); }
+  zoomTo(zoom, anchor = null) {
+    if (!Number.isFinite(zoom)) return;
+    const world = anchor && this.viewport.screenToWorld(anchor.x * this.dpr, anchor.y * this.dpr);
+    this.zoom = Math.max(0.65, Math.min(2.5, zoom));
+    if (this.zoom <= 1) this.pan = { x: 0, y: 0 };
+    this.plan();
+    if (world) {
+      const screen = this.viewport.worldToScreen(world.x, world.y);
+      this.panBy(anchor.x - screen.x / this.dpr, anchor.y - screen.y / this.dpr);
+    }
+  }
+  panBy(x, y) {
+    if (!this.movable || !Number.isFinite(x) || !Number.isFinite(y)) return false;
+    const before = this.pan;
+    this.pan = { x: before.x + x, y: before.y + y }; this.plan();
+    return this.pan.x !== before.x || this.pan.y !== before.y;
+  }
+  fitView(_options = {}) { this.pan = { x: 0, y: 0 }; this.zoomTo(1); }
+  park() { this.parked = true; this.presentationEpoch++;this.presentation.clear();this.presentationReceived=0;this.screens.clear();this.resetWeather(); this.stop(); }
+  resetWeather() {
+    this.weatherEpoch++; this.weatherReceivedAt = 0; this.weatherObservedUtc = null;
+    this.weather._last = -Infinity;
+  }
+  unpark() { this.parked = false; this.resize(); this.startEnvironment(); this.schedule(); }
+  stop() {
+    this.audio.pause();this.screens.active(false);
+    cancelAnimationFrame(this.raf); clearTimeout(this.tickTimer); clearTimeout(this.environmentTimer);
+    this.raf = 0; this.tickTimer = 0; this.environmentTimer = 0; this.weatherFrameAt = null;
+    this.lifeFrameAt = null;
+    this.nextFrameAt = null;
+    clearTimeout(this.presentationRefreshTimer);this.presentationRefreshTimer=0;
+  }
+  async refreshWeather() {
+    if (this.parked || document.hidden || this.replay || this.weather._pending) return;
+    await this.weather.first(Date.now());
+    if (!this.parked && !document.hidden) { this.draw(); this.schedule(); }
+  }
+  startEnvironment() {
+    if (this.parked || document.hidden || this.environmentTimer) return;
+    if (!this.replay) this.weather.update(Date.now());
+    if (!this.replay && (this.options.presentationReadable?.() ?? this.options.dataLive?.())) this.refreshPresentation(this.presentationDirty);
+    this.environmentTimer = window.setTimeout(() => {
+      this.environmentTimer = 0;
+      if (this.parked || document.hidden) return;
+      if (!this.raf && !this.tickTimer) this.draw();
+      this.schedule(); this.startEnvironment();
+    }, OUTDOORS.clock_refresh_ms);
+  }
+  currentWeather(now = Date.now()) {
+    return outdoorWeather(this.weather.state, this.weatherReceivedAt, now, this.weatherObservedUtc, this.replay);
+  }
+  weatherAnimating(weather = this.currentWeather()) {
+    return weatherMoves(weather, { live: this.options.dataLive?.(), reduced: this.options.reducedMotion?.(), replay: this.replay, parked: this.parked, hidden: document.hidden });
+  }
+  ambientAnimating() {
+    return ambientMoves({ live: this.options.dataLive?.(), reduced: this.options.reducedMotion?.(), replay: this.replay, parked: this.parked, hidden: document.hidden });
+  }
+  motionFor(agent, at = this.lifeElapsed) {
+    const base=characterMotion(agent, at, this.options.dataLive?.(), this.options.reducedMotion?.(), this.replay);
+    const intent=presentationAction(this.presentation.get(String(agent.id||agent.agent_id)),agent,
+      at-this.presentationAt,this.presentationReceived);
+    if(!intent)return {...base,action:'look',monitor:['PAUSED','UNKNOWN'].includes(base.mode)?'off':'on',animate:false,authorized:false};
+    return {...base,...intent,elapsed:base.animate?base.elapsed:at,
+      wind:this.currentWeather().windKph||0,
+      animate:Boolean(this.options.dataLive?.()&&!this.options.reducedMotion?.()&&!this.replay&&agent.lifecycle==='ACTIVE'&&intent.action!=='rest')};
+  }
+  queuePresentationRefresh(delay=PRESENTATION.state_refresh_debounce_ms){
+    if(!this.options.fetchPresentation||this.presentationRefreshTimer||this.presentationPending||this.parked||this.replay||document.hidden
+      ||!(this.options.presentationReadable?.()??this.options.dataLive?.()))return;
+    this.presentationRefreshTimer=window.setTimeout(()=>{
+      this.presentationRefreshTimer=0;void this.refreshPresentation(true);
+    },delay);
+  }
+  async refreshPresentation(force=false){
+    if(!this.options.fetchPresentation||this.presentationPending||this.parked||this.replay||document.hidden
+      ||!(this.options.presentationReadable?.()??this.options.dataLive?.())
+      ||(!force&&Date.now()-this.presentationReceived<PRESENTATION.refresh_ms))return;
+    clearTimeout(this.presentationRefreshTimer);this.presentationRefreshTimer=0;
+    this.presentationPending=true;
+    this.presentationDirty=false;
+    const epoch=this.presentationEpoch;
+    try{const snapshot=await this.options.fetchPresentation();
+      if(epoch!==this.presentationEpoch||this.parked||this.replay||document.hidden
+        ||!(this.options.presentationReadable?.()??this.options.dataLive?.()))return;
+      if(snapshot?.schema!==1||!Array.isArray(snapshot.agents)){this.presentationDirty=true;return;}
+      this.presentation=new Map(snapshot.agents.map(p=>[String(p.agent_id),p]));
+      this.presentationReceived=Date.now();this.presentationAt=this.lifeElapsed;
+      // Events can commit while this HTTP read is in flight. Reject unmatched intent and read again.
+      this.presentationDirty=this.agents.some(a=>!presentationAction(this.presentation.get(String(a.id||a.agent_id)),a,0,this.presentationReceived));
+      this.screens.setMedia(snapshot.media);this.draw();this.schedule();
+    }catch{this.presentationDirty=true; /* Keep actual state; failed reads never invent an action. */ }
+    finally{this.presentationPending=false;
+      if(this.presentationDirty&&epoch===this.presentationEpoch)this.queuePresentationRefresh(PRESENTATION.state_retry_ms);
+    }
+  }
+  bindLivingControls(){
+    const host=this.canvas.parentElement;if(host?.id!=='scene-viewport')return;
+    const controls=document.createElement('div');controls.className='studio-living-controls';
+    const sound=document.createElement('button');sound.type='button';sound.textContent='Sunet';sound.setAttribute('aria-label','Sunetul studioului');sound.setAttribute('aria-pressed','false');
+    sound.addEventListener('click',async()=>{const on=await this.audio.toggle();sound.setAttribute('aria-pressed',String(on));sound.textContent=on?'Sunet pornit':'Sunet';this.draw();});
+    const volume=document.createElement('input');volume.type='range';volume.min='0';volume.max='1';volume.step='.01';volume.value=String(this.audio.volume);volume.setAttribute('aria-label','Volumul studioului');
+    volume.addEventListener('input',()=>this.audio.setVolume(volume.value));
+    const film=document.createElement('button');film.type='button';film.textContent='Film';film.setAttribute('aria-label','Filmele de pe monitoare');film.addEventListener('click',()=>this.screens.openPlayer());
+    controls.append(sound,volume,film);host.append(controls);this.livingControls=controls;
+    this.soundButton=sound;
+  }
+  profileFor(agent) { return characterProfile(agent, this.characters.get(String(agent.id || agent.agent_id))); }
+  visiblePositions() { return this.positions.filter(p => p.page === this.page); }
+  schedule() {
+    if (this.raf || this.tickTimer || this.parked || document.hidden) return;
+    const moving = this.visiblePositions().some(p => this.motionFor(p.agent).animate);
+    const speaking = this.bubbles.some(b => b.expiresAt > Date.now()) && (this.replay || this.options.dataLive?.());
+    if (!moving && !speaking && !this.weatherAnimating() && !this.ambientAnimating()) return;
+    // Keep a timed cadence without a busy RAF loop or accumulating paint-time slowdown.
+    const interval = 1000 / PIXEL_LAYOUT.life.frame_rate;
+    const delay = Math.max(0, (this.nextFrameAt ?? performance.now()) - performance.now());
+    this.tickTimer = window.setTimeout(() => {
+      this.tickTimer = 0;
+      if (this.parked || document.hidden) return;
+      this.raf = requestAnimationFrame(at => {
+        this.raf = 0;
+        this.nextFrameAt = Math.max(at, (this.nextFrameAt ?? at) + interval);
+        this.draw(at); this.schedule();
+      });
+    }, Math.ceil(delay));
+  }
+  setLayout(layout) {
+    this.layout = layout;
+    // Existing inspectors use department/desk names; visual coordinates belong to this scene.
+    this.assets.manifest = { ...layout };
+    this.pixelLayout = layout.pixel_office || PIXEL_LAYOUT;
+    // A running backend may still hold the preceding visual config. Keep its reserved
+    // slots/desk metadata and apply current artwork calibration to the same illustrated desks.
+    this.pixelLayout = { ...this.pixelLayout, stations: (this.pixelLayout.stations || PIXEL_LAYOUT.stations).map(station => {
+      const painted = PIXEL_LAYOUT.stations.find(s => s.desk_id === station.desk_id && s.x === station.x && s.y === station.y);
+      return painted ? { ...station, seating: painted.seating, foreground_polygons: painted.foreground_polygons, chair_clear_polygons: painted.chair_clear_polygons } : station;
+    }) };
+    this.draw();
+  }
+  setCharacterBible(characters) {
+    this.characters = new Map(characters.filter(c => c.employee_id).map(c => [String(c.employee_id), c]));
+    this.draw();
+  }
+  setAgents(agents) {
+    // OfficeState mutates records in place; retain scalar versions rather than object references.
+    const revision=JSON.stringify(agents.map(a=>[String(a.id||a.agent_id),a.version,a.lifecycle,a.runtime_state]).sort((a,b)=>a[0].localeCompare(b[0])));
+    if(revision!==this.presentationRevision){this.presentationRevision=revision;this.presentationDirty=true;this.queuePresentationRefresh();}
+    this.agents = [...agents];
+    this.positions = staffPositions(agents, this.pixelLayout);
+    const pages = this.positions.map(p => p.page);
+    if (!pages.includes(this.page)) this.page = pages[0] || 0;
+    this.syncHits();
+    this.renderPages();
+    this.draw();
+    this.schedule();
+    this.renderRoster();
+  }
+  depthPositions() {
+    return depthOrder(this.visiblePositions().map(p=>({...p,depth:p.seating?.floor_y??p.y})));
+  }
+  syncHits() {
+    // Pointer selection starts with the nearest painted person when targets overlap.
+    this.renderer.hits = this.depthPositions().reverse().map(p => ({ x: p.x - 32, y: p.y - 70, w: 64, h: 86, x0: p.x - 32, y0: p.y - 70, x1: p.x + 32, y1: p.y + 16, agent: p.agent }));
+  }
+  showPage(page) { this.page = page; this.syncHits(); this.renderPages(); this.draw(); this.schedule(); }
+  setSelectedAgent(id) {
+    this.selected = id;
+    const person = this.positions.find(p => p.id === id);
+    if (person && person.page !== this.page) this.showPage(person.page);
+    this.draw(); this.renderRoster();
+  }
+  renderPages() {
+    const host = document.getElementById('pixel-office-pages');
+    if (!host) return;
+    const pages = [...new Set(this.positions.map(p => p.page))].sort((a, b) => a - b);
+    host.hidden = pages.length <= 1;
+    const key = `${pages}:${this.page}`;
+    if (key === this.pagesKey) return;
+    this.pagesKey = key; host.replaceChildren();
+    for (const page of pages) {
+      const button = document.createElement('button'); button.type = 'button';
+      button.textContent = page === 0 ? 'Birouri principale' : `Birouri suplimentare ${page}`;
+      button.setAttribute('aria-pressed', String(page === this.page));
+      button.addEventListener('click', () => this.showPage(page)); host.append(button);
+    }
+  }
+  setSpeechBubbles(bubbles) { this.bubbles = [...bubbles]; this.draw(); this.schedule(); }
+  setProjectTokens(_tokens) { /* Workflow progress is displayed by the existing truthful day track. */ }
+  setFacts(facts) {
+    this.facts = facts;
+    const place = studioPlace(), key = `${place.lat}:${place.lon}:${place.timeZone}`;
+    if (this.weatherPlace && this.weatherPlace !== key) this.resetWeather();
+    this.weatherPlace = key;
+    this.draw();
+  }
+  setReplay(on) { this.replay = on; this.draw(); this.schedule(); }
+  setReplayMoment(at) { this.replayAt = at; this.draw(); }
+  async prepareMoment(_at) { return true; }
+  setReplayStill(_image, _at) { return false; }
+  clearArrivals() { this.bubbles = []; this.draw(); }
+  quietRoomChips() { this.draw(); }
+  resetGlints() { this.draw(); }
+  offerArrival(_event, _live) { this.draw(); }
+  offerReplayArrival(_event) { this.draw(); }
+  setCovered(_covered) { this.draw(); }
+
+  draw(at = performance.now()) {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.fillStyle = '#222538';
+    ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    const v = this.viewport;
+    ctx.setTransform(v.zoom, 0, 0, v.zoom, v.panX, v.panY);
+    ctx.imageSmoothingEnabled = false;
+    if (this.background.complete && this.background.naturalWidth) ctx.drawImage(this.background, 0, 0, WORLD_W, WORLD_H);
+    else { ctx.fillStyle = '#4b3556'; ctx.fillRect(0, 0, WORLD_W, WORLD_H); }
+    this.screens.drawArtwork(ctx);
+    const now = new Date();
+    const historical = this.replay && this.replayAt ? new Date(this.replayAt) : now;
+    const moment = outdoorMoment(Number.isFinite(historical.getTime()) ? historical : now, studioPlace());
+    const weather = this.currentWeather(now.getTime());
+    const animate = this.weatherAnimating(weather);
+    const ambient = this.ambientAnimating();
+    if (ambient && this.lifeFrameAt !== null) this.lifeElapsed += Math.max(0, at - this.lifeFrameAt);
+    this.lifeFrameAt = ambient ? at : null;
+    if (animate && this.weatherFrameAt !== null) this.weatherElapsed += Math.max(0, Math.min(250, at - this.weatherFrameAt));
+    this.weatherFrameAt = animate ? at : null;
+    drawOutdoorLight(ctx, moment, weather);
+    const sky = drawOutdoorSky(ctx, this.background, moment, weather, this.lifeElapsed);
+    let clock;
+    this.street = drawOutdoorLife(ctx, weather, this.lifeElapsed, moment, {background:this.background,
+      clock:()=>{clock=drawOutdoorClock(ctx,now,this.facts?.timeZone);}});
+    drawOutdoorWeather(ctx, weather, this.weatherElapsed);
+    const positions=this.depthPositions();
+    const motions=new Map(positions.map(p=>[p.id,this.motionFor(p.agent)]));
+    this.roomFrame=this.roomPhysics.frame(this.lifeElapsed,weather,positions);
+    drawRoomLife(ctx,this.background,this.lifeElapsed,weather,this.roomFrame);
+    // Clear static empty chairs together before painting any foreground ensemble.
+    const ensembles=new Map(positions.map(p=>[p.id,clearEmptyChair(ctx,this.profileFor(p.agent),p,this.pixelLayout)]));
+    this.screens.active(ambient && Date.now()-this.presentationReceived<PRESENTATION.valid_ms);
+    this.monitorFrames=this.screens.draw(ctx,positions,motions,this.lifeElapsed);
+    for (const p of positions) {
+      const profile = this.profileFor(p.agent);
+      const motion = motions.get(p.id);
+      const ensemble = ensembles.get(p.id);
+      drawSeatedPerson(ctx, profile, motion, p.x, p.y, p.scale || 1.5, false, p.orientation, p.seating);
+      if (!ensemble) {
+        restoreFurniture(ctx, this.background, p, this.pixelLayout);
+        drawDeskGesture(ctx, profile, motion, p.x, p.y, p.scale || 1.5, p.seating);
+      }
+      // A tiny real-state indicator keeps the detailed furniture and room readable.
+      ctx.fillStyle = '#222538'; ctx.fillRect(p.x + 17, p.y - 61, 5, 5);
+      ctx.fillStyle = motion.color; ctx.fillRect(p.x + 18, p.y - 60, 3, 3);
+    }
+    // Dialogue/state UI is above the complete scene, independent of employee array order.
+    // Every employee with a word says it (2026-10-11, the Owner: the office alive from the
+    // backend's events), not only the one selected or hovered: a bubble is one per employee
+    // and short-lived (office_state.addSpeechBubble), so the room never fills with them.
+    for(const p of positions){
+      const bubble=this.bubbles.find(b=>b.agentId===p.id&&b.expiresAt>Date.now());
+      if (bubble) this.speech(ctx,bubble,p);
+    }
+    this.bubbles = this.bubbles.filter(b => b.expiresAt > Date.now());
+    this.depth={outdoors:this.street.depthOrder,indoors:positions.map(({id,depth})=>({id,depth})),foreground:foregroundStatus(this.background)};
+    this.audio.update(ambient,weather,positions.map(p=>({p,motion:motions.get(p.id)})),this.roomFrame,this.lifeElapsed,this.street);
+    if (this.options.infoElement) {
+      this.options.infoElement.textContent = outdoorReadout(clock, weather, this.replay);
+      this.options.infoElement.title = weather.available ? `${studioPlace().city} · ${weather.observedAt || 'observație curentă'} · ${this.weatherSource}` : 'Ora studioului; datele meteo nu sunt disponibile.';
+    }
+    this.environment = { clock, phase: moment.phase, daylight: moment.daylight, moon: sky.moon, sun: sky.sun, stars: sky.stars, weather: weather.condition, available: weather.available, animating: animate, ambientAnimating: ambient };
+    this.clockAt = now.getTime();
+  }
+  speech(ctx, bubble, person) {
+    const pages = bubble.pages || bubblePages(bubble.text);
+    const frame = bubbleFrame(pages, (Date.now() - bubble.createdAt) / 1000);
+    const lines = this.options.reducedMotion?.() ? pages[frame.pageIndex] || [] : frame.lines;
+    const left = Math.max(4, Math.min(WORLD_W - 188, person.x - 92));
+    const top = person.y - 132;
+    ctx.fillStyle = '#222538'; ctx.fillRect(left, top, 184, 54);
+    ctx.strokeStyle = '#d5b28a'; ctx.lineWidth = 1; ctx.strokeRect(left, top, 184, 54);
+    ctx.font = '10px monospace'; ctx.fillStyle = '#f4dfb4';
+    lines.forEach((line, i) => ctx.fillText(line, left + 8, top + 13 + i * 12));
+    if (frame.pageCount > 1) { ctx.font = '8px monospace'; ctx.fillStyle = '#c3b9bb'; ctx.fillText(`${frame.pageIndex + 1}/${frame.pageCount}`, left + 151, top + 48); }
+  }
+  /**
+   * The state on an employee's name tag: «în pauză» when paused, else what the studio knows of
+   * them beyond their own state (options.stateWord: «așteaptă imaginile de la RunPod» while the
+   * editor's GPU session is open, paid_work.js; 2026-10-12), else the page's word for the state.
+   * @param {any} agent
+   */
+  stateWord(agent) {
+    if (['PAUSED', 'SUSPENDED'].includes(agent.lifecycle)) return 'în pauză';
+    const known = this.options.stateWord?.(agent);
+    return typeof known === 'string' && known ? known : runtimeLabel(agent.runtime_state || 'UNKNOWN');
+  }
+  renderRoster() {
+    const host = document.getElementById('pixel-roster');
+    if (!host) return;
+    const key = JSON.stringify(this.agents.map(a => [a.id || a.agent_id, a.display_name, a.runtime_state, a.lifecycle, this.selected, this.stateWord(a)]));
+    if (key === this.rosterKey) return;
+    this.rosterKey = key;
+    // Reconcile in place so live updates preserve the keyboard focus and scroll position.
+    const ids = new Set(this.positions.map(p => p.id));
+    for (const child of Array.from(host.children)) if (!ids.has(child.getAttribute('data-agent'))) child.remove();
+    for (const p of this.positions) {
+      let button = /** @type {HTMLButtonElement} */ (Array.from(host.children).find(el => el.getAttribute('data-agent') === p.id));
+      if (!button) {
+        button = document.createElement('button'); button.type = 'button'; button.dataset.agent = p.id;
+        button.addEventListener('click', () => this.select(button.dataset.agent));
+        host.append(button);
+      }
+      button.textContent = `${p.agent.display_name || p.agent.name || p.id} · ${this.stateWord(p.agent)}`;
+      button.setAttribute('aria-pressed', String(p.id === this.selected));
+      button.dataset.state = this.motionFor(p.agent).mode;
+      button.title = `Birou personal: ${p.agent.display_name || p.id}. ${this.stateWord(p.agent)}`;
+    }
+  }
+  select(id) {
+    const p = this.positions.find(p => p.id === id);
+    if (!p) return;
+    this.setSelectedAgent(id);
+    this.options.onSelectAgent?.(p.agent);
+  }
+  bindInput() {
+    this.canvas.addEventListener('wheel', event => {
+      const rect = this.canvas.getBoundingClientRect();
+      if (event.ctrlKey || event.metaKey) {
+        event.preventDefault();
+        this.zoomTo(this.zoom * Math.exp(-event.deltaY * 0.002), { x: event.clientX - rect.left, y: event.clientY - rect.top });
+      } else {
+        const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? rect.height : 1;
+        const moved = event.shiftKey ? this.panBy(-event.deltaY * unit, -event.deltaX * unit) : this.panBy(-event.deltaX * unit, -event.deltaY * unit);
+        if (moved) event.preventDefault();
+      }
+    }, { passive: false });
+    this.canvas.addEventListener('pointerdown', event => {
+      if (event.button === 0) this.suppressClick = false;
+      if (event.button !== 0 || !this.movable) return;
+      this.drag = { id: event.pointerId, x: event.clientX, y: event.clientY, originX: event.clientX, originY: event.clientY, moved: false };
+      this.canvas.setPointerCapture(event.pointerId);
+    });
+    this.canvas.addEventListener('pointermove', event => {
+      if (this.drag?.id === event.pointerId) {
+        const drag = this.drag;
+        if (drag.moved || Math.hypot(event.clientX - drag.originX, event.clientY - drag.originY) > 4) {
+          drag.moved = true; this.suppressClick = true; this.hover = null;
+          this.panBy(event.clientX - drag.x, event.clientY - drag.y);
+          drag.x = event.clientX; drag.y = event.clientY; return;
+        }
+      }
+      const rect = this.canvas.getBoundingClientRect();
+      const p = this.viewport.screenToWorld((event.clientX - rect.left) * this.dpr, (event.clientY - rect.top) * this.dpr);
+      const hit = this.renderer.hits.find(h => p.x >= h.x && p.x <= h.x + h.w && p.y >= h.y && p.y <= h.y + h.h);
+      this.hover = hit ? String(hit.agent.id || hit.agent.agent_id) : null;
+      this.canvas.style.cursor = hit ? 'pointer' : this.movable ? 'grab' : 'default';
+      this.canvas.title = hit ? `${hit.agent.display_name || hit.agent.id}: ${this.motionFor(hit.agent).mode === 'PAUSED' ? runtimeLabel('PAUSED') : this.stateWord(hit.agent)}` : 'Birourile agenților · Ctrl + rotiță: zoom · scena mărită: scroll sau tragere · Încadrează: vedere completă';
+      this.draw();
+    });
+    const endDrag = event => {
+      if (this.drag?.id !== event.pointerId) return;
+      this.drag = null;
+      if (this.canvas.hasPointerCapture(event.pointerId)) this.canvas.releasePointerCapture(event.pointerId);
+      this.canvas.style.cursor = this.movable ? 'grab' : 'default';
+    };
+    this.canvas.addEventListener('pointerup', endDrag);
+    this.canvas.addEventListener('pointercancel', endDrag);
+    this.canvas.addEventListener('lostpointercapture', endDrag);
+    this.canvas.addEventListener('pointerleave', () => { this.hover = null; this.draw(); });
+    this.canvas.addEventListener('click', event => {
+      if (this.suppressClick) { this.suppressClick = false; return; }
+      const rect = this.canvas.getBoundingClientRect();
+      const p = this.viewport.screenToWorld((event.clientX - rect.left) * this.dpr, (event.clientY - rect.top) * this.dpr);
+      const hit = this.renderer.hits.find(h => p.x >= h.x && p.x <= h.x + h.w && p.y >= h.y && p.y <= h.y + h.h);
+      if (hit) this.select(String(hit.agent.id || hit.agent.agent_id));
+    });
+    this.canvas.addEventListener('keydown', event => {
+      if (!this.positions.length) return;
+      const index = this.positions.findIndex(p => p.id === (this.hover || this.selected));
+      if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
+        event.preventDefault();
+        const direction = ['ArrowLeft', 'ArrowUp'].includes(event.key) ? -1 : 1;
+        this.hover = this.positions[(index + direction + this.positions.length) % this.positions.length].id;
+        const p = this.positions.find(p => p.id === this.hover);
+        if (p.page !== this.page) this.showPage(p.page);
+        this.canvas.setAttribute('aria-label', `${p.agent.display_name || p.id}: ${this.stateWord(p.agent)}. Enter deschide angajatul.`);
+        this.draw();
+      } else if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); this.select(this.hover || this.positions[0].id); }
+    });
+  }
+}
+
+export class PixelTitle {
+  constructor({ stage, caption }) { this.stage = stage; this.caption = caption; this.visible = true; }
+  start() { this.caption.textContent = 'AMN-AI · studioul creativ'; }
+  show() { this.visible = true; this.stage.hidden = false; document.body.classList.add('is-title'); }
+  hide() { this.visible = false; this.stage.hidden = true; document.body.classList.remove('is-title', 'is-entering'); }
+  async enter(_landing = null) { this.hide(); return true; }
+}

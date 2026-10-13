@@ -1,0 +1,532 @@
+import logging
+from time import perf_counter
+from typing import Literal
+from uuid import UUID, uuid4
+
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
+
+from app.agents.models import Agent, ModelRecord, ProviderRecord
+from app.agents.services import (
+    list_agents,
+    list_provider_models,
+    list_roles,
+    run_agent_task,
+    sync_provider_models,
+)
+from app.economy.prices import price_lookup
+from app.integrations.autoconfig import auto_configure
+from app.integrations.catalog import CATALOG
+from app.integrations.discovery import (
+    DISCOVERED_KINDS,
+    ProductionCommand,
+    ResourceMetadataCommand,
+    catalog_view,
+    refresh_catalog,
+    save_production,
+    update_resource_metadata,
+)
+from app.integrations.llm import ConfiguredLLM
+from app.integrations.models import Integration, ServiceSelection
+from app.integrations.probes import probe
+from app.integrations.services import SaveIntegration, assign_agent, public, save, select_service
+from app.models import DomainEvent
+from app.publishing.models import ChannelRecord
+from app.security import require_owner
+from app.services import append_event, utc_now
+from app.youtube.models import YouTubeConnection
+
+logger = logging.getLogger("studio.settings")
+
+
+def check_failure(exc: Exception) -> dict:
+    """Fixed operator messages; no vendor response or credential becomes a UI string."""
+    status = getattr(exc, "http_status", getattr(exc, "code", None))
+    if status == 401:
+        code, message = (
+            "AUTH_REQUIRED",
+            (
+                "Cheia API lipsește, este invalidă sau a fost revocată (HTTP "
+                "401). Introdu o cheie validă și verifică din nou."
+            ),
+        )
+    elif status == 403:
+        code, message = (
+            "ACCESS_DENIED",
+            (
+                "Acces refuzat de furnizor (HTTP 403). Verifică permisiunile "
+                "cheii și accesul contului."
+            ),
+        )
+    elif status == 429:
+        code, message = (
+            "RATE_LIMITED",
+            (
+                "Furnizorul a raportat o limită de utilizare (HTTP 429). "
+                "Încearcă mai târziu și verifică limitele contului."
+            ),
+        )
+    elif isinstance(status, int) and 500 <= status <= 599:
+        code, message = (
+            "SERVICE_UNAVAILABLE",
+            f"Serviciul furnizorului este indisponibil (HTTP {status}). Încearcă mai târziu.",
+        )
+    elif isinstance(exc, OSError):
+        code, message = (
+            "UNREACHABLE",
+            (
+                "Nu s-a putut verifica conexiunea cu furnizorul. Verifică "
+                "internetul și adresa serverului, apoi încearcă din nou."
+            ),
+        )
+    else:
+        code, message = (
+            "CHECK_FAILED",
+            "Verificarea a eșuat. Verifică adresa serverului, datele și accesul la serviciu.",
+        )
+    return {"status": "FAILED", "error_code": code, "message": message}
+
+
+class SelectionCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    integration_id: UUID | None
+    expected_version: int = Field(ge=0)
+
+
+class AssignmentCommand(BaseModel):
+    """Which models an employee thinks with, and what to do when there is more than one.
+
+    `model_id` alone is the command as it always was: one model, nothing else changes. The
+    remaining fields are the optional second and third slots and the strategy that uses them.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    model_id: UUID
+    expected_version: int = Field(ge=1)
+    secondary_model_id: UUID | None = None
+    tertiary_model_id: UUID | None = None
+    multi_llm_strategy: Literal["SINGLE", "FALLBACK", "REVIEW", "DEBATE", "PARALLEL"] = "SINGLE"
+    additional_llm_policy: Literal["IMPORTANT_ONLY", "LOW_CONFIDENCE", "ALWAYS", "MANUAL"] = (
+        "IMPORTANT_ONLY"
+    )
+    min_importance: Literal["ROUTINE", "NOTABLE", "STRATEGIC"] = "STRATEGIC"
+    min_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+
+
+class ChannelBindingCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    #: A YouTube connection id. Credentials for a channel come from an OAuth grant, never from
+    #: a catalog entry someone filled in by hand.
+    connection_id: UUID | None
+    expected_event_id: UUID | None
+
+
+def _propose_cards(request: Request) -> None:
+    """The cards a connection needs, proposed when it is saved rather than at the next start
+    (2026-10-09: his RunPod cards waited for a restart). Each card is still proposed once
+    (`seed_owner_decisions`); a failure is logged and never fails his save."""
+    from app.decisions.seed import seed_owner_decisions  # noqa: PLC0415
+
+    try:
+        seed_owner_decisions(request.app.state.engine, request.app.state.settings)
+    except Exception as exc:  # noqa: BLE001 - logged; the save already succeeded
+        logger.warning("owner_decisions_seed_failed", exc_info=exc)
+
+
+def create_settings_router() -> APIRouter:
+    router = APIRouter(prefix="/settings", dependencies=[Depends(require_owner)])
+
+    @router.get("")
+    def read_settings(request: Request) -> dict:
+        engine = request.app.state.engine
+        with Session(engine) as session:
+            integrations = [
+                {
+                    **public(row),
+                    "check_result": event.payload.get("result")
+                    if event.event_type == "settings.integration_checked"
+                    else None,
+                }
+                for row, event in session.execute(
+                    select(Integration, DomainEvent).join(
+                        DomainEvent, Integration.event_id == DomainEvent.event_id
+                    )
+                )
+            ]
+            provider_catalogs = {
+                row["id"]: catalog_view(session, row["id"])
+                for row in integrations
+                if row["kind"] in DISCOVERED_KINDS
+            }
+            selections = {
+                row.purpose: dict(integration_id=row.integration_id, version=row.version)
+                for row in session.scalars(select(ServiceSelection))
+            }
+            provider_ids = set(session.scalars(select(ModelRecord.provider_id)).all())
+            # Providers seeded before the Settings screen existed (the local Ollama
+            # endpoint) have no Integration row, so without this the Owner can see their
+            # models but has no control to verify them — and an unverifiable record can
+            # only ever stay an unverified claim.
+            integration_ids = {row.id for row in session.scalars(select(Integration))}
+            legacy_providers = [
+                dict(
+                    id=p.id,
+                    name=p.name,
+                    provider_type=p.provider_type,
+                    base_url=p.base_url,
+                    status=p.status,
+                    last_health_check=p.last_health_check,
+                )
+                for p in session.scalars(select(ProviderRecord))
+                if p.id not in integration_ids
+            ]
+            channels = [
+                dict(
+                    id=c.id,
+                    name=c.channel_name,
+                    credentials_ref=c.credentials_ref,
+                    # Which account this channel actually publishes to, as reported by Google
+                    # when the connection behind it was authorised.
+                    remote_channel_id=c.remote_channel_id,
+                    event_id=c.event_id,
+                    status=c.status,
+                )
+                for c in session.scalars(
+                    select(ChannelRecord).where(ChannelRecord.platform == "YOUTUBE")
+                )
+            ]
+        return dict(
+            catalog=CATALOG,
+            channels=channels,
+            integrations=integrations,
+            provider_catalogs=provider_catalogs,
+            selections=selections,
+            agents=list_agents(engine),
+            roles=list_roles(engine),
+            models=[m for p in provider_ids for m in list_provider_models(engine, p)],
+            legacy_providers=legacy_providers,
+            legacy_youtube_configured=request.app.state.settings.youtube_credentials_present,
+        )
+
+    @router.put("/integrations/{identifier}")
+    def save_integration(identifier: UUID, command: SaveIntegration, request: Request) -> dict:
+        try:
+            result = save(
+                request.app.state.engine,
+                request.app.state.credential_vault,
+                str(identifier),
+                command,
+            )
+            _propose_cards(request)
+            if command.kind in DISCOVERED_KINDS:
+                checked = refresh_catalog(
+                    request.app.state.engine,
+                    request.app.state.credential_vault,
+                    str(identifier),
+                    interval_seconds=request.app.state.settings.provider_catalog_refresh_seconds,
+                    retry_seconds=request.app.state.settings.provider_catalog_retry_seconds,
+                    force=True,
+                    settings=request.app.state.settings,
+                )
+                with Session(request.app.state.engine) as session:
+                    saved = session.get(Integration, str(identifier))
+                    if saved is None:
+                        raise HTTPException(409, "Conexiunea a fost ștearsă")
+                    return {
+                        **public(saved),
+                        **checked,
+                        "catalog": catalog_view(session, str(identifier)),
+                    }
+            if CATALOG[command.kind]["runtime"] == "llm":
+                with Session(request.app.state.engine) as session:
+                    row = session.get(Integration, str(identifier))
+                    if row is None:
+                        raise HTTPException(409, "Conexiunea a fost ștearsă")
+                    # This adapter replaces the one start-up registered, so it carries the
+                    # same price table: a connection re-saved during the day must not go
+                    # back to reporting every run at `cost_vr` NULL.
+                    adapter = ConfiguredLLM(
+                        row.kind,
+                        row.config,
+                        request.app.state.credential_vault.decrypt(row.encrypted_secrets),
+                        price_lookup=price_lookup(request.app.state.engine, row.kind),
+                    )
+                    request.app.state.registry.register(str(identifier), adapter)
+            return result
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from None
+
+    @router.post("/integrations/{identifier}/check")
+    def check_integration(identifier: UUID, request: Request) -> dict:
+        engine = request.app.state.engine
+        vault = request.app.state.credential_vault
+        with Session(engine) as session:
+            row = session.get(Integration, str(identifier))
+            if row is None:
+                raise HTTPException(404, "Conexiune inexistentă")
+            kind, config, version = row.kind, row.config, row.version
+            secrets = vault.decrypt(row.encrypted_secrets)
+        if kind in DISCOVERED_KINDS:
+            return refresh_resources(identifier, request)
+        runtime = CATALOG[kind]["runtime"]
+        try:
+            if runtime == "llm":
+                models = sync_provider_models(engine, request.app.state.registry, str(identifier))
+                available = sum(bool(model["is_available"]) for model in models)
+                adapter = request.app.state.registry.get(str(identifier))
+                cloud = isinstance(adapter, ConfiguredLLM) and adapter.is_ollama_cloud
+                status = "VERIFIED"
+                result = {
+                    "status": status,
+                    "models_loaded": available,
+                    "generation_tested": False,
+                    "verification_scope": "AUTHENTICATION_AND_CATALOG"
+                    if cloud
+                    else "ACCESS_AND_CATALOG",
+                    "message": (
+                        "Cheia API Ollama Cloud este validă. "
+                        if cloud
+                        else "Accesul la furnizor a fost verificat. "
+                    )
+                    + (
+                        f"{available} modele disponibile încărcate. Generarea nu a "
+                        f"fost testată; o poți testa în Setări → Angajați."
+                    ),
+                }
+            else:
+                # "stored" and "media" both verify by calling the vendor and comparing the answer
+                # to what was saved. Media kinds used to fall through to a YouTube health check
+                # that could only ever raise, so verifying an ElevenLabs or OpenAI media key
+                # always reported FAILED; that branch is gone with the YouTube catalog entry.
+                status = "ACCESS_VERIFIED" if probe(kind, config, secrets) else "FAILED"
+                result = {
+                    "status": status,
+                    "message": "Acces verificat. Nu s-a publicat sau generat conținut."
+                    if status == "ACCESS_VERIFIED"
+                    else (
+                        "Verificarea a eșuat. Verifică datele, permisiunile și accesul la serviciu."
+                    ),
+                }
+        except NotImplementedError:
+            return {"status": "NOT_SUPPORTED", "message": "Verificarea nu este încă disponibilă."}
+        except Exception as exc:
+            result = check_failure(exc)
+            status = "FAILED"
+        with Session(engine) as session, session.begin():
+            row = session.get(Integration, str(identifier))
+            if row is None or row.version != version:
+                raise HTTPException(409, "Configurația s-a schimbat în timpul verificării")
+            row.status, row.checked_at = status, utc_now()
+            if runtime == "llm" and status == "FAILED":
+                provider = session.get(ProviderRecord, str(identifier))
+                if provider is not None:
+                    provider.status = {
+                        "AUTH_REQUIRED": "AUTH_REQUIRED",
+                        "ACCESS_DENIED": "AUTH_REQUIRED",
+                        "RATE_LIMITED": "RATE_LIMITED",
+                        "UNREACHABLE": "OFFLINE",
+                    }.get(str(result.get("error_code")), "DEGRADED")
+                    provider.last_health_check = row.checked_at
+            row.version += 1
+            event = append_event(
+                session,
+                "settings.integration_checked",
+                "integration",
+                row.id,
+                row.version,
+                {"status": status, "result": result},
+                str(uuid4()),
+            )
+            row.event_id = event.event_id
+        return result
+
+    @router.post("/integrations/{identifier}/refresh-resources")
+    def refresh_resources(identifier: UUID, request: Request) -> dict:
+        try:
+            return refresh_catalog(
+                request.app.state.engine,
+                request.app.state.credential_vault,
+                str(identifier),
+                interval_seconds=request.app.state.settings.provider_catalog_refresh_seconds,
+                retry_seconds=request.app.state.settings.provider_catalog_retry_seconds,
+                force=True,
+                settings=request.app.state.settings,
+            )
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from None
+
+    @router.put("/integrations/{identifier}/production")
+    def configure_production(
+        identifier: UUID, command: ProductionCommand, request: Request
+    ) -> dict:
+        try:
+            return save_production(request.app.state.engine, str(identifier), command)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from None
+
+    @router.patch("/resources/{identifier}/metadata")
+    def configure_resource_metadata(
+        identifier: UUID, command: ResourceMetadataCommand, request: Request
+    ) -> dict:
+        try:
+            return update_resource_metadata(request.app.state.engine, str(identifier), command)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from None
+
+    @router.post("/auto-configure")
+    def post_auto_configure(request: Request) -> dict:
+        """Finish what the verified connections leave unfinished, and say what was chosen.
+
+        Selects a service only where one candidate exists and fills only empty defaults; an
+        ambiguous purpose is reported, never resolved. Every choice is an event and can be
+        changed on the connection's own card.
+        """
+        try:
+            return auto_configure(request.app.state.engine, request.app.state.credential_vault)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from None
+
+    @router.post("/model-research")
+    def post_model_research(request: Request) -> dict:
+        """The stewards read their vendors' pages now and choose. Says what each decided."""
+        from app.media.model_research import research_all  # noqa: PLC0415
+
+        return research_all(
+            request.app.state.engine, request.app.state.registry, request.app.state.settings
+        )
+
+    @router.put("/selections/{purpose}")
+    def set_selection(purpose: str, command: SelectionCommand, request: Request) -> dict:
+        try:
+            return select_service(
+                request.app.state.engine,
+                purpose,
+                str(command.integration_id) if command.integration_id else None,
+                command.expected_version,
+            )
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from None
+
+    @router.put("/agents/{agent_id}/model")
+    def set_agent_model(agent_id: UUID, command: AssignmentCommand, request: Request) -> dict:
+        try:
+            return assign_agent(
+                request.app.state.engine,
+                str(agent_id),
+                str(command.model_id),
+                command.expected_version,
+                secondary_model_id=(
+                    str(command.secondary_model_id) if command.secondary_model_id else None
+                ),
+                tertiary_model_id=(
+                    str(command.tertiary_model_id) if command.tertiary_model_id else None
+                ),
+                multi_llm_strategy=command.multi_llm_strategy,
+                additional_llm_policy=command.additional_llm_policy,
+                min_importance=command.min_importance,
+                min_confidence=command.min_confidence,
+            )
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from None
+
+    @router.post("/agents/{agent_id}/test")
+    def test_agent_llm(agent_id: UUID, request: Request) -> dict:
+        """Owner-initiated connectivity check: one real run through the policy kernel.
+
+        Uses the agent's currently assigned provider/model; the answer, token counts and
+        audit trail come from the same AgentRun envelope every other task uses.
+        """
+        started = perf_counter()
+        try:
+            result = run_agent_task(
+                request.app.state.engine,
+                request.app.state.registry,
+                str(agent_id),
+                "TEST_CONNECTIVITY",
+                "Răspunde într-o singură propoziție scurtă: ești funcțional?",
+                "v1",
+                str(uuid4()),
+                max_tokens=2400,
+                temperature=0.2,
+            )
+        except ValueError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except SQLAlchemyError:
+            raise HTTPException(500, "Internal error") from None
+        result["duration_s"] = round(perf_counter() - started, 2)
+        return result
+
+    @router.put("/channels/{channel_id}")
+    def bind_channel(channel_id: UUID, command: ChannelBindingCommand, request: Request) -> dict:
+        with Session(request.app.state.engine) as session, session.begin():
+            channel = session.get(ChannelRecord, str(channel_id))
+            if channel is None or channel.platform != "YOUTUBE":
+                raise HTTPException(404, "Canal YouTube inexistent")
+            expected = str(command.expected_event_id) if command.expected_event_id else None
+            if channel.event_id != expected:
+                raise HTTPException(409, "Canalul s-a schimbat; reîncarcă")
+            if command.connection_id:
+                connection = session.get(YouTubeConnection, str(command.connection_id))
+                if connection is None or connection.status != "CONNECTED":
+                    raise HTTPException(422, "Conectează întâi canalul prin Google")
+                # Read back from the API during authorisation, so binding cannot attach a
+                # channel record to an account the grant does not actually open.
+                channel.remote_channel_id = connection.remote_channel_id
+                channel.credentials_ref = "youtube_connection:" + connection.id
+                channel.status = "AUTHENTICATED"
+            else:
+                channel.credentials_ref = None
+                channel.status = "NOT_CONFIGURED"
+            event = append_event(
+                session,
+                "channel.credentials_bound",
+                "channel_record",
+                channel.id,
+                1,
+                {"connection_id": str(command.connection_id) if command.connection_id else None},
+                str(uuid4()),
+            )
+            channel.event_id = event.event_id
+            channel.last_sync_at = utc_now()
+        return {"saved": True}
+
+    @router.delete("/integrations/{identifier}")
+    def delete_integration(identifier: UUID, expected_version: int, request: Request) -> dict:
+        with Session(request.app.state.engine) as session, session.begin():
+            row = session.get(Integration, str(identifier))
+            if row is None:
+                raise HTTPException(404, "Conexiune inexistentă")
+            if row.version != expected_version:
+                raise HTTPException(409, "Reîncarcă setările")
+            assigned = session.scalar(select(Agent.id).where(Agent.provider_id == row.id).limit(1))
+            selected = session.scalar(
+                select(ServiceSelection.purpose)
+                .where(ServiceSelection.integration_id == row.id)
+                .limit(1)
+            )
+            bound = session.scalar(
+                select(ChannelRecord.id)
+                .where(ChannelRecord.credentials_ref == "integration:" + row.id)
+                .limit(1)
+            )
+            if assigned or selected or bound:
+                raise HTTPException(
+                    409, "Conexiunea este alocată. Schimbă alocarea înainte de ștergere."
+                )
+            append_event(
+                session,
+                "settings.integration_deleted",
+                "integration",
+                row.id,
+                row.version + 1,
+                {"kind": row.kind},
+                str(uuid4()),
+            )
+            session.delete(row)
+        request.app.state.registry.unregister(str(identifier))
+        return {"deleted": True}
+
+    return router

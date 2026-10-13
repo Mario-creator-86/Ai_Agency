@@ -1,0 +1,196 @@
+{
+  "_about": "Sanitized offline regression fixture with fictional identifiers. Not a live or unedited production record.",
+  "report": {
+    "id": "00000000-0000-4000-8000-000000000137",
+    "media_asset_id": "00000000-0000-4000-8000-000000000163",
+    "status": "FAILED",
+    "score": 0.25,
+    "checks_json": {
+      "technical_qc": {
+        "passed": true,
+        "measured_width": 1080,
+        "measured_height": 1920,
+        "measured_duration_seconds": 31.6,
+        "video_codec": "h264",
+        "has_audio_stream": true,
+        "declared_width": 1080,
+        "declared_height": 1920,
+        "file_size_bytes": 10878150,
+        "provenance_hash_verified": true,
+        "provenance_sha256": "ade77fff3c95a6c8057ffdc658974519d497a661d77ebe14b0f40c8b4fde6388",
+        "probe_error": null
+      },
+      "rights_qc": {
+        "passed": true,
+        "license_status": "PROPRIETARY_STUDIO",
+        "provider_name": "RUNWAY_IMAGES"
+      },
+      "content_source_qc": {
+        "passed": true,
+        "provider_name": "RUNWAY_IMAGES",
+        "detail": "Visual source accepted."
+      },
+      "audio_qc": {
+        "passed": false,
+        "integrated_lufs": -14.98,
+        "true_peak_dbtp": -0.93,
+        "band_lufs": [
+          -16.0,
+          -12.0
+        ],
+        "true_peak_ceiling_dbtp": -1.0,
+        "normalised": true,
+        "error": null
+      },
+      "captions_qc": {
+        "passed": true,
+        "srt": "captions.srt",
+        "cues": 9,
+        "burned_in": true,
+        "covers_narration": true,
+        "coverage_ratio": 1.0,
+        "problems": []
+      },
+      "motion_qc": {
+        "passed": true,
+        "environment": "PRODUCTION",
+        "scenes": 6,
+        "motion_scenes": 4,
+        "fallback_scenes": 2,
+        "max_fallback_scenes": 3,
+        "warning": null
+      },
+      "factual_qc": {
+        "passed": true,
+        "total_claims_checked": 6,
+        "claims": [
+          {
+            "id": "00000000-0000-4000-8000-0000000000b4",
+            "status": "SUPPORTED"
+          },
+          {
+            "id": "00000000-0000-4000-8000-0000000001aa",
+            "status": "SUPPORTED"
+          },
+          {
+            "id": "00000000-0000-4000-8000-0000000000e0",
+            "status": "SUPPORTED"
+          },
+          {
+            "id": "00000000-0000-4000-8000-0000000000eb",
+            "status": "SUPPORTED"
+          },
+          {
+            "id": "00000000-0000-4000-8000-000000000085",
+            "status": "SUPPORTED"
+          },
+          {
+            "id": "00000000-0000-4000-8000-000000000196",
+            "status": "SUPPORTED"
+          }
+        ]
+      },
+      "picture_qc": {
+        "status": "MEASURED",
+        "passed": false,
+        "frames": 6,
+        "scenes_measured": 6,
+        "scenes": [
+          {
+            "scene": 1,
+            "status": "MEASURED",
+            "is_a_picture": true,
+            "shows_the_scene": true,
+            "reason": "Aerial view of Himalayan mountains with storm clouds over a remote village."
+          },
+          {
+            "scene": 2,
+            "status": "MEASURED",
+            "is_a_picture": true,
+            "shows_the_scene": true,
+            "reason": "Raging floodwaters carrying debris through a mountain valley with submerged houses."
+          },
+          {
+            "scene": 3,
+            "status": "MEASURED",
+            "is_a_picture": true,
+            "shows_the_scene": true,
+            "reason": "Mudslides covering terraced farmland with people salvaging belongings from a collapsed home."
+          },
+          {
+            "scene": 4,
+            "status": "MEASURED",
+            "is_a_picture": true,
+            "shows_the_scene": true,
+            "reason": "Farmer working a terraced field with smoke rising from a distant forest."
+          },
+          {
+            "scene": 5,
+            "status": "MEASURED",
+            "is_a_picture": true,
+            "shows_the_scene": false,
+            "reason": "Two vertical bars are present, but the second bar does not stop noticeably short as requested."
+          },
+          {
+            "scene": 6,
+            "status": "MEASURED",
+            "is_a_picture": true,
+            "shows_the_scene": false,
+            "reason": "Black screen was requested, but the frame shows a woman standing in a mountainous landscape."
+          }
+        ],
+        "model_used": true,
+        "looked_by": "Kael (Video Editor)",
+        "run_id": "00000000-0000-4000-8000-0000000000ae"
+      },
+      "character_drift_qc": {
+        "status": "NOT_APPLICABLE",
+        "passed": null,
+        "detail": "no scene in this film shows a studio character: the cast is empty by design, not by omission — the narrator has no face and the scenes show material, not people",
+        "characters_configured": 8,
+        "characters_measured": 0,
+        "characters_observed": 0,
+        "characters": [],
+        "reference_images": 0,
+        "run_id": "00000000-0000-4000-8000-0000000000ae"
+      },
+      "content_integrity_qc": {
+        "passed": true,
+        "degenerate_stills": []
+      }
+    },
+    "failure_reasons_json": [
+      "Measured true peak -0.9 dBTP is over the -1 dBTP ceiling",
+      "Scene 5: the picture is not what the scene asked for — Two vertical bars are present, but the second bar does not stop noticeably short as requested.",
+      "Scene 6: the picture is not what the scene asked for — Black screen was requested, but the frame shows a woman standing in a mountainous landscape."
+    ],
+    "verified_at": "2026-09-26T15:12:59.796558+00:00"
+  },
+  "credits_measured": {
+    "00000000-0000-4000-8000-000000000199": {
+      "kind": "elevenlabs",
+      "unit": "characters",
+      "before": 1000.0,
+      "after": 1240.0,
+      "spent": 240.0,
+      "limit": 20000
+    },
+    "00000000-0000-4000-8000-000000000149": {
+      "kind": "runway",
+      "unit": "credits",
+      "before": 5000.0,
+      "after": 4877.0,
+      "spent": 123.0,
+      "usd": 1.23
+    }
+  },
+  "credits_measured_second_render": null,
+  "scene_prompts": {
+    "1": "Aerial view of Himalayan mountains with dark storm clouds gathering over a remote village",
+    "2": "Raging floodwaters carrying debris through a mountain valley, houses partially submerged",
+    "3": "Mudslides covering terraced farmland, people salvaging belongings from a collapsed home",
+    "4": "A farmer working a small terraced field, smoke rising from a distant forest, no factories in sight",
+    "5": "Two vertical bars side by side: the first fills to the top, the second stops noticeably short the image holds, then fades to black",
+    "6": "A black screen, silent and still"
+  }
+}

@@ -1,0 +1,156 @@
+--- a/backend/app/office/scene_params.py
++++ b/backend/app/office/scene_params.py
+@@ -82,9 +82,25 @@
+ #: Blender day variant (build_hq.py daytime): the city's glow materials at x0.06 (principled
+ #: emission; x0.08 on pure emission nodes, which the glTF export does not carry).
+ CITY_DAY_EMISSION = 0.06
+-#: Blender day variant: the haze turns #a9c0e2 at emission strength 0.7.
++#: Blender day variant (build_hq.py daytime): #a9c0e2, now the day fog's colour only.
+ DAY_HAZE_SRGB = "#a9c0e2"
+-DAY_HAZE_STRENGTH = 0.7
++#: The skyline haze by day is the Blender day plates' (art-source/blender/hq/hq_day.py apply ->
++#: _haze, commit 00d92ce): the near plane #d2e0ef at strength 1.0 with 0.3 of its dusk opacity, the
++#: far one #c3d5ea at 1.05 with 0.62 of it. At the dusk's full opacity (0.55 and 0.385) the noon
++#: towers were 72 % haze, "blue cardboard" (art director, 2026-09-24).
++DAY_HAZE_NEAR = ("#d2e0ef", 1.0, 0.3)
++DAY_HAZE_FAR = ("#c3d5ea", 1.05, 0.62)
++#: The towers' lit windows (M_HQ_TowerDay, towers_day_hq_live.py): none while the sun stands above
++#: WINDOWS_OFF_ABOVE, a few (up to WINDOWS_FEW of the dusk's lit windows) as it sinks to
++#: WINDOWS_FEW_AT, all of them from the reference dusk down, so the approved dusk and the night are
++#: today's. The art director's reading of 2026-09-24; WINDOWS_FEW is judged by eye in the window.
++WINDOWS_OFF_ABOVE = 5.0
++WINDOWS_FEW_AT = 0.0
++WINDOWS_FEW = 0.2
++#: M_HQ_TowerDay's window ranks lie in (TOWER_RANK_MIN, TOWER_RANK_MAX]; WindowsOn 1 lights them all
++#: and 0 none (towers_day.py writes the ranks and holds the gate's arithmetic).
++TOWER_RANK_MIN = 0.02
++TOWER_RANK_MAX = 0.95
+ #: Full day: the sun this high is past the golden hour's colour; the city's lamps and windows
+ #: are the dusk's at and below the reference elevation and the day's from here up.
+ DAY_FULL_ELEVATION = 6.0
+@@ -245,6 +261,26 @@
+     return math.sqrt(min(1.0, sky_brightness(elevation)))
+ 
+ 
++def windows_share(elevation: float) -> float:
++    """The share of the dusk's lit windows lit at this real solar elevation (WINDOWS_* above)."""
++    if elevation >= WINDOWS_OFF_ABOVE:
++        return 0.0
++    if elevation >= WINDOWS_FEW_AT:
++        return WINDOWS_FEW * smoothstep(WINDOWS_OFF_ABOVE, WINDOWS_FEW_AT, elevation)
++    if elevation > REFERENCE_DUSK_ELEVATION:
++        return mix(WINDOWS_FEW, 1.0, smoothstep(WINDOWS_FEW_AT, REFERENCE_DUSK_ELEVATION, elevation))
++    return 1.0
++
++
++def windows_on(share: float) -> float:
++    """M_HQ_TowerDay's WindowsOn for that share: 1 (every window, exactly the dusk) at 1, 0 at 0."""
++    if share >= 1.0:
++        return 1.0
++    if share <= 0.0:
++        return 0.0
++    return TOWER_RANK_MIN + (TOWER_RANK_MAX - TOWER_RANK_MIN) * share
++
++
+ # ---------------------------------------------------------------- the sun
+ def air_mass(elevation: float) -> float:
+     """Kasten and Young (1989), elevation in degrees above the horizon."""
+@@ -455,15 +491,16 @@
+     dim = night_scale(e)
+     on = 1.0 if e < LIGHTS_ON_BELOW else 0.0
+ 
+-    day_haze = scale3(linear3(srgb_bytes(DAY_HAZE_SRGB)), DAY_HAZE_STRENGTH)
+     haze: dict[str, dict[str, Any]] = {}
+     for label in HAZE_LABELS:
+         dusk_colour = HAZE_RIGHT if label.endswith("right") else HAZE_LEFT
+         opacity = HAZE_OPACITY * (HAZE_FAR_SHARE if "_far_" in label else 1.0)
++        day_hex, day_strength, day_share = DAY_HAZE_FAR if "_far_" in label else DAY_HAZE_NEAR
++        day_haze = scale3(linear3(srgb_bytes(day_hex)), day_strength)
+         haze[label] = {
+             # exactly today's at the reference: dim is 1 and day 0 there, and a + (b - a) * 0 == a
+             "HazeColor": mix3(scale3(dusk_colour, dim), day_haze, day),
+-            "Opacity": opacity,
++            "Opacity": opacity * mix(1.0, day_share, day),
+         }
+ 
+     day_horizon = normalised(linear3(srgb_bytes(SKY_STOPS["day"][3])))
+@@ -528,6 +565,11 @@
+         # dusk colour at 0, their own hue at a facade's albedo by day, by the same day weight; the
+         # rejected rebuild showed them as black cardboard at noon
+         "near_blocks_day": {"Daylight": day},
++        # the towers' facades (M_HQ_TowerDay): their day colours by the same day weight, and the
++        # share of their lit windows by the real elevation; 0 and 1 at the reference (the dusk)
++        "towers": {"TowerDaylight": day, "WindowsOn": windows_on(windows_share(e))},
++        # the street trees' leaves (M_HQ_TreeLeaves): the pack's own albedo by day, the dusk's at 0
++        "trees": {"LeafDaylight": day},
+         "haze": haze,
+         "fog": {"inscattering": fog, "density": FOG_DENSITY},
+         "road": road(weather),
+--- a/tests/test_scene_params.py
++++ b/tests/test_scene_params.py
+@@ -190,6 +190,8 @@
+         "emissive_factor",
+         "window_view",
+         "near_blocks_day",
++        "towers",
++        "trees",
+         "haze",
+         "fog",
+         "road",
+@@ -197,6 +199,10 @@
+         "clock",
+         "weather_note",
+     }
++    # the day state's materials paint the build's dusk at these values (towers_day_hq_live.py,
++    # trees_day_hq_live.py: TowerDaylight 0, WindowsOn 1, LeafDaylight 0 are their defaults)
++    assert p["towers"] == {"TowerDaylight": 0.0, "WindowsOn": 1.0}
++    assert p["trees"] == {"LeafDaylight": 0.0}
+ 
+     # the sky light and the fog as the running level has them
+     assert p["sky_light"]["intensity"] == float(default("build_hq_scene.py", "AMN_SKYLIGHT"))
+@@ -380,10 +386,18 @@
+     p = scene_params(world(elevation=40.0, azimuth=180.0, weather_value=weather()), FRAME)
+     assert p["emissive_factor"]["skyline"] == pytest.approx(0.06)
+     assert p["window_view"]["DayBlend"] == 1.0
+-    # Blender's day variant: haze #a9c0e2 at strength 0.7 (build_hq.py daytime)
+-    assert p["haze"]["SkylineHaze_near_left"]["HazeColor"] == pytest.approx(
+-        (0.7 * 0.3967552, 0.7 * 0.5271151, 0.7 * 0.7605245), abs=1e-4
++    # the Blender day plates' haze (hq_day.py): near #d2e0ef at 1.0 with 0.3 of the dusk opacity,
++    # far #c3d5ea at 1.05 with 0.62 of it
++    near, far = p["haze"]["SkylineHaze_near_left"], p["haze"]["SkylineHaze_far_right"]
++    assert near["HazeColor"] == pytest.approx((0.6444797, 0.7454042, 0.8631572), abs=1e-4)
++    assert near["Opacity"] == pytest.approx(0.55 * 0.3)
++    assert far["HazeColor"] == pytest.approx(
++        (1.05 * 0.5457245, 1.05 * 0.6653873, 1.05 * 0.8227858), abs=1e-4
+     )
++    assert far["Opacity"] == pytest.approx(0.55 * 0.7 * 0.62)
++    # no tower window is lit under a high sun; the facades are in their day colours
++    assert p["towers"] == {"TowerDaylight": 1.0, "WindowsOn": 0.0}
++    assert p["trees"] == {"LeafDaylight": 1.0}
+     assert p["sun"]["intensity"] > 2.5
+ 
+ 
+@@ -524,3 +538,23 @@
+     assert scene_params(REFERENCE, FRAME, game_time_s=5.0) == scene_params(
+         REFERENCE, FRAME, game_time_s=5.0
+     )
++
++
++# ---------------------------------------------------------------- the towers' windows
++def test_the_towers_light_no_window_by_day_a_few_below_five_degrees_all_at_dusk():
++    from app.office.scene_params import WINDOWS_FEW, windows_on, windows_share
++
++    assert windows_share(45.0) == 0.0 and windows_share(5.0) == 0.0
++    assert 0.0 < windows_share(2.7) < WINDOWS_FEW  # the 18:50 instant: a few windows
++    assert windows_share(0.0) == pytest.approx(WINDOWS_FEW)
++    assert windows_share(-2.5) == 1.0 and windows_share(-30.0) == 1.0
++    elevations = [x / 10 for x in range(80, -60, -1)]
++    shares = [windows_share(e) for e in elevations]
++    assert shares == sorted(shares)
++    assert windows_on(1.0) == 1.0 and windows_on(0.0) == 0.0
++    assert 0.02 < windows_on(0.5) < 0.95
++    # the morning and the evening at the same elevation light the same windows (no invented
++    # occupancy; a morning share would be the Owner's decision)
++    morning = scene_params(world(elevation=2.0, azimuth=100.0), FRAME)["towers"]
++    evening = scene_params(world(elevation=2.0, azimuth=260.0), FRAME)["towers"]
++    assert morning == evening

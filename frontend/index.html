@@ -1,0 +1,740 @@
+<!doctype html>
+<html lang="ro">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#172927" />
+    <meta
+      name="description"
+      content="AMN-AI — Autonomous Machine Nexus · Artificial Intelligence. Spațiul privat al Proprietarului: angajați, producție media și distribuție, cu stare verificată."
+    />
+    <link rel="icon" href="/favicon.ico" sizes="48x48" />
+    <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta property="og:title" content="AMN-AI · Autonomous Machine Nexus" />
+    <meta property="og:description" content="Autonomous Machine Nexus — Artificial Intelligence. Muncă reală. Stare verificată." />
+    <meta property="og:image" content="/amn-ai-logo.png" />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary" />
+    <title>AMN-AI · Autonomous Machine Nexus</title>
+    <!-- The display face (Oxanium, SIL OFL 1.1, public/fonts/oxanium/OFL.txt) is served from this
+         origin; the Latin file carries the title, so it is asked for before the stylesheet finds it. -->
+    <link rel="preload" href="/fonts/oxanium/oxanium-latin-wght.woff2" as="font" type="font/woff2" crossorigin />
+  </head>
+  <body class="is-title pixel-studio">
+    <div id="title-stage" class="title-stage" aria-hidden="true"></div>
+    <header class="topbar">
+      <a href="/" class="brand" title="AMN-AI — Autonomous Machine Nexus · Artificial Intelligence"><img src="/amn-ai-mark.png" alt="" width="38" height="38" class="brand-logo" /><span><strong>AMN-AI</strong><br /><span class="brand-sub">Autonomous Machine Nexus</span></span></a>
+      <span class="topbar-crumb"><span id="studio-name">AMN-AI</span> <span class="separator">/</span> Spațiul Proprietarului</span>
+      <!-- THE STUDIO'S MENU. In the game frame the seven rooms come up here from the console under the
+           render (drawers.js), and go back there on a narrow screen. -->
+      <div id="topbar-rooms" class="topbar-rooms" hidden></div>
+      <!-- «Decizii» (DECISIONS_WINDOW, 2026-10-03): the Owner's own window of decisions, with the
+           count of what waits for him; shown once his key is accepted (decisions_window.js). -->
+      <span class="topbar-right"><button id="decisions-button" class="topbar-logout decisions-button" type="button" aria-haspopup="dialog" aria-controls="decisions-window" aria-label="Decizii — nimic nu te așteaptă" hidden><span class="decisions-button-word">Decizii</span><span id="decisions-badge" class="decisions-badge" aria-hidden="true" hidden></span></button><span id="environment-banner" class="env-banner" role="status" hidden>—</span><span id="connection" class="connection" role="status">Neconectat</span><button id="logout" class="quiet topbar-logout" hidden>Ieși din studio</button></span>
+    </header>
+    <main>
+      <section id="login" class="login" aria-labelledby="title-name">
+        <div class="title-block">
+          <p class="eyebrow title-eyebrow"><img src="/amn-ai-mark.png" alt="" class="title-mark" width="40" height="40" />AUTONOMOUS MACHINE NEXUS · ARTIFICIAL INTELLIGENCE</p>
+          <h1 id="title-name" class="title-name">AMN-AI</h1>
+          <p class="title-line">Un loc pentru ideea următoare.</p>
+          <!-- LOCAL_AUTO_LOGIN (2026-10-08): on the Owner's own machine the page enters without the
+               key (local_entry.js), so the form starts hidden under the waiting line and shows only
+               when this machine is not handed the key (another machine, the setting off). -->
+          <p id="login-wait" class="helper title-wait" role="status">Se deschide studioul…</p>
+          <form id="login-form" class="title-form" hidden>
+            <label for="owner-token">Cheia Proprietarului</label>
+            <input id="owner-token" type="password" required minlength="32" autocomplete="off" spellcheck="false" />
+            <button type="submit" class="primary">Intră în studio <span aria-hidden="true">↗</span></button>
+            <p id="login-local" class="helper" hidden>Pe acest calculator poți intra și fără cheie: lasă câmpul gol și apasă «Intră în studio».</p>
+            <p class="helper">Cheia locală se află în fișierul .env, la STUDIO_OWNER_TOKEN. Rămâne doar în memoria acestei pagini.</p>
+          </form>
+        </div>
+        <p id="title-caption" class="title-caption">Sediul studioului</p>
+      </section>
+      <section id="workspace" hidden>
+        <div class="workspace-grid">
+          <aside class="ledger-column" role="complementary" aria-label="Registrul viu">
+            <!-- THE DRAWERS' RAILS. In the game frame (drawers.js) the register and the governance side
+                 are glass drawers over the render's edges; closed, each is this rail, with its count.
+                 The page's order is the order they are seen in: the register on the left, the render
+                 and its dock, then the governance side on the right, so the keyboard walks them as
+                 the eye does. -->
+            <button id="register-rail" class="drawer-rail drawer-rail-register" type="button" aria-controls="register-panel" aria-expanded="false" title="Deschide registrul viu" hidden><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 6.5l5.5 5.5-5.5 5.5"/></svg><span class="drawer-rail-label">Registru viu</span><span id="register-rail-count" class="drawer-rail-count"></span></button>
+            <section id="register-panel" class="panel ledger-panel">
+              <div class="section-heading"><div><p class="eyebrow">REGISTRU VIU</p><h2>Ce se întâmplă acum</h2></div><span id="ledger-count" class="tag">—</span><button id="register-close" class="quiet drawer-close" type="button" aria-controls="register-panel" aria-expanded="true" aria-label="Strânge registrul viu" title="Strânge registrul viu la marginea ecranului"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 6.5L9 12l5.5 5.5"/></svg></button></div>
+              <!-- The gold mark: requests that wait for the Owner, as the approvals route lists them.
+                   It stays while they wait and takes him to them. -->
+              <button id="owner-mark" class="owner-mark" type="button" hidden><span class="owner-mark-dot" aria-hidden="true"></span><span id="owner-mark-text">—</span><span class="owner-mark-go" aria-hidden="true">↓</span></button>
+              <!-- While the building replays a past day, the register says it stays live (W15). -->
+              <p id="register-replay-note" class="register-replay-note" hidden></p>
+              <p id="ledger-now" class="ledger-now">Se încarcă…</p>
+              <div id="ledger-filters" class="ledger-filters" role="tablist" aria-label="Filtrele registrului"></div>
+              <ol id="ledger-list" class="ledger-list"></ol>
+            </section>
+          </aside>
+          <section class="panel office-panel">
+            <div class="section-heading office-heading"><div><p class="eyebrow">SPAȚIU DE LUCRU</p><h2>Biroul studioului</h2></div></div>
+            <div class="office-scene office-scene-container" id="office-scene-container">
+              <!-- THE RENDER AND ITS INSTRUMENTS. The three readouts are let into the bezel of the
+                   viewport itself — the clock and the weather in the top-left corner, the live state
+                   in the top-right, the slate along the bottom lip — rather than floating over the
+                   picture or standing about on the panel outside it. The canvas takes focus so the
+                   employees can be reached with the arrows as well as with a pointer. -->
+              <div class="scene-viewport" id="scene-viewport">
+              <canvas id="office-canvas" class="office-canvas" tabindex="0" aria-label="Studioul AMN-AI. Săgețile selectează angajații, Enter deschide conversația."></canvas>
+              <div id="pixel-office-pages" class="pixel-office-pages" role="group" aria-label="Birourile agenților" hidden></div>
+              <!-- «RELUAREA ZILEI» (W13): while the newest finished day is played back from its record,
+                   a letterbox closes over the sky row and the street, so no one takes it for live. -->
+              <div class="replay-letterbox" aria-hidden="true"></div>
+              <!-- W28: the room whose door is open, lit (dialog_doors.js): the page's mark of what he opened. -->
+              <div id="door-light" class="door-light" aria-hidden="true" hidden></div>
+              <div class="scene-readout scene-readout-info" title="Ora locală și vremea de afară. Lumina urmează poziția soarelui; decorul rămâne o ilustrație."><span class="scene-label replay-now-label">ACUM</span><span id="scene-info">—</span><span id="replay-then" class="replay-then" title="Ora din registru a momentului reluat" hidden><span class="replay-then-label">ATUNCI</span><span id="replay-then-time" class="scene-figure">—</span></span></div>
+              <!-- The replayed world is lit by its own hour's sun and draws no weather: the page does
+                   not know the weather of that night, and says so under the ATUNCI clock (W15). -->
+              <p id="replay-weather" class="replay-weather" hidden>vremea de atunci nu e cunoscută</p>
+              <span id="office-status" class="tag live-pill scene-readout scene-readout-live" data-state="reconnecting"><span class="live-dot" aria-hidden="true"></span><span id="office-fps"><span class="scene-live">Se conectează</span></span></span>
+              <!-- The slate: what is being looked at, the day's run as one segment per stage (the
+                   runbook's own events, hud_charts.js), and when the studio was last read. -->
+              <div id="pixel-roster" class="pixel-roster" role="group" aria-label="Angajații studioului"></div>
+              <div class="scene-slate"><span id="room-caption">—</span><span id="day-track" class="day-track" role="img" aria-label="Nicio rulare a zilei în registru."><svg class="day-track-bar" width="0" height="6" focusable="false" aria-hidden="true"></svg><span class="day-track-label">—</span></span><span id="snapshot-time">—</span></div>
+              <!-- THE FACES MADE LEGIBLE (W10): the glass readout laid beside the building's face the
+                   pointer or the keyboard stands on (scene_readout.js). It is hidden from assistive
+                   technology; its words are said once in the polite live region under it. -->
+              <div id="face-card" class="face-card" aria-hidden="true" hidden><canvas class="face-card-poster" width="180" height="320" hidden></canvas><div class="face-card-text"><p class="face-card-eyebrow"></p><p class="face-card-value"></p><p class="face-card-line"></p><p class="face-card-context"></p><p class="face-card-action"></p></div></div>
+              <p id="face-card-announce" class="moment-announce" role="status" aria-live="polite"></p>
+              <!-- THE REPLAY'S CONTROLS, on the slate (replay_player.js): play and pause, the stages,
+                   the run as a scrubber with each stage's start marked, the moment's real clock, the
+                   speed, and the way out. Esc also leaves; Space plays and pauses. -->
+              <section id="replay-bar" class="replay-bar" aria-label="Reluarea zilei" hidden>
+                <span class="replay-badge" aria-hidden="true"><span class="replay-dot"></span>RELUARE</span>
+                <div class="replay-keys" role="group" aria-label="Redare">
+                  <button id="replay-prev" class="replay-key" type="button" aria-label="Etapa anterioară" title="Etapa anterioară (Page Up pe cronologie)"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 5.5v13"/><path d="M18 6.2L9.6 12l8.4 5.8z"/></svg></button>
+                  <button id="replay-play" class="replay-key replay-play" type="button" data-state="paused" aria-label="Redă" title="Redă (Spațiu)"><svg class="ui-icon replay-icon-pause" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 5.8v12.4M15.5 5.8v12.4"/></svg><svg class="ui-icon replay-icon-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M7.5 5.6L18.6 12 7.5 18.4z"/></svg></button>
+                  <button id="replay-next" class="replay-key" type="button" aria-label="Etapa următoare" title="Etapa următoare (Page Down pe cronologie)"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M17.5 5.5v13"/><path d="M6 6.2l8.4 5.8L6 17.8z"/></svg></button>
+                </div>
+                <div id="replay-track" class="replay-track">
+                  <input id="replay-scrub" class="replay-scrub" type="range" min="0" max="1000" step="5" value="0" aria-label="Momentul din rulare">
+                  <div id="replay-ticks" class="replay-ticks" aria-hidden="true"></div>
+                </div>
+                <p class="replay-when"><span id="replay-time" class="replay-time">—</span><span id="replay-stage" class="replay-stage">—</span><span class="replay-meta"><span id="replay-progress" class="replay-progress">—</span> · <span id="replay-rate" class="replay-rate">—</span></span></p>
+                <button id="replay-back" class="replay-back" type="button" title="Înapoi la live (Esc)" hidden>Înapoi la live</button>
+                <div class="replay-speeds" role="group" aria-label="Ritmul reluării, față de rulare">
+                  <button class="replay-speed" type="button" data-speed="1" aria-pressed="true">1×</button>
+                  <button class="replay-speed" type="button" data-speed="4" aria-pressed="false">4×</button>
+                  <button class="replay-speed" type="button" data-speed="16" aria-pressed="false">16×</button>
+                </div>
+                <button id="replay-exit" class="replay-key replay-exit" type="button" title="Ieși din reluare (Esc)"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.4 6.4l11.2 11.2M17.6 6.4L6.4 17.6"/></svg><span>Ieși din reluare</span></button>
+              </section>
+              <!-- LIVE WINS: live news while the day is replayed ends the replay (replay_player.js). -->
+              <div id="replay-live" class="replay-live" role="alert" hidden><p class="replay-live-eyebrow"><span class="live-dot" aria-hidden="true"></span>SE ÎNTÂMPLĂ ACUM</p><p id="replay-live-what" class="replay-live-what"></p><button id="replay-live-go" class="replay-live-go" type="button">Înapoi la live · <span id="replay-live-count">6</span></button></div>
+              <p id="replay-announce" class="moment-announce" role="status" aria-live="polite"></p>
+              <!-- THE REPLAY OFFERED (W15, replay_invite.js): once per session, when the studio rests by
+                   its own record, a pane of the drawers' glass under the building offers the last
+                   working day. Its words are the runbook's; it never starts the replay by itself. -->
+              <section id="replay-invite" class="replay-invite" aria-labelledby="replay-invite-eyebrow replay-invite-lead" hidden>
+                <div class="replay-invite-text">
+                  <p id="replay-invite-eyebrow" class="replay-invite-eyebrow"><span class="replay-dot" aria-hidden="true"></span>RELUAREA ZILEI</p>
+                  <p id="replay-invite-lead" class="replay-invite-lead"></p>
+                  <p id="replay-invite-line" class="replay-invite-line"></p>
+                </div>
+                <div class="replay-invite-keys">
+                  <button id="replay-invite-go" class="replay-invite-go" type="button"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4.8 12a7.2 7.2 0 1 0 2.1-5.1"/><path d="M4.4 4.2v4.2h4.2"/><path d="M10.4 9.1l4.6 2.9-4.6 2.9z"/></svg><span>Vezi reluarea</span></button>
+                  <button id="replay-invite-later" class="replay-invite-later" type="button" title="Nu acum (Esc)">Nu acum</button>
+                </div>
+              </section>
+              <!-- A chapter of the serial, over the render for under three seconds, only when an
+                   episode is drafted or approved as it happens (moments.js). -->
+              <div id="moment-chapter" class="moment moment-chapter" hidden></div>
+              </div>
+              <div class="camera-toolbar">
+                <div class="toolbar-group toolbar-scene">
+                <button id="stop-toggle" class="cam-btn cam-switch" disabled title="Autonomia studioului: pornită sau oprită. Oprirea rămâne în vigoare și nu pornește niciodată angajați sau publicări."><span class="switch-label">AUTONOMIE</span><span class="switch-track"><span class="switch-knob"></span></span><span id="switch-state" class="switch-state">—</span></button>
+                <div id="gpu-switch" class="gpu-switch" hidden></div>
+                <button id="environment-toggle" class="cam-btn cam-switch" disabled title="Mediul studioului. TEST: se generează minimul, pe cel mai ieftin model compatibil. PRODUCTION: cel mai ieftin model care atinge calitatea de care are nevoie fiecare scenă."><span class="switch-label">MEDIU</span><span id="environment-state" class="switch-state">—</span></button>
+                <!-- The camera is one instrument, not four loose boxes: the four controls that
+                     move the same eye share one plate and are divided by hairlines. -->
+                <div class="cam-group" role="group" aria-label="Cameră">
+                <button id="zoom-in" class="quiet cam-btn cam-square" title="Apropie" aria-label="Apropie"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5.2v13.6M5.2 12h13.6"/></svg></button>
+                <button id="zoom-out" class="quiet cam-btn cam-square" title="Depărtează" aria-label="Depărtează"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5.2 12h13.6"/></svg></button>
+                <button id="zoom-fit" class="quiet cam-btn cam-worded" title="Încadrează toată clădirea"><svg class="ui-icon dock-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4.6 8.6v-4h4M15.4 4.6h4v4M19.4 15.4v4h-4M8.6 19.4h-4v-4"/><rect x="8.8" y="9.2" width="6.4" height="5.6" rx="1"/></svg><span class="dock-label">Încadrează</span></button>
+                <button id="zoom-reset" class="quiet cam-btn" title="Mărime reală">1:1</button>
+                </div>
+                <button id="scene-motion-toggle" class="quiet cam-btn cam-switch" type="button" aria-label="Animațiile studioului" aria-pressed="false"><span class="switch-label">ANIMAȚII</span><span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span><span class="switch-state">—</span></button>
+                <button id="replay-toggle" class="quiet cam-btn cam-worded replay-toggle" type="button" aria-pressed="false" title="Reluarea zilei: ultima rulare încheiată, redată din registrul studioului" hidden><svg class="ui-icon dock-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4.8 12a7.2 7.2 0 1 0 2.1-5.1"/><path d="M4.4 4.2v4.2h4.2"/><path d="M10.4 9.1l4.6 2.9-4.6 2.9z"/></svg><span class="dock-label">Reluare</span></button>
+                <button id="fullscreen-btn" class="quiet cam-btn btn-fs cam-worded" title="Ecran complet"><svg class="ui-icon dock-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14.2 4.6h5.2v5.2M19.4 4.6l-5.6 5.6M9.8 19.4H4.6v-5.2M4.6 19.4l5.6-5.6"/></svg><span class="dock-label">Ecran complet</span></button>
+                <button id="exit-fullscreen-btn" class="quiet cam-btn btn-exit-fs hidden" title="Ieși din ecran complet"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.4 6.4l11.2 11.2M17.6 6.4L6.4 17.6"/></svg>Ieși</button>
+                </div>
+                <!-- THE SEVEN ROOMS, ONE ICON FAMILY. Every icon in this page is drawn on the
+                     same 24x24 grid at --icon-stroke, round caps and joins, no fill but the
+                     dot a shape needs, and stroke: currentColor so the ink is the control's
+                     (style.css, .ui-icon). Two of the seven said the wrong thing and were
+                     replaced: the daily run was a HOUSE and is now the sun over the horizon --
+                     a day of work, and not the play triangle the other candidate offered,
+                     because a play mark already means "a film" two buttons to the left and
+                     because it would read as a Start this dialog does not carry; and
+                     distribution was a circle with a diagonal that read as "forbidden" and is
+                     now the film leaving the studio. -->
+                <div class="toolbar-group toolbar-modules" role="group" aria-label="Camerele studioului">
+                <button id="open-research-btn" class="quiet cam-btn" title="Subiecte, surse și verificarea afirmațiilor"><svg class="ui-icon cam-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.7" cy="10.7" r="5.9"/><path d="M14.9 14.9l5.1 5.1"/></svg><span class="room-label">Cercetare</span></button>
+                <button id="open-media-btn" class="quiet cam-btn cam-btn-media" title="Storyboarduri, randare video și controlul calității"><svg class="ui-icon cam-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="6" width="17" height="12" rx="2.6"/><path d="M10.3 9.2l4.9 2.8-4.9 2.8z"/></svg><span class="room-label">Producție media</span></button>
+                <button id="open-publishing-btn" class="quiet cam-btn cam-btn-pub" title="Canale, verificări înainte de publicare și istoric"><svg class="ui-icon cam-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.6V5"/><path d="M7.9 9.1L12 5l4.1 4.1"/><path d="M4.6 14.6v3.1a1.8 1.8 0 0 0 1.8 1.8h11.2a1.8 1.8 0 0 0 1.8-1.8v-3.1"/></svg><span class="room-label">Distribuție</span></button>
+                <button id="open-workforce-btn" class="quiet cam-btn" title="Cum lucrează angajații și ce schimbări de personal susțin măsurătorile"><svg class="ui-icon cam-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8.6" r="3.5"/><path d="M5.2 19.6c.9-3.6 3.5-5.6 6.8-5.6s5.9 2 6.8 5.6"/></svg><span class="room-label">Angajați</span></button>
+                <button id="open-story-btn" class="quiet cam-btn" title="Jurnalul zilei și episodul din Office Serial construit din el"><svg class="ui-icon cam-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="3.6" width="14" height="16.8" rx="2.4"/><path d="M8.4 8.4h7.2M8.4 12h7.2M8.4 15.6h4.6"/></svg><span class="room-label">Jurnal</span></button>
+                <button id="open-runbook-btn" class="quiet cam-btn" title="Ce poate face studioul acum și ce a făcut fiecare rulare a zilei"><svg class="ui-icon cam-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.6 18.9h16.8"/><path d="M7 18.9a5 5 0 0 1 10 0"/><path d="M12 6.1V3.9"/><path d="M7.05 8.25L5.5 6.7"/><path d="M16.95 8.25L18.5 6.7"/></svg><span class="room-label">Rularea zilei</span></button>
+                <button id="open-autonomy-btn" class="quiet cam-btn" title="Programare, permisiuni și limite de cheltuieli" aria-label="Autonomie"><svg class="ui-icon cam-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 3h4v3h3v4h4v4h-4v4h-3v3h-4v-3H7v-4H3v-4h4V6h3V3Z"/><path d="M10 10h4v4h-4z"/></svg><span class="room-label">Autonomie</span></button>
+                </div>
+              </div>
+              <div id="rooms" class="rooms" hidden></div>
+            </div>
+          </section>
+          <aside class="side-column" role="complementary" aria-label="Guvernanța, aprobările și studioul pe scurt">
+            <button id="side-rail" class="drawer-rail drawer-rail-side" type="button" aria-controls="governance-panel studio-readout" aria-expanded="false" title="Deschide guvernanța, aprobările și studioul pe scurt" hidden><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 6.5L9 12l5.5 5.5"/></svg><span class="drawer-rail-label">Guvernanță</span><span id="side-rail-count" class="drawer-rail-count"></span></button>
+            <!-- Governance: the mode the studio is really in, and what a supervised studio stopped to ask. -->
+            <section id="governance-panel" class="panel governance-panel">
+              <div class="section-heading"><div><p class="eyebrow">GUVERNANȚĂ</p><h2>Mod de autonomie</h2></div><span id="autonomy-mode-tag" class="tag">—</span><button id="side-close" class="quiet drawer-close" type="button" aria-controls="governance-panel studio-readout" aria-expanded="true" aria-label="Strânge guvernanța" title="Strânge guvernanța, aprobările și studioul pe scurt la marginea ecranului"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 6.5l5.5 5.5-5.5 5.5"/></svg></button></div>
+              <p id="autonomy-mode-meaning" class="ledger-now">—</p>
+              <div id="autonomy-mode-buttons" class="mode-buttons" role="group" aria-label="Mod de autonomie">
+                <button class="quiet mode-btn" data-mode="MANUAL" type="button" title="Agenții pregătesc și analizează; Proprietarul aprobă trecerile între etape.">Manual</button>
+                <button class="quiet mode-btn" data-mode="SUPERVISED" type="button" title="Etapele interne merg singure; o scriere în afară devine o cerere de aprobare.">Supravegheat</button>
+                <button class="quiet mode-btn" data-mode="AUTONOMOUS_CEO" type="button" title="Directoarea execută singură treptele T0–T3 în limitele politicii; T4 rămâne a Proprietarului.">CEO autonom</button>
+              </div>
+              <p id="autonomy-mode-note" class="helper-note" hidden></p>
+              <!-- PAGE_OWNER_DAY (PAGE-04): his rule for a film's paid steps, beside the mode it combines
+                   with, and what the next run will buy alone (governance.js dayWillWords). A form, so its
+                   radio group is its own and not the sheet's copy (shooting_sheet.js keeps that one). -->
+              <p id="day-will" class="ledger-now day-will" aria-live="polite">—</p>
+              <details class="governance-rule-box"><summary>Când te întreabă un pas plătit al unui film</summary><form id="paid-media-governance" class="governance-paid-media"></form></details>
+              <div class="section-heading approvals-heading"><div><p class="eyebrow">APROBĂRI</p><h2>Ce așteaptă decizia ta</h2></div><span id="approvals-count" class="tag">—</span><button id="refresh-approvals-btn" class="quiet cam-square" type="button" title="Recitește cererile de aprobare" aria-label="Recitește cererile de aprobare"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 12a7.4 7.4 0 1 1-2.17-5.23"/><path d="M19.4 5.1v4.6h-4.6"/></svg></button></div>
+              <div id="approvals-list" class="approvals-list"></div>
+              <!-- PAGE_OWNER_DAY (PAGE-07): the letters the studio wrote to him that are still open
+                   (owner_inbox.js), each with its thread, its film's sheet when it names one, and
+                   «Marchează rezolvat». -->
+              <div class="section-heading inbox-heading"><div><p class="eyebrow">SCRISORI</p><h2>Scrisori pentru tine</h2></div><span id="owner-inbox-count" class="tag">—</span><button id="refresh-inbox-btn" class="quiet cam-square" type="button" title="Recitește scrisorile pentru tine" aria-label="Recitește scrisorile pentru tine"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 12a7.4 7.4 0 1 1-2.17-5.23"/><path d="M19.4 5.1v4.6h-4.6"/></svg></button></div>
+              <div id="owner-inbox-list" class="owner-inbox-list"><div class="topics-loading">Se citesc scrisorile…</div></div>
+            </section>
+            <!-- THE STUDIO AT A GLANCE (side_readout.js): the side drawer's lower half. The day's run,
+                 the USD budget, the next scheduled run, each from the record the page already reads, «—»
+                 where it holds nothing. W34: at every height; the module list («Starea modulelor», a
+                 developer's checklist) left the main screen for Setări → Despre studio, and its key is
+                 the readout's foot. -->
+            <section id="studio-readout" class="panel studio-readout" aria-labelledby="studio-readout-title"><p class="eyebrow">PE SCURT</p><h2 id="studio-readout-title">Studioul azi</h2><dl id="studio-readout-list" class="readout-list"></dl><button id="studio-about-btn" class="quiet studio-about-key" type="button" title="Starea modulelor, în Setări → Despre studio">Despre studio</button></section>
+          </aside>
+        </div>
+      </section>
+
+      <!-- Agent Inspector Modal / Drawer -->
+      <dialog id="agent-inspector" class="studio-dialog">
+        <div class="dialog-header inspector-head" id="inspector-head">
+          <!-- The employee's original front pixel portrait, role environment and actual state. -->
+          <span class="person-portrait inspector-portrait is-empty" id="inspector-portrait" aria-hidden="true"><canvas class="person-canvas" width="0" height="0"></canvas><span class="person-portrait-none">—</span></span>
+          <div class="inspector-heading">
+            <span class="eyebrow dialog-eyebrow" id="inspector-role">ROL</span>
+            <h2 id="inspector-name" class="dialog-title">Agent</h2>
+          </div>
+          <div class="dialog-header-actions">
+            <button id="inspector-expand" class="dialog-close dialog-expand" title="Extinde: toată discuția și istoricul, de sus până jos" aria-label="Extinde fereastra"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4.6 9.4V4.6h4.8M14.6 4.6h4.8v4.8M19.4 14.6v4.8h-4.8M9.4 19.4H4.6v-4.8"/></svg></button>
+            <button id="inspector-close" class="dialog-close" aria-label="Închide"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.4 6.4l11.2 11.2M17.6 6.4L6.4 17.6"/></svg></button>
+          </div>
+        </div>
+        <div class="dialog-body">
+          <div class="agent-stats-grid">
+            <div><span class="stat-label">Stare de lucru</span><strong id="inspector-state" class="stat-value text-accent">IDLE</strong></div>
+            <div><span class="stat-label">Statut în companie</span><strong id="inspector-lifecycle" class="stat-value text-success">ACTIVE</strong></div>
+            <div><span class="stat-label">Model alocat</span><strong id="inspector-model" class="stat-value">—</strong></div>
+          </div>
+          <div class="dialog-btn-row">
+            <button id="agent-pause-btn" class="secondary btn-pause">Pune în pauză</button>
+            <button id="agent-resume-btn" class="secondary btn-resume">Reia lucrul</button>
+            <button id="agent-live-btn" class="quiet btn-live" title="Deschide o fereastră live separată: ce face, ce spune și ce termină angajatul">Fereastră live ↗</button>
+            <button id="inspector-copy-id" class="quiet btn-copy-id" type="button">Copiază identificatorul</button>
+          </div>
+          <div class="dialog-section" id="inspector-identity">
+            <h3 class="dialog-section-header">Identitate și contract de rol</h3>
+            <p id="inspector-mission" class="helper">Se încarcă identitatea…</p>
+            <div id="inspector-contract" class="identity-grid"></div>
+            <details class="identity-prompt">
+              <summary>Promptul de sistem, exact cum îl primește modelul</summary>
+              <pre id="inspector-system-prompt" class="dialog-output"></pre>
+            </details>
+          </div>
+          <div class="dialog-section" id="inspector-memory-section">
+            <h3 class="dialog-section-header">Memorie și mesaje</h3>
+            <ul id="inspector-memory" class="identity-list"></ul>
+            <ul id="inspector-messages" class="identity-list"></ul>
+          </div>
+          <div class="dialog-section" id="inspector-chat-section">
+            <h3 class="dialog-section-header">Discuție și istoric</h3>
+            <p class="helper">Tot ce s-a întrebat, s-a răspuns și s-a decis, și de ce, în ordine. Scrie-i direct angajatului: răspunde cu identitatea și memoria lui, iar schimbul rămâne în istoric.</p>
+            <div id="agent-history" class="chat-history"><div class="helper">Se încarcă istoricul…</div></div>
+            <div id="agent-typing" class="chat-typing" hidden></div>
+            <form id="agent-run-form" class="dialog-form chat-form">
+              <input id="agent-run-objective" aria-label="Întrebarea pentru angajat" placeholder="Întreabă ceva (ex: Ce ai decis azi și de ce?)…" required class="dialog-input" />
+              <button type="submit" class="primary dialog-submit-btn">Trimite ↗</button>
+            </form>
+            <div id="agent-run-output" class="dialog-output" hidden></div>
+          </div>
+        </div>
+      </dialog>
+
+      <!-- Factual Research & Verification Modal -->
+      <dialog id="research-modal" class="studio-dialog research-dialog">
+        <div class="dialog-header">
+          <div>
+            <p class="eyebrow dialog-eyebrow">CERCETARE · L3</p>
+            <h2 class="dialog-title">Cercetare și verificarea faptelor</h2>
+            <p class="dialog-desc">Propune subiecte, analizează surse și verifică afirmațiile înainte de scenariu.</p>
+          </div>
+          <button id="close-research-btn" class="dialog-close" aria-label="Închide"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.4 6.4l11.2 11.2M17.6 6.4L6.4 17.6"/></svg></button>
+        </div>
+        <div class="dialog-body dialog-body-railed">
+          <nav class="dialog-rail" aria-label="Secțiunile cercetării">
+            <a href="#rs-trends">Ce se caută acum</a>
+            <a href="#rs-propose">Propune un subiect</a>
+            <a href="#rs-topics">Subiecte recente și scorul de noutate</a>
+            <a href="#rs-sources">Surse și afirmații</a>
+            <a href="#rs-scripts">Scenarii</a>
+          </nav>
+          <div class="dialog-pane">
+          <div class="dialog-section-bottom" id="rs-trends" data-door-steps>
+            <div class="trends-head">
+              <h3 class="dialog-section-header-bright">Ce se caută acum</h3>
+              <!-- W34: the page's own refresh icon, not the «↻» glyph: no font on the page has it, and its first use sent the text shaper to the system fonts for 11 ms of Research's first frame -->
+              <button id="trends-refresh" class="quiet trends-refresh" type="button">Citește tendințele <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 12a7.4 7.4 0 1 1-2.17-5.23"/><path d="M19.4 5.1v4.6h-4.6"/></svg></button>
+            </div>
+            <p class="helper">Google Trends pentru țara studioului, citit zilnic. O tendință este o deschidere, nu o sursă: cercetătorul o folosește doar unde site-urile autorizate o pot dovedi.</p>
+            <ul id="trends-list" class="trends-list" data-door-steps><li class="helper">Se încarcă…</li></ul>
+          </div>
+          <div class="dialog-section-bottom" id="rs-propose">
+            <h3 class="dialog-section-header-bright">Propune un subiect</h3>
+            <form id="topic-propose-form" class="dialog-form">
+              <label class="yt-field"><span class="yt-field-label">Titlul episodului</span><input id="topic-title" placeholder="ex: James Webb găsește cea mai veche galaxie" required class="dialog-input" /></label>
+              <label class="yt-field"><span class="yt-field-label">Subiectul factual</span><input id="topic-subject" placeholder="ex: Descoperirea galaxiei GLASS-z12 la redshift 12.1" required class="dialog-input" /></label>
+              <div class="topic-input-grid">
+                <label class="yt-field"><span class="yt-field-label">Unghiul</span><input id="topic-angle" placeholder="ex: O descoperire de referință" required class="dialog-input" /></label>
+                <label class="yt-field"><span class="yt-field-label">Publicul</span><input id="topic-audience" placeholder="ex: science" value="general" class="dialog-input" /></label>
+              </div>
+              <button type="submit" class="primary dialog-submit-btn">Trimite subiectul la cercetare ↗</button>
+            </form>
+            <div id="topic-propose-status" class="dialog-status-msg" hidden></div>
+          </div>
+          <div id="rs-topics" data-door-steps>
+            <div class="topics-header-row">
+              <h3 class="dialog-section-header-bright-compact">Subiecte recente și scorul de noutate</h3>
+              <button id="refresh-topics-btn" class="quiet btn-refresh">Reîncarcă</button>
+            </div>
+            <div id="topics-list" class="topics-container">
+              <div class="topics-loading">Se încarcă subiectele…</div>
+            </div>
+          </div>
+
+          <div class="dialog-section-top" id="rs-sources" data-door-steps>
+            <div class="topics-header-row">
+              <h3 class="dialog-section-header-bright-compact">Surse și afirmații</h3>
+              <button id="retest-hosts-btn" class="quiet btn-refresh">Testează site-urile</button>
+              <button id="refresh-sources-btn" class="quiet btn-refresh">Reîncarcă</button>
+            </div>
+            <p id="sources-allowlist" class="helper-note">Se verifică site-urile autorizate…</p>
+            <div id="allowed-hosts" class="allowed-hosts" data-door-steps></div>
+            <form id="allowed-host-form" class="dialog-form source-form">
+              <input id="allowed-host-input" aria-label="Site autorizat" placeholder="Adaugă un site autorizat (ex: www.nasa.gov)" required class="dialog-input" autocomplete="off" spellcheck="false" />
+              <button type="submit" class="secondary dialog-submit-btn">Autorizează și testează ↗</button>
+            </form>
+            <form id="source-retrieve-form" class="dialog-form source-form">
+              <input id="source-url" type="url" aria-label="Adresa paginii-sursă" placeholder="https://… o pagină de pe un site autorizat" required class="dialog-input" />
+              <button type="submit" class="primary dialog-submit-btn">Preia sursa ↓</button>
+            </form>
+            <div id="source-retrieve-status" class="dialog-status-msg" hidden></div>
+            <div id="sources-list" class="topics-container" data-door-steps>
+              <div class="topics-loading">Se încarcă sursele…</div>
+            </div>
+          </div>
+
+          <div class="dialog-section-top" id="rs-scripts" data-door-steps>
+            <div class="topics-header-row">
+              <h3 class="dialog-section-header-bright-compact">Scenarii</h3>
+              <button id="refresh-scripts-btn" class="quiet btn-refresh">Reîncarcă</button>
+            </div>
+            <p class="helper-note">Scenaristul scrie numai din afirmațiile subiectului susținute de sursă. Fiecare scenă citează afirmațiile pe care se sprijină; o citare inventată respinge tot scenariul.</p>
+            <form id="script-write-form" class="dialog-form source-form">
+              <select id="script-topic" aria-label="Subiect" class="dialog-input" required></select>
+              <button type="submit" class="primary dialog-submit-btn">Scrie scenariul ↗</button>
+            </form>
+            <div id="script-status" class="dialog-status-msg" hidden></div>
+            <div id="scripts-list" class="topics-container">
+              <div class="topics-loading">Se încarcă scenariile…</div>
+            </div>
+          </div>
+          </div>
+        </div>
+      </dialog>
+      <!-- Phase 9: Daily log and Office Serial -->
+      <dialog id="story-modal" class="studio-dialog research-dialog journal-dialog">
+        <div class="dialog-header">
+          <div>
+            <p class="eyebrow dialog-eyebrow">JURNAL · OFFICE SERIAL</p>
+            <h2 class="dialog-title">Jurnalul zilei și Office Serial</h2>
+            <p class="dialog-desc">Ziua, numărată din fluxul de evenimente. Episodul se scrie doar din ce s-a întâmplat: fiecare beat citează evenimentele reale pe care le dramatizează.</p>
+          </div>
+          <button id="close-story-btn" class="dialog-close" aria-label="Închide"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.4 6.4l11.2 11.2M17.6 6.4L6.4 17.6"/></svg></button>
+        </div>
+        <div class="dialog-body dialog-body-railed">
+          <!-- W28: one scroll with its section rail, as the other long doors. -->
+          <nav class="dialog-rail" aria-label="Secțiunile jurnalului">
+            <a href="#st-episodes">Episoade</a>
+            <a href="#st-days">Zile închise</a>
+          </nav>
+          <div class="dialog-pane">
+          <!-- The writers room comes first: it is what the Journal is opened for, and at 1080 the
+               closed days above it pushed the episodes below the fold (W8). -->
+          <div class="dialog-section-bottom" id="st-episodes" data-door-steps>
+            <!-- THE COVER (W12, serial_room.js journalCoverHtml): the newest episode as a poster,
+                 its number, title, the day it tells and the Director's verdict. -->
+            <div id="story-cover" class="journal-cover-slot"></div>
+            <h3 class="dialog-section-header-bright-compact journal-heading">Episoade</h3>
+            <!-- THE WRITERS ROOM (serial_room.js). The threads canon carries, above the episodes
+                 (folded away when there are none); each episode below is a script page with the
+                 Director's reading and tomorrow's plan beside it. -->
+            <div id="story-serial-board"></div>
+            <div id="story-episodes" class="topics-container writers-room" data-door-steps>
+              <div class="topics-loading">Se încarcă episoadele…</div>
+            </div>
+          </div>
+          <div id="st-days">
+            <div class="topics-header-row">
+              <h3 class="dialog-section-header-bright-compact journal-heading">Zile închise</h3>
+              <button id="close-day-btn" class="quiet btn-media-action">Închide ziua</button>
+            </div>
+            <div id="story-status" class="dialog-status-msg" hidden></div>
+            <div id="story-logs" class="topics-container">
+              <div class="topics-loading">Se încarcă jurnalele…</div>
+            </div>
+          </div>
+          </div>
+        </div>
+      </dialog>
+
+      <!-- Phase 10: Daily runbook -->
+      <dialog id="runbook-modal" class="studio-dialog research-dialog">
+        <div class="dialog-header">
+          <div>
+            <p class="eyebrow dialog-eyebrow">FAȚADA · RULAREA ZILEI</p>
+            <h2 class="dialog-title">Rularea zilei</h2>
+            <p class="dialog-desc">Verificarea preliminară spune ce poate face studioul acum, fără să contacteze nimic. Rularea înregistrează ce a făcut fiecare etapă — inclusiv etapele sărite și de ce.</p>
+          </div>
+          <button id="close-runbook-btn" class="dialog-close" aria-label="Închide"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.4 6.4l11.2 11.2M17.6 6.4L6.4 17.6"/></svg></button>
+        </div>
+        <div class="dialog-body dialog-body-railed">
+          <nav class="dialog-rail" aria-label="Secțiunile rulării zilei">
+            <a href="#rb-company">Compania acum</a>
+            <a href="#rb-preflight">Verificare preliminară</a>
+            <a href="#rb-schedule">Programare</a>
+            <a href="#rb-runs">Rulări</a>
+          </nav>
+          <div class="dialog-pane">
+
+          <div id="runbook-safe-mode" class="runbook-safe-mode" hidden>
+            <div class="runbook-safe-head">
+              <strong>Mod sigur activ</strong>
+              <span id="runbook-safe-since">—</span>
+            </div>
+            <p id="runbook-safe-reason" class="runbook-safe-reason">—</p>
+            <p class="runbook-note">Ieșirea din modul sigur nu repornește autonomia; asta rămâne o decizie separată.</p>
+            <label class="runbook-label" for="runbook-safe-notes">Ce ai verificat</label>
+            <textarea id="runbook-safe-notes" class="runbook-textarea" rows="2" placeholder="Scrie ce ai verificat; nota rămâne în istoric."></textarea>
+            <button id="clear-safe-mode-btn" class="quiet btn-media-action">Ieși din modul sigur</button>
+          </div>
+
+          <div class="dialog-section-bottom" id="rb-company">
+            <div class="topics-header-row">
+              <h3 class="dialog-section-header-bright-compact">Compania acum</h3>
+              <div class="media-actions-bar">
+                <button id="direct-company-btn" class="quiet btn-media-action" title="Directorul citește starea companiei și repartizează munca departamentelor care pot acționa">Condu compania acum</button>
+              </div>
+            </div>
+            <div id="company-state" class="runbook-summary">
+              <div class="topics-loading">Se încarcă starea companiei…</div>
+            </div>
+            <div id="company-decisions" class="topics-container"></div>
+          </div>
+
+          <div class="dialog-section-bottom" id="rb-preflight" data-door-steps>
+            <div class="topics-header-row">
+              <h3 class="dialog-section-header-bright-compact">Verificare preliminară</h3>
+              <button id="refresh-preflight-btn" class="quiet btn-refresh">Reîncarcă</button>
+            </div>
+            <div id="runbook-preflight-summary" class="runbook-summary">
+              <div class="topics-loading">Se încarcă verificarea preliminară…</div>
+            </div>
+            <div id="runbook-checks" class="topics-container" data-door-steps></div>
+          </div>
+
+          <div id="rb-schedule">
+            <div class="topics-header-row">
+              <h3 class="dialog-section-header-bright-compact">Programare</h3>
+            </div>
+            <div id="runbook-schedule" class="runbook-summary">
+              <div class="topics-loading">Se încarcă programarea…</div>
+            </div>
+          </div>
+
+          <div id="rb-runs">
+            <div class="topics-header-row">
+              <h3 class="dialog-section-header-bright-compact">Rulări</h3>
+              <div class="media-actions-bar">
+                <button id="start-run-btn" class="quiet btn-media-action">Pornește rularea de azi</button>
+                <button id="start-weekly-review-btn" class="quiet btn-media-action" title="Directorul citește performanța măsurată și trimite îndrumări către sunet și video">Analiza săptămânală acum</button>
+              </div>
+            </div>
+            <div id="runbook-status" class="dialog-status-msg" hidden></div>
+            <div id="runbook-runs" class="topics-container">
+              <div class="topics-loading">Se încarcă rulările…</div>
+            </div>
+          </div>
+
+          <div id="rb-queue">
+            <div class="topics-header-row">
+              <h3 class="dialog-section-header-bright-compact">Coada de lucru</h3>
+              <button id="refresh-queue-btn" type="button" class="quiet btn-refresh">Reîncarcă</button>
+            </div>
+            <p class="helper">Sarcinile pe care lucrătorul studioului le are de făcut: tipul, vârsta, încercările și ultima eroare. O sarcină oprită definitiv se poate pune din nou în coadă.</p>
+            <div id="queue-status" class="dialog-status-msg" role="status" hidden></div>
+            <div id="work-queue" class="topics-container">
+              <div class="topics-loading">Se încarcă coada…</div>
+            </div>
+          </div>
+          </div>
+        </div>
+      </dialog>
+
+      <dialog id="autonomy-modal" class="studio-dialog research-dialog" aria-labelledby="autonomy-title">
+        <div class="dialog-header">
+          <div><p class="eyebrow dialog-eyebrow">SETĂRI DE RULARE</p><h2 id="autonomy-title" class="dialog-title">Autonomie</h2><p class="dialog-desc">Ce poate face studioul, când lucrează și cât poate cheltui. Setările și verificările vin din configurația reală.</p></div>
+          <button id="close-autonomy-btn" class="dialog-close" aria-label="Închide">×</button>
+        </div>
+        <div class="dialog-body dialog-body-railed">
+          <nav class="dialog-rail" aria-label="Setările de autonomie"><a href="#autonomy-overview">Pregătire</a><a href="#autonomy-budget">Buget</a><a href="#autonomy-prices">Prețuri</a></nav>
+          <div class="dialog-pane">
+            <div class="topics-header-row"><h3 class="dialog-section-header-bright-compact">Configurarea autonomiei</h3><button id="refresh-autonomy-btn" class="quiet btn-refresh">Reîncarcă</button></div>
+            <div id="autonomy-overview" aria-live="polite">Se citesc setările…</div>
+          <div class="dialog-section-bottom" id="autonomy-budget">
+            <h3 class="dialog-section-header-bright-compact">Buget și cheltuieli</h3>
+            <p class="helper-note">Cheltuielile vin din registru: estimări (o randare la prețul modelului) și facturi. Bugetul este limita pe care o pui; peste linia de avertizare Nadia (Accountant) escaladează, iar peste limită studioul nu mai randează.</p>
+            <div id="budget-cards" class="budget-grid"><div class="topics-loading">Se încarcă bugetul…</div></div>
+            <form id="budget-form" class="dialog-form">
+              <div class="topic-input-grid">
+                <select id="budget-period" class="dialog-input" aria-label="Perioada bugetului">
+                  <option value="DAILY">Buget zilnic</option>
+                  <option value="MONTHLY">Buget lunar</option>
+                </select>
+                <input id="budget-limit" aria-label="Limita bugetului, în USD" class="dialog-input" maxlength="20" required inputmode="decimal" pattern="(?!0*(?:[.,]0*)?$)\d{1,9}(?:[.,]\d{1,2})?" title="O sumă pozitivă în USD, de exemplu 25 sau 12,50" placeholder="Limită în USD, ex: 25" />
+              </div>
+              <button type="submit" class="secondary dialog-submit-btn">Salvează bugetul</button>
+            </form>
+            <!-- PAGE-05: retiring the daily budget is its own key, asked first (budget_form.js). -->
+            <button id="budget-retire" class="quiet btn-refresh" type="button">Retrage bugetul zilnic</button>
+            <div id="budget-status" class="dialog-status-msg" hidden></div>
+            <button id="close-books-btn" class="quiet btn-refresh">Cere Contabilului să închidă ziua</button>
+          </div>
+
+          <!-- W34: the token prices, the Owner's to type (PUT /economy/prices, owner_controls.js). The
+               preflight's model_prices line opens here. -->
+          <div class="dialog-section-bottom" id="autonomy-prices">
+            <h3 class="dialog-section-header-bright-compact">Prețurile modelelor</h3>
+            <p class="helper-note" id="prices-meaning"></p>
+            <p class="helper-note prices-currency">Prețurile se scriu în <strong>USD</strong>, moneda în care studioul ține prețurile.</p>
+            <div id="prices-list" class="prices-list"><div class="topics-loading">Se încarcă prețurile…</div></div>
+            <div id="prices-status" class="dialog-status-msg" role="status" hidden></div>
+          </div>
+
+          </div>
+        </div>
+      </dialog>
+
+      <!-- Phase 8: Workforce -->
+      <dialog id="workforce-modal" class="studio-dialog research-dialog">
+        <div class="dialog-header">
+          <div>
+            <p class="eyebrow dialog-eyebrow">SEDIUL · ANGAJAȚI</p>
+            <h2 class="dialog-title">Angajați și capacitate</h2>
+            <p class="dialog-desc">Cum lucrează angajații, măsurat din rulările lor, și ce schimbări susțin cifrele. Angajarea și concedierea sunt decizia ta.</p>
+          </div>
+          <button id="close-workforce-btn" class="dialog-close" aria-label="Închide"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.4 6.4l11.2 11.2M17.6 6.4L6.4 17.6"/></svg></button>
+        </div>
+        <div class="dialog-body">
+          <!-- W30: the employees as people (roster.js): a card each, with their front portrait and role environment -->
+          <div class="dialog-section-bottom">
+            <div class="topics-header-row">
+              <h3 class="dialog-section-header-bright-compact">Oamenii studioului</h3>
+              <button id="refresh-workforce-btn" class="quiet btn-refresh">Reîncarcă</button>
+            </div>
+            <div id="workforce-agents" class="topics-container roster">
+              <div class="topics-loading">Se încarcă angajații…</div>
+            </div>
+          </div>
+          <div class="dialog-section-bottom">
+            <div class="topics-header-row">
+              <h3 class="dialog-section-header-bright-compact">Măsurători</h3>
+            </div>
+            <div id="workforce-summary" class="workforce-summary">
+              <div class="topics-loading">Se încarcă măsurătorile…</div>
+            </div>
+          </div>
+          <div>
+            <div class="topics-header-row">
+              <h3 class="dialog-section-header-bright-compact">Propuneri</h3>
+              <button id="generate-proposals-btn" class="quiet btn-media-action">Recalculează propunerile</button>
+            </div>
+            <div id="workforce-status" class="dialog-status-msg" hidden></div>
+            <div id="workforce-proposals" class="topics-container">
+              <div class="topics-loading">Se încarcă propunerile…</div>
+            </div>
+          </div>
+        </div>
+      </dialog>
+
+      <!-- Mail thread: one exchange between employees, read as letters -->
+      <dialog id="mail-modal" class="studio-dialog mail-dialog has-footer">
+        <div class="dialog-header">
+          <div>
+            <span class="eyebrow dialog-eyebrow">CORESPONDENȚĂ</span>
+            <h2 id="mail-title" class="dialog-title">Fir de corespondență</h2>
+            <p class="dialog-desc">Cine a scris cui, când și de ce — tot schimbul, în ordine. Răspunsul tău merge la cel care a scris ultimul, în același fir.</p>
+          </div>
+          <button id="mail-close" class="dialog-close" aria-label="Închide"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.4 6.4l11.2 11.2M17.6 6.4L6.4 17.6"/></svg></button>
+        </div>
+        <div id="mail-thread" class="mail-thread dialog-body"></div>
+        <form id="mail-reply-form" class="mail-reply dialog-footer">
+          <textarea id="mail-reply-text" aria-label="Răspunsul tău" class="dialog-input" rows="3" placeholder="Scrie un răspuns… (ex: Vreau sursa pe birou până seara.)" required></textarea>
+          <div class="mail-reply-row">
+            <span id="mail-status" class="helper" hidden></span>
+            <button type="submit" class="primary dialog-submit-btn">Trimite ↗</button>
+          </div>
+        </form>
+      </dialog>
+
+      <!-- Media Production & Video Assembly Modal -->
+      <dialog id="media-modal" class="studio-dialog media-dialog">
+        <div class="dialog-header">
+          <div>
+            <p class="eyebrow dialog-eyebrow">RANDARE · L1</p>
+            <h2 class="dialog-title">Producție media și asamblare video</h2>
+            <p class="dialog-desc">Transformă scenariile verificate în video vertical 9:16: storyboard, sinteză audio-video și controlul calității.</p>
+          </div>
+          <button id="close-media-btn" class="dialog-close" aria-label="Închide"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.4 6.4l11.2 11.2M17.6 6.4L6.4 17.6"/></svg></button>
+        </div>
+        <div class="dialog-body dialog-body-railed">
+          <nav class="dialog-rail media-tabs-bar" aria-label="Secțiunile producției media">
+            <button id="tab-storyboards-btn" class="media-tab media-tab-active">Storyboarduri și randări</button>
+            <button id="tab-characters-btn" class="media-tab">Character Bible</button>
+          </nav>
+          <div class="dialog-pane">
+
+          <div id="media-content-area" data-door-steps>
+            <!-- Storyboard View -->
+            <div id="media-storyboards-section" data-door-steps>
+              <div class="topics-header-row">
+                <h3 class="dialog-section-header-bright-compact">Fluxul activ: scenariu · storyboard · video · QC</h3>
+                <div class="media-actions-bar">
+                  <button id="generate-demo-storyboard-btn" hidden class="quiet btn-media-action" title="Creează un subiect, un scenariu și o afirmație neverificată, ca să testezi fluxul factual">Creează un caz demo</button>
+                  <button id="refresh-media-btn" class="quiet btn-refresh">Reîncarcă</button>
+                </div>
+              </div>
+              <div id="media-status-msg" class="dialog-status-msg" hidden></div>
+              <p id="media-provider-note" class="helper-note">Se verifică furnizorii media…</p>
+              <div id="awaiting-storyboard" class="awaiting-block" hidden>
+                <h4 class="awaiting-title">Scenarii aprobate în așteptarea producției</h4>
+                <div id="awaiting-list" class="topics-container"></div>
+              </div>
+              <div id="storyboards-list" class="storyboard-container" data-door-steps>
+                <div class="topics-loading">Se încarcă producția media…</div>
+              </div>
+            </div>
+
+            <!-- Character Bible View -->
+            <div id="media-characters-section" class="hidden">
+              <div class="topics-header-row">
+                <h3 class="dialog-section-header-bright-compact">Personaje canonice</h3>
+              </div>
+              <div id="characters-list" class="characters-grid">
+                <div class="topics-loading">Se încarcă personajele…</div>
+              </div>
+            </div>
+          </div>
+          </div>
+        </div>
+      </dialog>
+      <!-- Autonomous Publishing & Distribution Modal -->
+      <dialog id="publishing-modal" class="studio-dialog publishing-dialog">
+        <div class="dialog-header">
+          <div>
+            <p class="eyebrow dialog-eyebrow">DISTRIBUȚIE · L2</p>
+            <h2 class="dialog-title">Distribuție și publicare pe YouTube Shorts</h2>
+            <p class="dialog-desc">Publicare privată pe canalele YouTube oficiale. Fără credențiale reale nu se publică nimic — studioul nu simulează niciodată încărcări.</p>
+          </div>
+          <button id="close-publishing-btn" class="dialog-close" aria-label="Închide"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.4 6.4l11.2 11.2M17.6 6.4L6.4 17.6"/></svg></button>
+        </div>
+        <div class="dialog-body">
+
+          <div class="publishing-content-area" data-door-steps>
+            <!-- Gate & Channel Overview -->
+            <div class="pub-overview-grid" data-door-steps>
+              <div class="pub-card pub-channels-card" data-door-steps>
+                <div class="pub-card-header">
+                  <h3>Sloturi de canal</h3>
+                  <span class="privacy-badge privacy-badge-private">Privat implicit</span>
+                </div>
+                <div id="channels-list" class="channels-container" data-door-steps>
+                  <div class="topics-loading">Se încarcă canalele…</div>
+                </div>
+              </div>
+
+              <div class="pub-card pub-gate-card">
+                <div class="pub-card-header">
+                  <h3>Verificări înainte de publicare</h3>
+                  <span class="tag">din poarta studioului</span>
+                </div>
+                <div id="pub-gate-checks" class="pub-gate-checks" aria-live="polite">
+                  <p class="pub-gate-note">Se citește poarta de publicare…</p>
+                </div>
+              </div>
+            </div>
+
+            <!-- Quick Action & Notification -->
+            <div class="pub-actions-row">
+              <div class="pub-quick-info">
+                <strong>Publicare privată:</strong> studioul alege cel mai nou film care a trecut QC și te întreabă, numind filmul, canalul și vizibilitatea, înainte să-l încarce privat pe Canalul A. Are nevoie de un canal autentificat și de credențiale YouTube reale.
+              </div>
+              <div class="media-actions-bar">
+                <button id="trigger-quick-publish-btn" class="quiet btn-media-action btn-pub-action">Publică privat</button>
+                <button id="refresh-publishing-btn" class="quiet btn-refresh">Reîncarcă</button>
+              </div>
+            </div>
+            <div id="publisher-config-banner" class="dialog-status-msg" hidden></div>
+            <div id="publishing-status-msg" class="dialog-status-msg" role="status" hidden></div>
+            <div id="quick-publish-confirm" class="owner-confirm decision-confirm" role="group" aria-label="Confirmă publicarea" hidden></div>
+
+            <!-- Publications History Table -->
+            <div class="pub-history-section" data-door-steps>
+              <div class="topics-header-row">
+                <h3 class="dialog-section-header-bright-compact">Istoricul publicărilor</h3>
+              </div>
+              <div id="publications-list" class="publications-container" data-door-steps>
+                <div class="topics-loading">Se încarcă publicările…</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </dialog>
+      <p id="message" role="alert" class="message" hidden></p>
+      <!-- A film rendered or published as it happens: a quiet toast for under three seconds. -->
+      <div id="moment-toast" class="moment moment-toast" hidden></div>
+      <p id="moment-announce" class="moment-announce" role="status" aria-live="polite"></p>
+    </main>
+    <!-- W30: the doors' glass, painted with the workspace's warm-up under the title (style.css .glass-warm) -->
+    <div class="glass-warm" aria-hidden="true"><i></i><i></i></div>
+    <footer class="site-footer"><span>AMN-AI · Autonomous Machine Nexus — Artificial Intelligence</span><span>Muncă reală. Stare verificată.</span></footer>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

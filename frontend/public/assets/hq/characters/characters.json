@@ -1,0 +1,437 @@
+{
+ "frame": {
+  "w": 48,
+  "h": 60,
+  "pivot": [
+   24,
+   54
+  ],
+  "scale": 2
+ },
+ "characters": {
+  "sarah": {
+   "sheet": "sarah.png",
+   "columns": 8,
+   "role": "Director",
+   "canonical_name": "Sarah Executive",
+   "seat_facing": "front",
+   "animations": {
+    "sit_type_front": [
+     0,
+     1,
+     2,
+     3
+    ],
+    "sit_idle_front": [
+     4,
+     5
+    ],
+    "sit_think_front": [
+     6,
+     7
+    ],
+    "sit_talk_front": [
+     8,
+     9
+    ],
+    "sit_sleep_front": [
+     10,
+     11
+    ],
+    "sit_error_front": [
+     12,
+     13
+    ],
+    "stand_idle": [
+     14,
+     15
+    ],
+    "stand_react": [
+     16,
+     17
+    ],
+    "walk_right": [
+     18,
+     19,
+     20,
+     21,
+     22,
+     23,
+     24,
+     25
+    ]
+   }
+  },
+  "aris": {
+   "sheet": "aris.png",
+   "columns": 8,
+   "role": "LeadResearcher",
+   "canonical_name": "Dr. Aris Researcher",
+   "seat_facing": "front",
+   "animations": {
+    "sit_type_front": [
+     0,
+     1,
+     2,
+     3
+    ],
+    "sit_idle_front": [
+     4,
+     5
+    ],
+    "sit_think_front": [
+     6,
+     7
+    ],
+    "sit_talk_front": [
+     8,
+     9
+    ],
+    "sit_sleep_front": [
+     10,
+     11
+    ],
+    "sit_error_front": [
+     12,
+     13
+    ],
+    "stand_idle": [
+     14,
+     15
+    ],
+    "stand_react": [
+     16,
+     17
+    ],
+    "walk_right": [
+     18,
+     19,
+     20,
+     21,
+     22,
+     23,
+     24,
+     25
+    ]
+   }
+  },
+  "elena": {
+   "sheet": "elena.png",
+   "columns": 8,
+   "role": "FactChecker",
+   "canonical_name": "Elena Fact-Checker",
+   "seat_facing": "front",
+   "animations": {
+    "sit_type_front": [
+     0,
+     1,
+     2,
+     3
+    ],
+    "sit_idle_front": [
+     4,
+     5
+    ],
+    "sit_think_front": [
+     6,
+     7
+    ],
+    "sit_talk_front": [
+     8,
+     9
+    ],
+    "sit_sleep_front": [
+     10,
+     11
+    ],
+    "sit_error_front": [
+     12,
+     13
+    ],
+    "stand_idle": [
+     14,
+     15
+    ],
+    "stand_react": [
+     16,
+     17
+    ],
+    "walk_right": [
+     18,
+     19,
+     20,
+     21,
+     22,
+     23,
+     24,
+     25
+    ]
+   }
+  },
+  "marcus": {
+   "sheet": "marcus.png",
+   "columns": 8,
+   "role": "ScriptWriter",
+   "canonical_name": "Marcus Scriptwriter",
+   "seat_facing": "front",
+   "animations": {
+    "sit_type_front": [
+     0,
+     1,
+     2,
+     3
+    ],
+    "sit_idle_front": [
+     4,
+     5
+    ],
+    "sit_think_front": [
+     6,
+     7
+    ],
+    "sit_talk_front": [
+     8,
+     9
+    ],
+    "sit_sleep_front": [
+     10,
+     11
+    ],
+    "sit_error_front": [
+     12,
+     13
+    ],
+    "stand_idle": [
+     14,
+     15
+    ],
+    "stand_react": [
+     16,
+     17
+    ],
+    "walk_right": [
+     18,
+     19,
+     20,
+     21,
+     22,
+     23,
+     24,
+     25
+    ]
+   }
+  },
+  "lyra": {
+   "sheet": "lyra.png",
+   "columns": 8,
+   "role": "VoiceArtist",
+   "canonical_name": "Lyra Voice Artist",
+   "seat_facing": "front",
+   "animations": {
+    "sit_type_front": [
+     0,
+     1,
+     2,
+     3
+    ],
+    "sit_idle_front": [
+     4,
+     5
+    ],
+    "sit_think_front": [
+     6,
+     7
+    ],
+    "sit_talk_front": [
+     8,
+     9
+    ],
+    "sit_sleep_front": [
+     10,
+     11
+    ],
+    "sit_error_front": [
+     12,
+     13
+    ],
+    "stand_idle": [
+     14,
+     15
+    ],
+    "stand_react": [
+     16,
+     17
+    ],
+    "walk_right": [
+     18,
+     19,
+     20,
+     21,
+     22,
+     23,
+     24,
+     25
+    ]
+   }
+  },
+  "kael": {
+   "sheet": "kael.png",
+   "columns": 8,
+   "role": "VideoEditor",
+   "canonical_name": "Kael Video Editor",
+   "seat_facing": "front",
+   "animations": {
+    "sit_type_front": [
+     0,
+     1,
+     2,
+     3
+    ],
+    "sit_idle_front": [
+     4,
+     5
+    ],
+    "sit_think_front": [
+     6,
+     7
+    ],
+    "sit_talk_front": [
+     8,
+     9
+    ],
+    "sit_sleep_front": [
+     10,
+     11
+    ],
+    "sit_error_front": [
+     12,
+     13
+    ],
+    "stand_idle": [
+     14,
+     15
+    ],
+    "stand_react": [
+     16,
+     17
+    ],
+    "walk_right": [
+     18,
+     19,
+     20,
+     21,
+     22,
+     23,
+     24,
+     25
+    ]
+   }
+  },
+  "vera": {
+   "sheet": "vera.png",
+   "columns": 8,
+   "role": "Publisher",
+   "canonical_name": "Vera Distribution Hub",
+   "seat_facing": "front",
+   "animations": {
+    "sit_type_front": [
+     0,
+     1,
+     2,
+     3
+    ],
+    "sit_idle_front": [
+     4,
+     5
+    ],
+    "sit_think_front": [
+     6,
+     7
+    ],
+    "sit_talk_front": [
+     8,
+     9
+    ],
+    "sit_sleep_front": [
+     10,
+     11
+    ],
+    "sit_error_front": [
+     12,
+     13
+    ],
+    "stand_idle": [
+     14,
+     15
+    ],
+    "stand_react": [
+     16,
+     17
+    ],
+    "walk_right": [
+     18,
+     19,
+     20,
+     21,
+     22,
+     23,
+     24,
+     25
+    ]
+   }
+  },
+  "nadia": {
+   "sheet": "nadia.png",
+   "columns": 8,
+   "role": "Accountant",
+   "canonical_name": "Nadia Accountant",
+   "seat_facing": "front",
+   "animations": {
+    "sit_type_front": [
+     0,
+     1,
+     2,
+     3
+    ],
+    "sit_idle_front": [
+     4,
+     5
+    ],
+    "sit_think_front": [
+     6,
+     7
+    ],
+    "sit_talk_front": [
+     8,
+     9
+    ],
+    "sit_sleep_front": [
+     10,
+     11
+    ],
+    "sit_error_front": [
+     12,
+     13
+    ],
+    "stand_idle": [
+     14,
+     15
+    ],
+    "stand_react": [
+     16,
+     17
+    ],
+    "walk_right": [
+     18,
+     19,
+     20,
+     21,
+     22,
+     23,
+     24,
+     25
+    ]
+   }
+  }
+ }
+}

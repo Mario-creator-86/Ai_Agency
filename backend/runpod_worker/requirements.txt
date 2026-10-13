@@ -1,0 +1,4 @@
+# Worker image only (never the studio's environment). ComfyUI, Pillow, torch and the RunPod SDK
+# come from the pinned runpod/worker-comfyui base image.
+# boto3 >= 1.35 sends PutObject's IfNoneMatch (the claim marker's conditional write).
+boto3==1.35.36

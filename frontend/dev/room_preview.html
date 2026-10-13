@@ -1,0 +1,89 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Room preview</title>
+<style>body{margin:0;background:#0b1020}canvas{image-rendering:pixelated;display:block}</style></head>
+<body><canvas id="c"></canvas>
+<script type="module">
+import { drawZoneShell, bakeRoomLight, interiorFor, drawDeskFronts, fillZone, drawScreenContent, floorLine } from '../src/office_rooms.js';
+import { drawCharacterBody, drawCharacterHands, drawStateMark, agentLook, characterMetrics } from '../src/office_characters.js';
+import { glow } from '../src/pixel_sprites.js';
+import { department } from '../src/office_palette.js';
+import { loadAtlas } from '../src/office_atlas.js';
+import { usesAtlasCharacters } from '../src/office_rooms.js';
+const params = new URLSearchParams(location.search);
+// atlas=0 renders the procedural art (the "before"); anything else loads the sprite atlas.
+window.__ATLAS_BASE = '/public/';
+if (params.get('atlas') !== '0') await loadAtlas();
+const scale = Number(params.get('scale') || 4);
+const zoneType = params.get('zone') || 'RESEARCH';
+const time = Number(params.get('t') || 1.3);
+const ZONES = {
+  RESEARCH: { id: 'research_lab', zone_type: 'RESEARCH', floor: 3, x: 130, y: 195, width: 840, height: 130, desks: [{ id:'d1', x: 350, name: 'Lead Researcher', role_name: 'Researcher' }, { id:'d2', x: 680, name: 'Fact Checker', role_name: 'FactChecker' }] },
+  DIRECTOR: { id: 'director_suite', zone_type: 'DIRECTOR', floor: 4, x: 130, y: 60, width: 840, height: 130, desks: [{ id:'d1', x: 520, role_name: 'Director' }] },
+  SCRIPT: { id: 'script_room', zone_type: 'SCRIPT', floor: 2, x: 130, y: 330, width: 840, height: 130, desks: [{ id:'d1', x: 520, role_name: 'ScriptWriter' }] },
+  AUDIO: { id: 'audio_booth', zone_type: 'AUDIO', floor: 1, x: 130, y: 465, width: 415, height: 130, desks: [{ id:'d1', x: 330, role_name: 'VoiceArtist' }] },
+  VIDEO: { id: 'video_studio', zone_type: 'VIDEO', floor: 1, x: 555, y: 465, width: 415, height: 130, desks: [{ id:'d1', x: 750, role_name: 'VideoEditor' }] },
+  SERVER: { id: 'server_corner', zone_type: 'SERVER', floor: 0, x: 130, y: 600, width: 210, height: 200, desks: [{ id:'r1', x: 190, name: 'Ollama Cluster' }, { id:'r2', x: 285, name: 'Cloud Gateway' }] },
+  LOUNGE: { id: 'lounge_area', zone_type: 'LOUNGE', floor: 0, x: 350, y: 600, width: 230, height: 200, desks: [] },
+  PUBLISH: { id: 'publish_desk', zone_type: 'PUBLISH', floor: 0, x: 590, y: 600, width: 200, height: 200, desks: [{ id:'d1', x: 690, role_name: 'Publisher' }] },
+  SHOP: { id: 'ad_shop', zone_type: 'SHOP', floor: 0, x: 800, y: 600, width: 170, height: 200, desks: [] },
+};
+const list = zoneType === 'ALL' ? Object.keys(ZONES) : [zoneType];
+const modes = (params.get('modes') || 'work,think').split(',');
+function renderZone(zone, modeList) {
+  zone.isFloorLead = true; zone.floorRight = zone.x + zone.width;
+  const world = document.createElement('canvas');
+  world.width = zone.width + 20; world.height = zone.height + 20;
+  const ctx = world.getContext('2d');
+  ctx.translate(10 - zone.x, 10 - zone.y);
+  ctx.fillStyle = '#0b1020'; ctx.fillRect(zone.x - 10, zone.y - 10, zone.width + 20, zone.height + 20);
+  const live = { screens: [], leds: [], lamps: [], fans: [], vuMeters: [], steam: [], bubbles: [], radars: [], clocks: [], onAir: [], ceilingLights: [] };
+  drawZoneShell(ctx, zone);
+  const interior = interiorFor(zone, ctx, live, 0);
+  fillZone(ctx, zone, live, interior);
+  bakeRoomLight(ctx, zone, Number(params.get('daylight') || 0));
+  const looks = zone.desks.map((d, i) => agentLook(`agent-${i}-${zone.zone_type}`, d.role_name));
+  zone.desks.forEach((d, i) => {
+    const s = interior.stations.get(d.id);
+    if (!s) return;
+    const mode = modeList[i % modeList.length];
+    drawCharacterBody(ctx, s.seatX, s.deskTop, looks[i], mode, time, i === 0 && params.get('sel') === '1', false, usesAtlasCharacters(zone), mode === 'work' ? department(zone.zone_type).accent : null);
+  });
+  drawDeskFronts(ctx, zone, interior, live);
+  zone.desks.forEach((d, i) => {
+    const s = interior.stations.get(d.id);
+    if (!s) return;
+    drawCharacterHands(ctx, s.seatX, s.deskTop, looks[i], modeList[i % modeList.length], time, usesAtlasCharacters(zone));
+    const m = characterMetrics(s.deskTop);
+    drawStateMark(ctx, s.seatX, m.headTop, modeList[i % modeList.length], time);
+  });
+  for (const lamp of live.lamps) glow(ctx, lamp.x, lamp.y, lamp.r, lamp.color, 1);
+  for (const scr of live.screens) drawScreenContent(ctx, scr.kind, scr.mx, scr.my, scr.w, scr.h, time, scr.seed, scr.accent, true);
+  for (const led of live.leds) { ctx.fillStyle = led.color; ctx.fillRect(led.x, led.y, 2, 2); }
+  for (const bub of live.bubbles) { ctx.fillStyle = bub.color || '#cdeaf4'; ctx.fillRect(bub.x, bub.y - 4, 1, 1); ctx.fillRect(bub.x + 1, bub.y - 7, 1, 1); }
+  return { world, zone };
+}
+const rendered = list.map((k) => renderZone(ZONES[k], modes));
+const out = document.getElementById('c');
+const crop = (params.get('crop') || '').split(',').map(Number);
+const octx = out.getContext('2d');
+if (rendered.length > 1) {
+  const W = Math.max(...rendered.map((r) => r.world.width));
+  const H = rendered.reduce((sum, r) => sum + r.world.height, 0);
+  out.width = W * scale; out.height = H * scale;
+  octx.imageSmoothingEnabled = false;
+  let y = 0;
+  for (const r of rendered) { octx.drawImage(r.world, 0, y * scale, r.world.width * scale, r.world.height * scale); y += r.world.height; }
+} else {
+  const { world, zone } = rendered[0];
+  if (crop.length === 4 && !Number.isNaN(crop[0])) {
+    out.width = crop[2] * scale; out.height = crop[3] * scale;
+    octx.imageSmoothingEnabled = false;
+    octx.drawImage(world, crop[0] - zone.x + 10, crop[1] - zone.y + 10, crop[2], crop[3], 0, 0, out.width, out.height);
+  } else {
+    out.width = world.width * scale; out.height = world.height * scale;
+    octx.imageSmoothingEnabled = false;
+    octx.drawImage(world, 0, 0, out.width, out.height);
+  }
+}
+window.__ready = true;
+</script></body></html>

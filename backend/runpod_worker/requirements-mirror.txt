@@ -1,0 +1,2 @@
+# The one-time copy pod only (build.py mirror --execute), never the worker image.
+huggingface_hub==0.36.0

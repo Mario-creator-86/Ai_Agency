@@ -1,0 +1,1382 @@
+/* ==========================================================================
+   THE 3D WINDOW AND WHAT IS DRAWN OVER IT
+   ==========================================================================
+   The render is the hero of the page. Everything in this file is the chrome
+   around it, and the rule it follows is one sentence: nothing sits over the
+   picture without a ground, and every ground belongs to the scene.
+
+   Before this pass the chrome was four inventions. The clock floated on the
+   photograph on a rounded tab, set in mono at a tenth of an em; "Live Renderer
+   144fps" was a sans pill up in the panel's heading, far from the thing it
+   measures; the slate beneath the render was a loose caption on bare panel
+   ground; and the console under it was a row of bordered boxes on one tier and
+   a row of ghost labels on another, aligned to different left edges. Four
+   families, four scales, four alignments.
+
+   Now there is one instrument family. A READOUT is 28px tall (--scene-readout),
+   on the scene's own frosted plate, hairlined with --scene-chrome-edge and lit
+   along its top edge; its standing words are a small-caps label in
+   --scene-chrome-muted and its figures are mono and tabular in
+   --scene-chrome-ink. Three of them are LET INTO the bezel -- square where they
+   meet the frame, rounded only on the corner that faces the picture, so they
+   read as cut into the glass rather than laid on it: the clock and the weather
+   top left, the live state top right, the slate along the bottom lip. The
+   console below the render is a plate of the same ground carrying two tiers,
+   and every one of its controls is a ghost except the camera, which is one
+   instrument with hairlines between its four keys.
+
+   Every colour, radius, shadow, duration and measure here comes from the token
+   block at the top of frontend/src/style.css. Nothing states one of its own.
+   The art inside the render -- the building, the city, the street, the sky --
+   is not touched by anything in this file.
+   ========================================================================== */
+
+/* The sheen falls off over the heading band, so the stop is that band's own
+   height and not a number of its own. */
+.office-panel { background: linear-gradient(180deg, var(--sheen), transparent calc(var(--topbar-h) * 2)), var(--surface); border: 1px solid var(--line-strong); border-radius: var(--radius); color: var(--ink); }
+/* THE BAND ABOVE THE RENDER. It carried the live badge at its right end until
+   the badge was let into the glass, and what was left was a heading alone in
+   an 83px band 1422px wide. Nothing was brought back to fill it: every readout
+   this panel owns is already on the bezel -- the clock, the weather, the live
+   state, and on the slate the employee count and the moment it was read -- and
+   a second copy up here would be the page saying the same sentence twice.
+   So the band was tightened to what the heading needs. Its two lines were
+   leaded for running prose: --lh-body gave the 10px eyebrow a 16px line and
+   the 20px title a 30px one, inside 32px of padding. Both now take --lh-tight,
+   the token the type scale already names for titles and figures, and the
+   padding comes to the page's own rhythm. Measured at 1920x1080: 83px -> 64px,
+   which is the height the register's heading and the approvals heading have
+   always had, so the page now has one section-heading band instead of two. */
+.office-panel .office-heading { padding: var(--s3) var(--s6) var(--s3); align-items: center; }
+/* The eyebrow takes the page's own tracking and size; only its leading and its
+   margin are the heading's business. */
+.office-panel .office-heading .eyebrow { color: var(--ink-3); line-height: var(--lh-tight); margin: 0 0 var(--s1); }
+.office-panel .office-heading h2 { color: var(--ink); font-size: var(--fs-h2); font-weight: var(--w-semi); letter-spacing: var(--track-tight); line-height: var(--lh-tight); margin: 0; }
+
+/* --------------------------------------------------------------------------
+   THE INSTRUMENT FAMILY
+   -------------------------------------------------------------------------- */
+.scene-viewport .scene-readout,
+.scene-viewport .scene-slate {
+  position: absolute;
+  z-index: 5;
+  height: var(--scene-readout);
+  display: flex;
+  align-items: center;
+  background: var(--scene-chrome);
+  color: var(--scene-chrome-ink);
+  font-family: var(--font-sans);
+  font-size: var(--fs-meta);
+  font-weight: var(--w-semi);
+  line-height: var(--lh-tight);
+  letter-spacing: normal;
+  text-transform: none;
+  white-space: pre;
+  backdrop-filter: blur(var(--scene-blur));
+  /* A readout is never a target: the whole picture behind it stays draggable. */
+  pointer-events: none;
+}
+/* Let into the frame: square against the bezel, rounded towards the picture. */
+.scene-viewport .scene-readout-info {
+  top: 0; left: 0;
+  padding: 0 var(--s3);
+  border-right: 1px solid var(--scene-chrome-edge);
+  border-bottom: 1px solid var(--scene-chrome-edge);
+  border-radius: 0 0 var(--radius-sm) 0;
+  box-shadow: var(--lit-edge);
+}
+.scene-viewport .scene-readout-live {
+  top: 0; right: 0;
+  gap: var(--s2);
+  padding: 0 var(--s3);
+  border-left: 1px solid var(--scene-chrome-edge);
+  border-bottom: 1px solid var(--scene-chrome-edge);
+  border-radius: 0 0 0 var(--radius-sm);
+  box-shadow: var(--lit-edge);
+}
+/* The slate is the frame's bottom lip: what the Owner is looking at on the
+   left, when it was last read on the right, the full width of the render. */
+.scene-viewport .scene-slate {
+  left: 0; right: 0; bottom: 0;
+  justify-content: space-between;
+  gap: var(--s4);
+  padding: 0 var(--s4);
+  margin: 0;
+  border-top: 1px solid var(--scene-chrome-edge);
+  color: var(--scene-chrome-muted);
+  font-size: var(--fs-micro);
+  font-weight: var(--w-bold);
+  letter-spacing: var(--track-caps);
+  text-transform: uppercase;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.scene-viewport .scene-slate > span { overflow: hidden; text-overflow: ellipsis; }
+/* Two readouts share one edge, so neither may take more than half of it: on a
+   narrow render (600px page, a 546px picture) the clock and the live state were
+   8px apart, and one longer weather word would have run them into each other.
+   Each is held to half the bezel and what will not fit is trimmed; the words
+   themselves are untouched, so what the element says is still what it says. */
+.scene-viewport .scene-readout { max-width: 50%; overflow: hidden; }
+.scene-viewport .scene-readout > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* The left of the slate says what is being looked at; the right says when it
+   was last read, and that is a figure, so it is set as one. */
+.scene-viewport .scene-slate #snapshot-time { font-family: var(--font-mono); letter-spacing: normal; color: var(--scene-chrome-ink); }
+
+/* The pieces a readout is set in. The figure is the only mono on the render,
+   and it is tabular, so a ticking second never shoves the city name sideways;
+   the standing word beside it is a label and is set as one. */
+.scene-viewport .scene-figure { font-family: var(--font-mono); font-variant-numeric: tabular-nums; color: var(--scene-chrome-ink); }
+.scene-viewport .scene-label { font-size: var(--fs-micro); font-weight: var(--w-bold); letter-spacing: var(--track-caps); color: var(--scene-chrome-muted); }
+.scene-viewport .scene-sep { color: var(--scene-chrome-muted); }
+.scene-viewport .scene-weather { color: var(--scene-chrome-ink); font-weight: var(--w-med); }
+/* "Live Renderer 144fps" says every word it said. What changed is the weight:
+   the live state is the brightest thing in the readout, and what is running
+   and how fast it runs step back to a label and a figure behind it. */
+.scene-viewport .scene-live { color: var(--ink); font-weight: var(--w-bold); }
+/* THE FRAME RATE IS NOT A HEADING. The Owner watches his renderer, so the
+   number stays -- but it was set at --fs-meta in --scene-chrome-ink, the same
+   size and the same ink as the word Live beside it, and a figure that ticks
+   every second was leading a readout whose subject is that the render is
+   live. It takes the quiet meta treatment the rest of the chrome uses: the
+   smallest size, the muted ink, still mono and still tabular so a change from
+   9 to 144 never shoves the pill. This is scoped to the live readout: the
+   clock in the opposite corner is the same .scene-figure and is the whole
+   point of its own readout, so it keeps its size. --scene-chrome-muted and
+   not --ink-3: they are the same grey to a tenth of a step, and the label
+   three pixels to the left of this figure is already the scene's own. */
+.scene-viewport .scene-readout-live .scene-figure {
+  font-size: var(--fs-micro);
+  font-weight: var(--w-med);
+  color: var(--scene-chrome-muted);
+}
+.live-dot { width: var(--s2); height: var(--s2); border-radius: var(--radius-pill); background: var(--teal); box-shadow: var(--glow-live); flex: none; }
+/* THE LIVE READOUT SAYS WHAT IS TRUE (live_claims.js sets data-state).
+   live: the teal dot, pulsing (style.css). frozen / reconnecting: the stream's
+   last frame is up, or the events stopped arriving -- the dot is still and
+   warm, the words say "Se reconectează". stale / offline: the dot is still and
+   red. starting: the viewport's own plate already says the headquarters is
+   starting, so the corner says nothing. The dot is never the only carrier:
+   every state has its words. */
+.scene-viewport .scene-readout-live:not([data-state="live"]) .live-dot { background: var(--scene-chrome-muted); box-shadow: none; }
+.scene-viewport .scene-readout-live[data-state="frozen"] .live-dot,
+.scene-viewport .scene-readout-live[data-state="reconnecting"] .live-dot { background: var(--warn-ink); }
+.scene-viewport .scene-readout-live[data-state="stale"] .live-dot,
+.scene-viewport .scene-readout-live[data-state="offline"] .live-dot { background: var(--alert-ink); }
+.scene-viewport .scene-readout-live[data-state="starting"] { visibility: hidden; }
+
+/* --------------------------------------------------------------------------
+   WHAT THE SCENE SAYS WHEN IT HAS NOTHING TO SHOW
+   --------------------------------------------------------------------------
+   The same three shapes the rest of the page uses (style.css, "3 STATES"),
+   over the render instead of inside a list: a calm plate with a rail at its
+   edge while something is on its way, and the alert triple with a 2px rail
+   when something failed. The words are the product's own, unchanged. */
+.scene-viewport .scene-note {
+  position: absolute;
+  z-index: 4;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  max-width: min(var(--scene-note), 80%);
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  padding: var(--s4) var(--s5);
+  background: var(--surface-sunk);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-sm);
+  color: var(--ink-3);
+  font-family: var(--font-sans);
+  font-size: var(--fs-body);
+  font-weight: var(--w-body);
+  line-height: var(--lh-snug);
+  text-align: left;
+  text-wrap: pretty;
+  box-shadow: var(--shadow-raised);
+}
+.scene-viewport .scene-note::before {
+  content: '';
+  flex: none;
+  width: 2px;
+  align-self: stretch;
+  border-radius: var(--radius-pill);
+  background: var(--line-strong);
+}
+.scene-viewport .scene-note-error {
+  background: var(--alert-bg);
+  border: 1px solid var(--alert-line);
+  border-left: 2px solid var(--alert-ink);
+  color: var(--alert-ink);
+}
+.scene-viewport .scene-note-error::before { display: none; }
+
+/* --------------------------------------------------------------------------
+   THE VIEWPORT
+   -------------------------------------------------------------------------- */
+#office-scene-container { position: relative; height: auto; min-height: 0; display: flex; flex-direction: column; gap: var(--s3); margin: 0 var(--s5); padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; overflow: visible; }
+/* The render is the heaviest object on the page: the only black well, one
+   hairline bezel, and a lit top edge where the light falls on the glass. */
+#office-scene-container .scene-viewport {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1600 / 840;
+  border: 1px solid var(--scene-frame);
+  border-radius: var(--radius);
+  overflow: hidden;
+  /* W27: the stream's <video> stands 28 px past the frame's foot; `clip` shows the same picture and,
+     unlike `hidden`, is no scroll container, so no focus, find-in-page or hover can lift the building. */
+  overflow: clip;
+  background: var(--scene-deep);
+  box-shadow: var(--shadow-scene), inset 0 1px 0 var(--scene-frame-top);
+}
+#office-scene-container .office-canvas { position: absolute; inset: 0; width: 100%; height: 100%; background: var(--scene); }
+/* The scene answers the keyboard with the same ring every control on the page
+   answers it with, drawn inside the bezel so the frame's own corners keep it. */
+#office-scene-container .office-canvas:focus-visible { outline: 2px solid var(--teal); outline-offset: calc(-1 * var(--s1)); border-radius: var(--radius); }
+/* W18, seen with the real stream: the stream's layer lies over the canvas and the drawers over its
+   edges, so the canvas's own ring was never seen and a keyboard visitor on the building saw no focus
+   at all. The same ring is drawn over the room the drawers leave, above the stream and under the
+   instruments; the canvas's own outline is then not needed. */
+#office-scene-container .office-canvas:focus-visible { outline-color: transparent; }
+#office-scene-container .scene-viewport:has(.office-canvas:focus-visible)::after {
+  content: '';
+  position: absolute;
+  z-index: 3;
+  top: var(--s1);
+  bottom: calc(var(--scene-readout) + var(--s1));
+  left: calc(var(--hud-l) + var(--s1));
+  right: calc(var(--hud-r) + var(--s1));
+  border: 2px solid var(--teal);
+  border-radius: var(--radius-sm);
+  pointer-events: none;
+}
+
+/* The streamed Unreal headquarters lies over the renderer and lets clicks through to it. */
+#office-scene-container .live-stream-layer { position: absolute; inset: 0; z-index: 2; pointer-events: none; background: var(--scene); }
+/* The video is laid in its box whole (contain), so none of its rows -- the sky over the roof, the
+   roof's railing -- is cut before the page's camera places it (game_frame.js streamTransform). */
+#office-scene-container .live-stream-layer video { position: absolute; inset: 0; width: 100% !important; height: 100% !important; object-fit: contain; pointer-events: none !important; }
+/* W17, seen through the real stream: Pixel Streaming's VideoPlayer writes pointer-events: all on its
+   own video element, so the video took every click, hover and drag meant for the renderer under
+   it (no employee opened, no face's readout, no pan). The page's viewer sends no input to Unreal;
+   the pointer belongs to the page's hit boxes. */
+/* While not live the layer still covers the other renderer: the last frame, frozen, or a note. */
+#office-scene-container .live-stream-layer.paused video { visibility: hidden; }
+/* W18: reduced motion. The video still plays underneath (the stream stays connected); what is seen
+   is one real frame of it, kept and renewed every 10 s (hq_stream.js, HELD_STILL_MS). */
+#office-scene-container .live-stream-layer.held video { visibility: hidden; }
+/* Reconnecting: a readout of the same family, seated above the slate on the
+   right, because the picture behind it is a real frame that must stay seen. */
+#office-scene-container .live-stream-badge {
+  position: absolute;
+  right: 0;
+  bottom: var(--scene-readout);
+  z-index: 3;
+  height: var(--scene-readout);
+  display: flex;
+  align-items: center;
+  padding: 0 var(--s3);
+  background: var(--scene-chrome);
+  border-top: 1px solid var(--scene-chrome-edge);
+  border-left: 1px solid var(--scene-chrome-edge);
+  border-radius: var(--radius-sm) 0 0 0;
+  color: var(--scene-chrome-ink);
+  font-family: var(--font-sans);
+  font-weight: var(--w-semi);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-tight);
+  letter-spacing: normal;
+  backdrop-filter: blur(var(--scene-blur));
+  box-shadow: var(--lit-edge);
+}
+/* Starting, with no frame kept yet: there is nothing behind it to protect, so
+   the note takes the page's own loading shape in the middle of the dark. */
+#office-scene-container .live-stream-layer.waiting .live-stream-badge {
+  right: 50%;
+  bottom: 50%;
+  transform: translate(50%, 50%);
+  height: auto;
+  gap: var(--s3);
+  padding: var(--s4) var(--s5);
+  background: var(--surface-sunk);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-sm);
+  color: var(--ink-3);
+  font-size: var(--fs-body);
+  font-weight: var(--w-body);
+  line-height: var(--lh-snug);
+  backdrop-filter: none;
+  box-shadow: var(--shadow-raised);
+}
+#office-scene-container .live-stream-layer.waiting .live-stream-badge::before {
+  content: '';
+  flex: none;
+  width: 2px;
+  align-self: stretch;
+  border-radius: var(--radius-pill);
+  background: var(--line-strong);
+}
+/* W21: a headquarters that has not answered for a while (hq_stream_config.js streamSilent): the
+   plate's rail and words take the page's warn ink, so the dark reads as a silence, not a start. */
+#office-scene-container .live-stream-layer.waiting.silent .live-stream-badge { color: var(--warn-ink); border-color: var(--warn-line); background: var(--warn-bg); }
+#office-scene-container .live-stream-layer.waiting.silent .live-stream-badge::before { background: var(--warn-ink); }
+#office-scene-container .live-stream-still { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 1; object-fit: contain; }
+/* W19: before this visit's first live frame, the last live frame an earlier visit kept in this
+   browser (stream_keep.js), dimmed and named by the badge («ultimul cadru live · azi 22:48»); when
+   the live video presents its first frame, the kept one fades off it. */
+#office-scene-container .live-stream-layer.kept .live-stream-still { filter: var(--kept-dim); }
+#office-scene-container .live-stream-layer.handoff .live-stream-still { opacity: 0; transition: opacity var(--dur-handoff) var(--ease); }
+/* W19, the replay's door: into the replay the live picture, held as one real frame of it, fades into
+   the page's own graded building; back, the live video fades in over the replay's last frame. */
+.scene-viewport[data-replay] .live-stream-layer.door-out { visibility: visible; animation: stream-door-out var(--dur-door) var(--ease) both; }
+#office-scene-container .live-stream-layer.door-out video { visibility: hidden; }
+#office-scene-container .live-stream-layer.door-in { animation: stream-door-in var(--dur-door) var(--ease) both; }
+@keyframes stream-door-out { to { opacity: 0; } }
+@keyframes stream-door-in { from { opacity: 0; } }
+
+/* W19: THE STUDIO'S NUMBERS OVER THE LIVE VIDEO (stream_plaques.js). Small panes (four, seven since W21) of the
+   drawers' glass, anchored to real objects of the streamed building, laid by the page's camera. */
+.scene-viewport .stream-plaques { position: absolute; inset: 0; z-index: 3; pointer-events: none; overflow: hidden; overflow: clip; }
+.scene-viewport .stream-plaques[hidden] { display: none; }
+.scene-viewport[data-replay]:not([data-replay-look="unreal"]) .stream-plaques { visibility: hidden; }
+/* W22: over the replay played in the Unreal building the plaques stay, in the replay's ink */
+.scene-viewport .stream-plaques[data-replay] .stream-plaque { border-color: var(--replay-line); }
+.scene-viewport .stream-plaques[data-replay] .stream-plaque-eyebrow { color: var(--replay-ink); }
+.scene-viewport .stream-plaque {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 3px var(--s2) var(--s1);
+  background: linear-gradient(180deg, var(--sheen), transparent 70%), var(--plaque-glass);
+  border: 1px solid var(--plaque-edge);
+  border-radius: var(--radius-xs);
+  box-shadow: var(--lit-edge);
+  color: var(--ink);
+  white-space: nowrap;
+  opacity: 1;
+  transition: opacity var(--dur-slow) var(--ease);
+}
+.scene-viewport .stream-plaque[data-shown="false"] { opacity: 0; }
+.scene-viewport .stream-plaque-eyebrow {
+  color: var(--scene-chrome-muted);
+  font-size: var(--fs-micro);
+  font-weight: var(--w-bold);
+  letter-spacing: var(--track-caps);
+  line-height: var(--lh-tight);
+}
+.scene-viewport .stream-plaque-value {
+  color: var(--ink);
+  font-size: var(--fs-meta);
+  font-weight: var(--w-semi);
+  line-height: var(--lh-tight);
+  font-variant-numeric: tabular-nums;
+}
+.scene-viewport .stream-plaque[data-level="compact"] .stream-plaque-eyebrow { display: none; }
+.scene-viewport .stream-plaque[data-level="compact"] .stream-plaque-value { font-size: var(--fs-meta); }
+.scene-viewport .stream-plaque[data-level="full"] .stream-plaque-value { font-size: var(--fs-body); }
+.scene-viewport .stream-plaque[data-level="large"] { padding: var(--s1) var(--s3); }
+.scene-viewport .stream-plaque[data-level="large"] .stream-plaque-eyebrow { font-size: var(--fs-meta); }
+.scene-viewport .stream-plaque[data-level="large"] .stream-plaque-value { font-size: var(--fs-h3); }
+.scene-viewport .stream-plaque[data-tone="ok"] .stream-plaque-value { color: var(--ok-ink); }
+.scene-viewport .stream-plaque[data-tone="alert"] .stream-plaque-value { color: var(--alert-ink); }
+/* a hairline from the pane to the object it names */
+.scene-viewport .stream-plaque::after { content: ''; position: absolute; background: var(--plaque-stem); }
+.scene-viewport .stream-plaque[data-side="on"]::after { display: none; }
+.scene-viewport .stream-plaque[data-side="above"]::after { left: 50%; top: 100%; width: 1px; height: 6px; }
+.scene-viewport .stream-plaque[data-side="below"]::after { left: 50%; bottom: 100%; width: 1px; height: 6px; }
+.scene-viewport .stream-plaque[data-side="right"]::after { right: 100%; top: 50%; width: 6px; height: 1px; }
+.scene-viewport .stream-plaque[data-side="left"]::after { left: 100%; top: 50%; width: 6px; height: 1px; }
+@media (prefers-reduced-motion: reduce) {
+  .scene-viewport .stream-plaque,
+  #office-scene-container .live-stream-layer.handoff .live-stream-still { transition: none; }
+  .scene-viewport[data-replay] .live-stream-layer.door-out,
+  #office-scene-container .live-stream-layer.door-in { animation: none; }
+}
+
+/* --------------------------------------------------------------------------
+   THE CONSOLE -- two tiers, one plate, one alignment
+   --------------------------------------------------------------------------
+   Tier 1 is what the Owner sets and what he points the camera with; tier 2 is
+   the seven rooms, spread edge to edge like running heads. Every control on
+   both tiers is a ghost, so each tier's first word starts at the same left
+   margin and the two read as one instrument panel. The one bordered object is
+   the camera: four keys on a single plate divided by hairlines, because they
+   all move the same eye. Before this, tier 1 was seven separate boxes and the
+   eye aligned to their edges while tier 2's eye aligned to its glyphs -- the
+   two tiers never lined up at any width. */
+#office-scene-container .camera-toolbar {
+  position: static;
+  inset: auto;
+  transform: none;
+  height: max-content;
+  display: flex;
+  align-items: stretch;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  width: auto;
+  max-width: none;
+  padding: 0;
+  gap: 0;
+  background: var(--scene-chrome);
+  border: 1px solid var(--scene-chrome-edge);
+  border-radius: var(--radius);
+  box-shadow: var(--lit-edge), var(--shadow-raised);
+  overflow: hidden;
+}
+#office-scene-container .toolbar-group { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); }
+/* The GPU switch in the toolbar (gpu_switch.js): its reading and its key on one line. The key
+   never folds to an icon (it has none: its words ran over the reading and «MEDIU», 2026-10-12,
+   «Scrisul se suprapune!»); the reading gives way instead, ending in «…» and said whole on
+   hover. While his hold is on, the key is «Permite GPU din nou», in the allowing colour. */
+#office-scene-container .toolbar-scene .gpu-switch { display: inline-flex; align-items: center; gap: var(--s2); min-width: 0; flex: 0 1 auto; }
+#office-scene-container .toolbar-scene .gpu-switch[hidden] { display: none; }
+#office-scene-container .toolbar-scene .gpu-switch-state { min-width: 0; max-width: 52ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#office-scene-container .toolbar-scene .gpu-switch-off { flex: none; width: auto; padding: 0 var(--s3); white-space: nowrap; }
+/* «Permite GPU din nou…» is its own key at the switch's other end, never the stop key: a second
+   press on «Oprește GPU acum» must not undo the stop (19:48 UTC, 2026-10-12). */
+#office-scene-container .toolbar-scene .gpu-switch-allow { flex: none; width: auto; padding: 0 var(--s3); white-space: nowrap; color: var(--teal); border-color: var(--ok-line); background: var(--ok-bg); }
+#office-scene-container .toolbar-scene .gpu-switch-allow[hidden] { display: none; }
+#office-scene-container .toolbar-scene .gpu-switch-allow:disabled { opacity: .55; cursor: not-allowed; }
+#office-scene-container .toolbar-scene .gpu-switch-off:disabled { opacity: .45; cursor: default; }
+/* Tier 1: the two state readouts, the camera, and the way out to fullscreen. */
+#office-scene-container .toolbar-scene {
+  flex: 1 1 100%;
+  gap: var(--s2);
+  padding: var(--s2) var(--s3);
+}
+/* Tier 2: its own row under a hairline, on a darker ground, so the bar reads
+   as two registers rather than as one long queue. */
+#office-scene-container .toolbar-modules {
+  flex: 1 1 100%;
+  margin-left: 0;
+  justify-content: space-between;
+  flex-wrap: nowrap;
+  gap: var(--s1);
+  padding: var(--s2) var(--s3);
+  border-top: 1px solid var(--scene-frame);
+  background: color-mix(in srgb, var(--scene-deep) 38%, transparent);
+}
+
+/* One button. Ghost by default on both tiers, a ground on hover, the page's
+   ring on the keyboard, the page's pixel of travel on a press. */
+#office-scene-container .cam-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  height: var(--hit-lg);
+  padding: 0 var(--s3);
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--scene-chrome-ink);
+  font-weight: var(--w-semi);
+  font-size: var(--fs-body);
+  line-height: 1;
+  font-family: var(--font-sans);
+  letter-spacing: normal;
+  text-transform: none;
+  white-space: nowrap;
+  transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+#office-scene-container .cam-btn:hover:not(:disabled) { background: var(--surface-quiet); border-color: transparent; color: var(--ink); }
+#office-scene-container .cam-btn:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+#office-scene-container .cam-square { width: var(--hit-lg); padding: 0; justify-content: center; font-size: var(--fs-h3); }
+/* The fit and fullscreen keys carry an icon for the frame's dock; under the
+   render, on a narrow page, they say their word as they always did. */
+#office-scene-container .dock-icon { display: none; }
+/* The family's grid, stroke, caps, joins and currentColor come from .ui-icon
+   in style.css, which every icon in the product wears. What is the console's
+   own business is the ink and the measure: an icon here is quieter than the
+   word beside it, so the svg carries the muted colour and .ui-icon's
+   stroke: currentColor reads it. */
+#office-scene-container .cam-icon { color: var(--scene-chrome-muted); transition: color var(--dur) var(--ease); }
+/* The module buttons are what the Owner presses all day; their icon lights with them. */
+#office-scene-container .toolbar-modules .cam-btn:hover .cam-icon { color: var(--forest-ink); }
+/* An icon and its label are one word, so they sit at the tighter gap; and at
+   1280 the render's column is only 774px wide while the page is not narrow
+   enough for the 900px rule below, so those two measures are what keep the
+   seven rooms on one line instead of pushing Treasury past the plate's edge.
+   Measured at 1280x800: tier 2 ended 17px past the plate before this. */
+#office-scene-container .toolbar-modules .cam-btn { flex: 0 1 auto; min-width: 0; gap: var(--s1); }
+#office-scene-container .toolbar-modules .cam-icon { width: var(--scene-icon); height: var(--scene-icon); }
+/* The camera's keys carry the same family: the plus and the minus were a
+   font's characters set at --fs-h3 and sat 1px off the row's optical centre. */
+#office-scene-container .cam-group .ui-icon { color: var(--scene-chrome-ink); }
+
+/* THE CAMERA -- one instrument. Four keys, one plate, hairlines between. */
+#office-scene-container .cam-group {
+  display: flex;
+  align-items: stretch;
+  /* Tier 1 has two ends and they mean two different things: on the left what
+     the Owner SETS, on the right how he LOOKS. Both ends reach the plate's
+     margins, so tier 1 and tier 2 span exactly the same width. */
+  margin-left: auto;
+  background: var(--surface-sunk);
+  border: 1px solid var(--scene-chrome-edge);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--lit-edge);
+  overflow: hidden;
+}
+#office-scene-container .cam-group .cam-btn { border: 0; border-radius: 0; }
+#office-scene-container .cam-group .cam-btn + .cam-btn { border-left: 1px solid var(--scene-chrome-edge); }
+#office-scene-container .cam-group .cam-btn:hover:not(:disabled) { background: var(--surface-hi); }
+/* Fullscreen is the last key of the same instrument: it changes how the scene
+   is looked at, not what the studio does, so it stands beside the camera. */
+#office-scene-container .btn-fs, #office-scene-container .btn-exit-fs { margin-left: var(--s2); }
+/* Leaving fullscreen is the one control in the bar that undoes something, and
+   it keeps the page's destructive triple. Stated here because the ghost rule
+   above is scoped to the container and would otherwise outrank the page's. */
+#office-scene-container .btn-exit-fs { background: var(--alert-bg); border-color: var(--alert-line); color: var(--alert-ink); }
+#office-scene-container .btn-exit-fs:hover:not(:disabled) { background: var(--alert-bg-hi); border-color: var(--alert-ink); color: var(--alert-ink); }
+/* THE ROOM THAT IS OPEN. main.js marks the button whose dialog is showing; on
+   a bar of ghosts that mark is the one filled ground, in the studio's action
+   colour, and its icon lights with it. Same reason as above for the scope. */
+#office-scene-container .cam-btn.cam-btn-active { background: var(--forest); border-color: var(--forest-ink); color: var(--ink-on-dark); }
+#office-scene-container .cam-btn.cam-btn-active:hover:not(:disabled) { background: var(--forest-lift); color: var(--ink-on-dark); }
+#office-scene-container .cam-btn.cam-btn-active .cam-icon { color: var(--ink-on-dark); }
+
+/* THE TWO STATE READOUTS in the console. They are the studio's own state, not
+   camera controls, so they are set as readouts: a small-caps label, then the
+   value. They keep a full hit box and answer a hover whenever they can be
+   pressed, and they are flat and unlit when they cannot. */
+#office-scene-container .cam-switch { height: var(--hit-lg); padding: 0 var(--s3); gap: var(--s2); }
+#office-scene-container .cam-switch .switch-label { color: var(--scene-chrome-muted); font-size: var(--fs-micro); font-weight: var(--w-bold); letter-spacing: var(--track-caps); }
+/* The console used to redraw the toggle at 42x22 with a 16x14 knob and a travel
+   of 22, which left it 2px short of its own right inset. There is one toggle in
+   this product and it is drawn once, in style.css, from --switch-*. */
+
+/* --------------------------------------------------------------------------
+   FULLSCREEN
+   -------------------------------------------------------------------------- */
+#office-scene-container:fullscreen,
+#office-scene-container.is-fullscreen { position: fixed; inset: 0; z-index: 1000; height: 100vh; margin: 0; padding: var(--s4); background: var(--scene-deep); }
+#office-scene-container:fullscreen .scene-viewport,
+#office-scene-container.is-fullscreen .scene-viewport { flex: 1; aspect-ratio: auto; min-height: 0; }
+
+.office-panel { border-color: var(--line); }
+
+/* --------------------------------------------------------------------------
+   NARROW
+   -------------------------------------------------------------------------- */
+/* Below 900px the two tiers are allowed to wrap; above it they never do. */
+@media (max-width: 900px) {
+  #office-scene-container .toolbar-modules { flex-wrap: wrap; justify-content: flex-start; }
+  #office-scene-container .toolbar-modules .cam-btn,
+  #office-scene-container .toolbar-scene .cam-btn { height: var(--hit); font-size: var(--fs-meta); }
+  #office-scene-container .cam-switch { height: var(--hit); }
+  #office-scene-container .toolbar-scene .cam-square { width: var(--hit); }
+}
+@media (max-width: 720px) {
+  #office-scene-container { margin: 0 var(--s2); }
+  /* On a phone the render is small and the slate would eat it: the two corner
+     readouts stay, because they are the state, and the slate steps down. */
+  .scene-viewport .scene-readout, .scene-viewport .scene-slate { font-size: var(--fs-micro); }
+  .scene-viewport .scene-readout-info, .scene-viewport .scene-readout-live { padding: 0 var(--s2); }
+  .scene-viewport .scene-slate { padding: 0 var(--s3); }
+}
+
+
+/* ==========================================================================
+   7 THE LIVE BADGE DOES NOT CLAIM A PICTURE THAT IS NOT THERE
+   ==========================================================================
+   While the viewport is showing its loading plate or its error plate, the badge
+   in the opposite corner went on reading "Live Renderer 68fps" over a frame
+   whose only other content was the sentence saying the headquarters could not
+   be drawn. The badge is hidden for exactly as long as a plate is up; it says
+   the same words, at the same place, the moment the render is back.
+   ========================================================================== */
+.scene-viewport:has(.scene-note) .scene-readout-live { visibility: hidden; }
+
+/* The slate's stamp joins every other figure on the bezel on a fixed advance,
+   so the seconds stop shoving the caption beside them. */
+.scene-viewport .scene-slate #snapshot-time { font-variant-numeric: tabular-nums; }
+
+/* Fullscreen is the last key of the camera and now looks like one at rest: it
+   stood beside a bordered, filled group of four as bare text with no edge of
+   its own, and did not read as a control until the pointer was on it. */
+#office-scene-container .btn-fs {
+  background: var(--surface-sunk);
+  border-color: var(--scene-chrome-edge);
+  box-shadow: var(--lit-edge);
+}
+#office-scene-container .btn-fs:hover:not(:disabled) {
+  background: var(--surface-hi);
+  border-color: var(--scene-chrome-edge);
+}
+
+/* ==========================================================================
+   8 THE DAY ON THE SLATE, AND A CHAPTER OVER THE RENDER
+   ==========================================================================
+   The slate's middle carries the newest daily run as one segment per stage
+   (hud_charts.js dayTrack): lit green when the stage closed, warm when it was
+   partial, red when it failed or never finished, gold for the one the runbook
+   says is running, and a faint slot for a stage that has not begun. It is
+   drawn from the runbook's own events and changes only when one arrives; the
+   words beside it say the day, the tally and the state, so the colour never
+   carries the fact alone. Nothing on it moves by itself. */
+.scene-viewport .scene-slate #room-caption { flex: 1 1 auto; min-width: 0; }
+.scene-viewport .scene-slate #snapshot-time { flex: none; }
+.scene-viewport .scene-slate .day-track {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  color: var(--scene-chrome-ink);
+}
+.scene-viewport .day-track-bar { flex: none; display: block; overflow: visible; }
+.scene-viewport .day-track-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.scene-viewport .day-track[data-state="empty"] .day-track-bar { display: none; }
+.scene-viewport .day-track[data-state="empty"] .day-track-label { color: var(--scene-chrome-muted); }
+.track-seg { fill: var(--seg-pending); transition: fill var(--dur-seg) var(--ease); }
+.track-seg.seg-done    { fill: var(--ok-ink); }
+.track-seg.seg-partial { fill: var(--warn-ink); }
+.track-seg.seg-failed  { fill: var(--alert-ink); }
+.track-seg.seg-skipped { fill: var(--scene-chrome-muted); }
+.track-seg.seg-running { fill: var(--gold); }
+.track-seg.seg-unrun   { fill: var(--seg-unrun); }
+/* A render too narrow for the sentence keeps the segments and says only the
+   day and the tally (12.09 · 12/12); the tracker's aria-label still says all
+   of it. Measured: at a 1280 page the sentence ran into the caption and both
+   were cut. */
+.scene-viewport .day-track-short { display: none; }
+@media (max-width: 1600px) {
+  .scene-viewport .day-track-long { display: none; }
+  .scene-viewport .day-track-short { display: inline; }
+  /* The caption gives way first: the tally is a figure and is never cut. */
+  .scene-viewport .scene-slate .day-track { flex: none; }
+}
+
+/* The chapter card: set into the render's lower left, above the slate, on the
+   same glass as the instruments and with the studio's gold rule. It is up for
+   under three seconds (moments.js) and is the one place a moment covers the
+   picture. */
+.scene-viewport .moment-chapter {
+  position: absolute;
+  z-index: 7;
+  left: var(--s5);
+  bottom: calc(var(--scene-readout) + var(--s5));
+  max-width: var(--moment-w);
+  padding: var(--s4) calc(var(--s7) + var(--s4)) var(--s4) var(--s5);
+  background: var(--moment-glass);
+  border: 1px solid var(--scene-chrome-edge);
+  border-left: 2px solid var(--moment-edge);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  box-shadow: var(--lit-edge), var(--shadow-raised);
+  /* No backdrop blur: the picture under the card changes every frame, and a blur over it
+     would be recomputed every frame for a plate that is 90% opaque anyway. */
+  pointer-events: auto;
+  opacity: 0;
+  transform: translateY(var(--moment-rise));
+  transition: opacity var(--moment-in) var(--ease), transform var(--moment-in) var(--ease);
+}
+.scene-viewport .moment-chapter.is-in { opacity: 1; transform: none; }
+.scene-viewport .moment-chapter.is-out {
+  opacity: 0;
+  transform: none;
+  transition-duration: var(--moment-out);
+}
+@media (prefers-reduced-motion: reduce) {
+  /* Under the preference the card appears and leaves in place, for the same time. */
+  #office-scene-container .scene-viewport .moment-chapter { transform: none; transition: none; }
+  #office-scene-container .track-seg { transition: none; }
+}
+
+/* ==========================================================================
+   9 THE RENDER AS THE FRAME (W4, 2026-09-24)
+   ==========================================================================
+   On a screen at least 1051px wide and 600px tall (style.css section 9) the
+   render fills the frame edge to edge: no bezel, no corner, no heading band
+   above it (the heading stays for a screen reader). The instruments it
+   already wears keep their shapes and their words and stand inside the room
+   the drawers leave, --hud-l to --hud-r: the clock and the weather in the
+   top-left corner of that room, the live state in its top-right, the slate
+   along its bottom lip. The scene's switches and the camera are a dock of the
+   same glass hanging between them, in the row of sky the camera keeps over
+   the roof (--hud-top, W8): nothing of the instruments lies on the building,
+   and the street, the only thing that moves when the studio is quiet, is left
+   whole. The seven rooms have gone up to the masthead. When a drawer opens or
+   closes, the instruments slide with its edge and the camera re-centres the
+   building. */
+@media (min-width: 1051px) and (min-height: 600px) {
+  .office-panel .office-heading {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+  #office-scene-container { position: absolute; inset: 0; display: block; margin: 0; }
+  #office-scene-container .scene-viewport {
+    position: absolute;
+    inset: 0;
+    width: auto;
+    aspect-ratio: auto;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+  #office-scene-container .office-canvas:focus-visible { border-radius: 0; outline-offset: calc(-1 * var(--s1)); }
+  #office-scene-container .live-stream-layer video,
+  #office-scene-container .live-stream-still { transform-origin: 0 0; }
+
+  /* The instruments stand inside the room the drawers leave. */
+  .scene-viewport .scene-readout-info,
+  .scene-viewport .scene-readout-live,
+  .scene-viewport .scene-slate,
+  .scene-viewport .moment-chapter,
+  #office-scene-container .live-stream-badge,
+  #office-scene-container .camera-toolbar {
+    transition: left var(--dur-drawer) var(--ease), right var(--dur-drawer) var(--ease);
+  }
+  .scene-viewport .scene-readout { max-width: calc((100% - var(--hud-l) - var(--hud-r) - var(--dock-room)) / 2); }
+  .scene-viewport .scene-readout-info {
+    left: var(--hud-l);
+    border-left: 1px solid var(--scene-chrome-edge);
+    border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+  }
+  .scene-viewport .scene-readout-live {
+    right: var(--hud-r);
+    border-right: 1px solid var(--scene-chrome-edge);
+    border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+  }
+  #office-scene-container .live-stream-badge { right: var(--hud-r); }
+  .scene-viewport .scene-note { left: calc(var(--hud-l) + (100% - var(--hud-l) - var(--hud-r)) / 2); }
+  #office-scene-container .live-stream-layer.waiting .live-stream-badge { right: calc(var(--hud-r) + (100% - var(--hud-l) - var(--hud-r)) / 2); }
+  .scene-viewport .moment-chapter { left: calc(var(--hud-l) + var(--s5)); bottom: calc(var(--scene-readout) + var(--s5)); }
+
+  /* The slate is the room's bottom lip. It is a container, so what it says
+     is chosen by the room it has, not by the page's width: with both drawers
+     open the room is narrower than the page by 700px. */
+  .scene-viewport .scene-slate {
+    container: slate / inline-size;
+    left: var(--hud-l);
+    right: var(--hud-r);
+    height: auto;
+    min-height: var(--scene-readout);
+    flex-wrap: wrap;
+    row-gap: 0;
+    align-content: center;
+  }
+  .scene-viewport .scene-slate > span { min-height: var(--scene-readout); line-height: var(--scene-readout); }
+  .scene-viewport .scene-slate .day-track { min-height: var(--scene-readout); }
+
+  /* THE DOCK: the two switches, the camera and fullscreen, one plate of the
+     scene's glass hanging from the masthead in the middle of the room, in the
+     row of sky (W8; it stood over the zebra crossing and the near lane). The
+     outer box spans the room and is a container, so what the dock spells out
+     is chosen by the room it has: the state words always (PORNIT, TEST are
+     the studio's state), the switches' names from 1100px of room, the fit and
+     fullscreen words from 1500px; below that each is its icon, and its word is
+     a label that appears under it on the pointer and on the keyboard, as the
+     masthead's rooms do. Every key, id and name is the one it was. */
+  #office-scene-container .camera-toolbar {
+    position: absolute;
+    z-index: 6;
+    top: 0;
+    left: var(--hud-l);
+    right: var(--hud-r);
+    width: auto;
+    max-width: none;
+    height: 0;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    overflow: visible;
+    background: none;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    transform: none;
+    pointer-events: none;
+    container: dock / inline-size;
+  }
+  #office-scene-container .toolbar-scene {
+    flex: none;
+    flex-wrap: nowrap;
+    gap: var(--s1);
+    padding: var(--s1) var(--s2);
+    pointer-events: auto;
+    background: var(--scene-chrome);
+    border: 1px solid var(--scene-chrome-edge);
+    border-top: 0;
+    border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+    box-shadow: var(--lit-edge);
+    backdrop-filter: blur(var(--scene-blur));
+  }
+  #office-scene-container .toolbar-scene .cam-btn { position: relative; height: var(--hit); font-size: var(--fs-meta); }
+  #office-scene-container .toolbar-scene .cam-switch { padding: 0 var(--s2); }
+  #office-scene-container .toolbar-scene .cam-square { width: var(--hit); }
+  /* The camera's plate lets its keys' labels out below it; its end keys take its corners. */
+  #office-scene-container .cam-group { margin-left: var(--s1); overflow: visible; }
+  #office-scene-container .cam-group .cam-btn:first-child { border-radius: var(--radius-sm) 0 0 var(--radius-sm); }
+  #office-scene-container .cam-group .cam-btn:last-child { border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
+  #office-scene-container .btn-fs, #office-scene-container .btn-exit-fs { margin-left: var(--s1); }
+  #office-scene-container .cam-worded { gap: var(--s2); }
+  #office-scene-container .dock-icon { display: block; flex: none; width: var(--icon); height: var(--icon); color: var(--scene-chrome-ink); }
+
+  /* A word that is not spelled out is a floating label under its key. */
+  #office-scene-container .toolbar-scene :is(.switch-label, .dock-label) {
+    position: absolute;
+    top: calc(100% + var(--s2));
+    left: 50%;
+    z-index: 7;
+    translate: -50% 0;
+    padding: var(--s1) var(--s2);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius-xs);
+    background: var(--surface-sunk);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: var(--fs-micro);
+    font-weight: var(--w-bold);
+    letter-spacing: var(--track-caps);
+    text-transform: uppercase;
+    white-space: nowrap;
+    box-shadow: var(--shadow-raised);
+    opacity: 0;
+    pointer-events: none;
+    clip-path: inset(50%);
+    transition: opacity var(--dur-fast) var(--ease);
+  }
+  #office-scene-container .toolbar-scene .cam-worded { width: var(--hit); padding: 0; justify-content: center; }
+  #office-scene-container .toolbar-scene .cam-btn:is(:hover, :focus-visible) :is(.switch-label, .dock-label) { opacity: 1; clip-path: none; }
+
+  /* Before the menu has been lifted to the masthead, the rooms are not a second tier here. */
+  #office-scene-container .toolbar-modules { display: none; }
+}
+
+/* What the dock spells out for the room it has (it is a container only in the frame). */
+@container dock (min-width: 1100px) {
+  #office-scene-container .toolbar-scene .switch-label {
+    position: static;
+    translate: none;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--scene-chrome-muted);
+    box-shadow: none;
+    opacity: 1;
+    clip-path: none;
+  }
+}
+@container dock (min-width: 1500px) {
+  #office-scene-container .toolbar-scene .dock-label {
+    position: static;
+    translate: none;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    font-size: inherit;
+    font-weight: inherit;
+    letter-spacing: normal;
+    text-transform: none;
+    box-shadow: none;
+    opacity: 1;
+    clip-path: none;
+  }
+  #office-scene-container .toolbar-scene .cam-worded { width: auto; padding: 0 var(--s3); }
+}
+
+/* What the slate says for the room it has (it is a container only in the frame). */
+@container slate (min-width: 1040px) {
+  .scene-viewport .day-track-long { display: inline; }
+  .scene-viewport .day-track-short { display: none; }
+  .scene-viewport .scene-slate .day-track { flex: 0 1 auto; }
+}
+@container slate (max-width: 1039.98px) {
+  .scene-viewport .day-track-long { display: none; }
+  .scene-viewport .day-track-short { display: inline; }
+  .scene-viewport .scene-slate .day-track { flex: none; }
+}
+/* Too little room for the caption beside the day. It used to take the first
+   line whole and push the day and the hour to a second, and that second line
+   covered the road's near kerb by 12-18px at 1280 and 1440 with both drawers
+   open (W9). The slate now stays one line: the caption says only the count
+   and whether it is live («8 angajați · live»); the whole sentence stays its
+   title. Only a room narrower than any the frame opens (under 620px) still
+   folds to two lines rather than cut a word. */
+.scene-viewport .room-caption-short { display: none; }
+@container slate (max-width: 879.98px) {
+  .scene-viewport .scene-slate .room-caption-long { display: none; }
+  .scene-viewport .scene-slate .room-caption-short { display: inline; }
+}
+@container slate (max-width: 619.98px) {
+  .scene-viewport .scene-slate #room-caption { flex: 1 0 100%; overflow: visible; }
+  .scene-viewport .scene-slate .day-track { margin-right: auto; }
+}
+
+/* --------------------------------------------------------------------------
+   THE FACES MADE LEGIBLE (W10)
+   --------------------------------------------------------------------------
+   At fit zoom the building's bound faces are 30-45px wide: true, and too
+   small to read. The card below is laid beside the face the pointer or the
+   keyboard stands on (scene_readout.js; hq_readouts.js placeReadout keeps it
+   inside the room the drawers, the sky row and the slate leave, and off the
+   face itself). It is the drawers' own glass, with the page's type scale:
+   the face's name in small caps, its value in the display face, its second
+   line, what the face is, and what a click opens. It never takes the pointer:
+   the canvas under it keeps the hover. */
+.scene-viewport .face-card {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  gap: var(--s3);
+  align-items: flex-start;
+  width: var(--card-w);
+  max-width: calc(100% - var(--s6));
+  padding: var(--s3) var(--s4);
+  background: linear-gradient(180deg, var(--sheen), transparent 60%), var(--card-glass);
+  border: 1px solid var(--drawer-edge);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--lit-edge), var(--shadow-raised);
+  backdrop-filter: blur(var(--drawer-blur));
+  color: var(--ink);
+  pointer-events: none;
+  animation: face-card-in var(--dur) var(--ease);
+}
+.scene-viewport .face-card[hidden] { display: none; }
+/* With the film's frame beside the words, the words keep the card's own measure. */
+.scene-viewport .face-card:has(.face-card-poster:not([hidden])) { width: calc(var(--card-w) + var(--card-poster-w) + var(--s3)); }
+/* Reached by the keyboard, the card wears the focus colour its face's ring wears in the world. */
+.scene-viewport .face-card[data-via="keyboard"] { border-color: var(--teal); }
+.scene-viewport .face-card-poster {
+  flex: none;
+  width: var(--card-poster-w);
+  height: var(--card-poster-h);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-xs);
+}
+.scene-viewport .face-card-poster[hidden] { display: none; }
+.scene-viewport .face-card-text { flex: 1 1 auto; min-width: 0; }
+.scene-viewport .face-card p { margin: 0; }
+.scene-viewport .face-card p[hidden] { display: none; }
+.scene-viewport .face-card-eyebrow {
+  color: var(--scene-chrome-muted);
+  font-size: var(--fs-micro);
+  font-weight: var(--w-bold);
+  letter-spacing: var(--track-caps);
+  line-height: var(--lh-tight);
+  text-transform: uppercase;
+}
+.scene-viewport .face-card-value {
+  margin-top: var(--s1);
+  color: var(--ink);
+  font-family: var(--font-display);
+  font-size: var(--fs-h2);
+  font-weight: var(--w-display);
+  letter-spacing: var(--track-tight);
+  line-height: var(--lh-tight);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.scene-viewport .face-card[data-tone="ok"] .face-card-value { color: var(--ok-ink); }
+.scene-viewport .face-card[data-tone="warn"] .face-card-value { color: var(--warn-ink); }
+.scene-viewport .face-card[data-tone="alert"] .face-card-value { color: var(--alert-ink); }
+.scene-viewport .face-card-line {
+  margin-top: var(--s1);
+  color: var(--ink-2);
+  font-size: var(--fs-body);
+  line-height: var(--lh-snug);
+  overflow-wrap: anywhere;
+}
+.scene-viewport .face-card-context {
+  margin-top: var(--s2);
+  color: var(--ink-3);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-snug);
+}
+.scene-viewport .face-card-action {
+  margin-top: var(--s2);
+  padding-top: var(--s2);
+  border-top: 1px solid var(--line);
+  color: var(--scene-chrome-muted);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-snug);
+}
+@keyframes face-card-in {
+  from { opacity: 0; translate: 0 var(--s1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .scene-viewport .face-card { animation: none; }
+}
+
+/* --------------------------------------------------------------------------
+   «RELUAREA ZILEI» (W13)
+   --------------------------------------------------------------------------
+   The newest finished day, played back from the studio's own record
+   (day_replay.js, replay_player.js). Everything here says «this is not live»
+   before a word is read: a letterbox closes over the sky row and the street,
+   the world under it is graded towards grey and washed violet by the
+   renderer (hq_world.js drawReplayGrade; the words it draws are laid after
+   the grade, clear), the corner says RELUARE in the replay's violet in place
+   of «Live», and the moment's real clock stands beside the live one. Violet
+   is the replay's alone: gold is live or waiting for the Owner, green is act.
+   The controls are one plate on the letterbox's bottom bar, over the slate. */
+.scene-viewport .replay-letterbox { display: none; }
+.scene-viewport[data-replay] .replay-letterbox {
+  display: block;
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+}
+.scene-viewport[data-replay] .replay-letterbox::before,
+.scene-viewport[data-replay] .replay-letterbox::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  background: var(--replay-letterbox);
+  animation: replay-bar-in var(--dur-slow) var(--ease) both;
+}
+.scene-viewport[data-replay] .replay-letterbox::before { top: 0; height: var(--replay-bar-top); border-bottom: 1px solid var(--replay-line); transform-origin: top; }
+.scene-viewport[data-replay] .replay-letterbox::after { bottom: 0; height: var(--replay-bar-bottom); border-top: 1px solid var(--replay-line); transform-origin: bottom; }
+@keyframes replay-bar-in { from { transform: scaleY(0); } }
+/* The live clock keeps its hour and its city; the present's weather steps aside for the
+   replayed moment's clock (the engine writes five parts: hour, dot, city, dot, weather). */
+.scene-viewport[data-replay] #scene-info > :nth-child(n+4) { display: none; }
+/* In a narrower frame the live clock keeps its hour; the city is its title. */
+@media (max-width: 1599.98px) {
+  .scene-viewport[data-replay] #scene-info > :nth-child(n+2) { display: none; }
+  /* W17: without its city the live hour needs its own word beside ATUNCI: it is now. */
+  .scene-viewport[data-replay] .replay-now-label { display: inline; }
+  /* With both drawers open the corner has room for one clock only (about 140 px at 1280): the
+     replayed moment's, which is the one the picture is lit by. The live hour steps aside whole
+     rather than being cut to «A…» «2…»; the register beside it stays live and says so. */
+  :root[data-register="open"][data-side="open"] .scene-viewport[data-replay] .replay-now-label,
+  :root[data-register="open"][data-side="open"] .scene-viewport[data-replay] #scene-info { display: none; }
+  :root[data-register="open"][data-side="open"] .scene-viewport[data-replay] .replay-then { margin-left: 0; padding-left: 0; border-left: 0; }
+}
+/* The replayed moment's clock is never the part that is cut. */
+.scene-viewport .replay-then { flex-shrink: 0; }
+.scene-viewport .replay-now-label { display: none; margin-right: var(--s2); }
+/* The stream's layer stays connected and is only not shown: the replay is the page's own drawing. */
+.scene-viewport[data-replay] .live-stream-layer { visibility: hidden; }
+/* W16: the live snapshot's «Actualizat hh:mm:ss» steps aside inside the letterbox. Beside the
+   replayed run's «acum: …» it read as «now, updated at <live hour>»; the register (outside the
+   world) stays live and says so. */
+.scene-viewport[data-replay] .scene-slate #snapshot-time { display: none; }
+
+/* The corner: RELUARE in place of «Live», in the replay's ink. */
+.scene-viewport .scene-readout-live[data-state="replay"] { border-color: var(--replay-line); }
+.scene-viewport .scene-readout-live[data-state="replay"] .live-dot { background: var(--replay-ink); box-shadow: none; }
+.scene-viewport .scene-readout-live[data-state="replay"] .scene-live { color: var(--replay-ink); letter-spacing: var(--track-caps); font-size: var(--fs-micro); font-weight: var(--w-bold); }
+/* Beside the live clock: the replayed moment's own clock, from the record. */
+.scene-viewport .replay-then {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  margin-left: var(--s3);
+  padding-left: var(--s3);
+  border-left: 1px solid var(--replay-line);
+}
+.scene-viewport .replay-then[hidden] { display: none; }
+.scene-viewport .replay-then-label { color: var(--replay-ink); font-size: var(--fs-micro); font-weight: var(--w-bold); letter-spacing: var(--track-caps); }
+
+/* The dock's key: pressed while the day is replayed. */
+#office-scene-container .replay-toggle[aria-pressed="true"],
+#office-scene-container .replay-toggle[aria-pressed="true"] .dock-icon { color: var(--replay-ink); }
+#office-scene-container .replay-toggle[aria-pressed="true"] { background: var(--replay-bg); border-color: var(--replay-line); }
+#office-scene-container .replay-toggle[aria-busy="true"] { cursor: progress; }
+
+/* THE CONTROLS: one plate of the scene's glass, edged in the replay's violet. */
+.scene-viewport .replay-bar {
+  container: replay / inline-size;
+  position: absolute;
+  z-index: 6;
+  left: calc(var(--hud-l) + var(--s3));
+  right: calc(var(--hud-r) + var(--s3));
+  bottom: calc(var(--scene-readout) + var(--s2));
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  min-height: var(--s9);
+  padding: 0 var(--s2) 0 var(--s3);
+  background: var(--scene-chrome);
+  border: 1px solid var(--replay-line);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--lit-edge), var(--shadow-raised);
+  backdrop-filter: blur(var(--scene-blur));
+  color: var(--scene-chrome-ink);
+  font-family: var(--font-sans);
+  animation: replay-plate-in var(--dur-slow) var(--ease) both;
+}
+.scene-viewport .replay-bar[hidden] { display: none; }
+@keyframes replay-plate-in { from { opacity: 0; translate: 0 var(--s2); } }
+.scene-viewport .replay-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  flex: none;
+  padding: 0 var(--s2);
+  height: var(--chip-h);
+  border: 1px solid var(--replay-line);
+  border-radius: var(--radius-xs);
+  background: var(--replay-bg);
+  color: var(--replay-ink);
+  font-size: var(--fs-micro);
+  font-weight: var(--w-bold);
+  letter-spacing: var(--track-caps);
+}
+.scene-viewport .replay-dot { width: var(--s2); height: var(--s2); border-radius: var(--radius-pill); background: var(--replay-ink); }
+.scene-viewport .replay-keys { display: inline-flex; gap: var(--s1); flex: none; }
+.scene-viewport .replay-key,
+.scene-viewport .replay-speed {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s2);
+  min-width: var(--hit);
+  height: var(--hit);
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--scene-chrome-ink);
+  font-size: var(--fs-meta);
+  font-weight: var(--w-semi);
+  line-height: 1;
+}
+.scene-viewport .replay-key:hover,
+.scene-viewport .replay-speed:hover { background: var(--surface-quiet); color: var(--ink); }
+.scene-viewport .replay-key:focus-visible,
+.scene-viewport .replay-speed:focus-visible,
+.scene-viewport .replay-scrub:focus-visible,
+.scene-viewport .replay-live-go:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+.scene-viewport .replay-key .ui-icon { width: var(--icon); height: var(--icon); }
+.scene-viewport .replay-play { background: var(--replay-bg); border-color: var(--replay-line); color: var(--replay-ink); }
+.scene-viewport .replay-play[data-state="playing"] .replay-icon-play,
+.scene-viewport .replay-play[data-state="paused"] .replay-icon-pause { display: none; }
+.scene-viewport .replay-play .replay-icon-play { fill: currentColor; }
+
+/* The run as a line: the part played in the replay's fill, each stage's start a tick. */
+.scene-viewport .replay-track {
+  --replay-p: 0%;
+  position: relative;
+  flex: 2 1 var(--card-w);
+  min-width: var(--s9);
+  height: var(--hit);
+}
+.scene-viewport .replay-scrub {
+  -webkit-appearance: none;
+  appearance: none;
+  position: relative;
+  z-index: 1;
+  display: block;
+  width: 100%;
+  height: var(--hit);
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.scene-viewport .replay-scrub::-webkit-slider-runnable-track {
+  height: var(--s1);
+  border-radius: var(--radius-pill);
+  background: linear-gradient(90deg, var(--replay-fill) var(--replay-p), var(--replay-rest) var(--replay-p));
+}
+.scene-viewport .replay-scrub::-moz-range-track {
+  height: var(--s1);
+  border-radius: var(--radius-pill);
+  background: linear-gradient(90deg, var(--replay-fill) var(--replay-p), var(--replay-rest) var(--replay-p));
+}
+.scene-viewport .replay-scrub::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: var(--s4);
+  height: var(--s4);
+  margin-top: calc((var(--s1) - var(--s4)) / 2);
+  border: 2px solid var(--scene);
+  border-radius: var(--radius-pill);
+  background: var(--replay-ink);
+  box-shadow: 0 0 0 1px var(--replay-line);
+}
+.scene-viewport .replay-scrub::-moz-range-thumb {
+  width: var(--s4);
+  height: var(--s4);
+  border: 2px solid var(--scene);
+  border-radius: var(--radius-pill);
+  background: var(--replay-ink);
+}
+.scene-viewport .replay-ticks { position: absolute; inset: 0; pointer-events: none; }
+.scene-viewport .replay-tick {
+  position: absolute;
+  top: 50%;
+  width: 2px;
+  height: var(--s3);
+  translate: -50% -50%;
+  border-radius: 1px;
+  background: var(--replay-tick);
+}
+/* A quiet stretch of the record (nothing written for 30 s or more) passes in 2 s: on the line it
+   is a dotted run, as short as it is on the page, and the rate beside the line gives its times. */
+.scene-viewport .replay-quiet {
+  position: absolute;
+  top: 50%;
+  z-index: 2;
+  height: var(--s3);
+  translate: 0 -50%;
+  border-radius: 1px;
+  background: repeating-linear-gradient(90deg, var(--replay-tick) 0 2px, transparent 2px 5px);
+}
+.scene-viewport .replay-when {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 30ch;
+  min-width: 22ch;
+  max-width: 62ch;
+  margin: 0;
+  line-height: var(--lh-tight);
+}
+.scene-viewport .replay-when > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.scene-viewport .replay-time { color: var(--replay-ink); font-family: var(--font-mono); font-size: var(--fs-body); font-weight: var(--w-semi); font-variant-numeric: tabular-nums; }
+.scene-viewport .replay-stage { color: var(--scene-chrome-ink); font-size: var(--fs-meta); }
+.scene-viewport .replay-meta { color: var(--scene-chrome-muted); font-size: var(--fs-micro); }
+.scene-viewport .replay-progress { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.scene-viewport .replay-speeds { display: inline-flex; flex: none; padding: 1px; gap: 1px; border: 1px solid var(--scene-chrome-edge); border-radius: var(--radius-sm); }
+.scene-viewport .replay-speed { min-width: var(--s8); font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.scene-viewport .replay-speed[aria-pressed="true"] { background: var(--replay-bg); border-color: var(--replay-line); color: var(--replay-ink); }
+.scene-viewport .replay-exit { flex: none; padding: 0 var(--s3); border-color: var(--scene-chrome-edge); }
+.scene-viewport .replay-exit[hidden] { display: none; }
+/* W17: at the end, paused on the whole run, the way back to live stands beside it, in the act's
+   green (the prompt's «Înapoi la live · 6» key, without a count: nothing is waiting). */
+.scene-viewport .replay-back {
+  flex: none;
+  min-height: var(--hit);
+  padding: 0 var(--s4);
+  border: 1px solid var(--forest-lift);
+  border-radius: var(--radius-xs);
+  background: var(--forest);
+  color: var(--ink-on-dark);
+  font-size: var(--fs-meta);
+  font-weight: var(--w-semi);
+  white-space: nowrap;
+}
+.scene-viewport .replay-back[hidden] { display: none; }
+.scene-viewport .replay-back:hover { background: var(--forest-lift); }
+.scene-viewport .replay-back:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+/* What the plate spells out for the room it has. */
+@container replay (max-width: 999.98px) {
+  .scene-viewport .replay-badge { display: none; }
+}
+@container replay (max-width: 859.98px) {
+  .scene-viewport .replay-exit span { display: none; }
+  .scene-viewport .replay-exit { padding: 0; }
+}
+
+/* LIVE WINS: the prompt, in the live gold, over the replay's grey. */
+.scene-viewport .replay-live {
+  position: absolute;
+  z-index: 7;
+  top: calc(var(--replay-bar-top) + var(--s4));
+  left: calc(var(--hud-l) + (100% - var(--hud-l) - var(--hud-r)) / 2);
+  translate: -50% 0;
+  width: min(var(--toast-w), calc(100% - var(--hud-l) - var(--hud-r) - var(--s6)));
+  padding: var(--s3) var(--s4);
+  background: linear-gradient(180deg, var(--sheen), transparent 60%), var(--card-glass);
+  border: 1px solid var(--moment-edge);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--lit-edge), var(--shadow-raised);
+  backdrop-filter: blur(var(--drawer-blur));
+  animation: replay-plate-in var(--dur) var(--ease) both;
+}
+.scene-viewport .replay-live[hidden] { display: none; }
+.scene-viewport .replay-live-eyebrow { display: flex; align-items: center; gap: var(--s2); margin: 0; color: var(--gold-ink); font-size: var(--fs-micro); font-weight: var(--w-bold); letter-spacing: var(--track-caps); }
+.scene-viewport .replay-live-eyebrow .live-dot { background: var(--gold); }
+.scene-viewport .replay-live-what { margin: var(--s2) 0 var(--s3); color: var(--ink); font-size: var(--fs-body); line-height: var(--lh-snug); overflow-wrap: anywhere; }
+.scene-viewport .replay-live-go {
+  min-height: var(--hit);
+  padding: 0 var(--s4);
+  border: 1px solid var(--forest-lift);
+  border-radius: var(--radius-xs);
+  background: var(--forest);
+  color: var(--ink-on-dark);
+  font-size: var(--fs-meta);
+  font-weight: var(--w-semi);
+  font-variant-numeric: tabular-nums;
+}
+.scene-viewport .replay-live-go:hover { background: var(--forest-lift); }
+
+/* The replayed world draws no weather: under the ATUNCI clock, on the letterbox's top bar, the
+   page says it does not know the weather of that moment (W15). */
+.scene-viewport .replay-weather {
+  position: absolute;
+  z-index: 5;
+  top: calc(var(--scene-readout) + 3px);
+  left: calc(var(--hud-l, 0px) + var(--s3));
+  margin: 0;
+  color: var(--replay-ink);
+  font-size: var(--fs-micro);
+  font-weight: var(--w-semi);
+  line-height: var(--lh-tight);
+  /* W17: in the room left of the dock, as the clock above it; where that room is short (both
+     drawers open at 1280) the line wraps instead of running under the dock. */
+  max-width: calc((100% - var(--hud-l, 0px) - var(--hud-r, 0px) - var(--dock-room, 0px)) / 2);
+  pointer-events: none;
+}
+.scene-viewport .replay-weather[hidden] { display: none; }
+
+/* THE REPLAY OFFERED (W15): the invitation, a pane of the drawers' glass edged in the replay's
+   violet, laid on the street under the building (replay_invite.js invitePlacement writes left and
+   top). Text on the left, the two keys on the right, so it is one low band, not a card. */
+.scene-viewport .replay-invite {
+  position: absolute;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: var(--s4);
+  max-width: min(780px, calc(100% - var(--hud-l, 0px) - var(--hud-r, 0px) - var(--s6)));
+  padding: var(--s2) var(--s3) var(--s2) var(--s4);
+  background: linear-gradient(180deg, var(--sheen), transparent 60%), var(--card-glass);
+  border: 1px solid var(--replay-line);
+  border-left: 3px solid var(--replay-fill);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--lit-edge), var(--shadow-raised);
+  backdrop-filter: blur(var(--drawer-blur));
+}
+.scene-viewport .replay-invite[hidden] { display: none; }
+.scene-viewport .replay-invite[data-motion="enter"] { animation: replay-invite-in var(--dur-invite) var(--ease) both; }
+@keyframes replay-invite-in { from { opacity: 0; translate: 0 var(--s3); } }
+.scene-viewport .replay-invite-text { min-width: 0; }
+.scene-viewport .replay-invite-eyebrow { display: flex; align-items: center; gap: var(--s2); margin: 0 0 2px; color: var(--replay-ink); font-size: var(--fs-micro); font-weight: var(--w-bold); letter-spacing: var(--track-caps); }
+.scene-viewport .replay-invite-lead { margin: 0; color: var(--ink); font-size: var(--fs-body); font-weight: var(--w-semi); line-height: var(--lh-tight); }
+.scene-viewport .replay-invite-line { margin: 2px 0 0; color: var(--scene-chrome-ink); font-size: var(--fs-meta); line-height: var(--lh-tight); }
+.scene-viewport .replay-invite-keys { display: flex; flex: none; gap: var(--s2); }
+.scene-viewport .replay-invite-go,
+.scene-viewport .replay-invite-later {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  min-height: var(--hit);
+  padding: 0 var(--s4);
+  border-radius: var(--radius-xs);
+  font-size: var(--fs-meta);
+  font-weight: var(--w-semi);
+  white-space: nowrap;
+}
+.scene-viewport .replay-invite-go { border: 1px solid var(--replay-ink); background: var(--replay-fill); color: var(--replay-on-fill); }
+.scene-viewport .replay-invite-go .ui-icon { width: var(--icon); height: var(--icon); }
+.scene-viewport .replay-invite-go:hover { background: var(--replay-ink); }
+.scene-viewport .replay-invite-later { border: 1px solid var(--scene-chrome-edge); background: transparent; color: var(--scene-chrome-ink); }
+.scene-viewport .replay-invite-later:hover { background: var(--surface-quiet); color: var(--ink); }
+.scene-viewport .replay-invite-go:focus-visible,
+.scene-viewport .replay-invite-later:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .scene-viewport .replay-invite[data-motion] { animation: none; }
+  .scene-viewport[data-replay] .replay-letterbox::before,
+  .scene-viewport[data-replay] .replay-letterbox::after,
+  .scene-viewport .replay-bar,
+  .scene-viewport .replay-live { animation: none; }
+}

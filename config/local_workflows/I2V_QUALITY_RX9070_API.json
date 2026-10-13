@@ -1,0 +1,52 @@
+{
+  "1": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "input.png"
+    }
+  },
+  "2": {
+    "class_type": "StudioSequentialI2V",
+    "_meta": {
+      "title": "QUALITY — prompt și mișcare"
+    },
+    "inputs": {
+      "image": [
+        "1",
+        0
+      ],
+      "profile": "WAN_A14B_EULER_40",
+      "prompt": "A farmer working on terraced fields, natural body movement, realistic walking and digging motion, subtle cinematic camera movement, physically plausible motion, consistent anatomy, realistic documentary style.",
+      "negative_prompt": "",
+      "width": 512,
+      "height": 896,
+      "frames": 65,
+      "fps": 16,
+      "seed": 907004,
+      "decode_tile": 256,
+      "decode_temporal": 104
+    }
+  },
+  "3": {
+    "class_type": "CreateVideo",
+    "inputs": {
+      "images": [
+        "2",
+        0
+      ],
+      "fps": 16
+    }
+  },
+  "4": {
+    "class_type": "SaveVideo",
+    "inputs": {
+      "video": [
+        "3",
+        0
+      ],
+      "filename_prefix": "Studio/QUALITY_RX9070",
+      "format": "mp4",
+      "format.codec": "h264"
+    }
+  }
+}

@@ -1,0 +1,154 @@
+"""Answered letters: existing local-first media checks.
+
+Private production traces omitted; implementation unchanged."""
+
+from __future__ import annotations
+
+from typing import Any
+from uuid import uuid4
+
+from sqlalchemy import Engine, select
+from sqlalchemy.orm import Session
+
+from app.services import pending_approvals
+
+#: Who closed it, in the letter's record (the stage reports' archive uses the same word).
+RESOLVED_BY = "system"
+#: The sheet's letter and the list of his standing questions (`runbook.stages`,
+#: `economy.accountant.waiting_approvals_letter`).
+SHEET_LETTER = "owner_shooting_sheet"
+WAITING_LETTER = "owner_waiting"
+
+ANSWERED_RO = (
+    "Închisă de studio: întrebarea din scrisoare nu mai așteaptă răspunsul tău (ai răspuns, "
+    "a fost retrasă sau a expirat)."
+)
+SUPERSEDED_RO = (
+    "Închisă de studio: o scrisoare mai nouă despre același film spune unde a ajuns acum."
+)
+LIST_ANSWERED_RO = "Închisă de studio: nicio întrebare din listă nu mai așteaptă răspunsul tău."
+MOVED_ON_RO = (
+    "Închisă de studio: filmul a plecat din starea despre care întreba scrisoarea; acum: {now}"
+)
+#: Where a walk left a film (`runbook.stages.FILM_STATE_EVENT`): its status and reason.
+FILM_STATE_EVENT = "runbook.film_state"
+
+
+def _state_words(text: Any) -> str:
+    return " ".join(str(text or "").split()).rstrip(" .")
+
+
+def _film_moved_on(
+    session: Session, film: str, written_at: str, body: dict[str, Any]
+) -> str | None:
+    """Where the film's newest walk left it, when that is not the state the letter named (a
+    walk newer than the letter, with another status or reason); None while the letter is
+    still the film's word. Reads only."""
+    from app.models import DomainEvent  # noqa: PLC0415
+
+    newest = session.scalar(
+        select(DomainEvent)
+        .where(
+            DomainEvent.event_type == FILM_STATE_EVENT,
+            DomainEvent.aggregate_id == film,
+            DomainEvent.timestamp > written_at,
+        )
+        .order_by(DomainEvent.sequence.desc())
+        .limit(1)
+    )
+    if newest is None:
+        return None
+    payload = newest.payload if isinstance(newest.payload, dict) else {}
+    status = str(payload.get("status") or "")
+    reason = _state_words(payload.get("reason"))
+    if status == "WAITING" and reason == _state_words(body.get("reason")):
+        return None
+    return reason or status or "filmul a mers mai departe"
+
+
+def retire_answered_letters(engine: Engine, correlation_id: str | None = None) -> dict[str, Any]:
+    """Close the asking letters whose question no longer waits. Returns the closed ids by
+    reason. Idempotent: a closed letter is never read again."""
+    from app.agents.messages import is_for_owner, resolve_message  # noqa: PLC0415
+    from app.agents.models import AgentMessage  # noqa: PLC0415
+    from app.db import lock_for_write  # noqa: PLC0415
+
+    correlation = correlation_id or str(uuid4())
+    closed: dict[str, list[str]] = {"answered": [], "superseded": [], "moved_on": [], "lists": []}
+    with Session(engine) as session, session.begin():
+        lock_for_write(session)
+        # Read after the lock: a question asked (and its letter written) before it is in the
+        # list, and nothing new can be asked until this pass commits.
+        waiting = {view.id for view in pending_approvals(engine)}
+        letters = [
+            row
+            for row in session.scalars(
+                select(AgentMessage)
+                .where(AgentMessage.to_agent_id.is_(None))
+                .order_by(AgentMessage.created_at)
+            )
+            if is_for_owner(row)
+        ]
+        # The newest sheet letter of each film, whatever its status: the film's current word.
+        newest: dict[str, str] = {}
+        for row in letters:
+            body = row.body_json if isinstance(row.body_json, dict) else {}
+            if body.get("kind") == SHEET_LETTER and body.get("storyboard_id"):
+                film = str(body["storyboard_id"])
+                newest[film] = max(newest.get(film, ""), str(row.created_at))
+        for row in letters:
+            if row.status != "OPEN":
+                continue
+            body = row.body_json if isinstance(row.body_json, dict) else {}
+            kind = body.get("kind")
+            if kind == SHEET_LETTER:
+                approval_id = str(body.get("approval_id") or "")
+                if approval_id and approval_id not in waiting:
+                    resolve_message(
+                        session,
+                        row.id,
+                        resolution=ANSWERED_RO,
+                        resolved_by=RESOLVED_BY,
+                        correlation_id=correlation,
+                    )
+                    closed["answered"].append(str(row.id))
+                    continue
+                film = str(body.get("storyboard_id") or "")
+                if film and newest.get(film, "") > str(row.created_at):
+                    resolve_message(
+                        session,
+                        row.id,
+                        resolution=SUPERSEDED_RO,
+                        resolved_by=RESOLVED_BY,
+                        correlation_id=correlation,
+                    )
+                    closed["superseded"].append(str(row.id))
+                    continue
+                now = _film_moved_on(session, film, str(row.created_at), body) if film else None
+                if now is not None:
+                    resolve_message(
+                        session,
+                        row.id,
+                        resolution=MOVED_ON_RO.format(now=now)[:600],
+                        resolved_by=RESOLVED_BY,
+                        correlation_id=correlation,
+                    )
+                    closed["moved_on"].append(str(row.id))
+            elif kind == WAITING_LETTER:
+                questions = body.get("questions")
+                if not isinstance(questions, list) or not questions:
+                    continue
+                ids = [str(q.get("id") or "") for q in questions if isinstance(q, dict)]
+                if len(ids) != len(questions) or not all(ids):
+                    continue  # a list the studio cannot read whole is left for him
+                if any(i in waiting for i in ids):
+                    continue
+                resolve_message(
+                    session,
+                    row.id,
+                    resolution=LIST_ANSWERED_RO,
+                    resolved_by=RESOLVED_BY,
+                    correlation_id=correlation,
+                )
+                closed["lists"].append(str(row.id))
+    return closed

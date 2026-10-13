@@ -1,0 +1,139 @@
+{
+ "scale": 2.0,
+ "world": {
+  "width": 1600,
+  "height": 840
+ },
+ "variants": {
+  "night": {
+   "city": {
+    "file": "night_city.webp",
+    "x": 0.0,
+    "y": 78.0,
+    "w": 1600.0,
+    "h": 762.0
+   },
+   "street_back": {
+    "file": "night_street_back.webp",
+    "x": 78.0,
+    "y": 428.5,
+    "w": 1522.0,
+    "h": 246.0
+   },
+   "street_ground": {
+    "file": "night_street_ground.webp",
+    "x": 0.0,
+    "y": 603.5,
+    "w": 1600.0,
+    "h": 236.5
+   },
+   "building_back": {
+    "file": "night_building_back.webp",
+    "x": 429.5,
+    "y": 18.0,
+    "w": 880.0,
+    "h": 641.5
+   },
+   "building_front": {
+    "file": "night_building_front.webp",
+    "x": 645.0,
+    "y": 136.0,
+    "w": 400.0,
+    "h": 519.5
+   },
+   "building_shell": {
+    "file": "night_building_shell.webp",
+    "x": 412.5,
+    "y": 0.0,
+    "w": 943.0,
+    "h": 669.5
+   },
+   "street_props": {
+    "file": "night_street_props.webp",
+    "x": 64.0,
+    "y": 383.0,
+    "w": 1536.0,
+    "h": 335.0
+   },
+   "street_kerb": {
+    "file": "night_street_kerb.webp",
+    "x": 16.5,
+    "y": 683.0,
+    "w": 1549.0,
+    "h": 35.0
+   },
+   "street_front": {
+    "file": "night_street_front.webp",
+    "x": 33.0,
+    "y": 776.0,
+    "w": 1563.0,
+    "h": 56.5
+   }
+  },
+  "day": {
+   "city": {
+    "file": "day_city.webp",
+    "x": 0.0,
+    "y": 86.5,
+    "w": 1600.0,
+    "h": 753.5
+   },
+   "street_back": {
+    "file": "day_street_back.webp",
+    "x": 78.0,
+    "y": 428.5,
+    "w": 1522.0,
+    "h": 246.0
+   },
+   "street_ground": {
+    "file": "day_street_ground.webp",
+    "x": 0.0,
+    "y": 603.5,
+    "w": 1600.0,
+    "h": 236.5
+   },
+   "building_back": {
+    "file": "day_building_back.webp",
+    "x": 429.5,
+    "y": 26.0,
+    "w": 880.0,
+    "h": 633.5
+   },
+   "building_front": {
+    "file": "day_building_front.webp",
+    "x": 643.0,
+    "y": 136.0,
+    "w": 404.0,
+    "h": 519.5
+   },
+   "building_shell": {
+    "file": "day_building_shell.webp",
+    "x": 412.5,
+    "y": 0.0,
+    "w": 943.0,
+    "h": 669.0
+   },
+   "street_props": {
+    "file": "day_street_props.webp",
+    "x": 82.5,
+    "y": 398.0,
+    "w": 1517.5,
+    "h": 320.0
+   },
+   "street_kerb": {
+    "file": "day_street_kerb.webp",
+    "x": 16.5,
+    "y": 682.5,
+    "w": 1549.0,
+    "h": 35.5
+   },
+   "street_front": {
+    "file": "day_street_front.webp",
+    "x": 33.0,
+    "y": 776.5,
+    "w": 1563.0,
+    "h": 56.0
+   }
+  }
+ }
+}

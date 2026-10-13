@@ -1,0 +1,420 @@
+{
+  "name": "qwen_image_edit_2511_ref_seedvr2",
+  "model": "Qwen-Image-Edit-2511",
+  "operation": "image",
+  "status": "UNPROVEN",
+  "notes": [
+    "Checked against ComfyUI v0.39.2 (commit 3c1b7a17fdf239d35ce98cc777756f572d089795): every class_type and input name was read from its source on 2026-10-09 (comfy_extras/nodes_qwen.py, nodes_flux.py, nodes_cfg.py; tests/test_runpod_worker.py COMFY_NODES); never run.",
+    "Stage 1 follows the official template image_qwen_image_edit_2511.json (Comfy-Org/workflow_templates): UNETLoader qwen_image_edit_2511_fp8mixed + CLIPLoader type qwen_image (the same Qwen2.5-VL fp8 text encoder and VAE as the 2512 route) + ModelSamplingAuraFlow 3.1 + CFGNorm 1 + the Lightning 4-step LoRA, KSampler euler/simple. Picture 1 goes through FluxKontextImageScale; pictures 1-3 reach both TextEncodeQwenImageEditPlus nodes (the positive with the prompt, the negative empty) with the VAE, so they are also reference latents; both conditionings go through FluxKontextMultiReferenceLatentMethod index_timestep_zero.",
+    "The Owner chose the Lightning 4-step LoRA (card 2026-10-09): the template's switch is fixed to its 'on' branch (4 steps, CFG 1), because the switch node is not needed in core and a fixed graph is what the bake-off measures. At CFG 1 the negative conditioning does not steer the sampler.",
+    "Departure from the template: the latent is an empty 9:16 928x1664 latent (EmptySD3LatentImage, Qwen-Image's 9:16 size) instead of picture 1's size, so every still has the delivered aspect. Whether 2511 keeps the character's identity this way is UNPROVEN: the bake-off compares it with padding picture 1 to 9:16.",
+    "Stage 2 is the 2512 route's SeedVR2 stage unchanged: the render is center-cropped and Lanczos-scaled to exactly 1530x2720, then SeedVR2-7B restores it at that size.",
+    "References: reference_image (required), reference_image_2 and reference_image_3 are the item's first three reference_images in the studio's order (the character's identity sheet first). The worker prunes the LoadImage of an empty slot and the links to it (image2/image3 are optional inputs). The prompt is the scene's own text; Qwen names the pictures 'Picture 1..3' inside the encoder, so a prompt may refer to them that way.",
+    "Licences: Qwen-Image-Edit-2511 and its Lightning LoRA are Apache-2.0 (Hugging Face tags on Qwen/Qwen-Image-Edit-2511, Comfy-Org/Qwen-Image-Edit_ComfyUI, lightx2v/Qwen-Image-Edit-2511-Lightning)."
+  ],
+  "output_node": "60",
+  "references": {
+    "bindings": [
+      "reference_image",
+      "reference_image_2",
+      "reference_image_3"
+    ],
+    "required": 1
+  },
+  "bindings": {
+    "prompt": [
+      "6",
+      "inputs",
+      "prompt"
+    ],
+    "negative_prompt": [
+      "7",
+      "inputs",
+      "prompt"
+    ],
+    "seed": [
+      [
+        "3",
+        "inputs",
+        "seed"
+      ],
+      [
+        "45",
+        "inputs",
+        "seed"
+      ]
+    ],
+    "width": [
+      "50",
+      "inputs",
+      "width"
+    ],
+    "height": [
+      "50",
+      "inputs",
+      "height"
+    ],
+    "filename_prefix": [
+      "60",
+      "inputs",
+      "filename_prefix"
+    ],
+    "reference_image": [
+      "70",
+      "inputs",
+      "image"
+    ],
+    "reference_image_2": [
+      "71",
+      "inputs",
+      "image"
+    ],
+    "reference_image_3": [
+      "72",
+      "inputs",
+      "image"
+    ]
+  },
+  "models": [
+    "qwen_image_edit_2511_fp8mixed.safetensors",
+    "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+    "qwen_image_vae.safetensors",
+    "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+    "seedvr2_7b_int8_convrot.safetensors",
+    "seedvr2_ema_vae_fp16.safetensors"
+  ],
+  "graph": {
+    "37": {
+      "class_type": "UNETLoader",
+      "inputs": {
+        "unet_name": "qwen_image_edit_2511_fp8mixed.safetensors",
+        "weight_dtype": "default"
+      }
+    },
+    "38": {
+      "class_type": "CLIPLoader",
+      "inputs": {
+        "clip_name": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+        "type": "qwen_image",
+        "device": "default"
+      }
+    },
+    "39": {
+      "class_type": "VAELoader",
+      "inputs": {
+        "vae_name": "qwen_image_vae.safetensors"
+      }
+    },
+    "66": {
+      "class_type": "ModelSamplingAuraFlow",
+      "inputs": {
+        "model": [
+          "37",
+          0
+        ],
+        "shift": 3.1
+      }
+    },
+    "67": {
+      "class_type": "CFGNorm",
+      "inputs": {
+        "model": [
+          "66",
+          0
+        ],
+        "strength": 1.0
+      }
+    },
+    "68": {
+      "class_type": "LoraLoaderModelOnly",
+      "inputs": {
+        "model": [
+          "67",
+          0
+        ],
+        "lora_name": "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+        "strength_model": 1.0
+      }
+    },
+    "70": {
+      "class_type": "LoadImage",
+      "inputs": {
+        "image": "reference_1.png"
+      }
+    },
+    "71": {
+      "class_type": "LoadImage",
+      "inputs": {
+        "image": "reference_2.png"
+      }
+    },
+    "72": {
+      "class_type": "LoadImage",
+      "inputs": {
+        "image": "reference_3.png"
+      }
+    },
+    "73": {
+      "class_type": "FluxKontextImageScale",
+      "inputs": {
+        "image": [
+          "70",
+          0
+        ]
+      }
+    },
+    "6": {
+      "class_type": "TextEncodeQwenImageEditPlus",
+      "inputs": {
+        "clip": [
+          "38",
+          0
+        ],
+        "prompt": "",
+        "vae": [
+          "39",
+          0
+        ],
+        "image1": [
+          "73",
+          0
+        ],
+        "image2": [
+          "71",
+          0
+        ],
+        "image3": [
+          "72",
+          0
+        ]
+      }
+    },
+    "7": {
+      "class_type": "TextEncodeQwenImageEditPlus",
+      "inputs": {
+        "clip": [
+          "38",
+          0
+        ],
+        "prompt": "",
+        "vae": [
+          "39",
+          0
+        ],
+        "image1": [
+          "73",
+          0
+        ],
+        "image2": [
+          "71",
+          0
+        ],
+        "image3": [
+          "72",
+          0
+        ]
+      }
+    },
+    "74": {
+      "class_type": "FluxKontextMultiReferenceLatentMethod",
+      "inputs": {
+        "conditioning": [
+          "6",
+          0
+        ],
+        "reference_latents_method": "index_timestep_zero"
+      }
+    },
+    "75": {
+      "class_type": "FluxKontextMultiReferenceLatentMethod",
+      "inputs": {
+        "conditioning": [
+          "7",
+          0
+        ],
+        "reference_latents_method": "index_timestep_zero"
+      }
+    },
+    "58": {
+      "class_type": "EmptySD3LatentImage",
+      "inputs": {
+        "width": 928,
+        "height": 1664,
+        "batch_size": 1
+      }
+    },
+    "3": {
+      "class_type": "KSampler",
+      "inputs": {
+        "model": [
+          "68",
+          0
+        ],
+        "seed": 0,
+        "steps": 4,
+        "cfg": 1.0,
+        "sampler_name": "euler",
+        "scheduler": "simple",
+        "positive": [
+          "74",
+          0
+        ],
+        "negative": [
+          "75",
+          0
+        ],
+        "latent_image": [
+          "58",
+          0
+        ],
+        "denoise": 1.0
+      }
+    },
+    "8": {
+      "class_type": "VAEDecode",
+      "inputs": {
+        "samples": [
+          "3",
+          0
+        ],
+        "vae": [
+          "39",
+          0
+        ]
+      }
+    },
+    "50": {
+      "class_type": "ImageScale",
+      "inputs": {
+        "image": [
+          "8",
+          0
+        ],
+        "upscale_method": "lanczos",
+        "width": 1530,
+        "height": 2720,
+        "crop": "center"
+      }
+    },
+    "40": {
+      "class_type": "UNETLoader",
+      "inputs": {
+        "unet_name": "seedvr2_7b_int8_convrot.safetensors",
+        "weight_dtype": "default"
+      }
+    },
+    "41": {
+      "class_type": "VAELoader",
+      "inputs": {
+        "vae_name": "seedvr2_ema_vae_fp16.safetensors"
+      }
+    },
+    "42": {
+      "class_type": "SeedVR2Preprocess",
+      "inputs": {
+        "resized_images": [
+          "50",
+          0
+        ]
+      }
+    },
+    "43": {
+      "class_type": "VAEEncodeTiled",
+      "inputs": {
+        "pixels": [
+          "42",
+          0
+        ],
+        "vae": [
+          "41",
+          0
+        ],
+        "tile_size": 512,
+        "overlap": 128,
+        "temporal_size": 4096,
+        "temporal_overlap": 8
+      }
+    },
+    "44": {
+      "class_type": "SeedVR2Conditioning",
+      "inputs": {
+        "model": [
+          "40",
+          0
+        ],
+        "vae_conditioning": [
+          "43",
+          0
+        ]
+      }
+    },
+    "45": {
+      "class_type": "KSampler",
+      "inputs": {
+        "model": [
+          "40",
+          0
+        ],
+        "seed": 0,
+        "steps": 1,
+        "cfg": 1.0,
+        "sampler_name": "euler",
+        "scheduler": "simple",
+        "positive": [
+          "44",
+          0
+        ],
+        "negative": [
+          "44",
+          1
+        ],
+        "latent_image": [
+          "43",
+          0
+        ],
+        "denoise": 1.0
+      }
+    },
+    "46": {
+      "class_type": "VAEDecodeTiled",
+      "inputs": {
+        "samples": [
+          "45",
+          0
+        ],
+        "vae": [
+          "41",
+          0
+        ],
+        "tile_size": 512,
+        "overlap": 128,
+        "temporal_size": 4096,
+        "temporal_overlap": 8
+      }
+    },
+    "47": {
+      "class_type": "SeedVR2PostProcessing",
+      "inputs": {
+        "images": [
+          "46",
+          0
+        ],
+        "original_resized_images": [
+          "50",
+          0
+        ],
+        "color_correction_method": "lab"
+      }
+    },
+    "60": {
+      "class_type": "SaveImage",
+      "inputs": {
+        "images": [
+          "47",
+          0
+        ],
+        "filename_prefix": "amn/still"
+      }
+    }
+  }
+}

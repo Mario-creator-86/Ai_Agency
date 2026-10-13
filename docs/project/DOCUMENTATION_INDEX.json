@@ -1,0 +1,504 @@
+{
+  "source_document_count": 83,
+  "notes": "Original hashes captured before move; current hashes include path-reference updates. Project tracking files may evolve. Architecture hashes are checked by scripts/check_docs.py. Since 2026-10-02 an architecture sha256 is taken over the text with CRLF folded to LF (the bytes git stores), so it holds on every checkout; original_sha256 values are unchanged.",
+  "documents": [
+    {
+      "original_path": "00_MASTER_PROMPT.md",
+      "path": "docs/architecture/00_MASTER_PROMPT.md",
+      "original_sha256": "c7b72750dc2bc99df188003233ae83e216b3e9d3b5b431c0e42f874d11520851",
+      "sha256": "f65e5fd06e02da18e94b30fa269e825828fb13b2bbb28b137d34ec58fdd2854d"
+    },
+    {
+      "original_path": "01_VISION.md",
+      "path": "docs/architecture/01_VISION.md",
+      "original_sha256": "cd60871ef9b27945350bde22e6ad65da66292094680772813703de2c395e0e4c",
+      "sha256": "cd60871ef9b27945350bde22e6ad65da66292094680772813703de2c395e0e4c"
+    },
+    {
+      "original_path": "02_SRS.md",
+      "path": "docs/architecture/02_SRS.md",
+      "original_sha256": "e1a5d5eed9e62fcf51f0cde07b3a7d9cd7539b6d2d81a4f78ab067097fab0ab7",
+      "sha256": "21a06319b15f0d531eeb8e4145a434116505a9f2c38c2986dc54cc7ea7c8516c"
+    },
+    {
+      "original_path": "03_ARCHITECTURE.md",
+      "path": "docs/architecture/03_ARCHITECTURE.md",
+      "original_sha256": "b3d9c6ff9efdfae2c082187ba7405ffc800c53256b5ff7e8b5e7d9ce7aaefb71",
+      "sha256": "ef86a911fd9dd73905862e3eac0e8ba9f7fca01464f8ad8611e87a449968fd44"
+    },
+    {
+      "original_path": "04_AGENT_SYSTEM.md",
+      "path": "docs/architecture/04_AGENT_SYSTEM.md",
+      "original_sha256": "4ffd417bc535ca9c73b1c7f9891d119e00374bd83f422f26cf2465ae0f7ee91b",
+      "sha256": "4ffd417bc535ca9c73b1c7f9891d119e00374bd83f422f26cf2465ae0f7ee91b"
+    },
+    {
+      "original_path": "05_UI_UX_2D_OFFICE.md",
+      "path": "docs/architecture/05_UI_UX_2D_OFFICE.md",
+      "original_sha256": "11a0c27775ddd2ab42daa6c8dc9938cd367e17cd7605be1b230107d4b5ea0bf5",
+      "sha256": "a1872443d5014e672e19d55a30d2df9e676f3cdbdc21da8bad9fe1dd27944229"
+    },
+    {
+      "original_path": "06_BACKEND_EVENT_MODEL.md",
+      "path": "docs/architecture/06_BACKEND_EVENT_MODEL.md",
+      "original_sha256": "82132088546a87535919df82657e6c9c90d23c620221ce0a85e28d9422b32633",
+      "sha256": "82132088546a87535919df82657e6c9c90d23c620221ce0a85e28d9422b32633"
+    },
+    {
+      "original_path": "07_STORY_ENGINE.md",
+      "path": "docs/architecture/07_STORY_ENGINE.md",
+      "original_sha256": "e700c66ac6ebf57cb6d64f9327a75016482ae680d37704d4d4e5a6065265f22a",
+      "sha256": "e700c66ac6ebf57cb6d64f9327a75016482ae680d37704d4d4e5a6065265f22a"
+    },
+    {
+      "original_path": "08_VIDEO_PIPELINE.md",
+      "path": "docs/architecture/08_VIDEO_PIPELINE.md",
+      "original_sha256": "fdf41c8590434a5d7c4447d1056ecca09f2cbf95de87084c0487f60e3c553833",
+      "sha256": "57d3f9c2289c307a12c544a1a5c8339ed0a5edd17563127fec924c87a22ff463"
+    },
+    {
+      "original_path": "09_CHANNELS_AND_AUTOMATION.md",
+      "path": "docs/architecture/09_CHANNELS_AND_AUTOMATION.md",
+      "original_sha256": "af92784114a88a2ae0394f635b039e25691cfdf846d0b809b745cf6295491659",
+      "sha256": "af92784114a88a2ae0394f635b039e25691cfdf846d0b809b745cf6295491659"
+    },
+    {
+      "original_path": "10_FUTURE_MODULES.md",
+      "path": "docs/architecture/10_FUTURE_MODULES.md",
+      "original_sha256": "9a7eb6b83281743a69a634ff3e42b334a5eb23bfd0dd7377510215f18d4ebbf7",
+      "sha256": "9a7eb6b83281743a69a634ff3e42b334a5eb23bfd0dd7377510215f18d4ebbf7"
+    },
+    {
+      "original_path": "11_DATA_MODEL.md",
+      "path": "docs/architecture/11_DATA_MODEL.md",
+      "original_sha256": "718be7248068761ff4154a857d8538b523a68f9cea5c6e79e19506e92a4fc68d",
+      "sha256": "3708f1e49dec4af0f9468df87b7f162e50e965aa056c9b5613827bd210dd521b"
+    },
+    {
+      "original_path": "12_TESTING_QA.md",
+      "path": "docs/architecture/12_TESTING_QA.md",
+      "original_sha256": "a8b752c10cd36e203b60776eef7018c33f78a67291cdd636f6cab7a7401e4c41",
+      "sha256": "a8b752c10cd36e203b60776eef7018c33f78a67291cdd636f6cab7a7401e4c41"
+    },
+    {
+      "original_path": "13_ROADMAP_TODO.md",
+      "path": "docs/project/13_ROADMAP_TODO.md",
+      "original_sha256": "88bf0c953f794fb87873ac2daa6285ea601a63cee3524c3bc54dfa7b0ae11d7f",
+      "sha256": "65bf0464c6071c717a4104e7c2ce3a1f1e9505c9beffdfff725f80ff9127f110"
+    },
+    {
+      "original_path": "14_AI_HANDOFF_PROTOCOL.md",
+      "path": "docs/project/14_AI_HANDOFF_PROTOCOL.md",
+      "original_sha256": "f772190f599a764fd9fc21c2ea993353f6dfb145d2d6684c9bde3c8cce33850a",
+      "sha256": "8ff609f97689d39804d955bfab8915264d8bfae59d34af1399a6662dd6432242"
+    },
+    {
+      "original_path": "15_SECURITY_COSTS_OBSERVABILITY.md",
+      "path": "docs/architecture/15_SECURITY_COSTS_OBSERVABILITY.md",
+      "original_sha256": "521d6a5f218a8c6af4f542770335e736b5f03c052848fc6a856000e79745dbb7",
+      "sha256": "521d6a5f218a8c6af4f542770335e736b5f03c052848fc6a856000e79745dbb7"
+    },
+    {
+      "original_path": "16_DECISION_LOG.md",
+      "path": "docs/project/16_DECISION_LOG.md",
+      "original_sha256": "6b0a37f4388316f4c2331d1550d61df0051bfa598bf05fd0152954d987ebae0a",
+      "sha256": "8d488642546f48fa2151a98232e346f68843b76c6c9a34f007a623a0bb6e6ccf"
+    },
+    {
+      "original_path": "17_REALISM_CAPABILITY_MODEL.md",
+      "path": "docs/architecture/17_REALISM_CAPABILITY_MODEL.md",
+      "original_sha256": "2cd33e9c864e407502bc8ef6570f6a3a678717582bbf7b5f0c60f77cf524fd2c",
+      "sha256": "2cd33e9c864e407502bc8ef6570f6a3a678717582bbf7b5f0c60f77cf524fd2c"
+    },
+    {
+      "original_path": "18_AUTOMATION_ORCHESTRATION.md",
+      "path": "docs/architecture/18_AUTOMATION_ORCHESTRATION.md",
+      "original_sha256": "d08e9e92e7f44e9492399e089d975d1a24f75f4a07d145b532f2629b32c2b074",
+      "sha256": "d08e9e92e7f44e9492399e089d975d1a24f75f4a07d145b532f2629b32c2b074"
+    },
+    {
+      "original_path": "19_DIRECTOR_CEO_SPEC.md",
+      "path": "docs/architecture/19_DIRECTOR_CEO_SPEC.md",
+      "original_sha256": "cf45c8aebc1e36ef35a93759e75691e47c599dd160b9efbcd42507229d85f2ea",
+      "sha256": "cf45c8aebc1e36ef35a93759e75691e47c599dd160b9efbcd42507229d85f2ea"
+    },
+    {
+      "original_path": "20_EMPLOYEE_AGENT_SPEC.md",
+      "path": "docs/architecture/20_EMPLOYEE_AGENT_SPEC.md",
+      "original_sha256": "e4177f63d3e3ded933b6dbb22d6d2e33c389126c4e6b8b58c859dbe57e56b82a",
+      "sha256": "e4177f63d3e3ded933b6dbb22d6d2e33c389126c4e6b8b58c859dbe57e56b82a"
+    },
+    {
+      "original_path": "21_FAILURE_RECOVERY_PLAYBOOK.md",
+      "path": "docs/architecture/21_FAILURE_RECOVERY_PLAYBOOK.md",
+      "original_sha256": "bbbfad4288ba76857c3fb02782b0d40ab55e9ae5deb5b26fd5428e388c6894b1",
+      "sha256": "bbbfad4288ba76857c3fb02782b0d40ab55e9ae5deb5b26fd5428e388c6894b1"
+    },
+    {
+      "original_path": "22_PROVIDER_INTEGRATION_CONTRACTS.md",
+      "path": "docs/architecture/22_PROVIDER_INTEGRATION_CONTRACTS.md",
+      "original_sha256": "cacd662387e6ab9deff6af14054ac78c0e3fade0bded5bc62628214a91575f52",
+      "sha256": "cacd662387e6ab9deff6af14054ac78c0e3fade0bded5bc62628214a91575f52"
+    },
+    {
+      "original_path": "23_CONTENT_RIGHTS_PLATFORM_POLICY.md",
+      "path": "docs/architecture/23_CONTENT_RIGHTS_PLATFORM_POLICY.md",
+      "original_sha256": "98b53c12fba236e8d6fbb0f44d9b6a81692136c23474fdfc0b7d9d492ee78163",
+      "sha256": "98b53c12fba236e8d6fbb0f44d9b6a81692136c23474fdfc0b7d9d492ee78163"
+    },
+    {
+      "original_path": "24_VISUAL_CONTINUITY_ASSET_SYSTEM.md",
+      "path": "docs/architecture/24_VISUAL_CONTINUITY_ASSET_SYSTEM.md",
+      "original_sha256": "2405eb6efe0f8b9d12d07501cb2394bd45690219062afba5ae0eaea6584f02a9",
+      "sha256": "9a397c20436293fc122ab98fffa1c839df95cab5bc316829190e723f22f0922a"
+    },
+    {
+      "original_path": "25_DEPLOYMENT_BACKUP_OPERATIONS.md",
+      "path": "docs/architecture/25_DEPLOYMENT_BACKUP_OPERATIONS.md",
+      "original_sha256": "b9c8eb49b790d26f29be75fc7c650fa92cb603e8420b70d3d21d0cf7817e5f75",
+      "sha256": "76933e75b562d910aef200f7f9439ec3bc7b570da6975633e98133420c12d5ee"
+    },
+    {
+      "original_path": "26_MASTER_ACCEPTANCE_CRITERIA.md",
+      "path": "docs/architecture/26_MASTER_ACCEPTANCE_CRITERIA.md",
+      "original_sha256": "3b99a294e639c1009f10920a22554c39763ccb2b7b65d43e6430f580a4ac7359",
+      "sha256": "3b99a294e639c1009f10920a22554c39763ccb2b7b65d43e6430f580a4ac7359"
+    },
+    {
+      "original_path": "27_RISK_REGISTER.md",
+      "path": "docs/architecture/27_RISK_REGISTER.md",
+      "original_sha256": "594f4be059c2d2580645dc6dcc27283fb79e5531520f81b6c4156b7deb29af09",
+      "sha256": "594f4be059c2d2580645dc6dcc27283fb79e5531520f81b6c4156b7deb29af09"
+    },
+    {
+      "original_path": "28_DOCUMENTATION_AUDIT.md",
+      "path": "docs/architecture/28_DOCUMENTATION_AUDIT.md",
+      "original_sha256": "e9442027aee2bfcb6f27742bc80a23b11c01f51acf36ac4c8fa2377c3c106f30",
+      "sha256": "e9442027aee2bfcb6f27742bc80a23b11c01f51acf36ac4c8fa2377c3c106f30"
+    },
+    {
+      "original_path": "29_OPEN_QUESTIONS_AND_DECISIONS.md",
+      "path": "docs/architecture/29_OPEN_QUESTIONS_AND_DECISIONS.md",
+      "original_sha256": "58f6d376a70b912598041e4b61a4eec872241fda456c074c17a0c940f53e7b22",
+      "sha256": "58f6d376a70b912598041e4b61a4eec872241fda456c074c17a0c940f53e7b22"
+    },
+    {
+      "original_path": "30_PROMPT_CONTEXT_MEMORY_ARCHITECTURE.md",
+      "path": "docs/architecture/30_PROMPT_CONTEXT_MEMORY_ARCHITECTURE.md",
+      "original_sha256": "0cae4059387e209674619d207a18cd215eae03e0674d941242c070340a0add96",
+      "sha256": "0cae4059387e209674619d207a18cd215eae03e0674d941242c070340a0add96"
+    },
+    {
+      "original_path": "31_GOVERNANCE_APPROVAL_POLICY.md",
+      "path": "docs/architecture/31_GOVERNANCE_APPROVAL_POLICY.md",
+      "original_sha256": "ce9bca5714eeb9c07b478a27b35e8f00bf1f083017bf4a1b9e45bc26bcc6333c",
+      "sha256": "67ef4c69f19371869637ea7dc11f459a3cd913d0f664f64fcc75f1ac15c7b4ce"
+    },
+    {
+      "original_path": "32_AGENT_TOOL_PERMISSION_MATRIX.md",
+      "path": "docs/architecture/32_AGENT_TOOL_PERMISSION_MATRIX.md",
+      "original_sha256": "27fff43c51005ca57c73c6394a26fac97f7fbcf0b6d991d252a742fe1d0969a0",
+      "sha256": "27fff43c51005ca57c73c6394a26fac97f7fbcf0b6d991d252a742fe1d0969a0"
+    },
+    {
+      "original_path": "33_MODEL_EVALUATION_DRIFT.md",
+      "path": "docs/architecture/33_MODEL_EVALUATION_DRIFT.md",
+      "original_sha256": "e1b2116c6097eb622a6c6233e2d8e104e9ac51414dbb681605a630c27ccadf39",
+      "sha256": "e1b2116c6097eb622a6c6233e2d8e104e9ac51414dbb681605a630c27ccadf39"
+    },
+    {
+      "original_path": "34_CONTENT_QUALITY_ANALYTICS_OBJECTIVES.md",
+      "path": "docs/architecture/34_CONTENT_QUALITY_ANALYTICS_OBJECTIVES.md",
+      "original_sha256": "9c26262eefa833bb20ee3a272b2b33620de59ed0467843d3e5f16742d2ec677a",
+      "sha256": "9c26262eefa833bb20ee3a272b2b33620de59ed0467843d3e5f16742d2ec677a"
+    },
+    {
+      "original_path": "35_CI_CD_RELEASE_ENGINEERING.md",
+      "path": "docs/architecture/35_CI_CD_RELEASE_ENGINEERING.md",
+      "original_sha256": "0e39c34e44fe115078c519f1f7f3272319011d6fafdabbe5acf35fb9b3c02366",
+      "sha256": "0e39c34e44fe115078c519f1f7f3272319011d6fafdabbe5acf35fb9b3c02366"
+    },
+    {
+      "original_path": "36_RELIABILITY_SLO_RUNBOOK.md",
+      "path": "docs/architecture/36_RELIABILITY_SLO_RUNBOOK.md",
+      "original_sha256": "bcc0561d822e865d93cbdc537bf4e0930c4740a650a60f5a50f29e2f7556befb",
+      "sha256": "bcc0561d822e865d93cbdc537bf4e0930c4740a650a60f5a50f29e2f7556befb"
+    },
+    {
+      "original_path": "37_PUBLIC_COMMUNITY_MODERATION_PRIVACY.md",
+      "path": "docs/architecture/37_PUBLIC_COMMUNITY_MODERATION_PRIVACY.md",
+      "original_sha256": "9ed1c214b88bcf2add032995f76f1bda8f2eb7f53e50c310615b48ac745d0940",
+      "sha256": "9ed1c214b88bcf2add032995f76f1bda8f2eb7f53e50c310615b48ac745d0940"
+    },
+    {
+      "original_path": "38_IP_BRAND_TRANSFERABILITY.md",
+      "path": "docs/architecture/38_IP_BRAND_TRANSFERABILITY.md",
+      "original_sha256": "c2f18232636aac65d72fc0ef17e7a81475c83a98e10b0290d5aa10ef9cc76b03",
+      "sha256": "c2f18232636aac65d72fc0ef17e7a81475c83a98e10b0290d5aa10ef9cc76b03"
+    },
+    {
+      "original_path": "39_DAILY_AUTONOMOUS_RUNBOOK.md",
+      "path": "docs/architecture/39_DAILY_AUTONOMOUS_RUNBOOK.md",
+      "original_sha256": "09084b583c913e7fdcdc4059ab10d035bb91476cb42aaa960bc3c82498c77f64",
+      "sha256": "cb20789f3dfd0b309bbee506bebc7fc35d1e79c333a30b450a187c0a3e6f346a"
+    },
+    {
+      "original_path": "40_THREAT_MODEL_SECURITY_BOUNDARIES.md",
+      "path": "docs/architecture/40_THREAT_MODEL_SECURITY_BOUNDARIES.md",
+      "original_sha256": "77ba7994aaae0cce7f30c5919101b5d5b182b812aa986e4804eaac29b4bd75ad",
+      "sha256": "77ba7994aaae0cce7f30c5919101b5d5b182b812aa986e4804eaac29b4bd75ad"
+    },
+    {
+      "original_path": "41_WORLD_BUILDER_OFFICE_EVOLUTION.md",
+      "path": "docs/architecture/41_WORLD_BUILDER_OFFICE_EVOLUTION.md",
+      "original_sha256": "23ab297e88022827ccbc4d94b1ea2359f3c16e6488f6a66ffcb6f3a7341ad545",
+      "sha256": "23ab297e88022827ccbc4d94b1ea2359f3c16e6488f6a66ffcb6f3a7341ad545"
+    },
+    {
+      "original_path": "42_API_SCHEMA_VERSIONING_CONTRACTS.md",
+      "path": "docs/architecture/42_API_SCHEMA_VERSIONING_CONTRACTS.md",
+      "original_sha256": "b80b2b526023daaef5ab322c332934e8c3605ca8b158ef461d1c095b59b19932",
+      "sha256": "b80b2b526023daaef5ab322c332934e8c3605ca8b158ef461d1c095b59b19932"
+    },
+    {
+      "original_path": "43_DATA_RETENTION_PRIVACY_CLASSIFICATION.md",
+      "path": "docs/architecture/43_DATA_RETENTION_PRIVACY_CLASSIFICATION.md",
+      "original_sha256": "644193416fad99e4736d1c1edbd712a6fd9b3c3d7163fd293a407bb233c17540",
+      "sha256": "644193416fad99e4736d1c1edbd712a6fd9b3c3d7163fd293a407bb233c17540"
+    },
+    {
+      "original_path": "44_CONTENT_DEDUPLICATION_NOVELTY.md",
+      "path": "docs/architecture/44_CONTENT_DEDUPLICATION_NOVELTY.md",
+      "original_sha256": "b78a5690ba7495429020104c1bb49ea6004aa06e2135488dac0e521b6b66603d",
+      "sha256": "b78a5690ba7495429020104c1bb49ea6004aa06e2135488dac0e521b6b66603d"
+    },
+    {
+      "original_path": "45_PRELAUNCH_READINESS_CHECKLIST.md",
+      "path": "docs/architecture/45_PRELAUNCH_READINESS_CHECKLIST.md",
+      "original_sha256": "7ea7ab64fa4873d16dc4c2aba4b43ddb7bf770688a4649202ac1874df6c02a6c",
+      "sha256": "7ea7ab64fa4873d16dc4c2aba4b43ddb7bf770688a4649202ac1874df6c02a6c"
+    },
+    {
+      "original_path": "46_REQUIREMENTS_TRACEABILITY_MATRIX.md",
+      "path": "docs/architecture/46_REQUIREMENTS_TRACEABILITY_MATRIX.md",
+      "original_sha256": "696eff21db3d78ab28c409944c81c0a0e476500dbd5c02ed023972d74c3b12b9",
+      "sha256": "696eff21db3d78ab28c409944c81c0a0e476500dbd5c02ed023972d74c3b12b9"
+    },
+    {
+      "original_path": "47_STATE_MACHINE_SPECIFICATIONS.md",
+      "path": "docs/architecture/47_STATE_MACHINE_SPECIFICATIONS.md",
+      "original_sha256": "d2171c1e9e2911295d204c19ba9c83971d5d37e69eb5c055945c589c4b5f28dc",
+      "sha256": "2f92aceb3b6feab20561559e934b94d2d77ae70da370bab36ff31ceccc7e794b"
+    },
+    {
+      "original_path": "48_COMMAND_TOOL_CATALOG.md",
+      "path": "docs/architecture/48_COMMAND_TOOL_CATALOG.md",
+      "original_sha256": "4476e98eaa5eca31b7e14825d91ea9ef215210ae89a76c4105a222d27c7c3c86",
+      "sha256": "4476e98eaa5eca31b7e14825d91ea9ef215210ae89a76c4105a222d27c7c3c86"
+    },
+    {
+      "original_path": "49_UI_BACKEND_STATE_MAPPING.md",
+      "path": "docs/architecture/49_UI_BACKEND_STATE_MAPPING.md",
+      "original_sha256": "0a6daa21f3cf9ebbbdab923b89eb952cc106458c0c4e9a31f603f3e0703dcb5c",
+      "sha256": "0a6daa21f3cf9ebbbdab923b89eb952cc106458c0c4e9a31f603f3e0703dcb5c"
+    },
+    {
+      "original_path": "50_CONTENT_GATE_MATRIX.md",
+      "path": "docs/architecture/50_CONTENT_GATE_MATRIX.md",
+      "original_sha256": "9c0a40fb66ccf2f5bf8c5b20ada655be5ae9c72e00afe7d5ebd651b34af06233",
+      "sha256": "f8667b640df7544a0d4929deacd41db08893c43aedc1f71dba16690c0a7bb913"
+    },
+    {
+      "original_path": "51_AUTONOMY_MODE_SEMANTICS.md",
+      "path": "docs/architecture/51_AUTONOMY_MODE_SEMANTICS.md",
+      "original_sha256": "c18937e2da4d958f50dba801b5c3862c1b78131fce1c9e06f45c2beb6db82948",
+      "sha256": "fd7af4e4a25bad8b9f0d94cab4e36e32337f3efe3e49e14615bb53941fbfd62f"
+    },
+    {
+      "original_path": "52_OBSERVABILITY_METRICS_CATALOG.md",
+      "path": "docs/architecture/52_OBSERVABILITY_METRICS_CATALOG.md",
+      "original_sha256": "c46b0162318ff3b75113073e2ae35af471afbc7c13ded218a6bbf1998e71c1d0",
+      "sha256": "c46b0162318ff3b75113073e2ae35af471afbc7c13ded218a6bbf1998e71c1d0"
+    },
+    {
+      "original_path": "53_PERFORMANCE_CAPACITY_PLAN.md",
+      "path": "docs/architecture/53_PERFORMANCE_CAPACITY_PLAN.md",
+      "original_sha256": "9f64b5ad96b5dacc9f80788837f491386626daa89287117ab89a0f9722db294c",
+      "sha256": "9f64b5ad96b5dacc9f80788837f491386626daa89287117ab89a0f9722db294c"
+    },
+    {
+      "original_path": "54_MARKETING_COMMUNICATIONS_DEPARTMENT.md",
+      "path": "docs/architecture/54_MARKETING_COMMUNICATIONS_DEPARTMENT.md",
+      "original_sha256": "524fdcd30266cba57fc70036f06bde5baf73374c76729a4bce5dc1ba84367ac8",
+      "sha256": "524fdcd30266cba57fc70036f06bde5baf73374c76729a4bce5dc1ba84367ac8"
+    },
+    {
+      "original_path": "55_DYNAMIC_ORGANIZATION_DEPARTMENT_FACTORY.md",
+      "path": "docs/architecture/55_DYNAMIC_ORGANIZATION_DEPARTMENT_FACTORY.md",
+      "original_sha256": "a9effcd4444b7b1ebac676e9d0bffe51554cb1144d48e960f449e9ca8fbaa2b9",
+      "sha256": "a9effcd4444b7b1ebac676e9d0bffe51554cb1144d48e960f449e9ca8fbaa2b9"
+    },
+    {
+      "original_path": "56_MARKET_COMPETITIVE_INTELLIGENCE.md",
+      "path": "docs/architecture/56_MARKET_COMPETITIVE_INTELLIGENCE.md",
+      "original_sha256": "66376055904a26ca1f6134cf27ed6c8635dfb4b366c9f78f7bf1a688b89ff72f",
+      "sha256": "66376055904a26ca1f6134cf27ed6c8635dfb4b366c9f78f7bf1a688b89ff72f"
+    },
+    {
+      "original_path": "57_PEOPLE_HR_CULTURE_PERSONAS.md",
+      "path": "docs/architecture/57_PEOPLE_HR_CULTURE_PERSONAS.md",
+      "original_sha256": "61896c2ee84bb231544a072cbece91d174d7f201cf46eb92f6d7c0dc12170991",
+      "sha256": "61896c2ee84bb231544a072cbece91d174d7f201cf46eb92f6d7c0dc12170991"
+    },
+    {
+      "original_path": "58_FINANCE_ACCOUNTING_FINOPS.md",
+      "path": "docs/architecture/58_FINANCE_ACCOUNTING_FINOPS.md",
+      "original_sha256": "4a11418a6147de3e10655a0500a1c87fe3aede737c52333652e039849b30f5f9",
+      "sha256": "4a11418a6147de3e10655a0500a1c87fe3aede737c52333652e039849b30f5f9"
+    },
+    {
+      "original_path": "59_LEGAL_COMPLIANCE_DEPARTMENT.md",
+      "path": "docs/architecture/59_LEGAL_COMPLIANCE_DEPARTMENT.md",
+      "original_sha256": "3513780696cea3cfbcf414a992d0d7472d60d695a819442652a780337ee4719e",
+      "sha256": "3513780696cea3cfbcf414a992d0d7472d60d695a819442652a780337ee4719e"
+    },
+    {
+      "original_path": "60_ADVERTISING_PAID_MEDIA_SPONSORSHIPS.md",
+      "path": "docs/architecture/60_ADVERTISING_PAID_MEDIA_SPONSORSHIPS.md",
+      "original_sha256": "ffb74f614cd4ee5f04f3137a4bd49c384a86cadc1aedcf79f43c3302631062ae",
+      "sha256": "ffb74f614cd4ee5f04f3137a4bd49c384a86cadc1aedcf79f43c3302631062ae"
+    },
+    {
+      "original_path": "61_COMPANY_CALENDAR_EVENTS_TEAM_BUILDING.md",
+      "path": "docs/architecture/61_COMPANY_CALENDAR_EVENTS_TEAM_BUILDING.md",
+      "original_sha256": "b03852d89a794a96453998c4e3787717aaf326b482a14008b7651fa6c032c344",
+      "sha256": "b03852d89a794a96453998c4e3787717aaf326b482a14008b7651fa6c032c344"
+    },
+    {
+      "original_path": "62_CROSS_PLATFORM_SOCIAL_PUBLISHING.md",
+      "path": "docs/architecture/62_CROSS_PLATFORM_SOCIAL_PUBLISHING.md",
+      "original_sha256": "138ccf1e70270c8b84f164e764a08fb871734480cf9c83d6c0c80ca4b3502575",
+      "sha256": "138ccf1e70270c8b84f164e764a08fb871734480cf9c83d6c0c80ca4b3502575"
+    },
+    {
+      "original_path": "63_ORG_GROWTH_TRIGGERS_CAPACITY_PLANNING.md",
+      "path": "docs/architecture/63_ORG_GROWTH_TRIGGERS_CAPACITY_PLANNING.md",
+      "original_sha256": "0b0594639a47614ca0fd329efdaae5eba51b1d02af799cf49b50715792d08efb",
+      "sha256": "0b0594639a47614ca0fd329efdaae5eba51b1d02af799cf49b50715792d08efb"
+    },
+    {
+      "original_path": "64_NARRATIVE_PERSONA_RELATIONSHIP_ENGINE.md",
+      "path": "docs/architecture/64_NARRATIVE_PERSONA_RELATIONSHIP_ENGINE.md",
+      "original_sha256": "7615ff6fc74b709ceb1eb8971dc7e644a94ca6c77295c40891cc268a6ef15103",
+      "sha256": "7615ff6fc74b709ceb1eb8971dc7e644a94ca6c77295c40891cc268a6ef15103"
+    },
+    {
+      "original_path": "65_MARKETING_ATTRIBUTION_EXPERIMENTATION.md",
+      "path": "docs/architecture/65_MARKETING_ATTRIBUTION_EXPERIMENTATION.md",
+      "original_sha256": "c528a6a9c042641cc9c0af300386efcec595f6342d964527a41504e82199269f",
+      "sha256": "c528a6a9c042641cc9c0af300386efcec595f6342d964527a41504e82199269f"
+    },
+    {
+      "original_path": "66_VIRTUAL_REAL_ECONOMY_ENGINE.md",
+      "path": "docs/architecture/66_VIRTUAL_REAL_ECONOMY_ENGINE.md",
+      "original_sha256": "d38ed7df9b8f101b58df8b4e583e900536191df3a0e19ff16327e2343d5fa4c7",
+      "sha256": "0d59947efcc021595373fa9256635c5f5cfe684dbbfd52dbedcdec8ea0eee7a5"
+    },
+    {
+      "original_path": "67_VENDORSHOP_PROCUREMENT_ARCHITECT.md",
+      "path": "docs/architecture/67_VENDORSHOP_PROCUREMENT_ARCHITECT.md",
+      "original_sha256": "b2e1fc486556b3f9d1dbe950bc8d766b2898861592a679fb5bda80e24c0715c9",
+      "sha256": "b2e1fc486556b3f9d1dbe950bc8d766b2898861592a679fb5bda80e24c0715c9"
+    },
+    {
+      "original_path": "68_TREASURY_FINANCING_CAPITAL_STRUCTURE.md",
+      "path": "docs/architecture/68_TREASURY_FINANCING_CAPITAL_STRUCTURE.md",
+      "original_sha256": "01f28d99f1925d08462750e7692183e6fb3cb9f7fded8f3b3df5fe30dcdbc357",
+      "sha256": "3510211bbe231988d9f73640c31da4ee5b052ac09dbb7d6cee891f9180910bee"
+    },
+    {
+      "original_path": "69_REVENUE_MONETIZATION_CASH_RECONCILIATION.md",
+      "path": "docs/architecture/69_REVENUE_MONETIZATION_CASH_RECONCILIATION.md",
+      "original_sha256": "c5fa6d55191d4044606c6c45e5627c1eafea61ef9fdf91320a815b6641ffbcde",
+      "sha256": "c5fa6d55191d4044606c6c45e5627c1eafea61ef9fdf91320a815b6641ffbcde"
+    },
+    {
+      "original_path": "70_FINANCIAL_DASHBOARD_FORECASTING.md",
+      "path": "docs/architecture/70_FINANCIAL_DASHBOARD_FORECASTING.md",
+      "original_sha256": "73925c25a90841409477f1fbe8412757768d93266c17d63f80267d8fab2e9340",
+      "sha256": "73925c25a90841409477f1fbe8412757768d93266c17d63f80267d8fab2e9340"
+    },
+    {
+      "original_path": "71_VIRTUAL_ACCOUNTING_LEDGER_STANDARDS.md",
+      "path": "docs/architecture/71_VIRTUAL_ACCOUNTING_LEDGER_STANDARDS.md",
+      "original_sha256": "5811b682cdf8d6e1739826f29958c70e944d696ecc26ddf06e37b7f4018f9771",
+      "sha256": "5811b682cdf8d6e1739826f29958c70e944d696ecc26ddf06e37b7f4018f9771"
+    },
+    {
+      "original_path": "72_ECONOMY_STORY_WORLD_INTEGRATION.md",
+      "path": "docs/architecture/72_ECONOMY_STORY_WORLD_INTEGRATION.md",
+      "original_sha256": "c4b434eb4de7b4020de81a785783e7507ec6c6dfbc3fe927ac6e8d58b40ee632",
+      "sha256": "37864ff9261c353d7652eb3fbae9f25e754034ce6f5b5d42795a374a2f4c40f0"
+    },
+    {
+      "original_path": "73_END_TO_END_ECONOMY_SCENARIOS.md",
+      "path": "docs/architecture/73_END_TO_END_ECONOMY_SCENARIOS.md",
+      "original_sha256": "8d9de97adbe068e15850b1bd83f55ad32782a63d1d9babe0a152d0628abfae0b",
+      "sha256": "8d9de97adbe068e15850b1bd83f55ad32782a63d1d9babe0a152d0628abfae0b"
+    },
+    {
+      "original_path": "CHANGELOG.md",
+      "path": "docs/project/CHANGELOG.md",
+      "original_sha256": "66ab6caf7488c51f2e741810c4f4919654f4e6d457336eccb038785934d8ef48",
+      "sha256": "bf297b6806dae5d8e07fc0844fea21692e0b9f4b257d5d54b90b2e7741381958"
+    },
+    {
+      "original_path": "CURRENT_STATUS.md",
+      "path": "docs/project/CURRENT_STATUS.md",
+      "original_sha256": "babde35f5f5b1a48d50875cb5b50784e4b73e139d53e613ffb66fdfb49b7ac1a",
+      "sha256": "2d5619cb166d07cf6d3bee1346889ea49a6bdec0c1c2673c54e5e4f4a3edd457"
+    },
+    {
+      "original_path": "MANIFEST.md",
+      "path": "docs/architecture/MANIFEST.md",
+      "original_sha256": "8600ef38c0cc36f3761fd01043cd681a61fb135ac341025bf607909f3a6ee294",
+      "sha256": "c63330fadaf17e77b6c0dc0c25235c67e78e91ae7ade9a94e8fceace163a6ce8"
+    },
+    {
+      "original_path": "README.md",
+      "path": "docs/architecture/README.md",
+      "original_sha256": "ed1e3fb277cbb122db1d1fb1a72e16c6b6e7dc3f05295e6f07bb062be37d642c",
+      "sha256": "6e709fbbc741ed6a55f3deb711d0a10a38966f6c390d8d4637fb4e80d9353f2c"
+    },
+    {
+      "original_path": "REVISION_REPORT.md",
+      "path": "docs/architecture/REVISION_REPORT.md",
+      "original_sha256": "bf796d27af3eedc60363ef6336270e6a8de36bec3a5bb6d9a19de21036d04bfc",
+      "sha256": "bf796d27af3eedc60363ef6336270e6a8de36bec3a5bb6d9a19de21036d04bfc"
+    },
+    {
+      "original_path": "V3_FILE_BY_FILE_REVIEW.md",
+      "path": "docs/architecture/V3_FILE_BY_FILE_REVIEW.md",
+      "original_sha256": "f36204f2517c0d2e1d5fe0b9975f943bf70bb1b8a49bc5f023d647a65ee0217a",
+      "sha256": "9173ed3e83a84b5f2486fc7b2215b1be4e2fa22039edd42c194e5284aa426db5"
+    },
+    {
+      "original_path": "V4_REVISION_REPORT.md",
+      "path": "docs/architecture/V4_REVISION_REPORT.md",
+      "original_sha256": "8d80d5ebb67d580be5d9c72a2d1170122ec1e2b67f5852d189e00486d2d23ce8",
+      "sha256": "8d80d5ebb67d580be5d9c72a2d1170122ec1e2b67f5852d189e00486d2d23ce8"
+    },
+    {
+      "original_path": "V5_ECONOMY_ARCHITECTURE_AUDIT.md",
+      "path": "docs/architecture/V5_ECONOMY_ARCHITECTURE_AUDIT.md",
+      "original_sha256": "227ff19acb86de8760972dc39fc780ff43651c6f4cf4d4d10f31d7dd0d691e11",
+      "sha256": "227ff19acb86de8760972dc39fc780ff43651c6f4cf4d4d10f31d7dd0d691e11"
+    },
+    {
+      "original_path": "V5_REVISION_REPORT.md",
+      "path": "docs/architecture/V5_REVISION_REPORT.md",
+      "original_sha256": "7fe4a8bd51878c3137db913734894804b75c961e089df66bc2312dfc0c605993",
+      "sha256": "7fe4a8bd51878c3137db913734894804b75c961e089df66bc2312dfc0c605993"
+    }
+  ]
+}

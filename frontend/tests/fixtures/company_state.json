@@ -1,0 +1,26 @@
+{
+  "pipeline": {
+    "stages": {
+      "topics_proposed": 5,
+      "topics_selected": 5,
+      "scripts_awaiting_review": 29,
+      "scripts_approved": 2,
+      "scripts_blocked": 0,
+      "storyboards_approved": 0,
+      "storyboards_rejected": 1,
+      "renders_completed": 5,
+      "renders_failed": 2,
+      "films": 5,
+      "qc_passed": 7,
+      "published": 2,
+      "publications_failed": 0
+    },
+    "in_flight": 36,
+    "bottleneck": {
+      "stage": "APPROVAL",
+      "waiting": 29,
+      "passed_on": 2
+    },
+    "finished_ratio": 0.06
+  }
+}

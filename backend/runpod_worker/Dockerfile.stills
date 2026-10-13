@@ -1,0 +1,49 @@
+# syntax=docker/dockerfile:1.7
+#
+# AMN GPU work server for RunPod Serverless, the stills image: NO weights inside (Owner's
+# cards, 2026-10-09). The weights are the endpoint's RunPod cached model, the Owner's private
+# Hugging Face mirror of the stills files; the worker checks its pinned snapshot before
+# ComfyUI starts (runpod_worker/weights.py). Built by RunPod's GitHub integration from the
+# standalone repository export_repo.py writes: the build context is that repository's root
+# (this folder), the Dockerfile path is "Dockerfile.stills", and every pin is written in as a
+# default because the integration documents no build arguments, secrets or targets.
+# UNPROVEN until RunPod's first build and the paid bake-off.
+
+# The newest PUBLISHED base (Docker Hub, read 2026-10-08) and its OCI index digest.
+ARG BASE_IMAGE=runpod/worker-comfyui:5.10.0-base
+ARG BASE_DIGEST=sha256:e9d18d3db15839ebb10c10c824109fc2956f31ef7bf21916220c008855b0d538
+# The ComfyUI release every node of the graphs was checked against.
+ARG COMFYUI_VERSION=0.39.2
+
+FROM ${BASE_IMAGE}@${BASE_DIGEST}
+ARG COMFYUI_VERSION
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+# ffmpeg for the clip encode, git for the pinned ComfyUI and custom nodes.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Move the base's ComfyUI (a full git clone) to the pinned release.
+RUN cd /comfyui \
+    && git fetch --depth 1 origin "refs/tags/v${COMFYUI_VERSION}:refs/tags/v${COMFYUI_VERSION}" \
+    && git checkout "v${COMFYUI_VERSION}" \
+    && python -m pip install --no-cache-dir -r requirements.txt
+
+COPY requirements.txt /opt/amn/requirements.txt
+RUN python -m pip install --no-cache-dir -r /opt/amn/requirements.txt
+
+COPY . /opt/amn/runpod_worker/
+ENV PYTHONPATH=/opt/amn \
+    PYTHONUNBUFFERED=1 \
+    COMFY_DIR=/comfyui \
+    COMFY_HOST=127.0.0.1:8188 \
+    AMN_WORKER_IMAGE=stills \
+    AMN_MODEL_SOURCE=cache
+
+# custom_nodes.lock.json is empty today (SeedVR2 and RIFE are core nodes); kept for parity.
+RUN python -m runpod_worker.build nodes --image stills --dest /comfyui/custom_nodes
+
+# Our handler replaces the stock /start.sh + handler.py: it checks the weights, starts ComfyUI
+# itself (without --disable-metadata, see comfy.start_server) and serves amn.batch.v1 jobs.
+CMD ["python", "-u", "-m", "runpod_worker.amn_handler"]

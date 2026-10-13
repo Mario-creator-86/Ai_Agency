@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "status": "PROPOSED",
+  "proposed_on": "2026-09-27",
+  "proposed_by": "PROMPT_COMPILER, after the Nepal film",
+  "use_until_the_owner_changes_it": true,
+  "note": "The studio's one look for factual shorts, as the opening words of every still prompt (the look block, 40-60 words). A proposal the Owner may change; it is not in his database. The film's visual bible may refine the place, season, weather, light and palette in plain words, never the rendering: a bible that asks for another medium is not read here. No codes, no hex colours and no 'no ...' phrases belong in these words: the image model reads them literally. Chart colours live in the bible's card_palette and reach only the local card compositor. Change the words and bump the version.",
+  "rendering": "Documentary photograph, natural and unposed, true-to-life colour",
+  "slots": {
+    "place": "a real location as it is today",
+    "season": "",
+    "weather": "overcast sky",
+    "light": "soft diffuse daylight from high to one side",
+    "palette": "slate blue, muted moss green, wet earth brown and stone grey",
+    "lens": "natural 35mm lens perspective with gentle depth of field",
+    "grain": "fine film grain and crisp detail"
+  },
+  "slot_words": {
+    "place": 8,
+    "season": 4,
+    "weather": 6,
+    "light": 8,
+    "palette": 8
+  },
+  "fill": [
+    "Honest textures of stone, soil, water and weathered cloth.",
+    "Clear separation between foreground and background."
+  ],
+  "min_words": 40,
+  "max_words": 60,
+  "finish": {
+    "note": "The finish: what the studio does to a film after its pictures are made, locally and for 0 credits. None of it reaches a model (the image model reads only rendering, slots and fill). captions: the burnt captions' colours as #RRGGBB (text, the word being spoken, numbers), their shadow (opacity 0-1, 0-4 px) and whether the spoken word and numbers are coloured. headline: the hook written at the top for its first seconds (off until the Owner chooses it). grade: every filmed shot pulled toward the hero's light and colour (strength 0-1), an optional .cube LUT in config/luts with its licence (a LUT without a licence is not used) and shared grain (0-10). second_framing: a long spoken scene cut to a closer framing of the same picture (zoom 1.12-1.2). cover: a cover image from the hero still and the hook. editorial_qc_blocking: false keeps the editing checks advisory; true makes them refuse a film. A value that is not valid is not used and the default stands.",
+    "captions": {
+      "text": "#FFFFFF",
+      "active": "#FFD23F",
+      "emphasis": "#5CE1E6",
+      "outline": "#000000",
+      "shadow": "#000000",
+      "shadow_opacity": 0.6,
+      "shadow_px": 2.5,
+      "highlight_active_word": true,
+      "emphasis_numbers": true
+    },
+    "headline": {
+      "show": false,
+      "seconds": 2.2
+    },
+    "grade": {
+      "match_to_hero": true,
+      "strength": 0.6,
+      "lut": null,
+      "lut_licence": null,
+      "grain": 0
+    },
+    "second_framing": {
+      "enabled": true,
+      "min_spoken_seconds": 3.2,
+      "zoom": 1.15
+    },
+    "cover": {
+      "compose": true
+    },
+    "editorial_qc_blocking": false
+  }
+}

@@ -1,0 +1,65 @@
+[project]
+name = "amn-ai"
+version = "0.1.0"
+description = "AMN-AI (Autonomous Machine Nexus) — local-first, backend-authoritative AI media studio"
+requires-python = ">=3.12,<3.15"
+dependencies = [
+  "fastapi>=0.115,<1",
+  "uvicorn>=0.34,<1",
+  # Required for the /api/v1/ws gateway: without a WebSocket library uvicorn answers the
+  # handshake with 404 and the 2D office silently loses its real-time event feed.
+  "websockets>=13,<16",
+  "sqlalchemy>=2.0,<2.1",
+  "alembic>=1.15,<2",
+  "pydantic-settings>=2.8,<3",
+  "tzdata>=2025.1",
+  # 49 fixes CVE-2026-69247/69248/69249 (48.0.1 had them; the studio uses only Fernet).
+  "cryptography>=49,<51",
+  "opencv-python-headless>=4.10",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8,<10",
+  "pytest-cov>=6,<8",
+  "httpx>=0.28,<1",
+  "ruff>=0.11,<1",
+  "mypy>=1.15,<2",
+  "detect-secrets>=1.5,<2",
+  # tests/test_sky_atlas.py reads and filters images with Pillow; without it the test skipped.
+  "pillow>=11,<13",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["backend"]
+# pytester: tests/test_conftest_switches.py runs the suite's own switches in an inner session.
+addopts = "-ra -p pytester"
+markers = [
+  "film: needs FFmpeg (or the YuNet face model); set automatically from the skip marker",
+  "slow: a film test or a known slow module; the quick lane is -m 'not slow'",
+  "real_encode: keeps the production x264 final encode instead of the suite's quick preset",
+]
+filterwarnings = [
+  # Starlette's TestClient on httpx: deprecated upstream in favour of httpx2, harmless here.
+  "ignore:Using `httpx` with `starlette.testclient` is deprecated",
+  "ignore:The anyio.abc.BlockingPortal alias is deprecated:DeprecationWarning",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+# Blender/Unreal build scripts run inside those applications' own Python; they are not part of
+# the application and keep their own conventions.
+extend-exclude = ["art-source"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.12"
+mypy_path = "backend"
+files = ["backend/app"]
+check_untyped_defs = true
+disallow_untyped_defs = true
+

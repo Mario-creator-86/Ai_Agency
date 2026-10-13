@@ -1,0 +1,4 @@
+{
+  "notes_ro": "Biblioteca de muzică a Proprietarului. Fiecare piesă: id, kind (music sau ambience), file (relativ la acest dosar), sha256 (al fișierului licențiat), licence (licența sau termenii planului), commercial_ok (true doar dacă licența permite folosire comercială), redistributable, attribution (textul cerut de licență sau null), mood, bpm, tags (pentru ambianță). O piesă fără commercial_ok true, fără licență sau cu alt sha256 nu este folosită niciodată. Lista pornește goală: sursa muzicii este alegerea Proprietarului.",
+  "tracks": []
+}

@@ -1,0 +1,304 @@
+{
+  "name": "wan_2_2_i2v_lightx2v",
+  "model": "Wan-2.2-LightX2V",
+  "operation": "video",
+  "status": "UNPROVEN",
+  "notes": [
+    "Checked against ComfyUI v0.39.2 (commit 3c1b7a17fdf239d35ce98cc777756f572d089795): every class_type and input name was read from its source on 2026-10-08 (tests/test_runpod_worker.py COMFY_NODES cites the files); never run.",
+    "Follows the official template video_wan2_2_14B_i2v.json with its '4 steps LoRA' switch on: A14B high/low-noise experts each with the LightX2V 4-step LoRA, ModelSamplingSD3 shift 5, two KSamplerAdvanced halves (steps 4, CFG 1, split at 2), the template's own negative prompt when an item has none.",
+    "Wan 2.2 renders 720x1280 at 16 fps (frames 4k+1); ComfyUI's core RIFE (FrameInterpolationModelLoader + FrameInterpolate x2, comfy_extras/nodes_frame_interpolation.py, rife_v4.26 from Comfy-Org/frame_interpolation) makes 32 fps; the worker's encode scales (Lanczos) to 1080x1920 and resamples to 24 fps. SeedVR2 video upscaling instead is a bake-off option.",
+    "The publisher says very large motion may show artifacts with the 4-step distillation."
+  ],
+  "output_node": "19",
+  "frames": {
+    "fps": 16,
+    "multiple": 4,
+    "remainder": 1
+  },
+  "bindings": {
+    "prompt": [
+      "10",
+      "inputs",
+      "text"
+    ],
+    "negative_prompt": [
+      "11",
+      "inputs",
+      "text"
+    ],
+    "seed": [
+      [
+        "13",
+        "inputs",
+        "noise_seed"
+      ],
+      [
+        "14",
+        "inputs",
+        "noise_seed"
+      ]
+    ],
+    "source_image": [
+      "9",
+      "inputs",
+      "image"
+    ],
+    "duration_frames": [
+      "12",
+      "inputs",
+      "length"
+    ],
+    "filename_prefix": [
+      "19",
+      "inputs",
+      "filename_prefix"
+    ]
+  },
+  "models": [
+    "wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors",
+    "wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors",
+    "wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors",
+    "wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors",
+    "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+    "wan_2.1_vae.safetensors",
+    "rife_v4.26.safetensors"
+  ],
+  "graph": {
+    "1": {
+      "class_type": "UNETLoader",
+      "inputs": {
+        "unet_name": "wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors",
+        "weight_dtype": "default"
+      }
+    },
+    "2": {
+      "class_type": "UNETLoader",
+      "inputs": {
+        "unet_name": "wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors",
+        "weight_dtype": "default"
+      }
+    },
+    "3": {
+      "class_type": "LoraLoaderModelOnly",
+      "inputs": {
+        "model": [
+          "1",
+          0
+        ],
+        "lora_name": "wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors",
+        "strength_model": 1.0
+      }
+    },
+    "4": {
+      "class_type": "LoraLoaderModelOnly",
+      "inputs": {
+        "model": [
+          "2",
+          0
+        ],
+        "lora_name": "wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors",
+        "strength_model": 1.0
+      }
+    },
+    "5": {
+      "class_type": "ModelSamplingSD3",
+      "inputs": {
+        "model": [
+          "3",
+          0
+        ],
+        "shift": 5.0
+      }
+    },
+    "6": {
+      "class_type": "ModelSamplingSD3",
+      "inputs": {
+        "model": [
+          "4",
+          0
+        ],
+        "shift": 5.0
+      }
+    },
+    "7": {
+      "class_type": "CLIPLoader",
+      "inputs": {
+        "clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+        "type": "wan",
+        "device": "default"
+      }
+    },
+    "8": {
+      "class_type": "VAELoader",
+      "inputs": {
+        "vae_name": "wan_2.1_vae.safetensors"
+      }
+    },
+    "9": {
+      "class_type": "LoadImage",
+      "inputs": {
+        "image": ""
+      }
+    },
+    "10": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "clip": [
+          "7",
+          0
+        ],
+        "text": ""
+      }
+    },
+    "11": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "clip": [
+          "7",
+          0
+        ],
+        "text": "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走"
+      }
+    },
+    "12": {
+      "class_type": "WanImageToVideo",
+      "inputs": {
+        "positive": [
+          "10",
+          0
+        ],
+        "negative": [
+          "11",
+          0
+        ],
+        "vae": [
+          "8",
+          0
+        ],
+        "start_image": [
+          "9",
+          0
+        ],
+        "width": 720,
+        "height": 1280,
+        "length": 81,
+        "batch_size": 1
+      }
+    },
+    "13": {
+      "class_type": "KSamplerAdvanced",
+      "inputs": {
+        "model": [
+          "5",
+          0
+        ],
+        "add_noise": "enable",
+        "noise_seed": 0,
+        "steps": 4,
+        "cfg": 1.0,
+        "sampler_name": "euler",
+        "scheduler": "simple",
+        "positive": [
+          "12",
+          0
+        ],
+        "negative": [
+          "12",
+          1
+        ],
+        "latent_image": [
+          "12",
+          2
+        ],
+        "start_at_step": 0,
+        "end_at_step": 2,
+        "return_with_leftover_noise": "enable"
+      }
+    },
+    "14": {
+      "class_type": "KSamplerAdvanced",
+      "inputs": {
+        "model": [
+          "6",
+          0
+        ],
+        "add_noise": "disable",
+        "noise_seed": 0,
+        "steps": 4,
+        "cfg": 1.0,
+        "sampler_name": "euler",
+        "scheduler": "simple",
+        "positive": [
+          "12",
+          0
+        ],
+        "negative": [
+          "12",
+          1
+        ],
+        "latent_image": [
+          "13",
+          0
+        ],
+        "start_at_step": 2,
+        "end_at_step": 10000,
+        "return_with_leftover_noise": "disable"
+      }
+    },
+    "15": {
+      "class_type": "VAEDecode",
+      "inputs": {
+        "samples": [
+          "14",
+          0
+        ],
+        "vae": [
+          "8",
+          0
+        ]
+      }
+    },
+    "16": {
+      "class_type": "FrameInterpolationModelLoader",
+      "inputs": {
+        "model_name": "rife_v4.26.safetensors"
+      }
+    },
+    "17": {
+      "class_type": "FrameInterpolate",
+      "inputs": {
+        "interp_model": [
+          "16",
+          0
+        ],
+        "images": [
+          "15",
+          0
+        ],
+        "multiplier": 2
+      }
+    },
+    "18": {
+      "class_type": "CreateVideo",
+      "inputs": {
+        "images": [
+          "17",
+          0
+        ],
+        "fps": 32.0
+      }
+    },
+    "19": {
+      "class_type": "SaveVideo",
+      "inputs": {
+        "video": [
+          "18",
+          0
+        ],
+        "filename_prefix": "amn/clip",
+        "format": "auto",
+        "format.codec": "auto"
+      }
+    }
+  }
+}

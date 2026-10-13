@@ -1,0 +1,86 @@
+{
+  "1": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": {
+      "ckpt_name": "sd_xl_base_1.0.safetensors"
+    }
+  },
+  "2": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": [
+        "1",
+        1
+      ],
+      "text": "(enormous detailed planet dominating the upper right sky:1.5), massive crescent gas giant above the horizon, (wide establishing shot:1.2), a lone small full-body astronaut standing in the lower left of a vast Martian desert, entire white spacesuit and boots visible, generous space above the astronaut's helmet, rusty red sand, distant layered rocky mountains, fine atmospheric dust, soft cinematic lighting, realistic dramatic shadows, muted terracotta color palette, photorealistic science-fiction movie still, ultra detailed, panoramic 16:9 composition"
+    }
+  },
+  "3": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": [
+        "1",
+        1
+      ],
+      "text": "low quality, blurry, flicker, distorted anatomy, duplicate person, extra limbs, abrupt cuts, text, watermark, camera shake, unnatural movement, oversaturated colors, high contrast, zoom, close-up, cropped head, cropped feet"
+    }
+  },
+  "4": {
+    "class_type": "EmptyLatentImage",
+    "inputs": {
+      "width": 1024,
+      "height": 576,
+      "batch_size": 1
+    }
+  },
+  "5": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": [
+        "1",
+        0
+      ],
+      "positive": [
+        "2",
+        0
+      ],
+      "negative": [
+        "3",
+        0
+      ],
+      "latent_image": [
+        "4",
+        0
+      ],
+      "seed": 9071,
+      "steps": 30,
+      "cfg": 6.5,
+      "sampler_name": "dpmpp_2m",
+      "scheduler": "karras",
+      "denoise": 1.0
+    }
+  },
+  "6": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "5",
+        0
+      ],
+      "vae": [
+        "1",
+        2
+      ]
+    }
+  },
+  "7": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "6",
+        0
+      ],
+      "filename_prefix": "Studio/astronaut_mars"
+    }
+  }
+}

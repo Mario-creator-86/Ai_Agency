@@ -1,0 +1,42 @@
+# AMN-AI as a systemd USER service (Linux). The Windows equivalent is
+# scripts/install_studio_service.ps1.
+#
+# Install (as the user who owns the studio folder, never root):
+#   1. Build the page once:  uv run python scripts/start.py   (Ctrl+C after it starts)
+#   2. Copy this file:       mkdir -p ~/.config/systemd/user && cp scripts/amn-ai.service ~/.config/systemd/user/
+#   3. Edit WorkingDirectory below if the studio is not in ~/amn-ai.
+#   4. Enable it:            systemctl --user daemon-reload && systemctl --user enable --now amn-ai
+#   5. Keep it running after logout and at boot:  sudo loginctl enable-linger "$USER"
+#
+# Logs: journalctl --user -u amn-ai -f   (the full JSON log is data/logs/studio.log)
+# Stop: systemctl --user stop amn-ai     (the day in progress ends after the scene in flight,
+#       recorded INTERRUPTED; it is never re-run by the clock)
+#
+# The service does not activate the daily job: starting the studio's clock stays the Owner's
+# act in the page. On Linux the vault key (data/studio.credentials.key) is stored unwrapped with
+# mode 0600: keep the disk encrypted (LUKS or an encrypted home) — see README, "Linux".
+
+[Unit]
+Description=AMN-AI studio (local, 127.0.0.1)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/amn-ai
+# --skip-frontend: the page was built once by hand; the service never runs npm.
+ExecStart=/usr/bin/env uv run python scripts/start.py --skip-frontend
+Restart=on-failure
+RestartSec=60
+# The day finishes its scene in flight before the process ends (scripts/run.py waits 30 s for
+# open connections; the worker waits for the scene). A longer stop timeout avoids a kill mid-scene.
+TimeoutStopSec=900
+KillSignal=SIGINT
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONIOENCODING=utf-8
+# Least privilege for a local studio.
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

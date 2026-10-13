@@ -1,0 +1,153 @@
+{
+  "models_data": [
+    [
+      "kimi-k3:cloud",
+      null,
+      "Ollama Cloud role proposal; API identifier: kimi-k3"
+    ],
+    [
+      "minimax-m3:cloud",
+      null,
+      "Ollama Cloud role proposal; API identifier: minimax-m3"
+    ],
+    [
+      "deepseek-v4-pro:0813-cloud",
+      null,
+      "Ollama Cloud role proposal; API identifier: deepseek-v4-pro:0813"
+    ],
+    [
+      "mistral-large-4:cloud",
+      null,
+      "Ollama Cloud role proposal; API identifier: mistral-large-4"
+    ],
+    [
+      "nemotron-3-ultra:cloud",
+      null,
+      "Ollama Cloud role proposal; API identifier: nemotron-3-ultra"
+    ]
+  ],
+  "agents_def": [
+    [
+      "Sarah (Director)",
+      "Director",
+      "kimi-k3:cloud"
+    ],
+    [
+      "Dr. Aris (Researcher)",
+      "LeadResearcher",
+      "minimax-m3:cloud"
+    ],
+    [
+      "Elena (Fact Checker)",
+      "FactChecker",
+      "deepseek-v4-pro:0813-cloud"
+    ],
+    [
+      "Marcus (Script Writer)",
+      "ScriptWriter",
+      "kimi-k3:cloud"
+    ],
+    [
+      "Lyra (Voice Artist)",
+      "VoiceArtist",
+      "mistral-large-4:cloud"
+    ],
+    [
+      "Kael (Video Editor)",
+      "VideoEditor",
+      "kimi-k3:cloud"
+    ],
+    [
+      "Vera (Publisher)",
+      "Publisher",
+      "nemotron-3-ultra:cloud"
+    ],
+    [
+      "Nadia (Accountant)",
+      "Accountant",
+      "mistral-large-4:cloud"
+    ]
+  ],
+  "llm_allocation": [
+    {
+      "role": "Director",
+      "primary": "kimi-k3",
+      "secondary": "nemotron-3-ultra",
+      "tertiary": null,
+      "strategy": "REVIEW",
+      "policy": "IMPORTANT_ONLY",
+      "min_importance": "STRATEGIC",
+      "note": "Multimodal strategy and editorial review; independent Nemotron critic on important decisions only."
+    },
+    {
+      "role": "LeadResearcher",
+      "primary": "minimax-m3",
+      "secondary": null,
+      "tertiary": null,
+      "strategy": "SINGLE",
+      "policy": "IMPORTANT_ONLY",
+      "min_importance": "STRATEGIC",
+      "note": "Information retrieval, long evidence trails and cross-source research."
+    },
+    {
+      "role": "FactChecker",
+      "primary": "deepseek-v4-pro:0813",
+      "secondary": null,
+      "tertiary": null,
+      "strategy": "SINGLE",
+      "policy": "IMPORTANT_ONLY",
+      "min_importance": "STRATEGIC",
+      "note": "Independent logical verification against cited evidence; unsupported claims stay blocked."
+    },
+    {
+      "role": "ScriptWriter",
+      "primary": "kimi-k3",
+      "secondary": null,
+      "tertiary": null,
+      "strategy": "SINGLE",
+      "policy": "IMPORTANT_ONLY",
+      "min_importance": "STRATEGIC",
+      "note": "Narrative structure, grounded scripts and long-context character/story continuity."
+    },
+    {
+      "role": "VoiceArtist",
+      "primary": "mistral-large-4",
+      "secondary": null,
+      "tertiary": null,
+      "strategy": "SINGLE",
+      "policy": "IMPORTANT_ONLY",
+      "min_importance": "STRATEGIC",
+      "note": "Multilingual text adaptation and voice direction; actual synthesis remains on the voice provider."
+    },
+    {
+      "role": "VideoEditor",
+      "primary": "kimi-k3",
+      "secondary": null,
+      "tertiary": null,
+      "strategy": "SINGLE",
+      "policy": "IMPORTANT_ONLY",
+      "min_importance": "STRATEGIC",
+      "note": "Visual/frame understanding, editing plans and continuity; media tools execute the work."
+    },
+    {
+      "role": "Publisher",
+      "primary": "nemotron-3-ultra",
+      "secondary": null,
+      "tertiary": null,
+      "strategy": "SINGLE",
+      "policy": "IMPORTANT_ONLY",
+      "min_importance": "STRATEGIC",
+      "note": "Reliable procedural reasoning and quality/provenance gates; publication permissions stay authoritative."
+    },
+    {
+      "role": "Accountant",
+      "primary": "mistral-large-4",
+      "secondary": null,
+      "tertiary": null,
+      "strategy": "SINGLE",
+      "policy": "IMPORTANT_ONLY",
+      "min_importance": "STRATEGIC",
+      "note": "Financial document interpretation and budget reasoning; authoritative totals still come from the backend."
+    }
+  ]
+}

@@ -1,0 +1,266 @@
+{
+  "about": "The documented capability of every image-to-video model the studio's Runway connection lists, read 2026-10-01 from the vendors' own pages and the Artificial Analysis video arena. production_policy.scene_model_capabilities reads it when a model's catalogue row (ProviderResource.capabilities) carries no measured or sourced research of its own; a measured value always outranks it, and the studio's own judged shots (ModelOutcome) weigh on it from the third judged shot. The Owner edits 'allowed', 'hero_threshold' and 'premium_reference'; nothing else here is a preference.",
+  "read_on": "2026-10-01",
+  "allowed": [
+    "gemini_omni_flash",
+    "gemini_omni_flash_1.1",
+    "gen4.5",
+    "gen4_turbo",
+    "grok_imagine_1_5",
+    "h3_max",
+    "hailuo3",
+    "happyhorse_1_0",
+    "seedance2",
+    "seedance2_5",
+    "seedance2_fast",
+    "seedance2_mini",
+    "veo3.1",
+    "veo3.1_fast",
+    "wan3",
+    "wan3_prime"
+  ],
+  "allowed_note": "The Owner's allowed set. Default: every model in this file. The planner never buys a model outside it; his per-scene choice on the shooting sheet still wins (that is his decision, shown with a warning). A model the connection lists but this set does not name is never chosen by the planner.",
+  "hero_threshold": 0.93,
+  "hero_threshold_note": "The quality a HERO scene (the hook) must reach on the scale below. 0.93 is the studio's HERO tier (production_policy.QUALITY_TIERS) kept as it was; on this scale it means the model's shots are preferred at least 46.5% of the time against the board leader's (within about 25 Elo of the leader). When no allowed model reaches it, the scene goes to the Owner with the best model available and why.",
+  "premium_reference": {"model_id": "seedance2_5", "resolution": "1080p"},
+  "premium_reference_note": "What 'premium on every scene' costs when the sheet reports the saving: the dearest top-ranked model per second in the price table (68 credits/s at 1080p), the same reference as cost_plan.PREMIUM_REFERENCE.",
+  "scale": {
+    "method": "quality_score = 2 / (1 + 10^((leader_elo - model_elo) / 400)): twice the model's expected preference share against the board leader in a blind pairwise vote, so the leader reads 1.0 and a model preferred half as often as a coin flip reads about 0.5. Overall quality is the LOWER of the two silent boards the model appears on (AA-Video-T2V-Silent v2.0 and AA-Video-I2V-Silent v1.0): the studio films a still into motion without the model's audio, and the lower reading is the safer one. need_quality.people is the Human Anatomy board, water the Physics board (fluids are physics), fast_motion the lower of Physics and Spatio-Temporal Consistency (all T2V-Silent v2.0 categories).",
+    "precision": "Two decimals and no more: the overall boards carry +-9 to +-13 Elo (about +-0.03 near the top), the category boards +-35 to +-40 Elo (about +-0.08). Two models within 0.05 of each other are not reliably different.",
+    "basis": "documented",
+    "boards_read_on": "2026-10-01",
+    "camera_moves_rule": "The studio's single camera moves (prompt_lint.CAMERA_MOVES, the whole vocabulary of «Mișcare v2», 2026-10-12). A model gets the whole list when its vendor documents prompt-directed camera movement for it; null when nothing is documented (null excludes nothing and proves nothing).",
+    "sources": [
+      "https://artificialanalysis.ai/video/leaderboard/text-to-video?audio-output=false",
+      "https://artificialanalysis.ai/video/leaderboard/image-to-video?audio-output=false",
+      "https://artificialanalysis.ai/video/leaderboard/text-to-video?category=human-anatomy&audio-output=false",
+      "https://artificialanalysis.ai/video/leaderboard/text-to-video?category=physics&audio-output=false",
+      "https://artificialanalysis.ai/video/leaderboard/text-to-video?category=spatio-temporal-consistency&audio-output=false",
+      "https://artificialanalysis.ai/video/leaderboard/text-to-video?category=camera-control&audio-output=false",
+      "https://artificialanalysis.ai/video/methodology"
+    ]
+  },
+  "models": {
+    "wan3": {
+      "quality_score": 0.98,
+      "need_quality": {"people": 0.99, "water": 0.96, "fast_motion": 0.96},
+      "camera_moves": ["static", "slow push-in", "slow pull-back", "dolly in", "dolly out", "slow pan left", "slow pan right", "tracking left", "tracking right", "tilt up", "tilt down", "aerial drift forward", "pedestal up", "crane up", "crane down", "slow orbit", "handheld drift", "rack focus"],
+      "native_audio": true,
+      "seconds": {"min": 2, "max": 30},
+      "resolutions": ["480p", "720p", "1080p"],
+      "benchmarks": {"t2v_silent_elo": 1128, "t2v_silent_rank": 1, "i2v_silent_elo": 1362, "i2v_silent_rank": 3, "human_anatomy_elo": 1061, "physics_elo": 1073, "spatio_temporal_elo": 1130, "camera_control_elo": 1069},
+      "notes": "Alibaba Wan 3.0. Runway: 'Budget-friendly video with audio'; 'Improved rendering of real-world movement and physics, so water, fabric and fast action read the way a camera would catch them'; image as exact first frame; 2-30 s at 480p/720p/1080p; audio can be switched off. Leads T2V-Silent v2.0 overall, Spatio-Temporal and Camera Control; within the confidence interval of the I2V-Silent leader. At 20 credits/s at 1080p it is also among the cheapest 1080p models in the table.",
+      "sources": [
+        "https://runway.com/product/models/wan-3.0",
+        "https://help.runwayml.com/hc/en-us/articles/48649877897107-Available-Models-on-Runway",
+        "https://docs.dev.runwayml.com/guides/models/"
+      ],
+      "basis": "documented"
+    },
+    "seedance2_5": {
+      "quality_score": 0.92,
+      "need_quality": {"people": 0.94, "water": 0.94, "fast_motion": 0.94},
+      "camera_moves": ["static", "slow push-in", "slow pull-back", "dolly in", "dolly out", "slow pan left", "slow pan right", "tracking left", "tracking right", "tilt up", "tilt down", "aerial drift forward", "pedestal up", "crane up", "crane down", "slow orbit", "handheld drift", "rack focus"],
+      "native_audio": true,
+      "seconds": {"min": 4, "max": 30},
+      "resolutions": ["480p", "720p", "1080p"],
+      "benchmarks": {"t2v_silent_elo": 1100, "t2v_silent_rank": 3, "i2v_silent_elo": null, "human_anatomy_elo": 1042, "physics_elo": 1066, "spatio_temporal_elo": 1114, "camera_control_elo": 1064},
+      "notes": "ByteDance Seedance 2.5, successor of 2.0. Runway: up to 30 s, 480p/720p/1080p, audio generated in the same pass; 'handles complex, compound camera movement within a single beat' past about 4 s; holds a character across beats; public-figure moderation applies to references. Not yet on the I2V board (AA says I2V v2.0 is coming), so its overall score rests on T2V-Silent only. 68 credits/s at 1080p: the dearest per second in the table.",
+      "sources": [
+        "https://help.runwayml.com/hc/en-us/articles/53542207042323-Creating-with-Seedance-2-5",
+        "https://runway.com/resources/seedance-2-5-prompt-guide",
+        "https://docs.dev.runwayml.com/guides/models/"
+      ],
+      "basis": "documented"
+    },
+    "seedance2": {
+      "quality_score": 0.86,
+      "need_quality": {"people": 0.88, "water": 0.89, "fast_motion": 0.85},
+      "camera_moves": ["static", "slow push-in", "slow pull-back", "dolly in", "dolly out", "slow pan left", "slow pan right", "tracking left", "tracking right", "tilt up", "tilt down", "aerial drift forward", "pedestal up", "crane up", "crane down", "slow orbit", "handheld drift", "rack focus"],
+      "native_audio": true,
+      "seconds": {"min": 5, "max": 15},
+      "resolutions": ["480p", "720p", "1080p", "4K"],
+      "benchmarks": {"t2v_silent_elo": 1080, "t2v_silent_rank": 6, "i2v_silent_elo": 1340, "i2v_silent_note": "AA benchmarked 'Dreamina Seedance 2.0 720p'", "human_anatomy_elo": 1021, "physics_elo": 1047, "spatio_temporal_elo": 1079, "camera_control_elo": 1022},
+      "notes": "ByteDance Seedance 2.0. Runway: 'director-level control over camera movement', one movement type per shot (the studio's rule too); 5-15 s per Runway's help article and Seedance 2.5 prompt guide, while config/runway_prices.json lists 4-30 s for the API: the live contract decides, and a mismatch is refused as CONTRACT and moves the scene. Realistic human subjects from an input image may meet the provider's moderation ('The request was blocked by Seedance 2.0').",
+      "sources": [
+        "https://help.runwayml.com/hc/en-us/articles/50488490233363-Creating-with-Seedance-2-0",
+        "https://runway.com/resources/seedance-2-5-prompt-guide",
+        "https://help.runwayml.com/hc/en-us/articles/48649877897107-Available-Models-on-Runway"
+      ],
+      "basis": "documented"
+    },
+    "seedance2_fast": {
+      "quality_score": null,
+      "need_quality": {},
+      "camera_moves": null,
+      "native_audio": true,
+      "resolutions": ["480p", "720p"],
+      "benchmarks": {},
+      "notes": "Runway: 'built for speed and exploration'. No public benchmark of this variant; its quality is not known and it is not trusted with a published scene until the studio has measured it. The catalogue contract stops at 720x1280, so it cannot fill the studio's 1080x1920 frame.",
+      "sources": ["https://help.runwayml.com/hc/en-us/articles/48649877897107-Available-Models-on-Runway"],
+      "basis": "documented"
+    },
+    "seedance2_mini": {
+      "quality_score": null,
+      "need_quality": {},
+      "camera_moves": null,
+      "native_audio": true,
+      "resolutions": ["480p", "720p"],
+      "benchmarks": {},
+      "notes": "Runway: 'Budget friendly video generation, built for speed and exploration'. No public benchmark; quality unknown until measured. Stops at 720x1280.",
+      "sources": ["https://help.runwayml.com/hc/en-us/articles/48649877897107-Available-Models-on-Runway"],
+      "basis": "documented"
+    },
+    "veo3.1": {
+      "quality_score": 0.56,
+      "need_quality": {"people": 0.45, "water": 0.63, "fast_motion": 0.61},
+      "camera_moves": ["static", "slow push-in", "slow pull-back", "dolly in", "dolly out", "slow pan left", "slow pan right", "tracking left", "tracking right", "tilt up", "tilt down", "aerial drift forward", "pedestal up", "crane up", "crane down", "slow orbit", "handheld drift", "rack focus"],
+      "native_audio": true,
+      "seconds": {"values": [4, 6, 8]},
+      "resolutions": ["720p", "1080p", "4k"],
+      "benchmarks": {"t2v_silent_elo": 964, "t2v_silent_rank": 17, "i2v_silent_elo": 1252, "i2v_silent_rank": 31, "human_anatomy_elo": 850, "physics_elo": 952, "spatio_temporal_elo": 985, "camera_control_elo": 900},
+      "notes": "Google Veo 3.1 (veo-3.1-generate-001, GA 2025-11-17). Google: 4, 6 or 8 s, 24 fps, native audio; its prompt guide documents static, pan, tilt, dolly, pedestal, crane, aerial and arc moves; DeepMind cites preference for its physics on MovieGenBench (Oct 2025). Google AI Studio marks 1080p and 4k as '8s length only': a 4 or 6 s shot at 1080p may be refused (CONTRACT) unless Runway's endpoint differs. Ranked well below the 2026 models on every silent board, weakest on human anatomy.",
+      "sources": [
+        "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/veo/3-1-generate",
+        "https://aistudio.google.com/models/veo-3",
+        "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/video/video-gen-prompt-guide",
+        "https://deepmind.google/models/veo/",
+        "https://help.runwayml.com/hc/en-us/articles/48649877897107-Available-Models-on-Runway"
+      ],
+      "basis": "documented"
+    },
+    "veo3.1_fast": {
+      "quality_score": 0.57,
+      "need_quality": {"people": 0.39, "water": 0.54, "fast_motion": 0.54},
+      "camera_moves": ["static", "slow push-in", "slow pull-back", "dolly in", "dolly out", "slow pan left", "slow pan right", "tracking left", "tracking right", "tilt up", "tilt down", "aerial drift forward", "pedestal up", "crane up", "crane down", "slow orbit", "handheld drift", "rack focus"],
+      "native_audio": true,
+      "seconds": {"values": [4, 6, 8]},
+      "resolutions": ["720p", "1080p", "4k"],
+      "benchmarks": {"t2v_silent_elo": 966, "t2v_silent_rank": 16, "i2v_silent_elo": 1259, "i2v_silent_rank": 26, "human_anatomy_elo": 818, "physics_elo": 913, "spatio_temporal_elo": 977, "camera_control_elo": 931},
+      "notes": "Google Veo 3.1 Fast (veo-3.1-fast-generate-001). Google: 'faster video generation while maintaining high quality', 'ideal for standard production workflows'; same lengths and 1080p-at-8s-only note as Veo 3.1. Statistically level with Veo 3.1 overall, lowest of the priced 1080p models on human anatomy.",
+      "sources": [
+        "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/veo/3-1-generate",
+        "https://cloud.google.com/blog/products/ai-machine-learning/veo-3-1-lite-and-a-new-veo-upscaling-capability-on-vertex-ai",
+        "https://aistudio.google.com/models/veo-3",
+        "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/video/video-gen-prompt-guide"
+      ],
+      "basis": "documented"
+    },
+    "gen4.5": {
+      "quality_score": 0.47,
+      "need_quality": {"people": 0.45, "water": 0.51, "fast_motion": 0.44},
+      "camera_moves": ["static", "slow push-in", "slow pull-back", "dolly in", "dolly out", "slow pan left", "slow pan right", "tracking left", "tracking right", "tilt up", "tilt down", "aerial drift forward", "pedestal up", "crane up", "crane down", "slow orbit", "handheld drift", "rack focus"],
+      "native_audio": false,
+      "seconds": {"min": 2, "max": 10},
+      "resolutions": ["720p"],
+      "benchmarks": {"t2v_silent_elo": 921, "t2v_silent_rank": 22, "t2v_silent_note": "AA benchmarked 'Runway Gen-4.5 (720p)'", "i2v_silent_elo": 1265, "i2v_silent_rank": 24, "human_anatomy_elo": 848, "physics_elo": 902, "spatio_temporal_elo": 910, "camera_control_elo": 878},
+      "notes": "Runway Gen-4.5. Runway: 'state-of-the-art ... motion quality, prompt adherence and visual fidelity', 'detailed camera choreography' in one prompt; its camera-terms page shows pan, tilt, push in, pull back, pedestal, crane, orbit, static. 2-10 s, 720p only (9:16 is 720x1280), so it cannot fill a 1080x1920 film.",
+      "sources": [
+        "https://help.runwayml.com/hc/en-us/articles/46974685288467-Creating-with-Gen-4-5",
+        "https://help.runwayml.com/hc/en-us/articles/47313504791059-Camera-Terms-Prompts-Examples"
+      ],
+      "basis": "documented"
+    },
+    "gen4_turbo": {
+      "quality_score": 0.33,
+      "need_quality": {},
+      "camera_moves": ["static", "slow push-in", "slow pull-back", "dolly in", "dolly out", "slow pan left", "slow pan right", "tracking left", "tracking right", "tilt up", "tilt down", "aerial drift forward", "pedestal up", "crane up", "crane down", "slow orbit", "handheld drift", "rack focus"],
+      "native_audio": false,
+      "seconds": {"values": [5, 10]},
+      "resolutions": ["720p"],
+      "benchmarks": {"i2v_silent_elo": 1088, "i2v_silent_rank": 65, "i2v_silent_note": "AA lists 'Runway Gen 4'; Runway's API exposes Gen-4 image-to-video only as gen4_turbo, so the score is attributed to it with that caveat"},
+      "notes": "Runway Gen-4 Turbo (April 2025). Runway: 5 or 10 s, 720p, image input; 'Budget-friendly video generation'; camera motion can be prompted ('locked, handheld, dolly, pan, and more'). Not on the 2026 T2V board; far below on I2V. Cannot fill 1080x1920.",
+      "sources": [
+        "https://help.runwayml.com/hc/en-us/articles/37327109429011-Creating-with-Gen-4-Video",
+        "https://help.runwayml.com/hc/en-us/articles/39789879462419-Gen-4-Video-Prompting-Guide"
+      ],
+      "basis": "documented"
+    },
+    "wan3_prime": {
+      "quality_score": null,
+      "need_quality": {},
+      "camera_moves": null,
+      "native_audio": true,
+      "seconds": {"min": 2, "max": 30},
+      "benchmarks": {},
+      "notes": "Runway lists it as the premium Wan 3.0 variant. Not on any public board; quality unknown until measured. No price row in config/runway_prices.json, so the planner cannot buy it.",
+      "sources": ["https://docs.dev.runwayml.com/guides/models/"],
+      "basis": "documented"
+    },
+    "hailuo3": {
+      "quality_score": 0.96,
+      "need_quality": {"people": 1.0, "water": 0.98, "fast_motion": 0.88},
+      "camera_moves": null,
+      "native_audio": null,
+      "benchmarks": {"t2v_silent_elo": 1115, "t2v_silent_note": "AA benchmarked 'MiniMax H3 (768p)'", "i2v_silent_elo": 1357, "human_anatomy_elo": 1063, "physics_elo": 1081, "spatio_temporal_elo": 1088, "camera_control_elo": 1007},
+      "notes": "MiniMax H3 ('Multimodal video generation and editing' on Runway, 768p and 2K). Near the top of every silent board. No price row in config/runway_prices.json and its contract lists '9:16' rather than 1080:1920, so the planner cannot buy it today.",
+      "sources": [
+        "https://help.runwayml.com/hc/en-us/articles/48649877897107-Available-Models-on-Runway",
+        "https://docs.dev.runwayml.com/guides/models/"
+      ],
+      "basis": "documented"
+    },
+    "h3_max": {
+      "quality_score": null,
+      "need_quality": {},
+      "camera_moves": null,
+      "native_audio": null,
+      "benchmarks": {"i2v_with_audio_elo": 1195, "i2v_with_audio_rank": 1},
+      "notes": "MiniMax H3 Max. Leads the I2V board WITH audio (Elo 1195, 2026-10-01) but is absent from the silent boards the studio's scale uses, so no score is derived. No price row.",
+      "sources": [
+        "https://artificialanalysis.ai/video/leaderboard/image-to-video",
+        "https://docs.dev.runwayml.com/guides/models/"
+      ],
+      "basis": "documented"
+    },
+    "gemini_omni_flash": {
+      "quality_score": 1.0,
+      "need_quality": {},
+      "camera_moves": ["static", "slow push-in", "slow pull-back", "dolly in", "dolly out", "slow pan left", "slow pan right", "tracking left", "tracking right", "tilt up", "tilt down", "aerial drift forward", "pedestal up", "crane up", "crane down", "slow orbit", "handheld drift", "rack focus"],
+      "native_audio": null,
+      "seconds": {"min": 3, "max": 10},
+      "benchmarks": {"i2v_silent_elo": 1369, "i2v_silent_rank": 1},
+      "notes": "Google Gemini Omni Flash: leads I2V-Silent v1.0. Google's video prompt guide covers it and Veo for camera movement. Its catalogue contract stops at 720x1280 and it has no price row: not buyable today.",
+      "sources": [
+        "https://ai.google.dev/gemini-api/docs/video",
+        "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/video/video-gen-prompt-guide"
+      ],
+      "basis": "documented"
+    },
+    "gemini_omni_flash_1.1": {
+      "quality_score": 0.83,
+      "need_quality": {"people": 0.79, "water": 0.88, "fast_motion": 0.65},
+      "camera_moves": ["static", "slow push-in", "slow pull-back", "dolly in", "dolly out", "slow pan left", "slow pan right", "tracking left", "tracking right", "tilt up", "tilt down", "aerial drift forward", "pedestal up", "crane up", "crane down", "slow orbit", "handheld drift", "rack focus"],
+      "native_audio": null,
+      "benchmarks": {"t2v_silent_elo": 1068, "t2v_silent_rank": 7, "human_anatomy_elo": 987, "physics_elo": 1044, "spatio_temporal_elo": 1004, "camera_control_elo": 1001},
+      "notes": "Google Gemini Omni Flash 1.1. No price row in config/runway_prices.json: not buyable today.",
+      "sources": [
+        "https://ai.google.dev/gemini-api/docs/video",
+        "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/video/video-gen-prompt-guide"
+      ],
+      "basis": "documented"
+    },
+    "grok_imagine_1_5": {
+      "quality_score": 0.74,
+      "need_quality": {"people": 0.7, "water": 0.78, "fast_motion": 0.78},
+      "camera_moves": null,
+      "native_audio": true,
+      "seconds": {"min": 1, "max": 15},
+      "benchmarks": {"t2v_silent_elo": 1034, "i2v_silent_elo": 1330, "human_anatomy_elo": 957, "physics_elo": 1008, "spatio_temporal_elo": 1073, "camera_control_elo": 964},
+      "notes": "xAI Grok Imagine 1.5: 'Fast, budget-friendly video generation with audio' (Runway, 480p/720p). No price row: not buyable today.",
+      "sources": ["https://help.runwayml.com/hc/en-us/articles/48649877897107-Available-Models-on-Runway"],
+      "basis": "documented"
+    },
+    "happyhorse_1_0": {
+      "quality_score": 0.74,
+      "need_quality": {"people": 0.73, "water": 0.68, "fast_motion": 0.68},
+      "camera_moves": null,
+      "native_audio": null,
+      "seconds": {"min": 3, "max": 15},
+      "benchmarks": {"t2v_silent_elo": 1037, "i2v_silent_elo": 1295, "human_anatomy_elo": 967, "physics_elo": 973, "spatio_temporal_elo": 1046, "camera_control_elo": 967},
+      "notes": "Alibaba-ATH HappyHorse 1.0: 'General-purpose video generation' (Runway, 720p/1080p). No price row: not buyable today.",
+      "sources": ["https://help.runwayml.com/hc/en-us/articles/48649877897107-Available-Models-on-Runway"],
+      "basis": "documented"
+    }
+  }
+}

@@ -1,0 +1,155 @@
+{
+  "version": 1,
+  "about": "Which picture in the repository is which character, for app.workflows.passes.character_references (2026-10-11). The Owner: «Cauta pozele caracterelor/agentilor. Sa le putem include in bible ca la serial sa stim dupa ce caractere sa ne luam.» Each entry maps a bible's canonical_name to a PNG, relative to the repository, with the SHA-256 the picture was verified at by eye against the anchors in Agents ID and Bible/CHARACTER_BIBLES.md. The watchdog copies a verified file into the studio's media storage, makes it a MediaAsset and fills the bible's empty 'portrait' slot, once; a file whose SHA-256 no longer matches is reported and never registered, so a replaced picture needs a new look and a new hash here. Nothing here locks an identity or fills another slot: the Owner decides whether to lock the looks (then a missing reference blocks a scene by design) and whether to buy full_body/front/side/back through his press.",
+  "verified_on": "2026-10-11",
+  "verified_by": "read by eye in a Claude session: every sheet is titled with its character's name and its anchors match the bible (see matched_on); each crop was then viewed whole and its cut edges at 8x, to confirm that no text, quote, label or logo of the sheet lies inside it",
+  "pictures_are": "head-and-shoulders crops of the PORTRAIT panel of each character-bible sheet (hand-drawn 2D style, CHARACTER_BIBLES.md variant A), cut with Pillow from the sheet named in cropped_from at crop_box, no resampling. The whole sheets carried the title, labels, the handwritten quote and the AMN-AI logos and slogans, which an image model given the sheet as a face reference draws into the face; the crops carry none of it, only the face, the hair and what the quote's corner left of the shoulders. They fix who each character is; they are not in the serial's rendering (config/serial_series_look.json asks for stylised cinematic 3D and avoids flat 2D), so a clean set in the series' look remains the paid route's to produce.",
+  "cropped_on": "2026-10-11",
+  "crop_box_is": "[left, top, right, bottom] in the sheet's pixels, right and bottom exclusive (PIL.Image.crop); the crop's pixels are [right - left, bottom - top]",
+  "characters": {
+    "Sarah Executive": {
+      "file": "Agents ID and Bible/portraits/sarah-portrait.png",
+      "sha256": "137c66e00834bad1b4698d9972a4a513370ee9b94737bcff5c4be950dbca303e",
+      "pixels": [
+        268,
+        252
+      ],
+      "made_with": "ChatGPT, 2026-09-12, from the prompts in Agents ID and Bible/CHARACTER_BIBLES.md; the PORTRAIT panel cut out with Pillow on 2026-10-11, no resampling",
+      "matched_on": "the sheet is titled SARAH EXECUTIVE / DIRECTOR: brunette bob with warm highlights, brown eyes, navy two-piece blazer, white collared shirt, sky-blue tie; palette hexes as the bible's",
+      "cropped_from": "Agents ID and Bible/Sarah.png",
+      "crop_box": [
+        836,
+        446,
+        1104,
+        698
+      ],
+      "crop_note": "the panel's full width, cut above the handwritten quote that sits at the lower right (sheet rows 700 and below): the bob fills the panel's right side, so a cut before the quote's left edge would have taken half the hair. Kept: the whole head, neck and the top of the collar. Lost: the tie and the shoulders below the cut."
+    },
+    "Dr. Aris Researcher": {
+      "file": "Agents ID and Bible/portraits/dr-aris-portrait.png",
+      "sha256": "67d8eb988199e20550ec8876d6b603f9bbbc82d10e4f78e04a7f0849003ecb98",
+      "pixels": [
+        198,
+        356
+      ],
+      "made_with": "ChatGPT, 2026-09-12, from the prompts in Agents ID and Bible/CHARACTER_BIBLES.md; the PORTRAIT panel cut out with Pillow on 2026-10-11, no resampling",
+      "matched_on": "the sheet is titled DR. ARIS RESEARCHER / LEAD RESEARCHER: dark hair with silver temples, thin circular silver glasses with lens glare, white laboratory coat over a teal button-down shirt; drawn younger (38) than the prompt's fifties",
+      "cropped_from": "Agents ID and Bible/Dr. Aris.png",
+      "crop_box": [
+        826,
+        432,
+        1024,
+        788
+      ],
+      "crop_note": "the panel's full height down to its white frame, cut before the handwritten quote (sheet columns 1026 and beyond) and the background screen text TRUTH BUILDS BRIGHTER TOMORROWS (columns 1047 and beyond). Kept: the whole face, both silver temples, the glasses, the lab coat and the teal shirt. Lost: about 12 px of hair at the right."
+    },
+    "Elena Fact-Checker": {
+      "file": "Agents ID and Bible/portraits/elena-portrait.png",
+      "sha256": "99bb1626a1746dd048b869939121cc623f856af1804750bb4e5796e72403d3f4",
+      "pixels": [
+        272,
+        258
+      ],
+      "made_with": "ChatGPT, 2026-09-12, from the prompts in Agents ID and Bible/CHARACTER_BIBLES.md; the PORTRAIT panel cut out with Pillow on 2026-10-11, no resampling",
+      "matched_on": "the sheet is titled ELENA FACT-CHECKER / FACT CHECKER: auburn high bun, reading glasses, olive utility vest over a cream blouse, verification badge; its palette hexes differ from the bible's, the colours read the same",
+      "cropped_from": "Agents ID and Bible/Elena.png",
+      "crop_box": [
+        832,
+        440,
+        1104,
+        698
+      ],
+      "crop_note": "the panel's full width, cut above the handwritten quote at the lower right (sheet rows 701 and below): the bun and its loose strands fill the right side. Kept: the whole head, the glasses and the hand adjusting them, the collar. Lost: the vest and the shoulders below the cut."
+    },
+    "Marcus Scriptwriter": {
+      "file": "Agents ID and Bible/portraits/marcus-portrait.png",
+      "sha256": "499389b0f869ed5563e9e6d38d8b810e4d9841801494f48020048db58c70b707",
+      "pixels": [
+        268,
+        241
+      ],
+      "made_with": "ChatGPT, 2026-09-12, from the prompts in Agents ID and Bible/CHARACTER_BIBLES.md; the PORTRAIT panel cut out with Pillow on 2026-10-11, no resampling",
+      "matched_on": "the sheet is titled MARCUS SCRIPTWRITER / SCRIPT WRITER: tousled wavy dark hair, five o'clock shadow, royal purple fleece hoodie over a grey tee, dark jeans",
+      "cropped_from": "Agents ID and Bible/Marcus.png",
+      "crop_box": [
+        836,
+        453,
+        1104,
+        694
+      ],
+      "crop_note": "the panel's full width, cut above the handwritten quote at the lower right (sheet rows 697 and below). Kept: the whole head, the stubble, the neck and the hoodie's collar. Lost: the hoodie and the tee below the cut."
+    },
+    "Lyra Voice Artist": {
+      "file": "Agents ID and Bible/portraits/lyra-portrait.png",
+      "sha256": "afb3ecc2844c4322d88331ce680410b7a50185ea0e93a487c9c9dca4db2a80c9",
+      "pixels": [
+        275,
+        263
+      ],
+      "made_with": "ChatGPT, 2026-09-12, from the prompts in Agents ID and Bible/CHARACTER_BIBLES.md; the PORTRAIT panel cut out with Pillow on 2026-10-11, no resampling",
+      "matched_on": "the sheet is titled LYRA VOICE ARTIST: sleek jet-black hair with neon pink streaks (several, the bible asks for one), fuchsia sweater, large over-ear headphones",
+      "cropped_from": "Agents ID and Bible/Lyra.png",
+      "crop_box": [
+        829,
+        429,
+        1104,
+        692
+      ],
+      "crop_note": "the panel's full width, cut above the handwritten quote at the lower right (sheet rows 694 and below). Kept: the whole head, the headphones, the hand on the ear cup and the sweater's neckline. The small emblem on the ear cup is part of the headphones (a never-change anchor), not a sheet logo, and stays."
+    },
+    "Kael Video Editor": {
+      "file": "Agents ID and Bible/portraits/kael-portrait.png",
+      "sha256": "c0c5ee022ca214308c41a0ecb3de68fdce1986a4d2d234bc455e289a0b8de456",
+      "pixels": [
+        272,
+        266
+      ],
+      "made_with": "ChatGPT, 2026-09-12, from the prompts in Agents ID and Bible/CHARACTER_BIBLES.md; the PORTRAIT panel cut out with Pillow on 2026-10-11, no resampling",
+      "matched_on": "the sheet is titled KAEL / VIDEO EDITOR: sandy blonde spiky hair, single-ear comms headset, amber work shirt with rolled sleeves, dark cargo pants",
+      "cropped_from": "Agents ID and Bible/Kael.png",
+      "crop_box": [
+        832,
+        450,
+        1104,
+        716
+      ],
+      "crop_note": "the panel's full width, cut above the handwritten quote at the lower right (sheet rows 722 and below). Kept: the whole head, the single-ear comms headset, the collar and the top of the amber shirt. The small emblem on the headset's ear cup is the character's own prop (a never-change anchor), not a sheet logo, and stays."
+    },
+    "Vera Distribution Hub": {
+      "file": "Agents ID and Bible/portraits/vera-portrait.png",
+      "sha256": "2e60e38b95b82b29ab068949115d57bb9e640cebe63216943085ef2dc8ee98be",
+      "pixels": [
+        224,
+        296
+      ],
+      "made_with": "ChatGPT, 2026-09-12, from the prompts in Agents ID and Bible/CHARACTER_BIBLES.md; the PORTRAIT panel cut out with Pillow on 2026-10-11, no resampling",
+      "matched_on": "the unnamed export: the sheet is titled VERA DISTRIBUTION HUB / PUBLISHER: short styled black hair, mission-control headset, forest green technical flight suit with insignia",
+      "cropped_from": "Agents ID and Bible/ChatGPT Image Sep 12, 2026, 07_31_10 PM.png",
+      "crop_box": [
+        816,
+        446,
+        1040,
+        742
+      ],
+      "crop_note": "cut before the background screen text PRECISION CONNECTS CREATORS TO THE WORLD (sheet columns 1043 and beyond), which runs mid-height so a cut above it would have taken the chin, and above the AMN-AI insignia printed on the flight suit (rows 747 and below). Kept: the whole face, the headset, the collar and the shoulders. Lost: about 25 px of the bob's right edge."
+    },
+    "Nadia Accountant": {
+      "file": "Agents ID and Bible/portraits/nadia-portrait.png",
+      "sha256": "377efcf6b824b8db7bb6a84c318bbb8b70d688afee36da372893988b21a4dac8",
+      "pixels": [
+        208,
+        360
+      ],
+      "made_with": "ChatGPT, 2026-09-12, from the prompts in Agents ID and Bible/CHARACTER_BIBLES.md; the PORTRAIT panel cut out with Pillow on 2026-10-11, no resampling",
+      "matched_on": "the sheet is titled NADIA ACCOUNTANT: chestnut low bun, round tortoiseshell glasses, hazel eyes, plum blouse under a dark violet cardigan, brass pen on a chain, green ledger",
+      "cropped_from": "Agents ID and Bible/Nadia.png",
+      "crop_box": [
+        838,
+        430,
+        1046,
+        790
+      ],
+      "crop_note": "the panel's full height down to its white frame, cut before the handwritten quote (sheet columns 1050 and beyond), which sits mid-height at the right, so a cut above it would have taken the mouth and chin. Kept: the whole face, the glasses, the pen hand, the blouse and the cardigan. Lost: about 20 px of the bun's right edge."
+    }
+  }
+}

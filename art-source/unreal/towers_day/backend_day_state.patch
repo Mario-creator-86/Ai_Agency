@@ -1,0 +1,116 @@
+--- a/backend/app/office/unreal.py
++++ b/backend/app/office/unreal.py
+@@ -398,6 +398,22 @@
+         and window["slots"]
+     ):
+         objects.append(EnvObject(role="window_view", label="props", path=window["component"]))
++    # the day state (towers_day_hq_live.py and trees_day_hq_live.py, merged by day_state.py): the
++    # components whose materials carry TowerDaylight / WindowsOn, LeafDaylight, and the skyline's
++    # plain slots that take a day colour by Daylight. A report without it drives none of them.
++    day_state = report.get("day_state")
++    if isinstance(day_state, Mapping):
++        for key in ("towers", "trees"):
++            listed = day_state.get(key)
++            for entry in listed if isinstance(listed, list) else ():
++                found = _object(key, entry)
++                if found is not None:
++                    objects.append(found)
++        skyline_daylight = day_state.get("skyline_daylight")
++        if isinstance(skyline_daylight, str) and skyline_daylight:
++            objects.append(
++                EnvObject(role="skyline_daylight", label="skyline", path=skyline_daylight)
++            )
+     if not objects:
+         return None
+     heads = {o.path.split(":", 1)[0] for o in objects if ":" in o.path}
+@@ -569,6 +585,34 @@
+         calls.append(
+             EnvCall(
+                 "MeshComponent",
++                component.path,
++                scalar,
++                "Daylight",
++                float(plan["near_blocks_day"]["Daylight"]),
++            )
++        )
++    for component in report.of("towers"):
++        # TowerDaylight and WindowsOn exist only in M_HQ_TowerDay (the facade slots of the skyline
++        # and the near blocks): one call per component reaches those and nothing else
++        for name in ("TowerDaylight", "WindowsOn"):
++            calls.append(
++                EnvCall("MeshComponent", component.path, scalar, name, float(plan["towers"][name]))
++            )
++    for component in report.of("trees"):
++        calls.append(
++            EnvCall(
++                "MeshComponent",
++                component.path,
++                scalar,
++                "LeafDaylight",
++                float(plan["trees"]["LeafDaylight"]),
++            )
++        )
++    for component in report.of("skyline_daylight")[:1]:
++        # the skyline's M_HQ_CityDay slots (the bridge) by the near blocks' day weight
++        calls.append(
++            EnvCall(
++                "MeshComponent",
+                 component.path,
+                 scalar,
+                 "Daylight",
+--- a/tests/test_office_environment_bridge.py
++++ b/tests/test_office_environment_bridge.py
+@@ -898,3 +898,53 @@
+     assert at(20.0, 100.0) == pytest.approx(50.0)
+     assert at(35.0, 100.0) == pytest.approx(100.0)
+     assert at(40.0, 100.0) == pytest.approx(100.0)
++
++
++# ---------------------------------------------------------------- the day state
++DAY_STATE = {
++    "towers": [
++        entry("skyline", "StaticMeshActor_10", "StaticMeshComponent0"),
++        entry("near_blocks", "StaticMeshActor_11", "StaticMeshComponent0"),
++    ],
++    "trees": [entry("tree_0", "StaticMeshActor_30", "StaticMeshComponent0")],
++    "skyline_daylight": f"{LEVEL}.StaticMeshActor_10.StaticMeshComponent0",
++}
++
++
++def test_without_a_day_state_no_day_parameter_is_sent(tmp_path):
++    sender = Recorder()
++    EnvironmentPass(sender, clock=Clock()).sync(world(40.0, 180.0), report(tmp_path), 180.0)
++    names = {b["parameters"].get("ParameterName") for b in sender.calls}
++    assert not names & {"TowerDaylight", "WindowsOn", "LeafDaylight"}
++
++
++def test_the_day_state_reaches_the_towers_the_trees_and_the_bridge(tmp_path):
++    rep_dict = json.loads(json.dumps(REPORT))
++    rep_dict["day_state"] = DAY_STATE
++    rep = load_env_report(write_report(tmp_path, rep_dict))
++
++    def sent(elevation, azimuth):
++        sender = Recorder()
++        EnvironmentPass(sender, clock=Clock()).sync(world(elevation, azimuth), rep, 180.0)
++        out = {}
++        for b in sender.calls:
++            name = b["parameters"].get("ParameterName")
++            if name in ("TowerDaylight", "WindowsOn", "LeafDaylight", "Daylight"):
++                assert b["functionName"] == "SetScalarParameterValueOnMaterials"
++                actor = b["objectPath"].rsplit(".", 2)[-2]
++                out[(actor, name)] = b["parameters"]["ParameterValue"]
++        return out
++
++    dusk = sent(-2.5, 274.3)
++    for actor in ("StaticMeshActor_10", "StaticMeshActor_11"):
++        assert dusk[(actor, "TowerDaylight")] == 0.0
++        assert dusk[(actor, "WindowsOn")] == 1.0
++    assert dusk[("StaticMeshActor_30", "LeafDaylight")] == 0.0
++    # Daylight: the near blocks as before, and now the skyline's plain slots too
++    assert dusk[("StaticMeshActor_10", "Daylight")] == 0.0
++    assert dusk[("StaticMeshActor_11", "Daylight")] == 0.0
++    noon = sent(46.97, 180.0)
++    assert noon[("StaticMeshActor_10", "WindowsOn")] == 0.0
++    assert noon[("StaticMeshActor_10", "TowerDaylight")] == 1.0
++    assert noon[("StaticMeshActor_30", "LeafDaylight")] == 1.0
++    assert noon[("StaticMeshActor_10", "Daylight")] == 1.0

@@ -1,0 +1,792 @@
+/* ==========================================================================
+   THE WRITERS ROOM — the serial in the Journal dialog (serial_room.js)
+   ==========================================================================
+   An episode used to be a card whose beats were a bold scene and then the
+   whole dialogue in one run, "Sarah: (sighs) Okay, so …", so a script read as
+   a paragraph. It reads as a script page now: a slate with the episode's
+   number and title, a beat board of index cards (the part each beat plays and
+   the room it is set in), and the page itself set the way a screenplay is —
+   the scene as action across the page, each speaker's name over the words,
+   the direction in small italics between them. Beside it, the Director's
+   reading as a rubric and tomorrow's plan as its own card.
+
+   Every value is a token from style.css. The five parts of an episode carry
+   one ink each, taken from the state triples (all measured there at 8:1 or
+   better on --surface-sunk), and set once as --part so the slug, the index
+   card and a focused beat agree.
+   ========================================================================== */
+
+.part-hook      { --part: var(--gold-ink); }
+.part-situation { --part: var(--info-ink); }
+.part-turn      { --part: var(--alert-ink); }
+.part-payoff    { --part: var(--ok-ink); }
+.part-button    { --part: var(--gold); }
+.part-none      { --part: var(--ink-3); }
+
+.serial-sr {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+}
+.writers-label {
+  font-size: var(--fs-micro);
+  letter-spacing: var(--track-caps);
+  text-transform: uppercase;
+  color: var(--ink-3);
+  font-weight: var(--w-semi);
+}
+
+/* The episodes are read, not skimmed in a 420px well: the dialog body scrolls
+   and the list runs its whole length, with no cut-line fade over a script. */
+#story-episodes.writers-room {
+  max-height: none;
+  overflow: visible;
+  mask-image: none;
+  animation: none;
+  gap: var(--s4);
+}
+
+/* ------------------------------------------------------------ serial board */
+.serial-board {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--s6);
+  align-items: start;
+  margin-block: var(--s2) var(--s4);
+  padding: var(--s4) var(--s5);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: linear-gradient(180deg, var(--surface-quiet), var(--surface-sunk));
+  box-shadow: var(--shadow-raised);
+}
+.serial-canon { display: grid; gap: var(--s1); padding-right: var(--s6); border-right: 1px solid var(--line); }
+.serial-canon-number {
+  font-family: var(--font-display);
+  font-weight: var(--w-display);
+  font-size: var(--fs-num-xl);
+  line-height: var(--lh-tight);
+  letter-spacing: var(--track-tight);
+  color: var(--gold-ink);
+  font-variant-numeric: tabular-nums;
+}
+.serial-canon-word { font-size: var(--fs-body); color: var(--ink); }
+.serial-canon-last { font-size: var(--fs-meta); color: var(--ink-3); max-width: 28ch; }
+.serial-threads { display: grid; gap: var(--s2); min-width: 0; }
+.serial-thread-list { display: grid; gap: var(--s1); margin: 0; padding: 0; list-style: none; font-size: var(--fs-body); color: var(--ink-2); }
+.serial-thread-list li { display: flex; gap: var(--s2); align-items: baseline; }
+.serial-recurring { margin: 0; font-size: var(--fs-meta); color: var(--ink-2); }
+.thread-chip {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  padding: 0 var(--s2);
+  border: 1px solid var(--info-line);
+  border-radius: var(--radius-xs);
+  background: var(--info-bg);
+  color: var(--info-ink);
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-snug);
+}
+
+/* ----------------------------------------------------------- the episode */
+.writers-room .script-episode {
+  container-type: inline-size;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-panel);
+  overflow: hidden;
+}
+.writers-room .script-episode > * { max-width: none; }
+.writers-room .script-episode[open] { border-color: var(--line-strong); }
+
+/* The slate. A clapperboard's stripes along its top lip, the number in the
+   display face, the title under the day it tells. */
+.writers-room .episode-slate {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  grid-template-areas:
+    "num kicker badges chev"
+    "num title  badges chev"
+    "num meta   badges chev";
+  column-gap: var(--s4);
+  row-gap: var(--s1);
+  align-items: center;
+  padding: var(--s5) var(--s5) var(--s4);
+  background: linear-gradient(180deg, var(--surface-quiet), var(--surface));
+  cursor: pointer;
+  transition: background var(--dur) var(--ease);
+}
+.writers-room .episode-slate::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: var(--s1);
+  background: repeating-linear-gradient(-45deg, var(--line-strong) 0 var(--s2), transparent var(--s2) var(--s4));
+  transform: none;
+  transition: none;
+}
+.writers-room .script-episode[open] > .episode-slate::before {
+  background: repeating-linear-gradient(-45deg, var(--gold-line) 0 var(--s2), transparent var(--s2) var(--s4));
+  transform: none;
+}
+.writers-room .episode-slate::after {
+  content: '▸';
+  grid-area: chev;
+  color: var(--ink-3);
+  transition: transform var(--dur) var(--ease);
+}
+.writers-room .script-episode[open] > .episode-slate::after { transform: rotate(90deg); }
+.writers-room .episode-slate:hover { background: linear-gradient(180deg, var(--surface-hi), var(--surface)); }
+.writers-room .episode-slate:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+.slate-number {
+  grid-area: num;
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  min-width: calc(var(--s9) + var(--s4));
+  padding: var(--s2) var(--s3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-lift);
+  box-shadow: var(--inset-well);
+  font-family: var(--font-display);
+  font-weight: var(--w-display);
+  font-size: var(--fs-num-xl);
+  line-height: 1;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.slate-ep {
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  letter-spacing: var(--track-caps);
+  color: var(--ink-3);
+  margin-bottom: var(--s1);
+}
+.status-approved .slate-number { color: var(--gold-ink); border-color: var(--gold-line); }
+.slate-kicker {
+  grid-area: kicker;
+  font-size: var(--fs-micro);
+  letter-spacing: var(--track-caps);
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.writers-room .slate-title {
+  grid-area: title;
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: var(--w-display);
+  font-size: var(--fs-h2);
+  line-height: var(--lh-tight);
+  letter-spacing: var(--track-tight);
+  color: var(--ink);
+  text-wrap: balance;
+}
+.status-rejected .slate-title { color: var(--ink-2); }
+.slate-meta { grid-area: meta; font-size: var(--fs-meta); color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.slate-badges { grid-area: badges; display: flex; flex-wrap: wrap; gap: var(--s2); justify-content: flex-end; }
+
+.episode-state, .verdict-chip, .film-chip, .plan-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--chip-h);
+  padding: 0 var(--s3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-pill);
+  background: var(--surface-quiet);
+  color: var(--ink-2);
+  font-size: var(--fs-micro);
+  font-weight: var(--w-semi);
+  letter-spacing: var(--track-caps);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.state-draft    { background: var(--warn-bg);  border-color: var(--warn-line);  color: var(--warn-ink); }
+.state-approved { background: var(--ok-bg);    border-color: var(--ok-line);    color: var(--ok-ink); }
+.state-rejected { background: var(--alert-bg); border-color: var(--alert-line); color: var(--alert-ink); }
+.verdict-chip { font-family: var(--font-mono); }
+.v-pass, .verdict-pass .verdict-chip { background: var(--ok-bg);    border-color: var(--ok-line);    color: var(--ok-ink); }
+.v-fail, .verdict-fail .verdict-chip { background: var(--alert-bg); border-color: var(--alert-line); color: var(--alert-ink); }
+.film-chip { background: var(--info-bg); border-color: var(--info-line); color: var(--info-ink); }
+
+/* The room: the script on the left, the notes beside it. */
+.episode-room {
+  display: grid;
+  grid-template-columns: minmax(0, 1.8fr) minmax(0, 1fr);
+  gap: var(--s5);
+  padding: var(--s5);
+  border-top: 1px solid var(--line);
+}
+.episode-script { display: grid; gap: var(--s4); align-content: start; min-width: 0; }
+.episode-notes { display: grid; gap: var(--s4); align-content: start; min-width: 0; }
+
+/* ------------------------------------------------------------ beat board */
+.beat-board {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(calc(var(--s9) * 2.5), 1fr));
+  gap: var(--s2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.beat-card {
+  position: relative;
+  display: grid;
+  gap: var(--s1);
+  align-content: start;
+  min-height: 100%;
+  padding: var(--s3) var(--s3) var(--s2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunk);
+  color: var(--ink-2);
+  text-decoration: none;
+  overflow: hidden;
+  transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+.beat-card::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 2px;
+  background: var(--part);
+}
+.beat-card:hover { background: var(--surface-hi); border-color: var(--line-strong); }
+.beat-card:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.beat-card-head { display: flex; align-items: baseline; gap: var(--s2); }
+.beat-card-no { font-family: var(--font-mono); font-size: var(--fs-meta); color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.beat-card-part {
+  font-size: var(--fs-micro);
+  font-weight: var(--w-bold);
+  letter-spacing: var(--track-caps);
+  text-transform: uppercase;
+  color: var(--part);
+}
+.beat-card-room { font-size: var(--fs-meta); color: var(--ink); }
+.beat-card-who { font-size: var(--fs-meta); color: var(--ink-3); line-height: var(--lh-snug); }
+
+/* ------------------------------------------------------------ the script */
+.script-page {
+  display: grid;
+  padding: var(--s2) var(--s6) var(--s4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunk);
+  box-shadow: var(--lit-edge), var(--inset-well);
+  font-family: var(--font-mono);
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  color: var(--ink-2);
+}
+.script-beat {
+  margin-inline: calc(var(--s3) * -1);
+  padding: var(--s4) var(--s3);
+  border-bottom: 1px dashed var(--line);
+  scroll-margin-top: var(--s4);
+  transition: background var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+}
+.script-beat:last-child { border-bottom: 0; }
+/* Reached from its index card: the beat is lit along its edge in its part's ink. */
+.script-beat:focus { outline: none; background: var(--surface-quiet); box-shadow: inset 2px 0 0 var(--part, var(--teal)); }
+.script-beat:has(.part-hook)      { --part: var(--gold-ink); }
+.script-beat:has(.part-situation) { --part: var(--info-ink); }
+.script-beat:has(.part-turn)      { --part: var(--alert-ink); }
+.script-beat:has(.part-payoff)    { --part: var(--ok-ink); }
+.script-beat:has(.part-button)    { --part: var(--gold); }
+
+/* The scene heading: number, part, floor and room, in the caps a slug line is. */
+.beat-slug {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--s1) var(--s3);
+  margin-bottom: var(--s2);
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  font-size: var(--fs-meta);
+}
+.beat-no { color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.beat-part { color: var(--part); font-weight: var(--w-bold); }
+.beat-room { color: var(--ink); font-weight: var(--w-semi); }
+.beat-room.is-unknown { color: var(--warn-ink); }
+
+.beat-action { margin: 0 0 var(--s3); color: var(--ink-2); max-width: none; }
+.beat-narration { font-style: italic; }
+.beat-lines { display: grid; gap: var(--s3); }
+
+/* A line as a screenplay sets it: the name over the words, indented; the
+   direction between them in small italics; the words in a narrower column. */
+.script-line {
+  display: grid;
+  margin-inline: 14% 8%;
+}
+.line-speaker {
+  padding-left: 18%;
+  color: var(--ink);
+  font-weight: var(--w-bold);
+  text-transform: uppercase;
+  letter-spacing: .05em;
+}
+.line-role { font-weight: var(--w-body); text-transform: none; letter-spacing: 0; color: var(--ink-3); }
+.line-direction {
+  padding-left: 10%;
+  font-size: var(--fs-meta);
+  font-style: italic;
+  color: var(--ink-3);
+}
+.line-text { margin: 0; color: var(--ink); max-width: none; }
+.line-aside { font-size: var(--fs-meta); color: var(--ink-3); }
+
+.beat-foot {
+  margin-top: var(--s3);
+  font-family: var(--font-sans);
+  font-size: var(--fs-micro);
+  letter-spacing: .04em;
+  color: var(--ink-3);
+  text-align: right;
+}
+
+.episode-canon {
+  display: grid;
+  gap: var(--s2);
+  padding: var(--s3) var(--s4);
+  border-radius: var(--radius-sm);
+  background: var(--surface-quiet);
+  font-size: var(--fs-body);
+  color: var(--ink-2);
+}
+.episode-canon p { margin: 0; }
+.episode-canon .writers-label { margin-right: var(--s2); }
+
+/* ------------------------------------------------------------ the notes */
+.writers-card {
+  display: grid;
+  gap: var(--s3);
+  align-content: start;
+  padding: var(--s4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunk);
+  box-shadow: var(--lit-edge);
+  font-size: var(--fs-body);
+  color: var(--ink-2);
+}
+.writers-card p { margin: 0; }
+.writers-card-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s2); }
+.writers-room .writers-card-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: var(--w-display);
+  font-size: var(--fs-h3);
+  letter-spacing: var(--track-tight);
+  color: var(--ink);
+}
+.writers-empty { color: var(--ink-3); font-size: var(--fs-meta); }
+.writers-sub { font-size: var(--fs-meta); color: var(--ink-3); }
+
+.director-card.verdict-pass { border-top: 2px solid var(--ok-line); }
+.director-card.verdict-fail { border-top: 2px solid var(--alert-line); }
+.director-story {
+  padding-left: var(--s3);
+  border-left: 2px solid var(--line-strong);
+  color: var(--ink);
+  line-height: var(--lh-snug);
+}
+.director-policy { font-size: var(--fs-meta); color: var(--gold-ink); }
+
+/* The rubric: six rows, a word, five cells, the score. */
+.rubric { display: grid; gap: var(--s2); margin: 0; padding: 0; list-style: none; }
+.rubric-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto calc(var(--s7) + var(--s1));
+  align-items: center;
+  gap: var(--s3);
+  --tone: var(--ink-3);
+}
+.rubric-row.tone-high { --tone: var(--ok-ink); }
+.rubric-row.tone-mid  { --tone: var(--gold); }
+.rubric-row.tone-low  { --tone: var(--alert-ink); }
+.rubric-word { font-size: var(--fs-meta); color: var(--ink-2); }
+.rubric-row.tone-low .rubric-word { color: var(--alert-ink); font-weight: var(--w-semi); }
+.rubric-bar { display: inline-grid; grid-auto-flow: column; gap: var(--s1); }
+.rubric-bar i {
+  display: block;
+  width: calc(var(--s4) + var(--s1));
+  height: var(--s2);
+  border-radius: 1px;
+  background: var(--surface-hi);
+  box-shadow: var(--inset-well);
+}
+.rubric-bar i.on { background: var(--tone); box-shadow: none; }
+.rubric-score {
+  font-family: var(--font-mono);
+  font-size: var(--fs-meta);
+  color: var(--tone);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.rubric-row.tone-none .rubric-score { color: var(--ink-3); }
+
+.director-reasons { margin: 0; padding-left: var(--s4); font-size: var(--fs-meta); color: var(--ink-2); display: grid; gap: var(--s1); }
+.director-notes { font-size: var(--fs-meta); color: var(--ink-2); padding: var(--s2) var(--s3); border-radius: var(--radius-xs); background: var(--alert-wash); }
+.director-notes .writers-label { color: var(--alert-ink); margin-right: var(--s1); }
+
+.checks-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding-top: var(--s3);
+  border-top: 1px solid var(--line);
+  font-size: var(--fs-micro);
+  letter-spacing: var(--track-caps);
+  text-transform: uppercase;
+  color: var(--ink-3);
+  font-weight: var(--w-semi);
+}
+.checks-count { font-family: var(--font-mono); letter-spacing: 0; text-transform: none; font-size: var(--fs-meta); font-weight: var(--w-body); }
+.check-list { display: grid; gap: var(--s2); margin: 0; padding: 0; list-style: none; }
+.check-row {
+  display: grid;
+  grid-template-columns: var(--icon) minmax(0, 1fr);
+  column-gap: var(--s2);
+  row-gap: 2px;
+  align-items: start;
+  font-size: var(--fs-meta);
+  line-height: var(--lh-snug);
+}
+.check-mark { grid-row: span 3; display: inline-flex; padding-top: 1px; }
+.check-mark .ui-icon { width: var(--icon); height: var(--icon); }
+.check-row.is-pass .check-mark { color: var(--ok-ink); }
+.check-row.is-fail .check-mark { color: var(--alert-ink); }
+.check-row.is-legacy .check-mark { color: var(--ink-3); }
+.check-word { color: var(--ink-2); }
+.check-row.is-fail .check-word { color: var(--ink); font-weight: var(--w-semi); }
+.check-measure { grid-column: 2; font-family: var(--font-mono); color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.check-reason { grid-column: 2; color: var(--alert-ink); }
+
+/* Tomorrow's script: a card of its own, lit in the studio's warm accent while it still waits
+   for tomorrow. A plan already judged, or left by a refused draft, is history and goes quiet. */
+.tomorrow-card.is-live {
+  border-color: var(--gold-line);
+  background: linear-gradient(180deg, var(--gold-soft), var(--surface-sunk) 70%);
+}
+.tomorrow-card:not(.is-live) .cold-open-line { color: var(--ink); border-left-color: var(--line-strong); }
+.plan-chip { font-family: var(--font-mono); }
+.plan-planned .plan-chip { background: var(--info-bg);  border-color: var(--info-line);  color: var(--info-ink); }
+.plan-kept .plan-chip    { background: var(--ok-bg);    border-color: var(--ok-line);    color: var(--ok-ink); }
+.plan-dropped .plan-chip { background: var(--alert-bg); border-color: var(--alert-line); color: var(--alert-ink); }
+.plan-fields { display: grid; gap: var(--s3); margin: 0; }
+.plan-field { display: grid; gap: var(--s1); }
+.plan-field dt {
+  font-size: var(--fs-micro);
+  letter-spacing: var(--track-caps);
+  text-transform: uppercase;
+  color: var(--ink-3);
+  font-weight: var(--w-semi);
+}
+.plan-field dd { margin: 0; color: var(--ink); line-height: var(--lh-snug); }
+.cold-open-line {
+  display: block;
+  padding: var(--s2) var(--s3);
+  border-left: 2px solid var(--gold);
+  background: var(--surface-quiet);
+  border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
+  font-family: var(--font-mono);
+  color: var(--gold-ink);
+}
+.plan-question dd { font-style: italic; }
+.thread-chips { display: flex; flex-wrap: wrap; gap: var(--s1); }
+
+.received-card { gap: var(--s2); border-left: 2px solid var(--line-strong); font-size: var(--fs-meta); }
+.received-card.is-kept { border-left-color: var(--ok-ink); }
+.received-card.is-dropped { border-left-color: var(--alert-ink); }
+.received-card .writers-label { margin-right: var(--s1); }
+.received-word { color: var(--ink); }
+.received-premise { color: var(--ink-3); }
+
+/* ----------------------------------------------------------- the actions */
+.episode-owner-notes { margin: 0; padding: 0 var(--s5) var(--s3); }
+.writers-room .episode-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s3) var(--s5) var(--s4);
+  border-top: 1px solid var(--line);
+  background: var(--surface-sunk);
+}
+.writers-room .episode-actions .wf-notes { flex: 1 1 calc(var(--s9) * 5); min-width: 0; }
+.approve-note { flex-basis: 100%; margin: 0; font-size: var(--fs-meta); color: var(--ink-3); }
+/* What his decision did, under the button he pressed. */
+.decide-result {
+  flex-basis: 100%;
+  margin: 0;
+  padding: var(--s2) var(--s3);
+  border: 1px solid var(--ok-line);
+  border-radius: var(--radius-xs);
+  background: var(--ok-bg);
+  color: var(--ok-ink);
+  font-size: var(--fs-body);
+}
+.decide-result.is-error { border-color: var(--alert-line); background: var(--alert-bg); color: var(--alert-ink); }
+
+/* ------------------------------------------------- on a run card */
+.runbook-stage-notes { display: flex; flex-wrap: wrap; gap: var(--s1); margin-top: var(--s1); }
+.runbook-stage-note {
+  display: inline-flex;
+  padding: 0 var(--s2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-xs);
+  background: var(--surface-hi);
+  color: var(--ink-2);
+  font-size: var(--fs-meta);
+  line-height: var(--lh-snug);
+}
+
+/* ==========================================================================
+   THE JOURNAL IN THE FRAME'S GLASS (W12)
+   ==========================================================================
+   Four strangers read the Journal as the least game-like surface: a sheet of
+   paper lifted over the headquarters, with an empty «NICIUN FIR DESCHIS» box
+   at its head. It is now the drawers' own pane (their glass, their sheen,
+   their lit edge, their blur) with the newest episode as a poster on its
+   cover: the number in the display face, the title, the day it tells, the
+   Director's verdict. The empty threads panel is not drawn at all.
+   ========================================================================== */
+
+#story-modal.journal-dialog {
+  background:
+    linear-gradient(180deg, var(--sheen), transparent calc(var(--topbar-h) * 3)),
+    var(--drawer-glass);
+  border: 1px solid var(--drawer-edge);
+  box-shadow: var(--lit-edge), var(--shadow-dialog);
+  backdrop-filter: blur(var(--drawer-blur));
+}
+/* the headquarters stays in sight behind the pane, as it does behind the drawers */
+#story-modal.journal-dialog::backdrop { background: var(--backdrop); backdrop-filter: blur(2px); }
+#story-modal.journal-dialog .dialog-header {
+  background: transparent;
+  border-bottom: 1px solid var(--drawer-edge);
+}
+#story-modal.journal-dialog .dialog-header .eyebrow { color: var(--gold-ink); }
+#story-modal .journal-heading {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  margin-block: var(--s6) var(--s3);
+  font-size: var(--fs-h3);
+}
+#story-modal .journal-heading::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, var(--drawer-edge), transparent);
+}
+#story-modal .topics-header-row .journal-heading { flex: 1; margin-block: 0; }
+#story-modal .writers-room .script-episode {
+  background: linear-gradient(180deg, var(--sheen-soft), transparent 40%), var(--drawer-glass-hi);
+  border-color: var(--drawer-edge);
+}
+#story-modal .writers-room .episode-slate { background: linear-gradient(180deg, var(--sheen), transparent); }
+#story-modal .writers-room .episode-slate:hover { background: linear-gradient(180deg, var(--surface-hi), transparent); }
+#story-modal .serial-board {
+  background: var(--drawer-glass-hi);
+  border-color: var(--drawer-edge);
+  grid-template-columns: minmax(0, 1fr);
+}
+
+/* ------------------------------------------------------------- the cover */
+.journal-cover-slot:empty { display: none; }
+.journal-cover {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: var(--s7);
+  align-items: center;
+  min-height: var(--cover-min-h);
+  margin-top: var(--s2);
+  padding: var(--s7) var(--s7) var(--s8);
+  border: 1px solid var(--drawer-edge);
+  border-radius: var(--radius);
+  background:
+    radial-gradient(ellipse 34% 90% at 10% 55%, var(--cover-glow), transparent 70%),
+    radial-gradient(ellipse 50% 120% at 100% 0%, var(--cover-cool), transparent 70%),
+    linear-gradient(180deg, var(--sheen), transparent 55%),
+    var(--drawer-glass-hi);
+  box-shadow: var(--lit-edge), var(--shadow-panel);
+  overflow: hidden;
+  isolation: isolate;
+  animation: cover-in calc(var(--dur) * 3) var(--ease) both;
+}
+/* the clapperboard's lip across the top: gold once the episode is approved or passed */
+.journal-cover .cover-clapper {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: var(--s2);
+  background: repeating-linear-gradient(-45deg, var(--line-strong) 0 var(--s3), transparent var(--s3) var(--s5));
+  border-bottom: 1px solid var(--drawer-edge);
+}
+.journal-cover.status-approved .cover-clapper,
+.journal-cover.verdict-pass .cover-clapper {
+  background: repeating-linear-gradient(-45deg, var(--gold-line) 0 var(--s3), transparent var(--s3) var(--s5));
+}
+/* a film strip's perforations along the foot: the poster is a frame of a film */
+.journal-cover::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 var(--s2) 0;
+  height: var(--s2);
+  background: repeating-linear-gradient(90deg, var(--cover-ghost) 0 var(--s3), transparent var(--s3) var(--s5));
+  z-index: -1;
+}
+.cover-number {
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  min-width: calc(var(--s9) * 3);
+  padding: var(--s4) var(--s5);
+  border: 1px solid var(--drawer-edge);
+  border-radius: var(--radius-sm);
+  background: linear-gradient(180deg, var(--sheen), transparent), var(--bg-lift);
+  box-shadow: var(--inset-well);
+}
+.cover-ep {
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  letter-spacing: var(--track-caps);
+  color: var(--ink-3);
+}
+.cover-n {
+  font-family: var(--font-display);
+  font-weight: var(--w-display);
+  font-size: var(--fs-cover-num);
+  line-height: 1;
+  letter-spacing: var(--track-tight);
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.status-approved .cover-n { color: var(--gold-ink); }
+/* no number in the serial yet: the dash is a placeholder, not a figure */
+.cover-n.is-none { color: var(--ink-3); font-size: calc(var(--fs-cover-num) * .6); padding-block: var(--s2); }
+.cover-n-note { font-size: var(--fs-meta); color: var(--ink-3); }
+.cover-body { display: grid; gap: var(--s2); min-width: 0; }
+.cover-kicker {
+  margin: 0;
+  font-size: var(--fs-micro);
+  font-weight: var(--w-semi);
+  letter-spacing: var(--track-caps);
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.cover-kicker .cover-state { color: var(--ink-2); }
+.cover-kicker .cover-state.state-draft { color: var(--warn-ink); background: none; border: 0; }
+.cover-kicker .cover-state.state-approved { color: var(--ok-ink); background: none; border: 0; }
+.cover-kicker .cover-state.state-rejected { color: var(--alert-ink); background: none; border: 0; }
+.journal-cover .cover-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: var(--w-display);
+  font-size: var(--fs-cover-title);
+  line-height: var(--lh-tight);
+  letter-spacing: var(--track-tight);
+  color: var(--ink);
+  text-wrap: balance;
+}
+.cover-meta { margin: 0; font-size: var(--fs-body); color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.cover-foot { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s3) var(--s5); margin-top: var(--s2); }
+.cover-read {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--hit);
+  padding: 0 var(--s4);
+  border: 1px solid var(--gold-line);
+  border-radius: var(--radius-pill);
+  background: var(--gold-soft);
+  color: var(--gold-ink);
+  font-size: var(--fs-body);
+  font-weight: var(--w-semi);
+  text-decoration: none;
+  transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+.cover-read:hover { background: var(--warn-bg); border-color: var(--gold); }
+.cover-read:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.cover-canon { font-size: var(--fs-body); color: var(--ink-2); }
+.cover-canon strong { font-family: var(--font-display); color: var(--gold-ink); font-variant-numeric: tabular-nums; }
+.cover-canon .writers-label { margin-right: var(--s1); }
+.cover-verdict {
+  display: grid;
+  gap: var(--s1);
+  justify-items: end;
+  align-content: center;
+  min-width: calc(var(--s9) * 4);
+  padding-left: var(--s6);
+  border-left: 1px solid var(--drawer-edge);
+  text-align: right;
+}
+.cover-verdict-word {
+  font-family: var(--font-display);
+  font-weight: var(--w-display);
+  font-size: var(--fs-cover-verdict);
+  line-height: 1;
+  letter-spacing: var(--track-caps);
+  color: var(--ink-2);
+}
+.cover-verdict.tone-pass .cover-verdict-word { color: var(--ok-ink); }
+.cover-verdict.tone-fail .cover-verdict-word { color: var(--alert-ink); }
+.cover-verdict-line { font-size: var(--fs-meta); color: var(--ink-2); max-width: 26ch; }
+.journal-cover.is-empty { grid-template-columns: auto minmax(0, 1fr); }
+@keyframes cover-in {
+  from { opacity: 0; translate: 0 var(--s2); }
+  to { opacity: 1; translate: 0 0; }
+}
+@media (max-width: 1100px) {
+  .journal-cover { grid-template-columns: auto minmax(0, 1fr); gap: var(--s5); padding: var(--s6) var(--s5) var(--s7); }
+  .cover-verdict {
+    grid-column: 1 / -1;
+    justify-items: start;
+    padding: var(--s3) 0 0;
+    border-left: 0;
+    border-top: 1px solid var(--drawer-edge);
+    text-align: left;
+  }
+}
+@media (max-width: 640px) {
+  .journal-cover { grid-template-columns: minmax(0, 1fr); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .journal-cover { animation: none; }
+  .cover-read { transition: none; }
+}
+
+/* ------------------------------------------------------ narrower rooms */
+@container (max-width: 860px) {
+  .episode-room { grid-template-columns: minmax(0, 1fr); }
+}
+@container (max-width: 620px) {
+  .writers-room .episode-slate {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      "num kicker chev"
+      "num title  chev"
+      "num meta   chev"
+      "badges badges badges";
+  }
+  .slate-badges { justify-content: flex-start; }
+  .script-page { padding-inline: var(--s3); }
+  .script-line { margin-inline: 4% 0; }
+  .line-speaker { padding-left: 8%; }
+}
+@media (max-width: 720px) {
+  .serial-board { grid-template-columns: minmax(0, 1fr); gap: var(--s3); }
+  .serial-canon { padding-right: 0; border-right: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .writers-room .episode-slate,
+  .writers-room .episode-slate::after,
+  .beat-card,
+  .script-beat { transition: none; }
+}
