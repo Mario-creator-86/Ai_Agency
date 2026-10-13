@@ -1,0 +1,2324 @@
+diff --git a/backend/app/media/assembler.py b/backend/app/media/assembler.py
+index 10a85be..c56c144 100644
+--- a/backend/app/media/assembler.py
++++ b/backend/app/media/assembler.py
+@@ -10216,6 +10216,7 @@ def _clip_plan(
+     a factual film and the composed beat for the serial (`stills_stage._scene_picture`), never
+     the compiled still prompt that ``visual_prompt`` holds."""
+     from app.media import stills_stage as stills  # noqa: PLC0415 - stills_stage imports us
++    from app.media.markings import planned_markings  # noqa: PLC0415
+     from app.media.prompt_lint import bible_face_rule  # noqa: PLC0415
+     from app.media.still_gate import StillPlan  # noqa: PLC0415
+ 
+@@ -10225,6 +10226,7 @@ def _clip_plan(
+     asked = intent.get("camera_move") if isinstance(intent, dict) else None
+     look = str(package.get("look_block") or "")
+     words = " ".join(str(package.get("still_prompt") or scene.get("visual_prompt") or "").split())
++    picture = stills._scene_picture(package, str(scene.get("visual_prompt") or ""), words)
+     return StillPlan(
+         scene=int(scene["scene_index"]),
+         still_prompt=words,
+@@ -10233,12 +10235,15 @@ def _clip_plan(
+         bible_rules=stills._bible_rules(bible),
+         look_block=look,
+         palette_words=stills._palette_words(look),
+-        scene_picture=stills._scene_picture(package, str(scene.get("visual_prompt") or ""), words),
++        scene_picture=picture,
+         narration=" ".join(
+             str(scene.get("voiceover_segment") or scene.get("narration") or "").split()
+         ),
+         purpose=str(scene.get("story_purpose") or ""),
+         must_fix=tuple(must_fix),
++        # A thermometer's scale is not writing: the look is told, and her look may overturn
++        # a writing refusal of such a clip (`qc.look_may_overturn`, 2026-10-13).
++        expected_markings=planned_markings(words, picture),
+     )
+ 
+ 
+@@ -10332,6 +10337,7 @@ def _check_shot(
+             face_counter=face_counter,
+             judge=judge,
+             **({"must_fix": plan.must_fix} if plan.must_fix else {}),
++            **({"expected_markings": plan.expected_markings} if plan.expected_markings else {}),
+         )
+ 
+     checked_takes: list[str] = [take_id]
+diff --git a/backend/app/media/markings.py b/backend/app/media/markings.py
+new file mode 100644
+index 0000000..aba9ae9
+--- /dev/null
++++ b/backend/app/media/markings.py
+@@ -0,0 +1,193 @@
++"""Objects whose own markings are not «text in the picture» (2026-10-13).
++
++The Owner, on the film «Why the Kelvin Scale Has No 'Zero' to Begin From»: a scene asked for
++a thermometer, and quality control refused every still for the digits on it. «Nu ai cum să
++ai un termometru fără scris, grade, Celsius.» A thermometer's scale, a gauge's dial, a clock's
++face and a ruler's graduations ARE the object; the bible's rule against writing is about
++captions, signs, logos and the lettering a model invents.
++
++So when the scene's plan names such an object (`planned_markings`, read from the still prompt
++and the scene's written picture — what the picture must show — never from the narration
++alone):
++
++- the vision checks are told the object's markings are expected and asked to count only
++  writing elsewhere (`picture_qc.judge_still`, `picture_qc.judge_clip`: `markings_note`);
++- a writing finding is a reading the Director judges like any other — never a hard limit of
++  the bible that fails closed (`second_look.hard_limits`, `still_gate.may_be_overturned`,
++  `qc.look_may_overturn`), never anchored serious in her review of a rewrite
++  (`scene_rewrite.hard_limit`), and her brief is told so (`scene_rewrite._data`);
++- the still prompt says so instead of «No text» (`still_exclusions`), and a re-roll's positive
++  words no longer ask for «unmarked objects» (`still_gate.positive_instruction`).
++
++Writing anywhere else, faces and panels change nothing. The list is short and literal — an
++instrument that cannot exist without its scale, a clock, a keyboard — never a sign, a page, a
++board or a screen, which a model fills with gibberish and the bible rightly refuses.
++"""
++
++from __future__ import annotations
++
++import re
++from collections.abc import Sequence
++
++#: Each object with the spellings that name it: English (the prompts) and the Romanian a
++#: script's line may use. One key per object; a plan naming it in either language is one.
++MARKED_OBJECTS: dict[str, str] = {
++    "thermometer": r"\bthermometers?\b|\btermometr(?:u|e|ul|ele|elor)\b",
++    "barometer": r"\bbarometers?\b|\bbarometr(?:u|e|ul|ele)\b",
++    "manometer": r"\bmanometers?\b|\bmanometr(?:u|e|ul|ele)\b",
++    "hygrometer": r"\bhygrometers?\b|\bhigrometr(?:u|e|ul|ele)\b",
++    "altimeter": r"\baltimeters?\b|\baltimetr(?:u|e|ul|ele)\b",
++    "speedometer": r"\bspeedometers?\b|\bvitezometr(?:u|e|ul|ele)\b",
++    "odometer": r"\bodometers?\b|\bkilometraj(?:ul|e)?\b",
++    "tachometer": r"\btachometers?\b|\bturometr(?:u|e|ul|ele)\b",
++    "voltmeter": r"\bvoltmeters?\b|\bvoltmetr(?:u|e|ul|ele)\b",
++    "ammeter": r"\bammeters?\b|\bampermetr(?:u|e|ul|ele)\b",
++    "multimeter": r"\bmultimeters?\b|\bmultimetr(?:u|e|ul|ele)\b",
++    "galvanometer": r"\bgalvanometers?\b|\bgalvanometr(?:u|e|ul|ele)\b",
++    "chronometer": r"\bchronometers?\b|\bcronometr(?:u|e|ul|ele)\b",
++    "seismograph": r"\bseismographs?\b|\bseismograf(?:ul|e|ele)?\b",
++    "oscilloscope": r"\boscilloscopes?\b|\bosciloscop(?:ul|e|ele)?\b",
++    "gauge": r"\bgauges?\b",
++    "dial": r"\bdials?\b|\bcadran(?:ul|e|ele)?\b",
++    # Not «six o'clock»: an hour of the day is no clock in the picture.
++    "clock": r"(?<!o')(?<!o’)\bclocks?\b|\bceas(?:ul|uri|urile)?\b|\bpendul[ăa]\b",
++    "watch": r"\b(?:wrist|pocket|stop)[- ]?watch(?:es)?\b|\bwatch\s+face\b",
++    "sundial": r"\bsundials?\b",
++    "timer": r"\btimers?\b",
++    "ruler": r"\brulers?\b|\byardsticks?\b|\brigl(?:[ăa]|e|ele)\b",
++    "tape measure": r"\b(?:tape\s+measures?|measuring\s+tapes?)\b|\brulet[ăa]\b",
++    "protractor": r"\bprotractors?\b|\braportor(?:ul|e)?\b",
++    "weighing scale": (
++        r"\b(?:weighing|kitchen|bathroom|balance|laboratory|lab|spring)\s+scales?\b"
++        r"|\bcântar(?:ul|e|ele)?\b"
++    ),
++    "graduated glass": (
++        r"\bgraduated\s+(?:cylinders?|beakers?|flasks?|tubes?)\b|\bmeasuring\s+(?:cups?|jugs?)\b"
++        r"|\bburettes?\b|\bpipettes?\b|\bsyringes?\b|\bcilindr(?:u|ul)\s+gradat\b|\bsering[ăa]\b"
++    ),
++    "temperature scale": (
++        r"\b(?:celsius|fahrenheit|kelvin|centigrade|temperature|graduated|numbered)\s+scales?\b"
++        r"|\bscal[ăa]\s+(?:celsius|fahrenheit|kelvin|de\s+temperatur[ăa]|gradat[ăa])\b"
++    ),
++    "thermostat": r"\bthermostats?\b|\btermostat(?:ul|e|ele)?\b",
++    "compass": r"\bcompass(?:es)?\b|\bbusol(?:[ăa]|e|ele)\b",
++    "instrument panel": (
++        r"\b(?:instrument|control)\s+panels?\b|\bdashboards?\b|\bcockpits?\b"
++        r"|\bbord(?:ul)?\s+de\s+(?:instrumente|comand[ăa])\b"
++    ),
++    "keyboard": (
++        r"\bkeyboards?\b|\btypewriters?\b|\bkeypads?\b|\bcalculators?\b|\bcash\s+registers?\b"
++        r"|\btastatur[ăa]\b|\bma[șs]in[ăa]\s+de\s+scris\b"
++    ),
++}
++_PATTERNS: dict[str, re.Pattern[str]] = {
++    name: re.compile(pattern, re.IGNORECASE) for name, pattern in MARKED_OBJECTS.items()
++}
++#: The Owner reads Romanian: the object's name in his sentences (`markings_ro`).
++_RO: dict[str, str] = {
++    "thermometer": "termometrul",
++    "barometer": "barometrul",
++    "manometer": "manometrul",
++    "hygrometer": "higrometrul",
++    "altimeter": "altimetrul",
++    "speedometer": "vitezometrul",
++    "odometer": "kilometrajul",
++    "tachometer": "turometrul",
++    "voltmeter": "voltmetrul",
++    "ammeter": "ampermetrul",
++    "multimeter": "multimetrul",
++    "galvanometer": "galvanometrul",
++    "chronometer": "cronometrul",
++    "seismograph": "seismograful",
++    "oscilloscope": "osciloscopul",
++    "gauge": "indicatorul cu cadran",
++    "dial": "cadranul",
++    "clock": "ceasul",
++    "watch": "ceasul de mână",
++    "sundial": "cadranul solar",
++    "timer": "cronometrul",
++    "ruler": "rigla",
++    "tape measure": "ruleta",
++    "protractor": "raportorul",
++    "weighing scale": "cântarul",
++    "graduated glass": "vasul gradat",
++    "temperature scale": "scala de temperatură",
++    "thermostat": "termostatul",
++    "compass": "busola",
++    "instrument panel": "bordul de instrumente",
++    "keyboard": "tastatura",
++}
++
++
++def planned_markings(*texts: object) -> tuple[str, ...]:
++    """The objects of `MARKED_OBJECTS` the plan's ``texts`` name, in the order they are first
++    named, each once; empty when the plan names none. A text that is not a string is read as
++    its words; None and empty texts say nothing."""
++    said = " ".join(" ".join(str(text).split()) for text in texts if text)
++    if not said:
++        return ()
++    found: list[tuple[int, str]] = []
++    for name, pattern in _PATTERNS.items():
++        match = pattern.search(said)
++        if match:
++            found.append((match.start(), name))
++    names = [name for _at, name in sorted(found)]
++    if "thermometer" in names and "temperature scale" in names:
++        # A thermometer's Celsius scale is the thermometer's, not a second object.
++        names.remove("temperature scale")
++    return tuple(names)
++
++
++def named(names: Sequence[str], article: str = "the") -> str:
++    """«the thermometer», «the thermometer and the gauge», «a clock, a dial and a gauge»; with
++    a capital article, only the first («The thermometer and the gauge»)."""
++    said = [f"{article.lower()} {name}" for name in names]
++    if not said:
++        return ""
++    joined = said[0] if len(said) == 1 else ", ".join(said[:-1]) + " and " + said[-1]
++    return joined[:1].upper() + joined[1:] if article[:1].isupper() else joined
++
++
++def markings_note(markings: Sequence[str]) -> str:
++    """What a model that judges the picture is told when the plan names an object that
++    carries its own markings (English, for the vision model and the Director); "" when the
++    plan names none."""
++    if not markings:
++        return ""
++    return (
++        f"The plan asks for {named(markings, 'a')}: the scale, numbers, units and labels "
++        "that belong on such an object are part of the object, not writing in the picture, "
++        "and the picture is right to show them. Count as readable text only writing "
++        "elsewhere — a caption, a sign, a logo, lettering on nothing, a line that looks like "
++        "a subtitle — and say in your reason where any writing you see is. Such an object is "
++        "a photograph of a thing, never a chart, a title or numbers the studio composes "
++        "itself: its markings are no reason for compose_locally."
++    )
++
++
++def still_exclusions(markings: Sequence[str]) -> str:
++    """The still prompt's last sentence: «No text, no logo.» for a scene of plain objects;
++    for one whose plan names an object that carries its own markings, the object keeps them
++    (an image model told «no text» leaves a thermometer blank, or draws the digits anyway and
++    the words were a lie) and only a caption or a logo is kept out."""
++    if not markings:
++        return "No text, no logo."
++    keeps = "keeps its" if len(markings) == 1 else "keep their"
++    return f"{named(markings, 'The')} {keeps} own scale and markings; no caption, no logo."
++
++
++def markings_kept(markings: Sequence[str]) -> str:
++    """The same, said positively alone, for a model whose exclusions go to its negative
++    channel (gen4) and whose prompt says no «no»."""
++    if not markings:
++        return ""
++    keeps = "keeps its" if len(markings) == 1 else "keep their"
++    return f"{named(markings, 'The')} {keeps} own scale and markings."
++
++
++def markings_ro(markings: Sequence[str]) -> str:
++    """The objects in the Owner's language: «termometrul», «termometrul și cadranul»."""
++    names = [_RO.get(name, name) for name in markings]
++    if not names:
++        return ""
++    return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " și " + names[-1]
+diff --git a/backend/app/media/picture_qc.py b/backend/app/media/picture_qc.py
+index a82cbf2..f400e9f 100644
+--- a/backend/app/media/picture_qc.py
++++ b/backend/app/media/picture_qc.py
+@@ -91,6 +91,7 @@ from app.agents.identity import clipped
+ from app.agents.vision import frames_at, frames_for, vision_agent
+ from app.factual.sanitizer import wrap_in_inert_boundary
+ from app.media.cards import CAPTION_BAND_TOP, FRAME_HEIGHT
++from app.media.markings import markings_note
+ from app.media.models import (
+     CharacterBible,
+     MediaAsset,
+@@ -2284,9 +2285,15 @@ def judge_still(
+             "bible_rules": list(plan.bible_rules),
+         }
+     )
++    # An object the plan asks for with its own markings (`markings.planned_markings`,
++    # 2026-10-13): the look is told its scale is not writing, and asked only about the rest.
++    marked = tuple(getattr(plan, "expected_markings", ()) or ())
++    if marked:
++        shown["planned_markings"] = list(marked)
+     prompt = (
+         _STILL_INSTRUCTIONS.format(scene=plan.scene)
+         + (_FIXES_NOTE if must_fix else "")
++        + (markings_note(marked) + "\n" if marked else "")
+         + wrap_in_inert_boundary(json.dumps(shown, ensure_ascii=False)[:8000], "the-still")
+     )
+ 
+@@ -2609,6 +2616,11 @@ def judge_clip(
+         shown["scene_picture"] = getattr(plan, "scene_picture", "") or ""
+         shown["narration"] = getattr(plan, "narration", "") or ""
+         shown["must_fix"] = [{"item": number, **item} for number, item in enumerate(must_fix, 1)]
++    # An object the plan asks for with its own markings (`markings.planned_markings`,
++    # 2026-10-13): the look is told its scale is not writing, in the clip as in the still.
++    marked = tuple(getattr(plan, "expected_markings", ()) or ())
++    if marked:
++        shown["planned_markings"] = list(marked)
+     prompt = (
+         _CLIP_INSTRUCTIONS.format(
+             scene=plan.scene,
+@@ -2616,6 +2628,7 @@ def judge_clip(
+             studio_note=studio_text_note(studio_text),
+         )
+         + (_CLIP_FIXES_NOTE if must_fix else "")
++        + (markings_note(marked) + "\n" if marked else "")
+         + wrap_in_inert_boundary(json.dumps(shown, ensure_ascii=False)[:8000], "the-clip")
+     )
+ 
+diff --git a/backend/app/media/prompt_agent.py b/backend/app/media/prompt_agent.py
+index 8b1b206..c0dfcc1 100644
+--- a/backend/app/media/prompt_agent.py
++++ b/backend/app/media/prompt_agent.py
+@@ -55,6 +55,7 @@ from app.factual.editorial import SCENE_PURPOSES
+ from app.factual.models import FactualClaim, ScriptDraft
+ from app.factual.sanitizer import wrap_in_inert_boundary
+ from app.media import prompt_lint as lint
++from app.media.markings import markings_kept, planned_markings, still_exclusions
+ from app.media.models import CharacterBible, Storyboard, StoryboardScene
+ from app.media.series_look import (
+     LIGHT_SLOTS,
+@@ -404,6 +405,11 @@ _SHOTS_INSTRUCTIONS = (
+     "emotion, at a believable intensity; the background life, which must not compete with the "
+     "subject; what must match the previous shot (continuity); what the last frame should be "
+     "left on; the audio intent; the transition into the next shot; and what to avoid.\n\n"
++    "The still is drawn from the subject, the action, the environment, the camera's framing, "
++    "the lighting and the composition at the shot's FIRST moment, so those fields describe "
++    "what is seen then — a pose, a state, a place — never a camera move, a speed or a span of "
++    "the clip's seconds: those belong only in the camera's move, in motion and in "
++    "ending_frame.\n\n"
+     "Show the information rather than narrating it twice: if the narration says a storm grew "
+     "stronger, the picture shows cloud, wind, water and a reaction, not a caption. Never ask "
+     "for writing in the picture — no text overlay, title, label, caption or written number: a "
+@@ -1841,7 +1847,8 @@ def _still_moment(action: str) -> str:
+         ]
+         if marks:
+             part = _then_head(part, min(marks))
+-        part = _clean_cut(_first_moment(part))
++        # The camera's path and a tempo are the clip's, never the picture's (2026-10-13).
++        part = _clean_cut(lint.without_tempo(lint.static_clause(_first_moment(part))))
+         if part:
+             kept.append(part)
+     return "; ".join(kept)
+@@ -2639,6 +2646,14 @@ def _clauses_of(text: Any, *, motion: bool = False) -> list[str]:
+ 
+     def usable(part: str) -> str:
+         part = without_scene_reference(part)
++        if not motion:
++            # A still is one frozen moment (the Owner, 2026-10-13: «în promptul de imagine nu
++            # are ce să caute indicații de mișcare»): the camera's movement leaves the clause
++            # (a clause that only moves the camera is the motion's alone), and so do a tempo
++            # and a span of the clip.
++            part = lint.without_tempo(lint.static_clause(part))
++            if not part:
++                return ""
+         if (
+             not re.search(r"[A-Za-z]", part)
+             or lint.NONE_WORD.match(part)
+@@ -3135,6 +3150,14 @@ def compile_prompts(
+             light = f"light {light}"
+     cast = _cast_sentence(package.get("characters"), faces_banned)
+     people = _shows_people(" ".join((subject, action, environment, cast)))
++    # An object that carries its own markings (a thermometer's scale, `markings`): the still
++    # keeps them and says so instead of «No text» (the Owner, 2026-10-13).
++    marked = planned_markings(
++        package.get("subject"),
++        package.get("action"),
++        package.get("environment"),
++        package.get("writer_visual"),
++    )
+     items = [
+         (0, 0, block),
+         (0, 1, frame),
+@@ -3153,7 +3176,7 @@ def compile_prompts(
+         # words literally (config/factual_look.json's note; the lint refuses them on veo).
+         # They stay in the package's `avoid` and reach a model's negative channel where it
+         # has one (`render_motion`).
+-        (0, 9, STILL_EXCLUSIONS if still_family != "gen4" else ""),
++        (0, 9, still_exclusions(marked) if still_family != "gen4" else markings_kept(marked)),
+     ]
+     still = _fit_sentences(items, lint.prompt_cap(contract, "still"), STILL_MAX_WORDS)
+     # People kept faceless are shown from behind: an orbit around them turns their faces to
+diff --git a/backend/app/media/prompt_lint.py b/backend/app/media/prompt_lint.py
+index 049c164..8848e1c 100644
+--- a/backend/app/media/prompt_lint.py
++++ b/backend/app/media/prompt_lint.py
+@@ -104,6 +104,130 @@ SHOT_SIZE = re.compile(
+     re.IGNORECASE,
+ )
+ 
++# A still is one frozen moment: a camera move, a tempo or a span of the clip's seconds is
++# the motion prompt's and has no place in the picture's words (the Owner, 2026-10-13: «în
++# promptul de imagine nu are ce să caute indicații de mișcare»). The compiler leaves them out
++# of the still (`prompt_agent._clauses_of`: a clause that moves the camera is dropped, a tempo
++# is taken out of its clause) and `lint_still_prompt` says when a stored still prompt still
++# carries one (STILL_MOTION).
++#: A tempo or a span of the clip inside a clause: taken out of the still's words.
++STILL_TEMPO = re.compile(
++    r"\b(?:slowly|steadily|gradually|gently|smoothly|quickly|rapidly|swiftly|briskly"
++    r"|continuously|unhurriedly|over\s+the\s+(?:clip|shot)(?:'s)?(?:\s+seconds)?"
++    r"|throughout\s+the\s+(?:clip|shot)|for\s+the\s+whole\s+(?:clip|shot)"
++    r"|across\s+the\s+(?:whole\s+)?(?:clip|shot)|over\s+\d+\s+seconds?"
++    r"|as\s+the\s+(?:clip|shot)\s+(?:goes\s+on|runs|ends)"
++    r"|by\s+the\s+end\s+of\s+the\s+(?:clip|shot)|from\s+the\s+first\s+frame\s+to\s+the\s+last"
++    r"|frame\s+by\s+frame|second\s+by\s+second)\b",
++    re.IGNORECASE,
++)
++#: The camera itself as the subject of a verb of movement: the whole clause is the motion's.
++#: Only the camera, the lens and a drone: «the frame holds only the place and the things
++#: named» (`prompt_agent.NO_PEOPLE_SENTENCE`) is a composition, and «the shot shows» a
++#: picture; and only verbs that move it — a camera that «holds» or «stays» is a still.
++CAMERA_MOVING = re.compile(
++    r"\b(?:the\s+)?(?:camera|lens|drone)\s+"
++    r"(?:(?:slowly|gently|steadily|smoothly|then)\s+)?"
++    r"(?:moves?|moving|glides?|gliding|push(?:es|ing)|pulls?|pulling|tracks?|tracking"
++    r"|follows?|following|circles?|circling|orbits?|orbiting|rises?|rising|descends?"
++    r"|descending|sweeps?|sweeping|drifts?|drifting|pans?|panning|tilts?|tilting|zooms?"
++    r"|zooming|cranes?|craning|arcs?|arcing|travels?|travell?ing|swings?|swinging|creeps?"
++    r"|creeping|floats?|floating|clos(?:es|ing)\s+in|eases?\s+(?:in|out|closer|back)"
++    r"|easing\s+(?:in|out|closer|back))\b",
++    re.IGNORECASE,
++)
++#: The named moves a still prompt may say without moving anything: a locked camera is a
++#: composition, a handheld look is grain.
++_STILL_MAY_NAME = frozenset({"static", "handheld drift"})
++#: Where a named move is the camera's and not the subject's own: the clause names the camera
++#: or its stand-ins, or the move is said in the cinema's own words. «Earth orbits the Sun»
++#: and «she pulls back the curtain» are the subject's moment and stay (the Codex review of
++#: c6dc05c, 2026-10-13: a bare «orbits» emptied an astronomy scene's still).
++_CAMERA_CONTEXT = re.compile(
++    r"\b(?:camera|lens|shot|frame|framing|view|viewpoint|drone|pov|point\s+of\s+view)\b",
++    re.IGNORECASE,
++)
++_CAMERA_ONLY_MOVE = re.compile(
++    r"\b(?:doll(?:y|ies|ying)|crane(?:s|ing)?|pedestal|boom(?:s|ing)?\s+(?:up|down)"
++    r"|track(?:s|ing)?\s+(?:shot\s+)?(?:to\s+the\s+)?(?:left|right)|truck(?:s|ing)?"
++    r"|pan(?:s|ning)?\s+(?:left|right)|push[- ]in|pull[- ](?:back|out)|aerial\s+drift"
++    r"|rack[- ]focus|focus\s+(?:racks?|pulls?|pulling)|pull(?:s|ing)?\s+focus|zoom\w*)\b",
++    re.IGNORECASE,
++)
++
++
++def _camera_moves_in(text: str) -> list[tuple[int, str]]:
++    """(start, words) of each named move in ``text`` that is the camera's: not a locked camera
++    or a handheld look (`_STILL_MAY_NAME`), and either said beside the camera
++    (`_CAMERA_CONTEXT`) or in the cinema's own words (`_CAMERA_ONLY_MOVE`)."""
++    lowered = text.lower()
++    beside_the_camera = bool(_CAMERA_CONTEXT.search(text))
++    found: list[tuple[int, str]] = []
++    for move, written in camera_moves(text):
++        if move in _STILL_MAY_NAME:
++            continue
++        if not beside_the_camera and not _CAMERA_ONLY_MOVE.search(written):
++            continue
++        at = lowered.find(written.lower())
++        if at >= 0:
++            found.append((at, written))
++    return found
++
++
++def still_motion(text: str) -> str:
++    """The earliest words of a still prompt that move the camera (a named move of the camera,
++    or the camera as the subject of a verb of movement) or give a tempo or a span of the
++    clip, else ""."""
++    found: list[tuple[int, str]] = []
++    for pattern in (CAMERA_MOVING, STILL_TEMPO):
++        match = pattern.search(text)
++        if match:
++            found.append((match.start(), match.group(0).strip()))
++    found += _camera_moves_in(text)
++    return min(found)[1] if found else ""
++
++
++def moves_the_camera(text: str) -> bool:
++    """Whether a clause of a plan field moves the camera (`CAMERA_MOVING`, or a named move
++    that is the camera's, `_camera_moves_in`)."""
++    return bool(CAMERA_MOVING.search(text)) or bool(_camera_moves_in(text))
++
++
++#: What joins a subject's moment to the camera's move in one clause ("the mercury rises as
++#: the camera pushes in"): cut off with the move, the moment stays.
++_BEFORE_CAMERA = re.compile(r"\s*(?:,|;|\b(?:as|while|and|with|then|before|until)\b)\s*$")
++
++
++def static_clause(text: str) -> str:
++    """A clause of a plan field as a still may say it: without the camera's movement. A clause
++    that only moves the camera is "" (the motion prompt's); one that says a moment first
++    ("the mercury rises as the camera pushes in on the scale") keeps the moment ("the mercury
++    rises") when at least two words of it stay whole."""
++    starts = [match.start() for match in CAMERA_MOVING.finditer(text)]
++    starts += [at for at, _written in _camera_moves_in(text)]
++    if not starts:
++        return text
++    first = min(starts)
++    head = _BEFORE_CAMERA.sub("", text[:first]).strip()
++    # The move was named by a subject of its own ("the camera"): the head ends before it.
++    head = re.sub(r"\s*\b(?:the|a|an)\s*$", "", head, flags=re.IGNORECASE).strip(" ,;")
++    if len(head.split()) < 2 or dangling(head):
++        return ""
++    # A head that is only the camera's own name ("the view", "the camera") says no picture.
++    if _CAMERA_CONTEXT.fullmatch(re.sub(r"^(?:the|a|an)\s+", "", head, flags=re.IGNORECASE)):
++        return ""
++    return head
++
++
++def without_tempo(text: str) -> str:
++    """``text`` with its tempo and clip-span words taken out (`STILL_TEMPO`), the spacing and
++    the punctuation closed up: "cloud rolls steadily across the ridges" is "cloud rolls across
++    the ridges"."""
++    said = STILL_TEMPO.sub(" ", text)
++    said = re.sub(r"\s+([,;.!?])", r"\1", re.sub(r"\s{2,}", " ", said))
++    return said.strip()
++
++
+ # The tempo a motion prompt must say once. "Smooth", "fluid", "deliberate" and "sweeping"
+ # are the cinema's tempo words for an ample move (2026-10-11); "fast" and "quick" stay for a
+ # plan that asks for them (production_policy reads "fast" as a fast-motion need).
+@@ -863,6 +987,21 @@ def lint_still_prompt(
+                 "într-unul; descrieți locul în cuvinte.",
+             )
+         )
++    # WARN, as STILL_SEQUENCE: the compiler keeps movement out of the still (2026-10-13); this
++    # tells the Owner when a stored prompt still carries a camera move, a tempo or a span.
++    moving = still_motion(text)
++    if moving:
++        findings.append(
++            _finding(
++                "STILL_MOTION",
++                WARN,
++                scene,
++                moving,
++                f"Promptul imaginii cere mișcare („{moving}”). O imagine este un singur moment "
++                "nemișcat: mișcarea camerei, tempoul și durata clipului se spun doar în "
++                "promptul de mișcare. Descrieți ce se vede în acel moment.",
++            )
++        )
+ 
+     rule = bible_face_rule(bible)
+     if rule:
+diff --git a/backend/app/media/qc.py b/backend/app/media/qc.py
+index 7041ceb..0a88657 100644
+--- a/backend/app/media/qc.py
++++ b/backend/app/media/qc.py
+@@ -48,6 +48,7 @@ from app.db import lock_for_write
+ from app.factual.editorial import dangles
+ from app.factual.models import FactualClaim
+ from app.media.cards import film_finish
++from app.media.markings import planned_markings
+ from app.media.models import (
+     MediaAsset,
+     QualityControlReport,
+@@ -2219,9 +2220,14 @@ def check_clip(
+     judge: Callable[[list[Path]], Any] | None = None,
+     work_dir: Path | None = None,
+     must_fix: Sequence[Mapping[str, Any]] = (),
++    expected_markings: Sequence[str] = (),
+ ) -> ClipReport:
+     """Measure one bought clip before it is cut into the film, at 0 credits.
+ 
++    ``expected_markings`` (2026-10-13): the plan's objects that carry their own markings
++    (`still_gate.StillPlan.expected_markings`), kept on ``measured["picture"]`` so that a
++    writing refusal of such a clip is the Director's to overturn (`look_may_overturn`).
++
+     - motion: mean YDIF at 540 px against the floor of its camera move (`motion_check`);
+     - cuts: a hard cut inside the clip fails it (`cut_spikes`);
+     - faces: YuNet on the first, middle and last frames when the bible forbids faces;
+@@ -2307,6 +2313,8 @@ def check_clip(
+             }
+             if fixes:
+                 measured["picture"]["fixes"] = fixes
++            if expected_markings:
++                measured["picture"]["planned_markings"] = [str(n) for n in expected_markings]
+     finally:
+         if owned:
+             shutil.rmtree(folder, ignore_errors=True)
+@@ -2642,7 +2650,11 @@ def look_may_overturn(report: ClipReport) -> bool:
+     picture = (report.measured or {}).get("picture") or {}
+     flags = picture.get("verdict") if isinstance(picture, dict) else None
+     flags = flags if isinstance(flags, dict) else {}
+-    if flags.get("readable_text") or flags.get("one_picture") is False:
++    if flags.get("one_picture") is False:
++        return False
++    # Writing on a clip whose plan asks for an object with its own markings (a thermometer's
++    # scale, ``planned_markings``) is a reading, hers to judge (2026-10-13).
++    if flags.get("readable_text") and not picture.get("planned_markings"):
+         return False
+     faces = next((item for item in report.checks if item.code == "faces"), None)
+     forbidden = faces is not None and faces.status != "NOT_APPLICABLE"
+@@ -3756,6 +3768,9 @@ def span_picture_qc(
+                         faces_forbidden=faces_forbidden,
+                         bible_rules=rules,
+                         look_block=str(asked.get("look_block") or ""),
++                        # A thermometer's scale is not writing (2026-10-13): the look is
++                        # told, and her second look at the scene may overturn the reading.
++                        expected_markings=planned_markings(asked.get("still_prompt")),
+                     )
+                     judgement = judge([path for _at, _moment, path in looked_at], plan)
+                 picture = _picture_check(judgement, faces_forbidden=faces_forbidden)
+diff --git a/backend/app/media/scene_rewrite.py b/backend/app/media/scene_rewrite.py
+index 84c516a..736e80a 100644
+--- a/backend/app/media/scene_rewrite.py
++++ b/backend/app/media/scene_rewrite.py
+@@ -7,6 +7,7 @@ from __future__ import annotations
+ import json
+ import logging
+ import re
++from collections.abc import Sequence
+ from typing import Any, Literal
+ from uuid import uuid4
+ 
+@@ -19,6 +20,7 @@ from app.db import lock_for_write
+ from app.factual.models import ScriptDraft
+ from app.factual.sanitizer import wrap_in_inert_boundary
+ from app.media import prompt_lint as lint
++from app.media.markings import markings_kept, markings_note, planned_markings, still_exclusions
+ from app.media.models import SceneTake, Storyboard, StoryboardScene
+ from app.models import DomainEvent
+ from app.services import append_event
+@@ -149,6 +151,18 @@ HARD_LIMIT_WORDS = re.compile(
+     r"faces? (?:are |is )?forbidden",
+     re.IGNORECASE,
+ )
++#: The same words, split: writing alone is no hard limit when the plan names an object that
++#: carries its own markings (`markings.planned_markings`; the Owner, 2026-10-13, the Kelvin
++#: film's thermometer refused for the digits of its scale), the rest always is.
++_WRITING_LIMIT = re.compile(
++    r"text lizibil|apare text|readable text|garbled text|lettering", re.IGNORECASE
++)
++_OTHER_LIMITS = re.compile(
++    r"interzice fețele|panour\w*|colaj|ecran împărțit|bandă goală|\bpanels?\b|collage|"
++    r"split[- ]screen|o singură fotografie|încalcă biblia|breaks the bible|"
++    r"faces? (?:are |is )?forbidden",
++    re.IGNORECASE,
++)
+ #: A face named in quality control's words: a hard limit when the bible forbids faces. Only
+ #: the Romanian «chip» with its endings: a bare «chip» is the English word (a microchip film).
+ _FACE_WORDS = re.compile(
+@@ -771,7 +785,11 @@ _REWRITE_INSTRUCTIONS = (
+     "in the picture. Do not add facts, numbers, dates or events that are not in the narration. "
+     "Give the shot one ample, specific camera move with its path and tempo (where it starts, "
+     "where it ends over the clip's seconds) and write what the subject does as verbs; choose "
+-    "camera_move from: {moves}. Name colours in words. Return only JSON with this shot: "
++    "camera_move from: {moves}. Name colours in words. The picture's fields (subject, action, "
++    "environment, camera, lighting, composition) describe one frozen moment — what is seen, a "
++    "pose, a state, a place — with no camera move, no speed and no span of the clip in them: "
++    "a still cannot show movement, so everything that moves goes to motion, camera_move and "
++    "ending_frame only. Return only JSON with this shot: "
+     '{{"scene_index": {scene}, "subject": "...", "action": "...", "environment": "...", '
+     '"camera": "...", "camera_move": "...", "lighting": "...", "composition": "...", '
+     '"motion": "...", "emotion": "...", "background": "...", "continuity": "...", '
+@@ -1183,6 +1201,15 @@ def scene_context(engine: Engine, storyboard_id: str, scene_index: int) -> dict[
+                 _brief_in_short(brief) for brief in briefs[:-MAX_BRIEFS_SHOWN][-MAX_OLDER_BRIEFS:]
+             ],
+             "last_code": last_code,
++            # The plan's objects that carry their own markings (`markings.planned_markings`):
++            # a writing finding about them is hers to rate, never anchored serious.
++            "markings": planned_markings(
++                package.get("still_prompt") or target.visual_prompt,
++                package.get("writer_visual"),
++                package.get("subject"),
++                package.get("action"),
++                package.get("environment"),
++            ),
+             "layers": open_layers(session, storyboard_id, scene_index, last_code=last_code),
+             "local_move": _local_move(session, storyboard_id, scene_index),
+         }
+@@ -1297,10 +1324,14 @@ def _still_sentences(
+             if sentence.startswith("In frame, facing the viewer:")
+         ]
+         return found, {}
++    # The exclusions as this scene says them: «No text, no logo.», or the object's own scale
++    # kept when the plan names one that carries markings (`markings`, 2026-10-13).
++    marked = tuple(context.get("markings") or ())
+     candidates = [
+         str(package.get("look_block") or ""),
+         words.COMPOSITION_SENTENCE,
+-        words.STILL_EXCLUSIONS,
++        still_exclusions(marked),
++        markings_kept(marked),
+     ]
+     people = _present([words.PEOPLE_SENTENCE, words.NO_PEOPLE_SENTENCE], still)
+     return _present(candidates, still), ({"subject": people} if people else {})
+@@ -1519,9 +1550,29 @@ def _data(context: dict[str, Any], **more: Any) -> dict[str, Any]:
+         data["older_briefs_in_short"] = list(context["older_briefs"])
+     if context.get("serial"):
+         data["serial_shot"] = _serial_shot(context)
++    if context.get("markings"):
++        # The plan's objects that carry their own markings (`_markings_note`).
++        data["planned_markings"] = list(context["markings"])
+     return data
+ 
+ 
++def _markings_note(context: dict[str, Any]) -> str:
++    """Added to her brief and her review when the plan names an object that carries its own
++    markings (`markings.planned_markings`; the Owner, 2026-10-13, the Kelvin film's thermometer
++    refused for its digits): its scale is the object, not writing in the picture, and no
++    rewrite is asked to take it away."""
++    marked = tuple(context.get("markings") or ())
++    if not marked:
++        return ""
++    return (
++        markings_note(marked)
++        + " A finding that reads such markings as text in the picture is a misreading, "
++        "treated by nothing he writes: rate it minor, never brief him to remove the object's "
++        "scale or to leave the object blank; only writing elsewhere is a defect of the "
++        "words.\n"
++    )
++
++
+ def _dumps(data: Any) -> str:
+     return json.dumps(data, ensure_ascii=False, default=str)
+ 
+@@ -1672,6 +1723,7 @@ def director_brief(
+             layers=str(context.get("layers_note") or _LAYERS_OPEN.get(layers, "")),
+         )
+         + (_SERIAL_BRIEF_NOTE if context.get("serial") else "")
++        + _markings_note(context)
+         + lessons_rule(lessons)
+         + wrap_in_inert_boundary(_fitted(_data(context, **more), lessons), "scene-brief")
+     )
+@@ -1889,13 +1941,18 @@ def _is_finding(text: str) -> bool:
+     return not any(pattern.search(_norm(text)) for pattern in notes)
+ 
+ 
+-def hard_limit(text: Any, bible: dict[str, Any] | None) -> bool:
++def hard_limit(text: Any, bible: dict[str, Any] | None, markings: Sequence[str] = ()) -> bool:
+     """Whether quality control's words name what the bible's hard limits forbid
+     (`HARD_LIMIT_WORDS`; a face, when the bible forbids faces): such a finding is serious
+-    whatever a review says (2026-10-12 evening review of a50407e)."""
++    whatever a review says (2026-10-12 evening review of a50407e). Writing alone is not one
++    when the plan names an object that carries its own markings (``markings``,
++    `markings.planned_markings`): a thermometer's scale is the object, and her review rates
++    the finding (the Owner, 2026-10-13)."""
+     said = _norm(text)
+-    if HARD_LIMIT_WORDS.search(said):
++    if _OTHER_LIMITS.search(said):
+         return True
++    if _WRITING_LIMIT.search(said):
++        return not markings
+     return bool(lint.bible_face_rule(bible or {})) and bool(_FACE_WORDS.search(said))
+ 
+ 
+@@ -2017,6 +2074,9 @@ def review_rewrite(
+     }
+     if context.get("serial"):
+         data["serial_shot"] = _serial_shot(context)
++    if context.get("markings"):
++        # The plan's objects that carry their own markings (`_markings_note`).
++        data["planned_markings"] = list(context["markings"])
+     if earlier:
+         data["your_earlier_review"] = {
+             "verdict": earlier.get("verdict"),
+@@ -2032,14 +2092,20 @@ def review_rewrite(
+             lesson_chars=LESSON_CHARS_ASKED,
+         )
+         + (_SECOND_REVIEW_NOTE if earlier else "")
++        + _markings_note(context)
+         + lessons_rule(lessons)
+         + (_REVIEW_LESSONS_NOTE if lessons else "")
+         + wrap_in_inert_boundary(_fitted(data, lessons), "rewrite-review")
+     )
+     editable = tuple(terms["fields_he_may_change"])
+     # Serious whatever she says: the bible's hard limits, and what her earlier review in this
+-    # rung found serious (2026-10-12 evening review of a50407e).
+-    serious = {int(item["id"]) for item in qc if hard_limit(item.get("qc_text"), context["bible"])}
++    # rung found serious (2026-10-12 evening review of a50407e). Writing on an object the plan
++    # asks for with its own markings is not one (2026-10-13).
++    serious = {
++        int(item["id"])
++        for item in qc
++        if hard_limit(item.get("qc_text"), context["bible"], context.get("markings") or ())
++    }
+     serious |= {
+         int(item.get("id") or 0)
+         for item in (earlier or {}).get("findings") or []
+diff --git a/backend/app/media/second_look.py b/backend/app/media/second_look.py
+index b1558b1..7a99167 100644
+--- a/backend/app/media/second_look.py
++++ b/backend/app/media/second_look.py
+@@ -76,6 +76,7 @@ from sqlalchemy.orm import Session
+ 
+ from app.agents.identity import clipped
+ from app.factual.sanitizer import wrap_in_inert_boundary
++from app.media.markings import markings_note, planned_markings
+ from app.media.models import (
+     MediaAsset,
+     SceneTake,
+@@ -170,17 +171,21 @@ _HARD_RO = {
+ }
+ 
+ 
+-def hard_limits(refusal: Iterable[Any], *, faces_forbidden: bool) -> list[str]:
++def hard_limits(
++    refusal: Iterable[Any], *, faces_forbidden: bool, markings: Sequence[str] = ()
++) -> list[str]:
+     """Which of the bible's hard limits quality control's words read («faces» only where the
+     bible forbids faces; «panels» for panels, a collage or a flat band; «writing» for readable
+-    or garbled writing), in that order; empty when none."""
++    or garbled writing — unless the plan names an object that carries its own markings,
++    ``markings``, when the writing is hers to judge: a thermometer's scale is the object, the
++    Owner, 2026-10-13), in that order; empty when none."""
+     text = _NEGATED.sub(" ", " ".join(" ".join(str(part or "").split()) for part in refusal))
+     found: list[str] = []
+     if faces_forbidden and _FACE_WORDS.search(text):
+         found.append("faces")
+     if _PANEL_WORDS.search(text):
+         found.append("panels")
+-    if _WRITING_WORDS.search(text):
++    if _WRITING_WORDS.search(text) and not markings:
+         found.append("writing")
+     return found
+ 
+@@ -420,7 +425,13 @@ _SUMMARY_RO = {
+ 
+ 
+ def _instructions(
+-    kind: str, scene: int, title: str, layout: str, writing: str, hard_rule: str | None
++    kind: str,
++    scene: int,
++    title: str,
++    layout: str,
++    writing: str,
++    hard_rule: str | None,
++    markings: Sequence[str] = (),
+ ) -> str:
+     lines = [
+         f"You are the Director. Quality control refused {_WHAT[kind]} of scene {scene} of the "
+@@ -461,6 +472,14 @@ def _instructions(
+             "the picture at all (quality control misread it); if any of it is there, CONFIRMED, "
+             "severity serious, redo true."
+         )
++    if markings:
++        # The Owner, 2026-10-13: «Nu ai cum să ai un termometru fără scris, grade, Celsius.»
++        lines.append(
++            markings_note(markings) + " Writing that is only such an object's own scale is no "
++            "defect: say OVERTURNED with severity none when that is all the writing you see, "
++            "minor when a small trace of other writing is there, and CONFIRMED only for writing "
++            "elsewhere that draws the eye."
++        )
+     lines += [
+         "- cause (required with minor or serious): one sentence, why the defect appears — what "
+         "in the prompt, the plan, the still or the model made it. The Owner: understand why "
+@@ -664,6 +683,11 @@ def scene_intent(
+         "camera_move": package.get("camera_move") or None,
+         "look": _short(package.get("look_block"), 400) or None,
+     }
++    # The plan's objects that carry their own markings (`markings.planned_markings`): writing
++    # on them is hers to judge, never a hard limit (2026-10-13).
++    marked = planned_markings(still_prompt, writer)
++    if marked:
++        intent["plan"]["planned_markings"] = list(marked)
+     if bought:
+         _plan_as_bought(session, storyboard_id, scene_index, bought, intent["plan"])
+     avoid = bible.get("avoid")
+@@ -1437,6 +1461,13 @@ def _record(
+                     "layer": outcome.get("layer"),
+                     "source": outcome.get("source"),
+                     "hard_limits": list(context.get("hard_limits") or []),
++                    # Only when the plan names an object with its own markings (2026-10-13):
++                    # the event of a plain scene reads as it always did.
++                    **(
++                        {"planned_markings": list(context["planned_markings"])}
++                        if context.get("planned_markings")
++                        else {}
++                    ),
+                     "fail_closed": bool(context.get("fail_closed")),
+                     "plan_as_bought": list(context.get("plan_as_bought") or []),
+                     "plan_may_be_newer": bool(context.get("plan_may_be_newer")),
+@@ -1644,13 +1675,17 @@ def _look(
+         said_plan, said_bible = intent.get("plan"), intent.get("bible")
+         plan: dict[str, Any] = said_plan if isinstance(said_plan, dict) else {}
+         bible: dict[str, Any] = said_bible if isinstance(said_bible, dict) else {}
+-        limits = hard_limits(refusal, faces_forbidden=bool(bible.get("faces_forbidden")))
++        marked = tuple(str(name) for name in plan.get("planned_markings") or [])
++        limits = hard_limits(
++            refusal, faces_forbidden=bool(bible.get("faces_forbidden")), markings=marked
++        )
+         context.update(
+             title=title,
+             serial=intent.get("serial") if "serial" in intent else None,
+             plan_as_bought=list(plan.get("as_bought") or []),
+             plan_may_be_newer=bool(plan.get("plan_may_be_newer")),
+             hard_limits=limits,
++            planned_markings=list(marked),
+         )
+         director = agent_for_role(session, "Director")
+         if director is None:
+@@ -1682,10 +1717,12 @@ def _look(
+     }
+     if limits:
+         shown["hard_limits"] = limits
++    if marked:
++        shown["planned_markings"] = list(marked)
+     layout = str((view or {}).get("layout") or _LAYOUT[kind])
+     writing = str((view or {}).get("writing") or _WRITING[kind])
+     prompt = _instructions(
+-        kind, scene_index, title[:80], layout, writing, rule
++        kind, scene_index, title[:80], layout, writing, rule, marked
+     ) + wrap_in_inert_boundary(_fit_shown(shown), "second-look")
+     try:
+         parsed, first, second = structured_run(
+diff --git a/backend/app/media/still_gate.py b/backend/app/media/still_gate.py
+index 3ed226c..c278f82 100644
+--- a/backend/app/media/still_gate.py
++++ b/backend/app/media/still_gate.py
+@@ -176,6 +176,7 @@ from app.media.fix_check import (
+     fix_status,
+     minor_traces,
+ )
++from app.media.markings import markings_ro, named
+ from app.media.picture_qc import StillJudgement, judge_still
+ from app.media.qc import PANEL_BAND_SHARE, flat_band, still_is_degenerate
+ from app.media.toolchain import find_ffmpeg
+@@ -331,6 +332,11 @@ class StillPlan:
+     #: persists is refused (`decide`, ``finding_persists``). Clip QC reads the motion layer's
+     #: items from the same field of its own plan (`assembler._clip_plan`).
+     must_fix: tuple[dict[str, Any], ...] = ()
++    #: The objects the plan names that carry their own markings (`markings.planned_markings`;
++    #: the Owner, 2026-10-13, the Kelvin film's thermometer refused for its digits): the look
++    #: is told their scale is not writing, and a writing refusal of such a still is the
++    #: Director's to overturn (`may_be_overturned`), never a hard limit of the bible.
++    expected_markings: tuple[str, ...] = ()
+ 
+ 
+ @dataclass(frozen=True)
+@@ -367,6 +373,8 @@ class StillReport:
+     #: The items whose trace the look called minor: accepted, carried as a warning on the take
+     #: (`fix_check.record_take_note`) and on the stills step's entry.
+     minor: tuple[dict[str, str], ...] = ()
++    #: The plan's objects that carry their own markings (`StillPlan.expected_markings`).
++    expected_markings: tuple[str, ...] = ()
+ 
+     @property
+     def matched_plan(self) -> bool:
+@@ -1088,7 +1096,17 @@ def decide(
+                 )
+                 violations.append("faces")
+         if verdict.readable_text:
+-            vision_reasons.append(f"Modelul de vedere a văzut text lizibil în imagine {said}")
++            marked = tuple(getattr(plan, "expected_markings", ()) or ())
++            if marked:
++                # The plan asks for an object with its own scale: the look was told so, and
++                # what it still reads as writing is the Director's to judge (2026-10-13).
++                vision_reasons.append(
++                    f"Modelul de vedere a văzut text lizibil în imagine, deși planul cere "
++                    f"{markings_ro(marked)}, care își poartă scala; Directoarea decide dacă "
++                    f"scrisul e al obiectului {said}"
++                )
++            else:
++                vision_reasons.append(f"Modelul de vedere a văzut text lizibil în imagine {said}")
+             violations.append("readable_text")
+         if not verdict.one_picture:
+             # 2026-10-09: scene 5's triptych of three similar tunnels had no flat band to
+@@ -1148,6 +1166,7 @@ def decide(
+         measured=measured,
+         fixes=tuple(fixes),
+         minor=tuple(minor_traces(fixes)),
++        expected_markings=tuple(getattr(plan, "expected_markings", ()) or ()),
+     )
+ 
+ 
+@@ -1199,19 +1218,34 @@ def may_be_overturned(report: StillReport) -> bool:
+     is bought for its scene: a refusal the gate measured whole (nothing unmeasured) whose
+     reasons are a reading — the plan, the scene, the look, the technique, a corrected mistake
+     seen again — and none of the bible's hard limits (`fix_check.HARD_LIMITS`: a face where
+-    faces are forbidden, writing, panels, a blank field), which stay the code's."""
++    faces are forbidden, writing, panels, a blank field), which stay the code's. Writing on a
++    still whose plan asks for an object with its own markings (``expected_markings``) is a
++    reading, hers: a thermometer's scale is not the bible's writing (2026-10-13)."""
++    hard = set(report.violations) & HARD_LIMITS
++    if report.expected_markings:
++        hard.discard("readable_text")
+     return (
+         report.decision == "BLOCKED"
+         and bool(report.violations)
+         and not report.unmeasured
+-        and not set(report.violations) & HARD_LIMITS
++        and not hard
+         and report.outcome != "compose_locally"
+     )
+ 
+ 
+-def positive_instruction(violations: Iterable[str]) -> str:
+-    """The violations rewritten as words the image model obeys (English, for the model)."""
+-    words = [POSITIVE_WORDS[code] for code in dict.fromkeys(violations) if code in POSITIVE_WORDS]
++def positive_instruction(violations: Iterable[str], markings: Sequence[str] = ()) -> str:
++    """The violations rewritten as words the image model obeys (English, for the model). A
++    writing violation on a plan that asks for an object with its own markings (``markings``)
++    keeps that object's scale and asks every other surface plain (2026-10-13)."""
++    words: list[str] = []
++    for code in dict.fromkeys(violations):
++        if code == "readable_text" and markings:
++            words.append(
++                f"only {named(markings)}'s own scale and markings, every other surface plain "
++                "and unmarked, signs left blank"
++            )
++        elif code in POSITIVE_WORDS:
++            words.append(POSITIVE_WORDS[code])
+     return "; ".join(words)
+ 
+ 
+@@ -1280,7 +1314,7 @@ def next_step(report: StillReport, *, rerolls_done: int, words_correct: bool = F
+     if rerolls_done < MAX_REROLLS:
+         return NextStep(
+             "reroll",
+-            positive_instruction(report.violations),
++            positive_instruction(report.violations, report.expected_markings),
+             f"Scena {report.scene}: imaginea se reface ({rerolls_done + 1}/{MAX_REROLLS}): {first}",
+         )
+     return NextStep(
+diff --git a/backend/app/media/stills_stage.py b/backend/app/media/stills_stage.py
+index 3b0a9c0..6e0d683 100644
+--- a/backend/app/media/stills_stage.py
++++ b/backend/app/media/stills_stage.py
+@@ -157,6 +157,7 @@ from app.media.cost_plan import (
+ from app.media.disk import LOW_DISK, disk_refusal
+ from app.media.faces import FaceCounter
+ from app.media.fix_check import STILL_LAYER, open_findings
++from app.media.markings import planned_markings
+ from app.media.mode_guard import PurchaseGuard, unasked_refusal
+ from app.media.models import SceneTake, Storyboard, StoryboardScene
+ from app.media.picture_qc import StillJudgement, judge_still
+@@ -244,10 +245,25 @@ def _bible_bans_faces(bible: Mapping[str, Any] | None) -> bool:
+     return any(BIBLE_NO_FACES.search(text) for text in texts)
+ 
+ 
+-def still_negative(package: Mapping[str, Any] | None, bible: Mapping[str, Any] | None) -> str:
+-    """The negative prompt of one still: `STILL_NEGATIVE`, the faces when the bible forbids
+-    them, then the plan's own `avoid` items, each once, within `NEGATIVE_CHARS`."""
+-    terms: list[str] = list(STILL_NEGATIVE)
++#: Of `STILL_NEGATIVE`, the terms a scene whose plan names an object with its own markings
++#: leaves out (`markings.planned_markings`, 2026-10-13): a negative channel told «text,
++#: lettering» beside «the thermometer keeps its scale» draws a blank instrument. Captions,
++#: subtitles, a logo and a watermark stay out of every still.
++_MARKED_OBJECT_KEEPS: frozenset[str] = frozenset({"text", "lettering"})
++
++
++def still_negative(
++    package: Mapping[str, Any] | None,
++    bible: Mapping[str, Any] | None,
++    markings: Sequence[str] = (),
++) -> str:
++    """The negative prompt of one still: `STILL_NEGATIVE` (without «text» and «lettering»
++    when the plan names an object that carries its own markings, ``markings``), the faces
++    when the bible forbids them, then the plan's own `avoid` items, each once, within
++    `NEGATIVE_CHARS`."""
++    terms: list[str] = [
++        term for term in STILL_NEGATIVE if not (markings and term in _MARKED_OBJECT_KEEPS)
++    ]
+     if _bible_bans_faces(bible):
+         terms += STILL_NEGATIVE_FACES
+     avoid = (package or {}).get("avoid")
+@@ -375,6 +391,9 @@ class _Scene:
+     #: What the scene's current words were rewritten to fix (`fix_check.open_findings`), for
+     #: the gate to verify on every still bought for it (`still_gate.StillPlan.must_fix`).
+     must_fix: tuple[dict[str, str], ...] = ()
++    #: The plan's objects that carry their own markings (`markings.planned_markings`), for the
++    #: gate (`still_gate.StillPlan.expected_markings`): a thermometer's scale is not writing.
++    expected_markings: tuple[str, ...] = ()
+ 
+ 
+ @dataclass
+@@ -483,6 +502,7 @@ def _still_plan(scene: _Scene, *, faces_forbidden: bool, rules: tuple[str, ...])
+         narration=scene.narration,
+         purpose=scene.purpose,
+         must_fix=scene.must_fix,
++        expected_markings=scene.expected_markings,
+     )
+ 
+ 
+@@ -533,6 +553,8 @@ def _read_scenes(engine: Engine, storyboard_id: str) -> tuple[dict[str, Any], li
+                 except ReferenceRequired as exc:
+                     missing = str(exc)
+             identity = still_fields(visual, reference)
++            picture = _scene_picture(package, visual, words, serial=serial)
++            marked = planned_markings(words, picture)
+             scene = _Scene(
+                 index=int(row.scene_index),
+                 kind=kind,
+@@ -543,10 +565,11 @@ def _read_scenes(engine: Engine, storyboard_id: str) -> tuple[dict[str, Any], li
+                 source=package.get("source") if isinstance(package.get("source"), str) else None,
+                 reference=reference,
+                 needs_reference=missing,
+-                negative=still_negative(package, bible),
+-                picture=_scene_picture(package, visual, words, serial=serial),
++                negative=still_negative(package, bible, marked),
++                picture=picture,
+                 narration=" ".join(str(row.voiceover_segment or "").split()),
+                 purpose=str(row.story_purpose or ""),
++                expected_markings=marked,
+             )
+             if kind == LIVE_KIND:
+                 # The picture's open items only: a finding treated in the motion's words is
+diff --git a/backend/app/runbook/stages.py b/backend/app/runbook/stages.py
+index 298e537..b78b5c5 100644
+--- a/backend/app/runbook/stages.py
++++ b/backend/app/runbook/stages.py
+@@ -5071,6 +5071,62 @@ def _still_newer_than_film(session: Session, storyboard_id: str, scene: int, ass
+     return str(approved.id) != in_film.get("still")
+ 
+ 
++def _corrected_for_film(
++    session: Session, storyboard_id: str, scene: int, asset_id: str
++) -> dict[str, Any] | None:
++    """The scene's words as the Director's ladder corrected them for the failed film
++    ``asset_id`` and nobody bought on yet: her newest ``media.prompts_rewritten`` for the
++    scene, written after the film was rendered and after every take of the scene — {"layer",
++    "event_id"}; None when there is none (nothing corrected for this film, or a take bought on
++    the correction since).
++
++    2026-10-13: a paid redo under his ask-me rule is corrected first (`_correct_before_redo`)
++    and then asked, his yes bound to the corrected plan; the walk that resumed after his yes
++    corrected the scene AGAIN before spending it — the same words came back and the redo was
++    refused PROMPT_NOT_CORRECTED, or new words made a new plan and he was asked again — so the
++    redo he approved was never bought. On the resume, words corrected for this film and not
++    bought yet are the words his yes was asked on: neither her look nor his rewrite is asked
++    again before it is spent (`_apply_repairs`)."""
++    from app.media.assembler import SCENE_PROMPTS_REWRITTEN_EVENT  # noqa: PLC0415
++    from app.media.models import SceneTake  # noqa: PLC0415
++    from app.media.scene_rewrite import DECIDED_BY, REWRITE_REASON, _after  # noqa: PLC0415
++
++    film = session.get(MediaAsset, asset_id) if asset_id else None
++    if film is None:
++        return None
++    newest_take = session.scalar(
++        select(SceneTake.created_at)
++        .where(SceneTake.storyboard_id == storyboard_id, SceneTake.scene_number == scene)
++        .order_by(SceneTake.created_at.desc())
++        .limit(1)
++    )
++    floor = str(film.created_at or "")
++    if newest_take and _after(newest_take, floor):
++        floor = str(newest_take)
++    for event in session.scalars(
++        select(DomainEvent)
++        .where(
++            DomainEvent.event_type == SCENE_PROMPTS_REWRITTEN_EVENT,
++            DomainEvent.aggregate_id == storyboard_id,
++        )
++        .order_by(DomainEvent.sequence.desc())
++    ):
++        payload = event.payload if isinstance(event.payload, dict) else {}
++        if payload.get("scene_index") != scene:
++            continue
++        # Only her brief's rewrite (`scene_rewrite.REWRITE_REASON`): the serial's
++        # recomposition and its technical re-roll write the same event as the Director's,
++        # on words that may not have changed (the Codex review of c6dc05c).
++        if (
++            payload.get("decided_by") != DECIDED_BY
++            or payload.get("reason") != REWRITE_REASON
++            or not _after(event.timestamp, floor)
++        ):
++            return None
++        return {"layer": payload.get("layer"), "event_id": str(event.event_id)}
++    return None
++
++
+ def _correct_before_redo(
+     engine: Engine,
+     registry: ProviderRegistry | None,
+@@ -5663,7 +5719,18 @@ def _apply_repairs(
+                 {"scene_index": scene, "per_scene": per_scene, "per_film": per_film}
+             )
+             continue
++        corrected = None
+         if continues is None:
++            with Session(engine) as session:
++                corrected = _corrected_for_film(session, storyboard_id, scene, asset_id)
++        if corrected is not None:
++            # The words his yes was asked on (2026-10-13, `_corrected_for_film`): the walk
++            # that resumes after it neither looks nor corrects again before spending it. A
++            # correction that turned to the picture buys the still and its motion, as the
++            # first walk did.
++            if corrected.get("layer") == "still" and "still" not in paid[scene]:
++                paid[scene].insert(0, "still")
++        elif continues is None:
+             # She looks at the scene once more before anything is bought for it (2026-10-12):
+             # free, and the purchase is not. The motion that continues a new still was looked
+             # at with that still.
+diff --git a/tests/test_director_rewrites_failed_scene.py b/tests/test_director_rewrites_failed_scene.py
+index af03fe9..bc0cfec 100644
+--- a/tests/test_director_rewrites_failed_scene.py
++++ b/tests/test_director_rewrites_failed_scene.py
+@@ -14,6 +14,7 @@ from app.agents.models import Agent, AgentMessage, ModelRecord, Role
+ from app.agents.services import seed_initial_workforce
+ from app.media.assembler import SCENE_PROMPTS_REWRITTEN_EVENT, motion_plan
+ from app.media.models import SceneTake, StoryboardScene
++from app.media.prompt_agent import motion_prompt_for
+ from app.media.scene_rewrite import (
+     BRIEF_EVENT,
+     MOTION,
+@@ -290,7 +291,11 @@ def test_her_brief_rewrites_the_motion_and_the_shot_is_bought_again_and_passes(
+         clip_check=ScriptedCheck("PASSED"),
+     )
+     assert models.posts() == posted + 1
+-    assert spy.asked[-1]["prompt"] != spy.asked[0]["prompt"]
++    # The words sent are the rewritten package as rendered, not merely other words
++    # (2026-10-13): a retry's firmer prompt or a stale intent would also differ.
++    expected, _negative = motion_prompt_for(after.prompt_json, "seedance2_5", None)
++    assert spy.asked[-1]["prompt"] == expected
++    assert "from left to right" in expected and "from left to right" not in spy.asked[0]["prompt"]
+     (entry,) = summary["scenes"]
+     assert entry["status"] == "PAID"
+ 
+diff --git a/tests/test_planned_markings.py b/tests/test_planned_markings.py
+new file mode 100644
+index 0000000..720b402
+--- /dev/null
++++ b/tests/test_planned_markings.py
+@@ -0,0 +1,368 @@
++"""Writing that belongs to the object the plan asks for (2026-10-13).
++
++The Owner, on the film «Why the Kelvin Scale Has No 'Zero' to Begin From»: a scene asked for a
++thermometer and quality control refused every still for the digits on it. «Nu ai cum să ai un
++termometru fără scris, grade, Celsius.» Offline, with faked models and vendors:
++
++- the plan's objects that carry their own markings are read from its words (`planned_markings`);
++- writing on such an object is no hard limit of the bible: the Director overturns it in one
++  look, without the fail-closed loop, while the same words on a plan of plain objects still
++  fail closed; her rewrite review does not anchor such a finding serious;
++- the stills gate leaves such a writing refusal to her look (never a blind re-roll), its words
++  tell the Owner why, and a re-roll keeps the object's scale;
++- the look that judges the still is told the instrument keeps its scale; the stills step asks
++  her before anything more is bought; a clip's writing refusal is hers to overturn too;
++- the still prompt says the object keeps its markings instead of «No text».
++"""
++
++from __future__ import annotations
++
++import json
++from typing import Any
++
++import pytest
++from app.media import fix_check
++from app.media.markings import (
++    markings_kept,
++    markings_note,
++    markings_ro,
++    planned_markings,
++    still_exclusions,
++)
++from app.media.models import StoryboardScene
++from app.media.picture_qc import judge_still
++from app.media.prompt_agent import compile_prompts
++from app.media.prompt_lint import has_block, lint_still_prompt
++from app.media.qc import ClipCheck, ClipReport, look_may_overturn
++from app.media.scene_rewrite import hard_limit
++from app.media.second_look import HARD_LIMIT_MARK, hard_limits
++from app.media.still_gate import StillPlan, decide, may_be_overturned, positive_instruction
++from app.media.stills_stage import still_negative
++from app.media.toolchain import find_ffmpeg
++from app.providers.base import GenerateResult, HealthResult
++from sqlalchemy import select
++from sqlalchemy.orm import Session
++from test_director_decides_qc import failed_film
++from test_fix_is_verified import HER, Looks, OffPlanFirst, new_pictures_for, verdict
++from test_second_look import (
++    FIXTURES,
++    LookingDirector,
++    events,
++    give_vision,
++    her_registry,
++    look,
++    seeded_studio,
++    shown,
++)
++from test_stills_stage import LOOK, SUBJECTS, TAIL, SpyStills, a_film, approved_run
++
++requires_ffmpeg = pytest.mark.skipif(find_ffmpeg() is None, reason="ffmpeg not installed")
++
++THERMOMETER = (
++    "Detail shot, 85mm lens. A mercury thermometer with its Celsius scale on a lab bench, one "
++    "cold lamp. Vertical 9:16 frame, main subject in the upper two thirds."
++)
++WRITING = "Modelul de vedere a văzut text lizibil în imagine («digits along the thermometer»)"
++#: Her look at the digits: the scale is the thermometer's, the picture is used.
++ITS_SCALE = {
++    "verdict": "OVERTURNED",
++    "severity": "minor",
++    "redo": False,
++    "reason_ro": "Văd doar scala termometrului cu gradele ei; nu e text în imagine.",
++    "cause": "Planul cere un termometru, iar modelul de vedere a citit scala lui ca text.",
++    "layer": "still",
++}
++
++
++# ------------------------------------------------------------------- the objects a plan names
++
++
++@pytest.mark.parametrize(
++    ("text", "found"),
++    [
++        ("A mercury thermometer with its Celsius scale on a lab bench", ("thermometer",)),
++        ("un termometru vechi pe masa laboratorului", ("thermometer",)),
++        ("a brass pressure gauge beside a wall clock", ("gauge", "clock")),
++        ("the Kelvin scale drawn as a tall vertical line", ("temperature scale",)),
++        ("A far village of stone houses on a terraced slope", ()),
++        ("a blank sign over a shop, a page of a book", ()),
++        ("the valley lit at six o'clock in the evening", ()),
++        (None, ()),
++    ],
++)
++def test_the_objects_a_plan_names(text, found):
++    assert planned_markings(text) == found
++
++
++def test_the_words_for_the_models_and_the_owner():
++    assert still_exclusions(()) == "No text, no logo."
++    assert still_exclusions(("thermometer",)) == (
++        "The thermometer keeps its own scale and markings; no caption, no logo."
++    )
++    assert still_exclusions(("thermometer", "gauge")).startswith(
++        "The thermometer and the gauge keep their own"
++    )
++    assert markings_kept(("clock",)) == "The clock keeps its own scale and markings."
++    assert markings_note(("thermometer",)).startswith("The plan asks for a thermometer:")
++    assert "only writing elsewhere" in markings_note(("thermometer",))
++    assert "no reason for compose_locally" in markings_note(("thermometer",))
++    assert markings_note(()) == "" and markings_kept(()) == ""
++    assert markings_ro(("thermometer", "gauge")) == "termometrul și indicatorul cu cadran"
++
++
++def test_the_still_prompt_lets_the_instrument_keep_its_scale():
++    package = {
++        "scene_index": 3,
++        "scene_kind": "LIVE",
++        "subject": "a mercury thermometer on a lab bench",
++        "environment": "a dim laboratory",
++        "camera": "detail shot, 85mm lens",
++        "lighting": "one cold lamp",
++        "motion": "the mercury climbs",
++        "camera_move": "slow push-in",
++    }
++    still = compile_prompts(package, {})["still_prompt"]
++    assert still.endswith("The thermometer keeps its own scale and markings; no caption, no logo.")
++    assert "No text" not in still
++    assert not has_block(lint_still_prompt(still, scene=3))
++    plain = compile_prompts({**package, "subject": "a cold lamp on a lab bench"}, {})
++    assert plain["still_prompt"].endswith("No text, no logo.")
++
++
++# ------------------------------------------------------------ no hard limit, hers to judge
++
++
++def test_writing_on_the_planned_object_is_no_hard_limit():
++    assert hard_limits([WRITING], faces_forbidden=False) == ["writing"]
++    assert hard_limits([WRITING], faces_forbidden=False, markings=("thermometer",)) == []
++    # Faces and panels stay what they are.
++    face = "YuNet a găsit 1 față în imagine; biblia vizuală interzice fețele"
++    assert hard_limits([face, WRITING], faces_forbidden=True, markings=("thermometer",)) == [
++        "faces"
++    ]
++    assert hard_limits(["o bandă plată între panouri"], faces_forbidden=False, markings=("x",)) == [
++        "panels"
++    ]
++    # Her review of a rewrite does not anchor such a finding serious either.
++    assert hard_limit("Modelul de vedere a văzut text lizibil în imagine", {}) is True
++    assert (
++        hard_limit("Modelul de vedere a văzut text lizibil în imagine", {}, ("thermometer",))
++        is False
++    )
++    assert hard_limit("Imaginea nu e o singură fotografie: panouri", {}, ("thermometer",)) is True
++
++
++def _plan_asks_for_a_thermometer(engine, film) -> None:
++    with Session(engine) as session, session.begin():
++        row = session.scalar(
++            select(StoryboardScene).where(
++                StoryboardScene.storyboard_id == film["board"], StoryboardScene.scene_index == 5
++            )
++        )
++        row.prompt_json = {**dict(row.prompt_json or {}), "still_prompt": THERMOMETER}
++
++
++def test_she_overturns_the_digits_on_a_thermometer_in_one_look(engine):
++    studio = seeded_studio(engine)
++    film = failed_film(engine)
++    _plan_asks_for_a_thermometer(engine, film)
++    give_vision(engine, studio["agents"]["Director"].model_id)
++    model = LookingDirector(ITS_SCALE)
++
++    result = look(engine, her_registry(studio, model), film, refusal=[WRITING])
++
++    assert (result["verdict"], result["severity"], result["redo"]) == ("OVERTURNED", "minor", False)
++    assert result["cause"] == ITS_SCALE["cause"]
++    ((prompt, _images, _model),) = model.looked
++    assert "The plan asks for a thermometer" in prompt and HARD_LIMIT_MARK not in prompt
++    assert "only such an object's own scale is no defect" in prompt
++    data = shown(prompt)
++    assert data["planned_markings"] == ["thermometer"] and "hard_limits" not in data
++    assert data["scene"]["plan"]["planned_markings"] == ["thermometer"]
++    (event,) = events(engine)
++    assert event["planned_markings"] == ["thermometer"] and event["hard_limits"] == []
++    assert event["verdict"] == "OVERTURNED" and event["fail_closed"] is False
++
++
++def test_the_same_writing_on_a_plan_of_plain_objects_still_fails_closed(engine):
++    studio = seeded_studio(engine)
++    film = failed_film(engine)
++    give_vision(engine, studio["agents"]["Director"].model_id)
++    model = LookingDirector(ITS_SCALE)
++
++    result = look(engine, her_registry(studio, model), film, refusal=[WRITING])
++
++    assert len(model.looked) == 2
++    assert (result["verdict"], result["severity"], result["redo"]) == ("CONFIRMED", "serious", True)
++    (event,) = events(engine)
++    assert event["hard_limits"] == ["writing"] and "planned_markings" not in event
++    assert event["fail_closed"] is True
++
++
++# --------------------------------------------------------------------------- the stills gate
++
++
++def test_the_gate_leaves_such_a_writing_refusal_to_her_look():
++    plan = StillPlan(
++        scene=4,
++        still_prompt=THERMOMETER,
++        camera_move="slow push-in",
++        faces_forbidden=False,
++        expected_markings=("thermometer",),
++    )
++    plain = StillPlan(scene=4, still_prompt="A cold lamp.", camera_move="", faces_forbidden=False)
++    picture = FIXTURES / "scene_01.jpg"
++
++    digits = decide(picture, plan, [], verdict(readable_text=True), environment="TEST")
++    lettering = decide(picture, plain, [], verdict(readable_text=True), environment="TEST")
++
++    assert digits.decision == "BLOCKED" and "readable_text" in digits.violations
++    assert digits.expected_markings == ("thermometer",)
++    assert may_be_overturned(digits) and not may_be_overturned(lettering)
++    assert "deși planul cere termometrul" in digits.reasons_ro[0]
++    assert "Directoarea decide" in digits.reasons_ro[0]
++    assert (
++        "text lizibil" in lettering.reasons_ro[0] and "termometrul" not in lettering.reasons_ro[0]
++    )
++    # Panels on the same still stay the code's.
++    panels = decide(
++        picture, plan, [], verdict(readable_text=True, one_picture=False), environment="TEST"
++    )
++    assert not may_be_overturned(panels)
++    # A re-roll keeps the instrument's scale and asks every other surface plain.
++    words = positive_instruction(["readable_text"], ("thermometer",))
++    assert "the thermometer's own scale" in words and "plain" in words
++    assert positive_instruction(["readable_text"]).startswith("plain surfaces")
++
++
++class SeeingModel:
++    """The looker's model, faked: answers any look with a still that is right, every prompt
++    kept."""
++
++    def __init__(self):
++        self.calls: list[str] = []
++
++    async def health_check(self):
++        return HealthResult("HEALTHY")
++
++    async def list_models(self):
++        return []
++
++    async def generate(self, model, prompt, **kwargs):
++        self.calls.append(prompt)
++        answer: dict[str, Any] = {
++            "stills": [
++                {
++                    "scene": 4,
++                    "faces_visible": False,
++                    "readable_text": False,
++                    "one_picture": True,
++                    "matches_plan": True,
++                    "shows_scene": True,
++                    "look_ok": True,
++                    "technical_ok": True,
++                    "bible_violations": "none",
++                    "verdict": "buy_motion",
++                    "reason": "a thermometer on a bench, its scale readable",
++                }
++            ]
++        }
++        return GenerateResult(json.dumps(answer), 10, 40, None)
++
++
++@requires_ffmpeg
++def test_the_look_is_told_the_instrument_keeps_its_scale(engine):
++    studio = seeded_studio(engine)
++    give_vision(engine, studio["agents"]["VideoEditor"].model_id)
++    model = SeeingModel()
++    registry = her_registry(studio, model)
++    plan = StillPlan(
++        scene=4,
++        still_prompt=THERMOMETER,
++        camera_move="",
++        faces_forbidden=False,
++        expected_markings=("thermometer",),
++    )
++    plain = StillPlan(scene=4, still_prompt="A cold lamp.", camera_move="", faces_forbidden=False)
++
++    told = judge_still(engine, registry, FIXTURES / "scene_01.jpg", plan, "c-markings")
++    not_told = judge_still(engine, registry, FIXTURES / "scene_01.jpg", plain, "c-plain")
++
++    assert told.status == "MEASURED" and not_told.status == "MEASURED"
++    first, second = model.calls
++    assert (
++        "The plan asks for a thermometer" in first
++        and '"planned_markings": ["thermometer"]' in first
++    )
++    assert "The plan asks for" not in second and "planned_markings" not in second
++
++
++@requires_ffmpeg
++def test_the_stills_step_asks_her_about_the_thermometers_digits(engine, tmp_path, monkeypatch):
++    """As `test_her_look_never_overturns_the_bibles_hard_limits`, with scene 2's plan asking
++    for a thermometer: the lettering the look reads is hers to judge, and her look keeps the
++    picture, so nothing more is bought."""
++    looks = Looks(HER["OVERTURNED"])
++    monkeypatch.setattr(fix_check, "director_second_look", looks)
++    storyboard_id = a_film(engine, tmp_path)
++    with Session(engine) as session, session.begin():
++        row = session.scalar(
++            select(StoryboardScene).where(
++                StoryboardScene.storyboard_id == storyboard_id, StoryboardScene.scene_index == 2
++            )
++        )
++        words = (
++            f"{LOOK} {SUBJECTS[2]} A mercury thermometer with its Celsius scale on a stone. {TAIL}"
++        )
++        row.visual_prompt = words
++        row.prompt_json = {**dict(row.prompt_json or {}), "still_prompt": words}
++    adapter = SpyStills(pictures=new_pictures_for(2))
++
++    result = approved_run(engine, storyboard_id, tmp_path, adapter, OffPlanFirst(lettering=True))
++
++    assert len(looks.asked) == 1, "the digits on the thermometer are hers to judge"
++    asked = looks.asked[0]
++    assert asked["scene_index"] == 2 and asked["kind"] == "still"
++    assert any("termometrul" in reason for reason in asked["refusal"])
++    assert len([c for c in adapter.asked if SUBJECTS[2] in c["prompt"]]) == 1, "no re-roll"
++    by_scene = {entry["scene_index"]: entry for entry in result["scenes"]}
++    assert by_scene[2]["status"] == "APPROVED" and by_scene[2]["approved_by"] == "director_look"
++
++
++# ------------------------------------------------------------------------------- the clip
++
++
++def _clip_refused_for_writing(**picture: Any) -> ClipReport:
++    return ClipReport(
++        scene=1,
++        path="clip.mp4",
++        checks=(
++            ClipCheck("motion", "PASSED", False, 0.5, "mișcare"),
++            ClipCheck("picture", "FAILED", True, None, "apare text sau un logo"),
++        ),
++        passed=False,
++        blocks_ro=("apare text sau un logo",),
++        warnings_ro=(),
++        unmeasured=(),
++        measured={"picture": {"verdict": {"readable_text": True, "one_picture": True}, **picture}},
++    )
++
++
++def test_a_clips_writing_on_the_planned_object_is_hers_to_overturn():
++    assert not look_may_overturn(_clip_refused_for_writing())
++    assert look_may_overturn(_clip_refused_for_writing(planned_markings=["thermometer"]))
++
++
++# ------------------------------------------------------------------- the negative channel
++
++
++def test_the_negative_channel_keeps_the_instruments_markings():
++    """The Codex review of c6dc05c: a negative prompt told «text, lettering» beside «the
++    thermometer keeps its scale» draws a blank instrument. Captions, a logo and a watermark
++    stay out of every still."""
++    plain = still_negative({}, {})
++    marked = still_negative({}, {}, ("thermometer",))
++    assert "text" in plain.split(", ") and "lettering" in plain.split(", ")
++    assert "text" not in marked.split(", ") and "lettering" not in marked.split(", ")
++    for kept in ("captions", "subtitles", "logo", "watermark", "panels"):
++        assert kept in marked.split(", ")
+diff --git a/tests/test_redo_resume_spends_his_yes.py b/tests/test_redo_resume_spends_his_yes.py
+new file mode 100644
+index 0000000..277fbdf
+--- /dev/null
++++ b/tests/test_redo_resume_spends_his_yes.py
+@@ -0,0 +1,244 @@
++"""His yes for a corrected paid redo is spent on the resume, not asked again (2026-10-13).
++
++Under the Owner's ask-me rule a paid REPAIR of a scene is corrected first (`_correct_before_redo`:
++her brief, his rewrite, her review, the new words stored) and then asked, his yes bound to the
++corrected plan. Read on the source on 2026-10-13: the walk that resumed after his yes corrected
++the scene AGAIN before spending it — the same words came back and the redo was refused
++PROMPT_NOT_CORRECTED, or new words made a new plan and he was asked again — so the redo he
++approved was never bought. Now the words corrected for this film and not bought yet are the
++words his yes was asked on (`stages._corrected_for_film`): the resume neither looks nor
++corrects again, and the clip is bought on them.
++
++Offline: `_apply_repairs` twice on one motion redo, faked vendor, scripted agents."""
++
++from __future__ import annotations
++
++from types import SimpleNamespace
++from uuid import uuid4
++
++import pytest
++from app.media.assembler import SCENE_PROMPTS_REWRITTEN_EVENT
++from app.media.models import MediaAsset, SceneTake, VideoRenderJob
++from app.media.prompt_agent import motion_prompt_for
++from app.media.scene_rewrite import BRIEF_EVENT, REWRITE_REASON, SERIAL_RECOMPOSE_REASON
++from app.media.toolchain import find_ffmpeg
++from app.models import ApprovalRequest, OwnerPolicy
++from app.runbook import stages
++from app.services import append_event, utc_now
++from sqlalchemy import select
++from sqlalchemy.orm import Session
++from test_approvals import answer
++from test_clip_qc_wiring import events
++from test_director_rewrites_failed_scene import (  # noqa: F401 - the studio fixture
++    SHOT,
++    Agents,
++    a_planned_film,
++    agents_say,
++    scene,
++    studio,
++)
++from test_film_costing import SEEDANCE, Account, Models, SpyVideo
++
++pytestmark = pytest.mark.skipif(find_ffmpeg() is None, reason="ffmpeg not installed")
++
++#: What the editor would write if asked again on the resume: other words, another plan.
++SHOT_V3 = {
++    **SHOT,
++    "motion": "a shaft of sunlight sweeps across the terraces as the cloud breaks",
++    "camera_move": "slow push-in",
++    "ending_frame": "the village lit by a passing shaft of light",
++}
++
++
++def _rewrites(engine, storyboard_id: str) -> list:
++    return [
++        e
++        for e in events(engine, SCENE_PROMPTS_REWRITTEN_EVENT, storyboard_id)
++        if e.payload.get("decided_by") == "director"
++    ]
++
++
++def _walk(engine, settings, registry, storyboard_id: str, reading: dict) -> dict:
++    result: dict = {
++        "applied": [],
++        "bought": [],
++        "asked": [],
++        "refused": [],
++        "limited": [],
++        "made": [],
++        "new_asset": None,
++        "waiting": [],
++        "skipped": [],
++        "replaced_his": [],
++        "overturned": [],
++        "requalified": None,
++        "requalified_report_id": None,
++        "card_id": None,
++    }
++    stages._apply_repairs(engine, settings, None, registry, reading, result, False, str(uuid4()))
++    return result
++
++
++def _failed_film(engine, tmp_path, storyboard_id: str) -> str:
++    """The failed film's render record: scene 1's clip made from its approved still, so the
++    still is not newer than the film (`_still_newer_than_film` False, as in a real film)."""
++    asset_id = str(uuid4())
++    with Session(engine) as session, session.begin():
++        still = session.scalar(
++            select(SceneTake).where(
++                SceneTake.storyboard_id == storyboard_id, SceneTake.kind == "still"
++            )
++        )
++        session.add(
++            MediaAsset(
++                id=asset_id,
++                asset_type="RENDERED_VIDEO",
++                uri_or_path=str(tmp_path / f"{asset_id}.mp4"),
++                file_size_bytes=1024,
++                mime_type="video/mp4",
++                provider_name="STUDIO_INTERNAL",
++                license_status="PROPRIETARY_STUDIO",
++                provenance_hash="a" * 64,
++                created_at=utc_now(),
++            )
++        )
++        session.flush()
++        session.add(
++            VideoRenderJob(
++                id=str(uuid4()),
++                storyboard_id=storyboard_id,
++                output_asset_id=asset_id,
++                status="COMPLETED",
++                production_json={
++                    "scenes": [
++                        {"scene_index": 1, "still_take": {"take_id": still.id}, "motion": None}
++                    ]
++                },
++                started_at=utc_now(),
++                finished_at=utc_now(),
++            )
++        )
++    return asset_id
++
++
++@pytest.mark.parametrize("second_shot", ["same", "different"])
++def test_his_yes_on_a_corrected_motion_redo_is_spent_on_the_resume(
++    engine,
++    settings,
++    tmp_path,
++    studio,  # noqa: F811 - the fixture imported from test_director_rewrites_failed_scene
++    monkeypatch,
++    second_shot,
++):
++    storyboard_id = a_planned_film(engine, tmp_path, still_by="owner")
++    with Session(engine) as session, session.begin():
++        session.get(OwnerPolicy, 1).paid_media_approval = "EVERY_PAID_STEP"
++    account = Account(10_000)
++    spy = SpyVideo("seedance2_5", account)
++    models = Models(spy)
++    monkeypatch.setattr(
++        stages,
++        "sheet_wiring",
++        lambda engine_, vault, settings_: {
++            "integration_id": None,
++            "capabilities": [SEEDANCE],
++            "image_adapter": None,
++            "account": account,
++            "adapter_for_model": models,
++            "resolution": "1080p",
++            "storage_root": tmp_path / "media",
++        },
++    )
++    asset_id = _failed_film(engine, tmp_path, storyboard_id)
++    reading = {
++        "storyboard_id": storyboard_id,
++        "media_asset_id": asset_id,
++        "report_id": str(uuid4()),
++        "proposals": [
++            SimpleNamespace(
++                scene_index=1, redo="motion", reason="the clip barely moved", free=False
++            )
++        ],
++        "findings": [{"scene_index": 1, "text": "Scena 1: clipul aproape nu se mișcă"}],
++        "verdicts": [],
++    }
++
++    # Walk 1: her brief, his rewrite, her review; the redo is asked on the corrected words.
++    first = _walk(engine, settings, agents_say(studio, Agents()), storyboard_id, reading)
++
++    assert first["bought"] == [] and len(first["asked"]) == 1, first
++    assert len(_rewrites(engine, storyboard_id)) == 1
++    corrected = dict(scene(engine, storyboard_id).prompt_json)
++    approval_id = first["asked"][0]["approval_id"]
++    with Session(engine) as session:
++        hash_asked = session.get(ApprovalRequest, approval_id).proposed_diff["plan_hash"]
++    assert spy.asked == []
++
++    # His yes; the walk resumes — with an editor who would say the same words, or others.
++    answer(engine, approval_id, "APPROVED", note="Da, reface mișcarea scenei 1.")
++    agents = Agents() if second_shot == "same" else Agents(shot=SHOT_V3)
++    second = _walk(engine, settings, agents_say(studio, agents), storyboard_id, reading)
++
++    assert second["asked"] == [] and second["refused"] == [], second
++    assert [entry["scene_index"] for entry in second["bought"]] == [1], second
++    assert len(_rewrites(engine, storyboard_id)) == 1, "nothing was rewritten again"
++    assert len(events(engine, BRIEF_EVENT, storyboard_id)) == 1, "she was not asked again"
++    assert dict(scene(engine, storyboard_id).prompt_json) == corrected
++    with Session(engine) as session:
++        rows = list(session.scalars(select(ApprovalRequest).order_by(ApprovalRequest.created_at)))
++        assert [row.proposed_diff.get("plan_hash") for row in rows] == [hash_asked]
++        assert session.get(ApprovalRequest, approval_id).consumed_at is not None
++    # The clip was bought once, on the corrected words.
++    expected, _negative = motion_prompt_for(corrected, "seedance2_5", None)
++    (asked,) = spy.asked
++    assert asked["prompt"] == expected and "from left to right" in asked["prompt"]
++
++
++def test_only_her_briefs_rewrite_counts_as_the_correction(engine, tmp_path):
++    """The Codex review of c6dc05c: the serial's recomposition and its technical re-roll
++    write the same event as her brief's rewrite, with `decided_by: director`, on words that
++    may not have changed. Only the brief's rewrite (`REWRITE_REASON`), newer than the film
++    and than every take of the scene, is the correction his yes was asked on."""
++    storyboard_id = a_planned_film(engine, tmp_path, still_by="owner")
++    asset_id = _failed_film(engine, tmp_path, storyboard_id)
++    with Session(engine) as session, session.begin():
++        # The film and its takes well before any rewrite below.
++        session.get(MediaAsset, asset_id).created_at = "2026-10-01T00:00:00+00:00"
++        for take in session.scalars(
++            select(SceneTake).where(SceneTake.storyboard_id == storyboard_id)
++        ):
++            take.created_at = "2026-10-01T00:00:00+00:00"
++
++    def rewritten(reason: str, layer: str = "motion") -> None:
++        with Session(engine) as session, session.begin():
++            append_event(
++                session,
++                SCENE_PROMPTS_REWRITTEN_EVENT,
++                "storyboard",
++                storyboard_id,
++                1,
++                {
++                    "storyboard_id": storyboard_id,
++                    "scene_index": 1,
++                    "reason": reason,
++                    "decided_by": "director",
++                    "layer": layer,
++                },
++                str(uuid4()),
++            )
++
++    def corrected() -> dict | None:
++        with Session(engine) as session:
++            return stages._corrected_for_film(session, storyboard_id, 1, asset_id)
++
++    assert corrected() is None, "nothing corrected yet"
++    rewritten(SERIAL_RECOMPOSE_REASON, layer="still")
++    assert corrected() is None, "a recomposition is not her brief's correction"
++    rewritten(REWRITE_REASON)
++    found = corrected()
++    assert found is not None and found["layer"] == "motion"
++    # A take bought on the correction since: the words are spent, nothing to resume.
++    with Session(engine) as session, session.begin():
++        take = session.scalar(select(SceneTake).where(SceneTake.storyboard_id == storyboard_id))
++        take.created_at = utc_now()
++    assert corrected() is None
+diff --git a/tests/test_rewritten_motion_reaches_the_model.py b/tests/test_rewritten_motion_reaches_the_model.py
+new file mode 100644
+index 0000000..5975b7d
+--- /dev/null
++++ b/tests/test_rewritten_motion_reaches_the_model.py
+@@ -0,0 +1,165 @@
++"""The motion prompt the Director's ladder rewrote is the one the video model is sent, on the
++test-shot step and on the motion step (2026-10-13, the Owner: «la fel și la video, aceeași
++logică; promptul trebuie schimbat»).
++
++Offline, with faked vendors and scripted agents: after a motion-layer rewrite the hold on the
++refused scene is lifted and the request handed to the video vendor is exactly the rendering of
++the rewritten package (`prompt_agent.motion_prompt_for`), never the old words."""
++
++from __future__ import annotations
++
++from uuid import uuid4
++
++import pytest
++from app.media.assembler import MOTION_HOLD_EVENT, decide_take, motion_plan
++from app.media.models import SceneTake, StoryboardScene
++from app.media.prompt_agent import motion_prompt_for
++from app.media.scene_rewrite import MOTION, rewrite_failed_scene
++from app.media.toolchain import find_ffmpeg
++from sqlalchemy import select
++from sqlalchemy.orm import Session
++from test_clip_qc_wiring import ScriptedCheck, events, shots
++from test_director_rewrites_failed_scene import (  # noqa: F401 - the studio fixture
++    PLAN,
++    SHOT,
++    Agents,
++    a_planned_film,
++    agents_say,
++    refused_twice,
++    scene,
++    studio,
++)
++from test_film_costing import SEEDANCE, Account, Models, SpyVideo, a_film, approved
++
++pytestmark = pytest.mark.skipif(find_ffmpeg() is None, reason="ffmpeg not installed")
++
++
++def test_the_test_shot_is_bought_on_the_rewritten_motion_prompt(
++    engine,
++    tmp_path,
++    studio,  # noqa: F811 - the fixture imported from test_director_rewrites_failed_scene
++):
++    storyboard_id = a_planned_film(engine, tmp_path)
++    models, account, spy = refused_twice(engine, storyboard_id, tmp_path)
++    before = scene(engine, storyboard_id)
++
++    outcome = rewrite_failed_scene(
++        engine, agents_say(studio, Agents()), storyboard_id, 1, str(uuid4())
++    )
++
++    assert outcome["rewritten"] is True and outcome["layer"] == MOTION, outcome
++    after = scene(engine, storyboard_id)
++    plan = motion_plan(engine, storyboard_id, capabilities=[SEEDANCE])["steps"]["test_shot"]
++    assert plan["held"] == [] and plan["to_buy"] == [1]
++    summary = approved(
++        engine,
++        storyboard_id,
++        tmp_path,
++        "test_shot",
++        models,
++        account,
++        clip_check=ScriptedCheck("PASSED"),
++    )
++    (entry,) = summary["scenes"]
++    assert entry["status"] == "PAID"
++    expected, _negative = motion_prompt_for(after.prompt_json, "seedance2_5", None)
++    old, _negative = motion_prompt_for(before.prompt_json, "seedance2_5", None)
++    assert spy.asked[0]["prompt"] == old
++    assert spy.asked[-1]["prompt"] == expected
++    assert "from left to right" in expected and "from left to right" not in old
++
++
++def _scene(engine, storyboard_id: str, index: int) -> StoryboardScene:
++    with Session(engine) as session:
++        row = session.scalar(
++            select(StoryboardScene).where(
++                StoryboardScene.storyboard_id == storyboard_id,
++                StoryboardScene.scene_index == index,
++            )
++        )
++        session.expunge(row)
++        return row
++
++
++def test_the_motion_step_is_bought_on_the_rewritten_motion_prompt(
++    engine,
++    tmp_path,
++    studio,  # noqa: F811 - the fixture imported from test_director_rewrites_failed_scene
++):
++    storyboard_id = a_film(engine, tmp_path, scenes=2)
++    with Session(engine) as session, session.begin():
++        for row in session.scalars(
++            select(StoryboardScene).where(StoryboardScene.storyboard_id == storyboard_id)
++        ):
++            row.prompt_json = {**dict(row.prompt_json or {}), **PLAN}
++        for take in session.scalars(
++            select(SceneTake).where(SceneTake.storyboard_id == storyboard_id)
++        ):
++            take.approved_by = "owner"
++    account = Account(10_000)
++    spy = SpyVideo("seedance2_5", account)
++    models = Models(spy)
++    # The hero (scene 1) passes and the Owner approves it.
++    approved(
++        engine,
++        storyboard_id,
++        tmp_path,
++        "test_shot",
++        models,
++        account,
++        clip_check=ScriptedCheck("PASSED"),
++    )
++    (hero,) = [t for t in shots(engine, storyboard_id) if t.status == "PAID"]
++    decide_take(engine, hero.id, "APPROVED", decided_by="owner")
++    # The motion step: scene 2's clip fails clip QC, and its retry too — the scene is held.
++    approved(
++        engine,
++        storyboard_id,
++        tmp_path,
++        "motion",
++        models,
++        account,
++        clip_check=ScriptedCheck("FAILED"),
++    )
++    assert {t.status for t in shots(engine, storyboard_id) if t.scene_number == 2} == {"REJECTED"}
++    held = motion_plan(engine, storyboard_id, capabilities=[SEEDANCE])["steps"]["motion"]
++    assert held["held"] == [2] and held["to_buy"] == [], held
++    assert [
++        e.payload["scene_number"] for e in events(engine, MOTION_HOLD_EVENT, storyboard_id)
++    ] == [2]
++    posts_before = models.posts()
++    old_sent = spy.asked[-1]["prompt"]
++    before = _scene(engine, storyboard_id, 2)
++
++    outcome = rewrite_failed_scene(
++        engine,
++        agents_say(studio, Agents(shot={**SHOT, "scene_index": 2})),
++        storyboard_id,
++        2,
++        str(uuid4()),
++    )
++
++    assert outcome["rewritten"] is True and outcome["layer"] == MOTION, outcome
++    after = _scene(engine, storyboard_id, 2)
++    assert after.prompt_json["camera_move"] == "slow pan right"
++    assert after.prompt_json["motion_intent"] != before.prompt_json["motion_intent"]
++    lifted = motion_plan(engine, storyboard_id, capabilities=[SEEDANCE])["steps"]["motion"]
++    assert lifted["held"] == [] and lifted["to_buy"] == [2], lifted
++
++    summary = approved(
++        engine,
++        storyboard_id,
++        tmp_path,
++        "motion",
++        models,
++        account,
++        clip_check=ScriptedCheck("PASSED"),
++    )
++
++    assert models.posts() == posts_before + 1
++    by_scene = {e["scene_index"]: e for e in summary["scenes"]}
++    assert by_scene[2]["status"] == "PAID", by_scene
++    expected, _negative = motion_prompt_for(after.prompt_json, "seedance2_5", None)
++    sent = spy.asked[-1]["prompt"]
++    assert sent == expected and sent != old_sent
++    assert "from left to right" in sent and "from left to right" not in old_sent
+diff --git a/tests/test_rewritten_still_reaches_the_model.py b/tests/test_rewritten_still_reaches_the_model.py
+new file mode 100644
+index 0000000..03f0842
+--- /dev/null
++++ b/tests/test_rewritten_still_reaches_the_model.py
+@@ -0,0 +1,177 @@
++"""The still prompt the Director's ladder rewrote is the one the image model is sent
++(2026-10-13, the Owner: «noua imagine ar trebui refăcută cu noul prompt»).
++
++Offline, with faked vendors and scripted agents. After a still-layer rewrite the stills plan
++names the new words, the scene is to be bought (not held), and the request handed to the image
++vendor begins with them; a scene the gate held for the Owner is bought again, on the ladder's
++new words, once her ladder rewrote it. Nothing here proves a live vendor."""
++
++from __future__ import annotations
++
++from uuid import uuid4
++
++import pytest
++from app.media.models import StoryboardScene
++from app.media.prompt_lint import still_motion
++from app.media.scene_rewrite import STILL, rewrite_failed_scene
++from app.media.stills_stage import stills_plan
++from app.media.toolchain import find_ffmpeg
++from sqlalchemy import select
++from sqlalchemy.orm import Session
++from test_clip_qc_wiring import ScriptedCheck
++from test_director_rewrites_failed_scene import (  # noqa: F401 - the studio fixture
++    BRIEF,
++    PLAN,
++    STILL_SHOT,
++    Agents,
++    a_planned_film,
++    agents_say,
++    refused_twice,
++    scene,
++    studio,
++)
++from test_film_costing import approved
++from test_fix_is_verified import fix, verdict
++from test_stills_stage import (
++    FACE,
++    NO_FACE,
++    SUBJECTS,
++    SpyJudge,
++    SpyStills,
++    a_film,
++    approved_run,
++    takes,
++)
++
++pytestmark = pytest.mark.skipif(find_ffmpeg() is None, reason="ffmpeg not installed")
++
++
++def _words(text: str) -> str:
++    return " ".join(text.split())
++
++
++class AnsweringJudge:
++    """The vision model, faked: the still is right, and every mistake the words were
++    rewritten to correct (`StillPlan.must_fix`) is gone from it."""
++
++    def __init__(self):
++        self.looked_at: list[str] = []
++
++    def __call__(self, engine, registry, path, plan, correlation_id, *, ffmpeg_path=None):
++        self.looked_at.append(str(path))
++        gone = [fix(n, "gone", "the scene as rewritten") for n in range(1, len(plan.must_fix) + 1)]
++        return verdict(plan.scene, fixes=gone)
++
++
++def test_after_a_still_rewrite_the_stills_step_buys_the_new_words(
++    engine,
++    tmp_path,
++    studio,  # noqa: F811 - the fixture imported from test_director_rewrites_failed_scene
++):
++    storyboard_id = a_planned_film(engine, tmp_path, still_by="still_gate")
++    models, account, _spy = refused_twice(engine, storyboard_id, tmp_path)
++    first = rewrite_failed_scene(
++        engine, agents_say(studio, Agents()), storyboard_id, 1, str(uuid4())
++    )
++    assert first["rewritten"] is True
++    # The movement, rewritten once, fails again: the picture's turn.
++    approved(
++        engine,
++        storyboard_id,
++        tmp_path,
++        "test_shot",
++        models,
++        account,
++        clip_check=ScriptedCheck("FAILED"),
++    )
++    before = scene(engine, storyboard_id)
++    agents = Agents(brief={**BRIEF, "layer": "still"}, shot=STILL_SHOT)
++
++    outcome = rewrite_failed_scene(
++        engine, agents_say(studio, agents), storyboard_id, 1, str(uuid4())
++    )
++
++    assert outcome["rewritten"] is True and outcome["layer"] == STILL, outcome
++    after = scene(engine, storyboard_id)
++    assert after.visual_prompt != before.visual_prompt
++    assert "terraced rice fields" in after.visual_prompt.lower()
++    plan = stills_plan(engine, storyboard_id)
++    (row,) = plan["scenes"]
++    assert row["still_prompt"] == _words(after.visual_prompt)
++    assert plan["to_buy"] == [1] and plan["held"] == [], (plan["to_buy"], plan["held"], row)
++
++    images = SpyStills(balance=1_000)
++    result = approved_run(engine, storyboard_id, tmp_path, images, AnsweringJudge())
++
++    (asked,) = images.asked
++    assert asked["prompt"].startswith(_words(after.visual_prompt))
++    assert "terraced rice fields" in asked["prompt"].lower()
++    assert _words(before.visual_prompt) not in asked["prompt"]
++    # And the picture's words carry no movement (2026-10-13).
++    assert still_motion(asked["prompt"]) == ""
++    entry = next(e for e in result["scenes"] if e["scene_index"] == 1)
++    assert entry["status"] == "APPROVED", entry
++
++
++def _plan_scene(engine, storyboard_id: str, index: int) -> None:
++    with Session(engine) as session, session.begin():
++        row = session.scalar(
++            select(StoryboardScene).where(
++                StoryboardScene.storyboard_id == storyboard_id,
++                StoryboardScene.scene_index == index,
++            )
++        )
++        row.prompt_json = {**dict(row.prompt_json or {}), **PLAN, "scene_index": index}
++
++
++def _scene(engine, storyboard_id: str, index: int) -> StoryboardScene:
++    with Session(engine) as session:
++        row = session.scalar(
++            select(StoryboardScene).where(
++                StoryboardScene.storyboard_id == storyboard_id,
++                StoryboardScene.scene_index == index,
++            )
++        )
++        session.expunge(row)
++        return row
++
++
++def test_a_scene_the_gate_held_is_bought_again_once_her_ladder_rewrote_it(
++    engine,
++    tmp_path,
++    studio,  # noqa: F811 - the fixture imported from test_director_rewrites_failed_scene
++):
++    storyboard_id = a_film(engine, tmp_path)
++    for index in SUBJECTS:
++        _plan_scene(engine, storyboard_id, index)
++
++    def faces_in_two(prompt, call):
++        return [FACE, FACE] if SUBJECTS[2] in prompt else list(NO_FACE)
++
++    approved_run(engine, storyboard_id, tmp_path, SpyStills(pictures=faces_in_two), SpyJudge())
++    plan = stills_plan(engine, storyboard_id)
++    assert plan["held"] == [2] and plan["to_buy"] == []
++    before = _scene(engine, storyboard_id, 2)
++    agents = Agents(brief={**BRIEF, "layer": "still"}, shot={**STILL_SHOT, "scene_index": 2})
++
++    outcome = rewrite_failed_scene(
++        engine, agents_say(studio, agents), storyboard_id, 2, str(uuid4())
++    )
++
++    assert outcome["rewritten"] is True and outcome["layer"] == STILL, outcome
++    after = _scene(engine, storyboard_id, 2)
++    assert after.visual_prompt != before.visual_prompt
++    plan = stills_plan(engine, storyboard_id)
++    (row,) = [entry for entry in plan["scenes"] if entry["scene_index"] == 2]
++    assert row["still_prompt"] == _words(after.visual_prompt)
++    assert plan["to_buy"] == [2] and plan["held"] == []
++
++    images = SpyStills(balance=1_000)
++    result = approved_run(engine, storyboard_id, tmp_path, images, AnsweringJudge())
++
++    (sent,) = [asked["prompt"] for asked in images.asked]
++    assert sent.startswith(_words(after.visual_prompt))
++    entry = next(e for e in result["scenes"] if e["scene_index"] == 2)
++    assert entry["status"] == "APPROVED", entry
++    bought = [t for t in takes(engine, storyboard_id) if t.scene_number == 2]
++    assert len({t.prompt_hash for t in bought}) == 2, "the new words are a new take identity"
+diff --git a/tests/test_still_prompt_is_static.py b/tests/test_still_prompt_is_static.py
+new file mode 100644
+index 0000000..7e9ecfa
+--- /dev/null
++++ b/tests/test_still_prompt_is_static.py
+@@ -0,0 +1,153 @@
++"""The still prompt is one frozen moment (the Owner, 2026-10-13: «în promptul de imagine nu
++are ce să caute indicații de mișcare»).
++
++Offline, no provider: the compiler alone. A clause of the plan that moves the camera leaves
++the still (a clause that only moves it is the motion's; one that says a moment first keeps the
++moment), a tempo or a span of the clip leaves its clause, and the motion prompt keeps all of
++it. The lint says when a stored still prompt still carries one, and the writers are told."""
++
++from __future__ import annotations
++
++import pytest
++from app.media.prompt_agent import (
++    _SHOTS_INSTRUCTIONS,
++    COMPOSITION_SENTENCE,
++    NO_PEOPLE_SENTENCE,
++    PEOPLE_SENTENCE,
++    compile_prompts,
++)
++from app.media.prompt_lint import (
++    WARN,
++    has_block,
++    lint_still_prompt,
++    static_clause,
++    still_motion,
++    without_tempo,
++)
++from app.media.scene_rewrite import _REWRITE_INSTRUCTIONS
++
++VILLAGE = {
++    "scene_index": 1,
++    "scene_kind": "LIVE",
++    "subject": "a far village of stone houses on a terraced slope",
++    "action": "thick grey cloud rolls steadily across the ridges from left to right",
++    "environment": "steep Himalayan ridges under low cloud",
++    "camera": "wide establishing shot, 24mm lens",
++    "lighting": "soft overcast daylight",
++    "motion": "thick grey cloud rolls steadily across the ridges from left to right",
++    "camera_move": "slow pan right",
++}
++THERMOMETER = {
++    "scene_index": 2,
++    "scene_kind": "LIVE",
++    "subject": "a mercury thermometer on a lab bench",
++    "action": "the mercury rises slowly as the camera pushes in on the Celsius scale",
++    "environment": "a dim laboratory, steam drifting slowly",
++    "camera": "detail shot, 85mm lens, slow push-in",
++    "lighting": "one cold lamp",
++    "motion": "the mercury climbs steadily over the clip",
++    "camera_move": "slow push-in",
++}
++
++
++def test_the_still_keeps_the_moment_and_leaves_the_tempo_to_the_motion():
++    compiled = compile_prompts(VILLAGE, {})
++
++    still, motion = compiled["still_prompt"], compiled["motion_prompt"]
++    assert "Thick grey cloud rolls across the ridges from left to right." in still
++    assert "steadily" not in still and "pan" not in still.lower()
++    assert "rolls steadily across the ridges" in motion and "Slow pan right" in motion
++    assert still_motion(still) == ""
++
++
++def test_a_clause_that_moves_the_camera_leaves_the_still_and_the_moment_stays():
++    compiled = compile_prompts(THERMOMETER, {})
++
++    still, motion = compiled["still_prompt"], compiled["motion_prompt"]
++    assert "The mercury rises." in still
++    assert "camera" not in still.lower() and "push" not in still.lower()
++    assert "slowly" not in still and "steadily" not in still and "over the clip" not in still
++    assert "steam drifting" in still
++    assert still_motion(still) == ""
++    assert "Slow push-in" in motion and "climbs steadily over the clip" in motion
++    assert not has_block(lint_still_prompt(still, scene=2))
++    assert "STILL_MOTION" not in {f.code for f in lint_still_prompt(still, scene=2)}
++
++
++@pytest.mark.parametrize(
++    ("clause", "static"),
++    [
++        (
++            "the mercury rises slowly as the camera pushes in on the Celsius scale",
++            "the mercury rises slowly",
++        ),
++        ("the camera pushes in on the scale", ""),
++        ("a slow pan right across the valley", ""),
++        ("wind bends the young rice in long waves", "wind bends the young rice in long waves"),
++        ("a static camera on the empty hall", "a static camera on the empty hall"),
++        ("the ledger open on the desk, the camera drifting closer", "the ledger open on the desk"),
++        # The subject's own moment, in words the cinema also uses (the Codex review of
++        # c6dc05c): a bare «orbits» or «pulls back» moves no camera.
++        ("Earth orbits the Sun", "Earth orbits the Sun"),
++        ("she pulls back the curtain", "she pulls back the curtain"),
++        ("the view orbits the tower", ""),
++        ("a dolly in toward the ledger", ""),
++        ("the hall, tracking left along the benches", "the hall"),
++    ],
++)
++def test_the_camera_leaves_a_still_clause(clause, static):
++    assert static_clause(clause) == static
++
++
++@pytest.mark.parametrize(
++    ("said", "kept"),
++    [
++        ("cloud rolls steadily across the ridges", "cloud rolls across the ridges"),
++        ("the mercury rises slowly, then holds", "the mercury rises, then holds"),
++        ("dust rises over the clip's seconds", "dust rises"),
++        ("a quiet valley at dawn", "a quiet valley at dawn"),
++    ],
++)
++def test_the_tempo_leaves_a_still_clause(said, kept):
++    assert without_tempo(said) == kept
++
++
++@pytest.mark.parametrize(
++    ("prompt", "evidence"),
++    [
++        ("Wide shot. The camera slowly pushes in on the thermometer.", "The camera slowly pushes"),
++        ("A valley at dawn, a slow pan right across the ridges.", "slow pan right"),
++        ("Cloud rolls steadily across the ridges.", "steadily"),
++        ("Dust rises over the clip's seconds.", "over the clip's seconds"),
++    ],
++)
++def test_the_lint_warns_about_a_still_prompt_that_moves(prompt, evidence):
++    (finding,) = [f for f in lint_still_prompt(prompt, scene=1) if f.code == "STILL_MOTION"]
++    assert finding.severity == WARN and finding.evidence == evidence
++    assert "un singur moment nemișcat" in finding.message_ro
++
++
++@pytest.mark.parametrize(
++    "prompt",
++    [
++        "A quiet valley at dawn, mist in the hollows, a village far below.",
++        "A static camera on the empty hall, handheld grain, one cold lamp.",
++        # The compiler's own sentences (2026-10-13: «the frame holds» was read as a move).
++        NO_PEOPLE_SENTENCE,
++        PEOPLE_SENTENCE,
++        COMPOSITION_SENTENCE,
++        "The shot shows the ledger open on the desk; the camera stays on it.",
++        "Earth orbits the Sun, its night side dark; she pulls back the curtain.",
++    ],
++)
++def test_a_still_that_stands_still_is_not_flagged(prompt):
++    assert still_motion(prompt) == ""
++    assert "STILL_MOTION" not in {f.code for f in lint_still_prompt(prompt, scene=1)}
++
++
++def test_the_writers_are_told_the_still_is_one_frozen_moment():
++    assert "one frozen moment" in _REWRITE_INSTRUCTIONS
++    assert "everything that moves goes to motion, camera_move and ending_frame" in (
++        _REWRITE_INSTRUCTIONS
++    )
++    assert "never a camera move, a speed or a span of the clip's seconds" in _SHOTS_INSTRUCTIONS

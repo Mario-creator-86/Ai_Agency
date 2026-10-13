@@ -1,0 +1,640 @@
+diff --git a/backend/app/events_feed.py b/backend/app/events_feed.py
+index ae686bb..f6e2434 100644
+--- a/backend/app/events_feed.py
++++ b/backend/app/events_feed.py
+@@ -1444,6 +1444,8 @@ def _words(
+     if kind == "story.episode_approved":
+         return "Episodul serialului e aprobat; se pregătește filmarea.", "Episodul e aprobat!"
+     if kind == "story.episode_rejected":
++        if payload.get("reviewed_by") == "checks":
++            return "Episodul serialului nu a trecut verificările calculate; se rescrie.", None
+         return "Episodul serialului nu a trecut; se rescrie.", None
+     if kind == "story.daily_log_closed":
+         safe = int(payload.get("public_safe_events") or 0)
+diff --git a/backend/app/story/review.py b/backend/app/story/review.py
+index 6a62e81..bc74ed0 100644
+--- a/backend/app/story/review.py
++++ b/backend/app/story/review.py
+@@ -15,7 +15,8 @@ already has for films:
+   counted); cast (a v3 episode: two to four speakers, each acting in the events the episode
+   cites — the Owner's rule of 2026-09-24; a v2 episode: every active roster member appears);
+   structure (a v3 episode runs hook, situation, turn, payoff, button, in the studio's own
+-  rooms); words per beat (a v3 beat holds 8-22 spoken words, a scene's nine seconds);
++  rooms); words per beat (a v3 beat holds 8-22 spoken words, a scene's nine seconds — since
++  2026-10-13 a recommendation: measured and shown, decided by the Director, never a refusal);
+   concentration (no event carries more than half the beats unless it is the day's only
+   one — the episode on his data cites one event in all eight); language (the title and every
+   line in the publishing language, before any paid render); new-viewer accessibility
+@@ -25,7 +26,8 @@ already has for films:
+   The writer is measured by these same checks before a draft is stored (`draft_checks`).
+   A check certifies only what it measured: an episode with nothing to measure (no citation,
+   no line, no title) fails it rather than passing by absence.
+-  Any failure is the verdict, with its reasons, and the Director is not asked.
++  Any failure of a rule is the verdict, with its reasons, and the Director is not asked; a
++  check that only recommends (``advisory``) hands her its measure, and she decides.
+ - **Then the Director's verdict** (review v2, 2026-09-24), through `run_agent_task` with the
+   episode as data: each beat with the events it cites (id, the record's words, who acts),
+   the speakers' voices from their bibles, and the serial's memory. The facts are fitted to a
+@@ -191,8 +193,9 @@ _INSTRUCTIONS = (
+     "room, scene and lines, and the events it cites (what the studio's record says "
+     "happened, and who acted in it); the voices of the people who speak, from their "
+     "character bibles; the serial's memory (the last summaries and the open threads); and "
+-    "what the computed checks measured. Every computed check passed; you judge what they "
+-    "cannot.\n"
++    "what the computed checks measured. Every computed rule passed; what the checks only "
++    'recommend and this episode is outside of is listed under "recommendations", for you to '
++    "decide.\n"
+     "1. Truth. A beat may dramatise its events: jokes, pauses, reactions, compressed talk. "
+     "FAIL the episode if any beat shows an outcome that is not in the event it cites: a "
+     "decision, a verdict, a success or a failure, a publication, a hire or a departure, "
+@@ -207,6 +210,11 @@ _INSTRUCTIONS = (
+     "3. Voices. Does each speaker sound like their bible (register, cadence, habits, their "
+     "own phrases) and like a person, not a status report.\n"
+     "4. Continuity. Does it continue or close the open threads it claims to.\n"
++    f"5. Recommendations. A beat outside the {WORDS_PER_BEAT[0]}-{WORDS_PER_BEAT[1]} "
++    "spoken-word band is flagged, not refused: the filmable rule has already measured that "
++    "its lines fit one clip. Keep it when it reads well at 2.5 words a second; FAIL only when "
++    "the beat would be cut off or is too fast to follow, naming the beat and its words in the "
++    "notes.\n"
+     "A dramatisation is not a factual film: it makes no claims about the world and needs no "
+     "sources, and you do not reject it for that.\n"
+     "Score each part 1-5: 1 missing, 3 works, 5 could not be better. A PASS carries all six "
+@@ -306,13 +314,20 @@ def _beat_numbers(beats: list[dict]) -> list[int]:
+ def _words_per_beat(
+     beats: list[dict], lines_by_beat: list[list[dict[str, Any]]], v3: bool
+ ) -> dict[str, Any]:
+-    """Spoken words in each beat, inside the brief's `WORDS_PER_BEAT`.
++    """Spoken words in each beat, against the brief's `WORDS_PER_BEAT` — a recommendation.
+ 
+     A scene is at most nine seconds on the storyboard, and 22 words are 8.8 seconds at the
+     studio's rate; a beat of 40 words is either cut off or read too fast to follow. Only the
+     spoken words count: a name, a label or an acting note is never said. A v2 episode was
+     never told the rule and is measured but not held to it; a beat with no line fails, since
+     nothing in it was measured.
++
++    Since 2026-10-13 the band is ``advisory`` (the Owner: «nu trebuie să fie ceva fix, este
++    ceva recomandat, dar nici să respingi serialul de la asta»): a beat outside it is measured
++    and shown, the writer is not asked again for it (`services._ask_again`), and the Director
++    reads the episode and decides (`review_episode`). Until then a 23-word beat was REJECTED
++    before she read it («The Ninth Rewrite», 13.10.2026). The clip's own limit stays the
++    `filmable` rule.
+     """
+     per_beat = [_words(spoken_text(lines)) for lines in lines_by_beat]
+     low, high = WORDS_PER_BEAT
+@@ -321,7 +336,12 @@ def _words_per_beat(
+         for number, words in zip(_beat_numbers(beats), per_beat, strict=True)
+         if not low <= words <= high
+     ]
+-    measured: dict[str, Any] = {"per_beat": per_beat, "outside": outside}
++    measured: dict[str, Any] = {
++        "per_beat": per_beat,
++        "outside": outside,
++        "advisory": True,
++        "recommended": [low, high],
++    }
+     if not beats:
+         return {**measured, "passed": False, "reason": "episodul nu are niciun beat de măsurat"}
+     if not v3:
+@@ -331,14 +351,27 @@ def _words_per_beat(
+         **measured,
+         "passed": not outside,
+         "reason": (
+-            f"beat-urile {', '.join(map(str, outside))} nu au între {low} și {high} cuvinte "
+-            f"rostite (au {', '.join(map(str, counted))})"
++            f"beat-urile {', '.join(map(str, outside))} ies din recomandarea de {low}-{high} "
++            f"cuvinte rostite (au {', '.join(map(str, counted))}); decide Directoarea"
+             if outside
+             else ""
+         ),
+     }
+ 
+ 
++def failed_rules(checks: dict[str, dict[str, Any]]) -> list[str]:
++    """The checks that refuse the episode on their own: failed, and not a recommendation."""
++    return [
++        name for name, check in checks.items() if not check["passed"] and not check.get("advisory")
++    ]
++
++
++def outside_recommendations(checks: dict[str, dict[str, Any]]) -> list[str]:
++    """The recommendations the episode is outside of: measured and shown, the Director's to
++    decide (2026-10-13)."""
++    return [name for name, check in checks.items() if not check["passed"] and check.get("advisory")]
++
++
+ def motion_clip_limit(session: Session) -> dict[str, Any] | None:
+     """The motion model the serial is filmed with, and the longest beat one of its clips can
+     carry: its longest clip, slowed down locally by at most `SLOWDOWN_ALLOWANCE` (the Owner's
+@@ -811,6 +844,19 @@ def review_facts(
+             name: {k: v for k, v in check.items() if k != "reason"}
+             for name, check in checks.items()
+         },
++        # What the checks only recommend and this episode is outside of (2026-10-13): hers to
++        # decide, with the measure in words. Never shed by `fit_to_budget`: a few short lines.
++        "recommendations": [
++            {
++                "check": name,
++                **{
++                    key: value
++                    for key, value in checks[name].items()
++                    if key not in ("reason", "passed", "advisory")
++                },
++            }
++            for name in outside_recommendations(checks)
++        ],
+     }
+ 
+ 
+@@ -975,7 +1021,8 @@ def review_episode(
+         facts = review_facts(session, episode, checks)
+         title = episode.title
+ 
+-    failed = [name for name, check in checks.items() if not check["passed"]]
++    failed = failed_rules(checks)
++    advised = outside_recommendations(checks)
+     run_id: str | None = None
+     if failed:
+         reasons = [checks[name]["reason"] for name in failed if checks[name]["reason"]]
+@@ -1058,6 +1105,7 @@ def review_episode(
+                 "log_id": episode.log_id,
+                 "verdict": verdict.verdict,
+                 "checks_failed": failed,
++                "recommendations_outside": advised,
+                 "model_used": run_id is not None,
+             },
+             correlation,
+@@ -1065,14 +1113,18 @@ def review_episode(
+         if verdict.verdict == "FAIL":
+             episode.status = "REJECTED"
+             episode.notes = (verdict.notes or "; ".join(verdict.reasons))[:2000] or None
+-            episode.reviewed_by = "director"
++            # A FAIL the computed rules gave without her reading is signed by the checks
++            # (2026-10-13): the cover and the list said «respins de Director» for a verdict
++            # she never gave («The Ninth Rewrite», 9 din 10 verificări, fără rubrică).
++            by = "director" if run_id is not None else "checks"
++            episode.reviewed_by = by
+             episode.event_id = append_event(
+                 session,
+                 "story.episode_rejected",
+                 "story_episode",
+                 episode.id,
+                 3,
+-                {"log_id": episode.log_id, "reviewed_by": "director"},
++                {"log_id": episode.log_id, "reviewed_by": by},
+                 correlation,
+             ).event_id
+             showrunner = agent_for_role(session, PREFERRED_SHOWRUNNER_ROLE)
+diff --git a/backend/app/story/services.py b/backend/app/story/services.py
+index d4e36e3..848e2b4 100644
+--- a/backend/app/story/services.py
++++ b/backend/app/story/services.py
+@@ -913,9 +913,10 @@ in an event you cite, is "background" in a room or is mentioned in a line, and s
+ the words said aloud and nothing else, "direction": an optional acting note}}. A voice \
+ reads "text" exactly as written, so it never holds a name, a colon, a bracket or a stage \
+ direction.
+-4. Length. Each beat is {min_words} to {max_words} spoken words (a scene holds at most 9 \
+-seconds); the whole episode is {min_episode_words} to {max_episode_words} spoken words, 45 \
+-to 70 seconds at 2.5 words a second.
++4. Length. Aim for {min_words} to {max_words} spoken words in each beat (a scene holds at \
++most 9 seconds): a recommendation the Director weighs, not a rule that refuses the episode. \
++The whole episode is {min_episode_words} to {max_episode_words} spoken words, 45 to 70 \
++seconds at 2.5 words a second.
+ 5. Language. The title, the lines, the summary and the logline are in English. Some event \
+ texts (letter subjects, titles) are in Romanian: say what they mean in English, never quote \
+ the Romanian.
+@@ -994,9 +995,9 @@ PLAN FOR THIS EPISODE:
+ FINAL SPOKEN-LENGTH CHECK, including on a rewrite:
+ Only words inside lines[].text count; scene descriptions, directions, summaries and plans \
+ do not fill the spoken duration. Count each beat and the total before returning your JSON: \
+-{min_words} to {max_words} spoken words per beat and {min_episode_words} to \
+-{max_episode_words} across the episode. The hook's first line is short, but the whole hook \
+-beat still meets its word range: another person may answer it. The button is one line \
++{min_words} to {max_words} spoken words per beat (recommended) and {min_episode_words} to \
++{max_episode_words} across the episode (the rule). The hook's first line is short, but the whole \
++hook beat still meets its word range: another person may answer it. The button is one line \
+ within that same range. Expand the intervening dialogue with grounded reactions and \
+ consequences, without adding events or repeating filler. A collection of very short \
+ punchlines is too short even when it has enough beats. Return the episode JSON only, \
+@@ -1513,7 +1514,9 @@ def _measured_refusals(
+     return [
+         (name, str(check.get("reason") or name))
+         for name, check in checks.items()
+-        if not check["passed"] and name != "offered_speakers"
++        # A recommendation (words per beat, 2026-10-13) is measured for the Director, never a
++        # reason to ask the writer again: a beat a little over the band reaches her.
++        if not check["passed"] and name != "offered_speakers" and not check.get("advisory")
+     ]
+ 
+ 
+diff --git a/frontend/src/serial_room.css b/frontend/src/serial_room.css
+index 3588e98..eb3b1eb 100644
+--- a/frontend/src/serial_room.css
++++ b/frontend/src/serial_room.css
+@@ -462,6 +462,8 @@
+ .check-row.is-pass .check-mark { color: var(--ok-ink); }
+ .check-row.is-fail .check-mark { color: var(--alert-ink); }
+ .check-row.is-legacy .check-mark { color: var(--ink-3); }
++.check-row.is-advice .check-mark { color: var(--warn-ink); }
++.check-row.is-advice .check-word { color: var(--ink); }
+ .check-word { color: var(--ink-2); }
+ .check-row.is-fail .check-word { color: var(--ink); font-weight: var(--w-semi); }
+ .check-measure { grid-column: 2; font-family: var(--font-mono); color: var(--ink-3); font-variant-numeric: tabular-nums; }
+@@ -736,6 +738,7 @@
+ }
+ .cover-verdict.tone-pass .cover-verdict-word { color: var(--ok-ink); }
+ .cover-verdict.tone-fail .cover-verdict-word { color: var(--alert-ink); }
++.cover-verdict.is-computed .cover-verdict-word { font-size: calc(var(--fs-cover-verdict) * 0.62); letter-spacing: 0.08em; }
+ .cover-verdict-line { font-size: var(--fs-meta); color: var(--ink-2); max-width: 26ch; }
+ .journal-cover.is-empty { grid-template-columns: auto minmax(0, 1fr); }
+ @keyframes cover-in {
+diff --git a/frontend/src/serial_room.js b/frontend/src/serial_room.js
+index 8259ee9..ad6b256 100644
+--- a/frontend/src/serial_room.js
++++ b/frontend/src/serial_room.js
+@@ -85,7 +85,7 @@ export const CHECK_WORD = {
+   structure: 'structură (cârlig → poantă, camere din studio)',
+   cast: 'distribuție (2-4 care vorbesc)',
+   length: 'durată (beat-uri și secunde de dialog)',
+-  words_per_beat: 'cuvinte pe beat (8-22 rostite)',
++  words_per_beat: 'cuvinte pe beat (8-22 rostite, recomandare)',
+   concentration: 'evenimente răspândite (niciunul în mai mult de jumătate din beat-uri)',
+   accessibility: 'primul beat se ține singur',
+   language: 'engleză (titlu și replici)',
+@@ -285,7 +285,8 @@ export function checkMeasure(key, check) {
+ /**
+  * The computed checks as rows, known ones first in `CHECK_ORDER`, any the page does not know
+  * after them under their own name. `legacy` is a rule an old episode was never told, measured
+- * and not held against it.
++ * and not held against it. `advisory` is a recommendation (words per beat, 2026-10-13):
++ * measured and shown, decided by the Director, refusing nothing.
+  *
+  * @param {{checks?: Record<string, any>} | null | undefined} review
+  */
+@@ -299,12 +300,27 @@ export function checkRows(review) {
+       word: /** @type {Record<string,string>} */ (CHECK_WORD)[key] || key.replace(/_/g, ' '),
+       passed: check.passed === true,
+       legacy: check.legacy === true,
++      advisory: check.advisory === true,
+       reason: typeof check.reason === 'string' ? check.reason : '',
+       measure: checkMeasure(key, check),
+     };
+   });
+ }
+ 
++/**
++ * «N din M trecute» over the rules alone; a recommendation the episode is outside of is
++ * counted apart («· 1 recomandare de decis»), since it refuses nothing (2026-10-13).
++ *
++ * @param {ReturnType<typeof checkRows>} rows
++ */
++export function checksCount(rows) {
++  const rules = rows.filter((row) => !row.advisory);
++  const advised = rows.filter((row) => row.advisory && !row.passed && !row.legacy).length;
++  const head = rules.length ? `${rules.filter((row) => row.passed).length} din ${rules.length} trecute` : '';
++  const tail = advised ? `${countWord(advised, 'recomandare', 'recomandări')} de decis` : '';
++  return [head, tail].filter(Boolean).join(' · ');
++}
++
+ /**
+  * The plan an episode left for the next one, or null.
+  *
+@@ -426,6 +442,7 @@ const CHECK_ICON = {
+   pass: '<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5.5 12.5l4.2 4.2 8.8-9.4"/></svg>',
+   fail: '<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17"/></svg>',
+   legacy: '<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12"/></svg>',
++  advice: '<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v9M12 18.5v.5"/></svg>',
+ };
+ 
+ /** @param {string} display */
+@@ -539,15 +556,16 @@ function directorHtml(review, status) {
+             </li>`;
+         })
+         .join('')}</ul>`
+-    : `<p class="writers-empty">Fără rubrică: verificările calculate au oprit episodul înainte ca Directorul să-l citească.</p>`;
++    : review.model_used === true
++      ? `<p class="writers-empty">Fără rubrică: Directorul a dat verdictul fără note pe părți.</p>`
++      : `<p class="writers-empty">Fără rubrică: verificările calculate au oprit episodul înainte ca Directorul să-l citească.</p>`;
+   const checks = checkRows(review);
+-  const passed = checks.filter((row) => row.passed).length;
+   const checkList = checks.length
+-    ? `<div class="checks-head"><span>Verificări calculate</span><span class="checks-count">${passed} din ${checks.length} trecute</span></div>
++    ? `<div class="checks-head"><span>Verificări calculate</span><span class="checks-count">${escapeHtml(checksCount(checks))}</span></div>
+        <ul class="check-list">${checks
+          .map((row) => {
+-           const state = row.legacy ? 'legacy' : row.passed ? 'pass' : 'fail';
+-           const said = state === 'pass' ? 'trecută' : state === 'fail' ? 'picată' : 'neaplicată episodului vechi';
++           const state = row.legacy ? 'legacy' : row.passed ? 'pass' : row.advisory ? 'advice' : 'fail';
++           const said = state === 'pass' ? 'trecută' : state === 'fail' ? 'picată' : state === 'advice' ? 'în afara recomandării, decide Directorul' : 'neaplicată episodului vechi';
+            return `<li class="check-row is-${state}">
+                <span class="check-mark">${CHECK_ICON[state]}<span class="serial-sr">${said}</span></span>
+                <span class="check-word">${escapeHtml(row.word)}</span>
+@@ -631,7 +649,14 @@ export function episodeHtml(episode, context = {}) {
+   const number = typeof continuity.episode_number === 'number' ? continuity.episode_number : null;
+   const date = continuity.business_date ? String(continuity.business_date) : '';
+   const statusWord = /** @type {Record<string,string>} */ (STATUS_WORD)[status] || status;
+-  const by = episode.reviewed_by === 'owner' ? 'de tine' : episode.reviewed_by === 'director' ? 'de Director' : '';
++  const by =
++    episode.reviewed_by === 'owner'
++      ? 'de tine'
++      : episode.reviewed_by === 'director'
++        ? 'de Director'
++        : episode.reviewed_by === 'checks'
++          ? 'de verificările calculate'
++          : '';
+   const kicker = [
+     number !== null ? (status === 'APPROVED' ? `Episodul ${number}` : `ciorna episodului ${number}`) : 'Episod fără număr în serial',
+     date ? `ziua ${dayWords(date)}` : '',
+@@ -736,21 +761,24 @@ export function dayWords(date) {
+ 
+ /**
+  * The Director's reading in three figures for the cover: the verdict as she gave it, the mean
+- * of her six scores (one decimal, Romanian comma) and how many computed checks passed. Only
+- * what the review carries: no review is no verdict.
++ * of her six scores (one decimal, Romanian comma) and how many computed rules passed (a
++ * recommendation is not counted: it refuses nothing). Only what the review carries: no review
++ * is no verdict, and a FAIL the computed rules gave without her reading (`model_used` false)
++ * is `computed`: the cover signs it by the checks, not by her (2026-10-13).
+  * @param {Record<string, any> | null | undefined} review
+- * @returns {{verdict: string, mean: string, checks: string, read: boolean}}
++ * @returns {{verdict: string, mean: string, checks: string, read: boolean, computed: boolean}}
+  */
+ export function coverVerdict(review) {
+-  if (!review) return { verdict: '—', mean: '', checks: '', read: false };
++  if (!review) return { verdict: '—', mean: '', checks: '', read: false, computed: false };
+   const verdict = String(review.verdict || '').toUpperCase() || '—';
+   const scores = rubricRows(review).map((row) => row.score).filter((v) => v !== null);
+   const mean = scores.length
+     ? `nota medie ${(scores.reduce((a, b) => a + Number(b), 0) / scores.length).toFixed(1).replace('.', ',')} din 5`
+     : '';
+-  const rows = checkRows(review).filter((row) => !row.legacy);
++  const rows = checkRows(review).filter((row) => !row.legacy && !row.advisory);
+   const checks = rows.length ? `${rows.filter((row) => row.passed).length} din ${countWord(rows.length, 'verificare trecută', 'verificări trecute')}` : '';
+-  return { verdict, mean, checks, read: true };
++  const computed = verdict === 'FAIL' && review.model_used === false;
++  return { verdict, mean, checks, read: true, computed };
+ }
+ 
+ /**
+@@ -805,10 +833,10 @@ export function journalCoverHtml(episode, continuity) {
+           ${canonLine}
+         </div>
+       </div>
+-      <div class="cover-verdict tone-${tone}">
+-        <span class="writers-label">Verdictul Directorului</span>
+-        <strong class="cover-verdict-word">${escapeHtml(v.verdict)}</strong>
+-        ${v.read ? [v.mean, v.checks].filter(Boolean).map((line) => `<span class="cover-verdict-line">${escapeHtml(line)}</span>`).join('') : '<span class="cover-verdict-line">Directorul nu a citit încă episodul.</span>'}
++      <div class="cover-verdict tone-${tone}${v.computed ? ' is-computed' : ''}">
++        <span class="writers-label">${v.computed ? 'Verificările calculate' : 'Verdictul Directorului'}</span>
++        <strong class="cover-verdict-word">${escapeHtml(v.computed ? 'RESPINS' : v.verdict)}</strong>
++        ${v.read ? [v.computed ? 'Directorul nu a citit episodul.' : v.mean, v.checks].filter(Boolean).map((line) => `<span class="cover-verdict-line">${escapeHtml(line)}</span>`).join('') : '<span class="cover-verdict-line">Directorul nu a citit încă episodul.</span>'}
+       </div>
+     </section>`;
+ }
+diff --git a/frontend/tests/serial_room.test.js b/frontend/tests/serial_room.test.js
+index 9453869..8b399e7 100644
+--- a/frontend/tests/serial_room.test.js
++++ b/frontend/tests/serial_room.test.js
+@@ -26,6 +26,7 @@ import {
+   serialStageNotes,
+   journalCoverHtml,
+   coverVerdict,
++  checksCount,
+   dayWords,
+   splitName,
+   textParts,
+@@ -124,7 +125,8 @@ test('the checks come in reading order, with the labels the serial asked for and
+   assert.equal(rows[1].word, 'structură (cârlig → poantă, camere din studio)');
+   assert.equal(rows[1].passed, false);
+   assert.equal(rows[1].reason, 'Beat-ul 3 nu are o parte.', 'the backend reason, as it came');
+-  assert.equal(rows[2].word, 'cuvinte pe beat (8-22 rostite)');
++  assert.equal(rows[2].word, 'cuvinte pe beat (8-22 rostite, recomandare)');
++  assert.equal(rows[2].advisory, false, 'a review written before 2026-10-13 carries no advisory key');
+   assert.equal(rows[2].measure, '14 · 18 · 12');
+   assert.equal(rows[3].measure, '10 din 10 replici');
+   assert.equal(rows[4].word, 'shiny new rule', 'a check the page does not know keeps its own name');
+@@ -307,8 +309,73 @@ test('an unnumbered, unread draft says so, and no episode is a cover that says n
+   const none = journalCoverHtml(null, null);
+   assert.ok(none.includes('Niciun episod încă'));
+   assert.ok(!none.includes('episoade aprobate'), 'a serial not read says no count');
+-  assert.deepEqual(coverVerdict(null), { verdict: '—', mean: '', checks: '', read: false });
++  assert.deepEqual(coverVerdict(null), { verdict: '—', mean: '', checks: '', read: false, computed: false });
+   assert.equal(coverVerdict({ verdict: 'FAIL', scores: {}, checks: {} }).mean, '', 'a computed FAIL has no scores to average');
+   assert.equal(dayWords('2026-09-12'), '12.09.2026');
+   assert.equal(dayWords(''), '');
+ });
++
++test('a recommendation is shown apart from the rules and refuses nothing (2026-10-13)', () => {
++  const review = {
++    ...REVIEW,
++    checks: {
++      ...REVIEW.checks,
++      structure: { passed: true, reason: '' },
++      words_per_beat: {
++        passed: false,
++        advisory: true,
++        per_beat: [14, 23, 12],
++        outside: [2],
++        reason: 'beat-urile 2 ies din recomandarea de 8-22 cuvinte rostite (au 23); decide Directoarea',
++      },
++    },
++  };
++  const rows = checkRows(review);
++  const words = rows.find((r) => r.key === 'words_per_beat');
++  assert.equal(words.advisory, true);
++  assert.equal(words.passed, false);
++  assert.equal(checksCount(rows), '4 din 4 trecute · 1 recomandare de decis');
++  assert.equal(checksCount(checkRows(REVIEW)), '4 din 5 trecute', 'a recommendation kept is not counted either way');
++  const html = episodeHtml(
++    { id: 'ep-3', title: 'T', status: 'DRAFT', beats: [V3_BEAT], grounded_event_ids: ['e1'], review, continuity: {} },
++    { open: true },
++  );
++  assert.ok(html.includes('check-row is-advice'));
++  assert.ok(html.includes('1 recomandare de decis'));
++  assert.ok(!html.includes('check-row is-fail'), 'nothing is picată');
++  assert.ok(html.includes('decide Directoarea'));
++});
++
++test('the cover signs a computed rejection by the checks, not by the Director', () => {
++  const computed = {
++    verdict: 'FAIL',
++    model_used: false,
++    scores: {},
++    reasons: ['Titlul nu e în engleză.'],
++    checks: {
++      grounding: { passed: true, reason: '' },
++      language: { passed: false, reason: 'Titlul nu e în engleză.' },
++      words_per_beat: { passed: false, advisory: true, per_beat: [23], outside: [1], reason: 'r' },
++    },
++  };
++  const v = coverVerdict(computed);
++  assert.equal(v.computed, true);
++  assert.equal(v.checks, '1 din 2 verificări trecute', 'the recommendation is not a rule');
++  const cover = journalCoverHtml(
++    { id: 'c', status: 'REJECTED', reviewed_by: 'checks', title: 'The Ninth Rewrite', beats: [], grounded_event_ids: [], review: computed, continuity: { episode_number: 2, business_date: '2026-10-13' } },
++    { canon_episode_number: 1 },
++  );
++  assert.ok(cover.includes('Verificările calculate'));
++  assert.ok(!cover.includes('Verdictul Directorului'));
++  assert.ok(cover.includes('cover-verdict-word">RESPINS<'));
++  assert.ok(cover.includes('Directorul nu a citit episodul.'));
++  const hers = coverVerdict({ ...computed, model_used: true, scores: { hook: 2 } });
++  assert.equal(hers.computed, false);
++  const herCover = journalCoverHtml(
++    { id: 'd', status: 'REJECTED', reviewed_by: 'director', title: 'T', beats: [], grounded_event_ids: [], review: { ...computed, model_used: true }, continuity: {} },
++    null,
++  );
++  assert.ok(herCover.includes('Verdictul Directorului') && herCover.includes('cover-verdict-word">FAIL<'));
++  const page = episodeHtml({ id: 'e', title: 'T', status: 'REJECTED', reviewed_by: 'checks', beats: [], review: computed, continuity: {} });
++  assert.ok(page.includes('Respins de verificările calculate'), page.slice(0, 400));
++});
+diff --git a/tests/test_words_per_beat_is_a_recommendation.py b/tests/test_words_per_beat_is_a_recommendation.py
+new file mode 100644
+index 0000000..99a95d0
+--- /dev/null
++++ b/tests/test_words_per_beat_is_a_recommendation.py
+@@ -0,0 +1,145 @@
++"""Words per beat is a recommendation the Director decides (the Owner, 2026-10-13: «nu trebuie
++să fie ceva fix, este ceva recomandat, dar nici să respingi serialul de la asta; pot lua decizii
++singuri, iar Directoarea este aici pentru astfel de situații»).
++
++Read on his page the same day: «The Ninth Rewrite» (13.10.2026) was REJECTED by the computed
++checks for a 23-word beat (9 din 10 verificări) before the Director read it, and the cover
++signed that FAIL as «Verdictul Directorului». Now the band is `advisory`: measured and shown,
++never a reason to ask the writer again, and the Director reads the episode with the measure and
++decides; a verdict the computed rules give without her reading is signed by the checks.
++
++Offline: the showrunner and the Director are scripted fakes; no model, no provider."""
++
++from __future__ import annotations
++
++from app.models import DomainEvent
++from app.story.models import StoryEpisode
++from app.story.review import failed_rules, outside_recommendations, review_episode
++from app.story.services import list_episodes
++from sqlalchemy import select
++from sqlalchemy.orm import Session
++from test_serial_pipeline import (  # noqa: F401 - the studio fixture
++    KAEL,
++    SARAH,
++    beats_for,
++    checks_of,
++    fake_director,
++    letters_day,
++    registry,
++    staffed,
++    written,
++)
++
++#: Twenty-three spoken words: one over the band, 9.2 seconds at the studio's rate.
++LONG = (
++    "Right, the cut runs long again, so we trim the middle, keep the hook, and send it back "
++    "before lunch today, please, Kael."
++)
++assert len(LONG.split()) == 23
++
++
++def _event(session: Session, kind: str, episode_id: str) -> DomainEvent:
++    return session.scalars(
++        select(DomainEvent).where(
++            DomainEvent.event_type == kind, DomainEvent.aggregate_id == episode_id
++        )
++    ).one()
++
++
++def _over_the_band(engine, monkeypatch, asked: list[str] | None = None) -> dict:
++    _, ids = letters_day(engine)
++    beats = beats_for(ids, [SARAH, KAEL])
++    beats[2]["lines"] = [{"speaker": SARAH, "text": LONG}]
++    return written(engine, monkeypatch, beats, asked)
++
++
++def test_a_beat_over_the_band_is_measured_as_a_recommendation_not_refused(
++    engine,
++    staffed,  # noqa: F811 - the fixture imported from test_serial_pipeline
++    monkeypatch,
++):
++    asked: list[str] = []
++    episode = _over_the_band(engine, monkeypatch, asked)
++
++    assert len(asked) == 1, "the showrunner was not asked again for a recommendation"
++    checks = checks_of(engine, episode["id"])
++    words = checks["words_per_beat"]
++    assert words["advisory"] is True and words["passed"] is False
++    assert words["outside"] == [3] and words["per_beat"][2] == 23
++    assert "recomandarea de 8-22" in words["reason"] and "decide Directoarea" in words["reason"]
++    assert failed_rules(checks) == []
++    assert outside_recommendations(checks) == ["words_per_beat"]
++    # The brief says the band is a recommendation, and keeps the figures the writer aims for.
++    assert "Aim for 8 to 22 spoken words" in asked[0]
++    assert "a recommendation the Director weighs, not a rule" in asked[0]
++
++
++def test_the_director_reads_a_beat_over_the_band_and_decides(
++    engine,
++    staffed,  # noqa: F811 - the fixture imported from test_serial_pipeline
++    monkeypatch,
++):
++    episode = _over_the_band(engine, monkeypatch)
++    calls: list[str] = []
++    fake_director(monkeypatch, "PASS", calls=calls)
++
++    review = review_episode(engine, registry(), episode["id"])
++
++    assert review["verdict"] == "PASS"
++    assert len(calls) == 1, "she was asked: a recommendation refuses nothing"
++    prompt = calls[0]
++    assert '"recommendations"' in prompt
++    assert '"outside": [3]' in prompt and '"recommended": [8, 22]' in prompt
++    assert "5. Recommendations." in prompt and "flagged, not refused" in prompt
++    assert review["checks"]["words_per_beat"]["passed"] is False
++    with Session(engine) as session:
++        row = session.get(StoryEpisode, episode["id"])
++        assert row.status == "DRAFT" and row.review_json["model_used"] is True
++        reviewed = _event(session, "story.episode_reviewed", episode["id"])
++        assert reviewed.payload["checks_failed"] == []
++        assert reviewed.payload["recommendations_outside"] == ["words_per_beat"]
++
++
++def test_her_fail_on_such_a_beat_is_hers(
++    engine,
++    staffed,  # noqa: F811 - the fixture imported from test_serial_pipeline
++    monkeypatch,
++):
++    episode = _over_the_band(engine, monkeypatch)
++    fake_director(monkeypatch, "FAIL", notes="Beat 3 is too fast to follow: 23 words.")
++
++    review = review_episode(engine, registry(), episode["id"])
++
++    assert review["verdict"] == "FAIL"
++    with Session(engine) as session:
++        row = session.get(StoryEpisode, episode["id"])
++        assert row.status == "REJECTED" and row.reviewed_by == "director"
++        assert row.notes == "Beat 3 is too fast to follow: 23 words."
++        assert _event(session, "story.episode_rejected", episode["id"]).payload["reviewed_by"] == (
++            "director"
++        )
++
++
++def test_a_rule_the_checks_refuse_is_signed_by_the_checks_not_the_director(
++    engine,
++    staffed,  # noqa: F811 - the fixture imported from test_serial_pipeline
++    monkeypatch,
++):
++    _, ids = letters_day(engine)
++    episode = written(engine, monkeypatch, beats_for(ids, [SARAH]))  # one speaker: the cast rule
++    calls: list[str] = []
++    fake_director(monkeypatch, "PASS", calls=calls)
++
++    review = review_episode(engine, registry(), episode["id"])
++
++    assert review["verdict"] == "FAIL" and calls == []
++    assert review["checks"]["cast"]["passed"] is False
++    with Session(engine) as session:
++        row = session.get(StoryEpisode, episode["id"])
++        assert row.status == "REJECTED" and row.reviewed_by == "checks"
++        assert row.review_json["model_used"] is False
++        assert _event(session, "story.episode_rejected", episode["id"]).payload["reviewed_by"] == (
++            "checks"
++        )
++    (listed,) = [e for e in list_episodes(engine) if e["id"] == episode["id"]]
++    assert listed["reviewed_by"] == "checks"
