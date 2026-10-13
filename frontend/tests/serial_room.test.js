@@ -29,6 +29,7 @@ import {
   checksCount,
   dayWords,
   splitName,
+  tellOutcomeMessage,
   textParts,
 } from '../src/serial_room.js';
 import { describeEvent } from '../src/ledger.js';
@@ -378,4 +379,33 @@ test('the cover signs a computed rejection by the checks, not by the Director', 
   assert.ok(herCover.includes('Verdictul Directorului') && herCover.includes('cover-verdict-word">FAIL<'));
   const page = episodeHtml({ id: 'e', title: 'T', status: 'REJECTED', reviewed_by: 'checks', beats: [], review: computed, continuity: {} });
   assert.ok(page.includes('Respins de verificările calculate'), page.slice(0, 400));
+});
+
+test('the Owner\'s press says where the episode ended, in the backend\'s words, and only picks the tone (2026-10-13)', () => {
+  // The words are the backend's (serial_stage.py _press_words); the page prints them as they came.
+  const told = (words, episode_status, verdict, extra = {}) => tellOutcomeMessage({
+    status: 'COMPLETED', reason: 'Episodul zilei 2026-10-12 a fost scris, citit, aprobat și pregătit de filmare; rularea de mâine îl filmează.',
+    artefacts: {}, words, episode_status, verdict, ...extra,
+  });
+  const approved = told('„The Nine-Scene Rewrite” a trecut citirea Directorului și e aprobat; pregătit de filmare, iar rularea de mâine îl filmează.', 'APPROVED', 'PASS');
+  assert.deepEqual(approved, { text: '„The Nine-Scene Rewrite” a trecut citirea Directorului și e aprobat; pregătit de filmare, iar rularea de mâine îl filmează.', error: false });
+  const waiting = told('„T” a trecut citirea Directorului și așteaptă aprobarea ta; politica canalului nu îi permite Directorului să aprobe singură.', 'DRAFT', 'PASS');
+  assert.equal(waiting.error, false);
+  assert.ok(waiting.text.includes('așteaptă aprobarea ta'));
+  const hers = told('„T” a fost respins de Director: Primul beat nu se ține singur. (o apăsare nouă sau rularea următoare o scrie din nou, cu motivele).', 'REJECTED', 'FAIL');
+  assert.equal(hers.error, true, 'a rejection takes the error tone so it is not missed');
+  assert.ok(hers.text.includes('respins de Director'));
+  const computed = told('„T” a fost respins de verificările calculate: Titlul nu e în engleză. (ziua și-a folosit cele 3 ciorne; serialul trece la altă zi).', 'REJECTED', 'FAIL');
+  assert.equal(computed.error, true);
+  assert.ok(computed.text.includes('verificările calculate') && computed.text.includes('cele 3 ciorne'));
+  const unread = told('„T” a fost scrisă, dar Directorul nu a putut-o citi: fără obiect; rularea următoare o citește din nou.', 'DRAFT', null);
+  assert.equal(unread.error, true, 'a draft she could not read needs his eye');
+  // The same press answered twice (the same command id) says so, with the first answer's words.
+  const again = told('„T” a trecut citirea Directorului și e aprobat; pregătit de filmare, iar rularea de mâine îl filmează.', 'APPROVED', 'PASS', { replayed: true });
+  assert.ok(again.text.endsWith('(aceeași apăsare, răspunsul de atunci)'));
+  assert.equal(again.error, false);
+  // No words: the stage's reason stands in; nothing at all is said as such, never invented.
+  assert.equal(tellOutcomeMessage({ reason: 'Episodul pentru 2026-10-12 a fost respins de Director (o rulare următoare o scrie din nou, cu motivele): x', episode_status: 'REJECTED' }).text.startsWith('Episodul pentru 2026-10-12'), true);
+  assert.deepEqual(tellOutcomeMessage(null), { text: 'Studioul nu a spus ce s-a întâmplat cu episodul; reîncarcă lista.', error: true });
+  assert.equal(tellOutcomeMessage({ words: '', episode_status: null }).error, true);
 });
