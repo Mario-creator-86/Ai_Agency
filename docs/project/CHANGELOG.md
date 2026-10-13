@@ -18,6 +18,13 @@
 - A paid redo corrected under the Owner's ask-me rule is bought on his yes: the resumed walk
   no longer corrects (or looks at) the scene again before spending it
   (`runbook.stages._corrected_for_film`).
+- After the PR's automated review (Codex, three P1 findings, all real): the still's negative
+  channel no longer says «text, lettering» for a scene whose plan names an object with its own
+  markings (`stills_stage.still_negative`); a named camera move in a plan field counts as the
+  camera's only beside the camera or in the cinema's own words («Earth orbits the Sun» and
+  «she pulls back the curtain» stay in the still; `prompt_lint._camera_moves_in`); the
+  resumed paid redo binds to her brief's rewrite (`reason: director_brief`), never to the
+  serial's recomposition or re-roll, which write the same event.
 - Tests: `test_still_prompt_is_static.py`, `test_planned_markings.py`,
   `test_rewritten_still_reaches_the_model.py`, `test_rewritten_motion_reaches_the_model.py`,
   `test_redo_resume_spends_his_yes.py`; `test_director_rewrites_failed_scene.py` now asserts

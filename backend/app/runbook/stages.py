@@ -5089,7 +5089,7 @@ def _corrected_for_film(
     again before it is spent (`_apply_repairs`)."""
     from app.media.assembler import SCENE_PROMPTS_REWRITTEN_EVENT  # noqa: PLC0415
     from app.media.models import SceneTake  # noqa: PLC0415
-    from app.media.scene_rewrite import DECIDED_BY, _after  # noqa: PLC0415
+    from app.media.scene_rewrite import DECIDED_BY, REWRITE_REASON, _after  # noqa: PLC0415
 
     film = session.get(MediaAsset, asset_id) if asset_id else None
     if film is None:
@@ -5114,7 +5114,14 @@ def _corrected_for_film(
         payload = event.payload if isinstance(event.payload, dict) else {}
         if payload.get("scene_index") != scene:
             continue
-        if payload.get("decided_by") != DECIDED_BY or not _after(event.timestamp, floor):
+        # Only her brief's rewrite (`scene_rewrite.REWRITE_REASON`): the serial's
+        # recomposition and its technical re-roll write the same event as the Director's,
+        # on words that may not have changed (the Codex review of c6dc05c).
+        if (
+            payload.get("decided_by") != DECIDED_BY
+            or payload.get("reason") != REWRITE_REASON
+            or not _after(event.timestamp, floor)
+        ):
             return None
         return {"layer": payload.get("layer"), "event_id": str(event.event_id)}
     return None

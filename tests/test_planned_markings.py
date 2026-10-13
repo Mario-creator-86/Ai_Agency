@@ -37,6 +37,7 @@ from app.media.qc import ClipCheck, ClipReport, look_may_overturn
 from app.media.scene_rewrite import hard_limit
 from app.media.second_look import HARD_LIMIT_MARK, hard_limits
 from app.media.still_gate import StillPlan, decide, may_be_overturned, positive_instruction
+from app.media.stills_stage import still_negative
 from app.media.toolchain import find_ffmpeg
 from app.providers.base import GenerateResult, HealthResult
 from sqlalchemy import select
@@ -350,3 +351,18 @@ def _clip_refused_for_writing(**picture: Any) -> ClipReport:
 def test_a_clips_writing_on_the_planned_object_is_hers_to_overturn():
     assert not look_may_overturn(_clip_refused_for_writing())
     assert look_may_overturn(_clip_refused_for_writing(planned_markings=["thermometer"]))
+
+
+# ------------------------------------------------------------------- the negative channel
+
+
+def test_the_negative_channel_keeps_the_instruments_markings():
+    """The Codex review of c6dc05c: a negative prompt told «text, lettering» beside «the
+    thermometer keeps its scale» draws a blank instrument. Captions, a logo and a watermark
+    stay out of every still."""
+    plain = still_negative({}, {})
+    marked = still_negative({}, {}, ("thermometer",))
+    assert "text" in plain.split(", ") and "lettering" in plain.split(", ")
+    assert "text" not in marked.split(", ") and "lettering" not in marked.split(", ")
+    for kept in ("captions", "subtitles", "logo", "watermark", "panels"):
+        assert kept in marked.split(", ")
