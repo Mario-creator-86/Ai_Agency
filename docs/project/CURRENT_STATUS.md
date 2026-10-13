@@ -6,6 +6,15 @@ Current proof: this publication was checked offline and proven on fakes only for
 
 This is a source-only publication snapshot. The application is a local, single-owner FastAPI/SQLite media studio with a Vite pixel-office frontend. Existing Director QC and media-repair work needs an audit against the current source and tests. Other development worktrees and their unmerged commits are not included. Production health, balances, credentials, film history and configured accounts are intentionally absent. Do not treat historical mock acceptance as live vendor acceptance.
 
+## Office serial: recommendations and honest signatures (2026-10-13)
+
+Working (proven offline): a beat outside the 8-22 spoken-word band no longer refuses the
+episode or re-asks the showrunner; the Director reads it with the measure and decides
+(`story.review.failed_rules` / `outside_recommendations`). A rejection the computed rules gave
+without her reading is signed by the checks (`reviewed_by: checks`) on the row, the event, the
+journal's cover, the episode list and the event feed. Not proven: a live Director's reading of
+such an episode (model-dependent).
+
 ## Prompt path audit and repair (2026-10-13, branch `claude/compassionate-clarke-qqb9g7`)
 
 Task claim: the Owner's three questions on the media repair loop, read on the source and on

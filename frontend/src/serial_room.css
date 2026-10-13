@@ -462,6 +462,8 @@
 .check-row.is-pass .check-mark { color: var(--ok-ink); }
 .check-row.is-fail .check-mark { color: var(--alert-ink); }
 .check-row.is-legacy .check-mark { color: var(--ink-3); }
+.check-row.is-advice .check-mark { color: var(--warn-ink); }
+.check-row.is-advice .check-word { color: var(--ink); }
 .check-word { color: var(--ink-2); }
 .check-row.is-fail .check-word { color: var(--ink); font-weight: var(--w-semi); }
 .check-measure { grid-column: 2; font-family: var(--font-mono); color: var(--ink-3); font-variant-numeric: tabular-nums; }
@@ -736,6 +738,7 @@
 }
 .cover-verdict.tone-pass .cover-verdict-word { color: var(--ok-ink); }
 .cover-verdict.tone-fail .cover-verdict-word { color: var(--alert-ink); }
+.cover-verdict.is-computed .cover-verdict-word { font-size: calc(var(--fs-cover-verdict) * 0.62); letter-spacing: 0.08em; }
 .cover-verdict-line { font-size: var(--fs-meta); color: var(--ink-2); max-width: 26ch; }
 .journal-cover.is-empty { grid-template-columns: auto minmax(0, 1fr); }
 @keyframes cover-in {
