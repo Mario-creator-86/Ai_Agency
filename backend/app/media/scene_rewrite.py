@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Sequence
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -19,6 +20,7 @@ from app.db import lock_for_write
 from app.factual.models import ScriptDraft
 from app.factual.sanitizer import wrap_in_inert_boundary
 from app.media import prompt_lint as lint
+from app.media.markings import markings_kept, markings_note, planned_markings, still_exclusions
 from app.media.models import SceneTake, Storyboard, StoryboardScene
 from app.models import DomainEvent
 from app.services import append_event
@@ -145,6 +147,18 @@ _CONTEXT_PREFIXES: tuple[str, ...] = ("directoarea a privit din nou scena",)
 HARD_LIMIT_WORDS = re.compile(
     r"interzice fețele|text lizibil|apare text|readable text|garbled text|"
     r"lettering|panour\w*|colaj|ecran împărțit|bandă goală|\bpanels?\b|collage|"
+    r"split[- ]screen|o singură fotografie|încalcă biblia|breaks the bible|"
+    r"faces? (?:are |is )?forbidden",
+    re.IGNORECASE,
+)
+#: The same words, split: writing alone is no hard limit when the plan names an object that
+#: carries its own markings (`markings.planned_markings`; the Owner, 2026-10-13, the Kelvin
+#: film's thermometer refused for the digits of its scale), the rest always is.
+_WRITING_LIMIT = re.compile(
+    r"text lizibil|apare text|readable text|garbled text|lettering", re.IGNORECASE
+)
+_OTHER_LIMITS = re.compile(
+    r"interzice fețele|panour\w*|colaj|ecran împărțit|bandă goală|\bpanels?\b|collage|"
     r"split[- ]screen|o singură fotografie|încalcă biblia|breaks the bible|"
     r"faces? (?:are |is )?forbidden",
     re.IGNORECASE,
@@ -771,7 +785,11 @@ _REWRITE_INSTRUCTIONS = (
     "in the picture. Do not add facts, numbers, dates or events that are not in the narration. "
     "Give the shot one ample, specific camera move with its path and tempo (where it starts, "
     "where it ends over the clip's seconds) and write what the subject does as verbs; choose "
-    "camera_move from: {moves}. Name colours in words. Return only JSON with this shot: "
+    "camera_move from: {moves}. Name colours in words. The picture's fields (subject, action, "
+    "environment, camera, lighting, composition) describe one frozen moment — what is seen, a "
+    "pose, a state, a place — with no camera move, no speed and no span of the clip in them: "
+    "a still cannot show movement, so everything that moves goes to motion, camera_move and "
+    "ending_frame only. Return only JSON with this shot: "
     '{{"scene_index": {scene}, "subject": "...", "action": "...", "environment": "...", '
     '"camera": "...", "camera_move": "...", "lighting": "...", "composition": "...", '
     '"motion": "...", "emotion": "...", "background": "...", "continuity": "...", '
@@ -1183,6 +1201,15 @@ def scene_context(engine: Engine, storyboard_id: str, scene_index: int) -> dict[
                 _brief_in_short(brief) for brief in briefs[:-MAX_BRIEFS_SHOWN][-MAX_OLDER_BRIEFS:]
             ],
             "last_code": last_code,
+            # The plan's objects that carry their own markings (`markings.planned_markings`):
+            # a writing finding about them is hers to rate, never anchored serious.
+            "markings": planned_markings(
+                package.get("still_prompt") or target.visual_prompt,
+                package.get("writer_visual"),
+                package.get("subject"),
+                package.get("action"),
+                package.get("environment"),
+            ),
             "layers": open_layers(session, storyboard_id, scene_index, last_code=last_code),
             "local_move": _local_move(session, storyboard_id, scene_index),
         }
@@ -1297,10 +1324,14 @@ def _still_sentences(
             if sentence.startswith("In frame, facing the viewer:")
         ]
         return found, {}
+    # The exclusions as this scene says them: «No text, no logo.», or the object's own scale
+    # kept when the plan names one that carries markings (`markings`, 2026-10-13).
+    marked = tuple(context.get("markings") or ())
     candidates = [
         str(package.get("look_block") or ""),
         words.COMPOSITION_SENTENCE,
-        words.STILL_EXCLUSIONS,
+        still_exclusions(marked),
+        markings_kept(marked),
     ]
     people = _present([words.PEOPLE_SENTENCE, words.NO_PEOPLE_SENTENCE], still)
     return _present(candidates, still), ({"subject": people} if people else {})
@@ -1519,7 +1550,27 @@ def _data(context: dict[str, Any], **more: Any) -> dict[str, Any]:
         data["older_briefs_in_short"] = list(context["older_briefs"])
     if context.get("serial"):
         data["serial_shot"] = _serial_shot(context)
+    if context.get("markings"):
+        # The plan's objects that carry their own markings (`_markings_note`).
+        data["planned_markings"] = list(context["markings"])
     return data
+
+
+def _markings_note(context: dict[str, Any]) -> str:
+    """Added to her brief and her review when the plan names an object that carries its own
+    markings (`markings.planned_markings`; the Owner, 2026-10-13, the Kelvin film's thermometer
+    refused for its digits): its scale is the object, not writing in the picture, and no
+    rewrite is asked to take it away."""
+    marked = tuple(context.get("markings") or ())
+    if not marked:
+        return ""
+    return (
+        markings_note(marked)
+        + " A finding that reads such markings as text in the picture is a misreading, "
+        "treated by nothing he writes: rate it minor, never brief him to remove the object's "
+        "scale or to leave the object blank; only writing elsewhere is a defect of the "
+        "words.\n"
+    )
 
 
 def _dumps(data: Any) -> str:
@@ -1672,6 +1723,7 @@ def director_brief(
             layers=str(context.get("layers_note") or _LAYERS_OPEN.get(layers, "")),
         )
         + (_SERIAL_BRIEF_NOTE if context.get("serial") else "")
+        + _markings_note(context)
         + lessons_rule(lessons)
         + wrap_in_inert_boundary(_fitted(_data(context, **more), lessons), "scene-brief")
     )
@@ -1889,13 +1941,18 @@ def _is_finding(text: str) -> bool:
     return not any(pattern.search(_norm(text)) for pattern in notes)
 
 
-def hard_limit(text: Any, bible: dict[str, Any] | None) -> bool:
+def hard_limit(text: Any, bible: dict[str, Any] | None, markings: Sequence[str] = ()) -> bool:
     """Whether quality control's words name what the bible's hard limits forbid
     (`HARD_LIMIT_WORDS`; a face, when the bible forbids faces): such a finding is serious
-    whatever a review says (2026-10-12 evening review of a50407e)."""
+    whatever a review says (2026-10-12 evening review of a50407e). Writing alone is not one
+    when the plan names an object that carries its own markings (``markings``,
+    `markings.planned_markings`): a thermometer's scale is the object, and her review rates
+    the finding (the Owner, 2026-10-13)."""
     said = _norm(text)
-    if HARD_LIMIT_WORDS.search(said):
+    if _OTHER_LIMITS.search(said):
         return True
+    if _WRITING_LIMIT.search(said):
+        return not markings
     return bool(lint.bible_face_rule(bible or {})) and bool(_FACE_WORDS.search(said))
 
 
@@ -2017,6 +2074,9 @@ def review_rewrite(
     }
     if context.get("serial"):
         data["serial_shot"] = _serial_shot(context)
+    if context.get("markings"):
+        # The plan's objects that carry their own markings (`_markings_note`).
+        data["planned_markings"] = list(context["markings"])
     if earlier:
         data["your_earlier_review"] = {
             "verdict": earlier.get("verdict"),
@@ -2032,14 +2092,20 @@ def review_rewrite(
             lesson_chars=LESSON_CHARS_ASKED,
         )
         + (_SECOND_REVIEW_NOTE if earlier else "")
+        + _markings_note(context)
         + lessons_rule(lessons)
         + (_REVIEW_LESSONS_NOTE if lessons else "")
         + wrap_in_inert_boundary(_fitted(data, lessons), "rewrite-review")
     )
     editable = tuple(terms["fields_he_may_change"])
     # Serious whatever she says: the bible's hard limits, and what her earlier review in this
-    # rung found serious (2026-10-12 evening review of a50407e).
-    serious = {int(item["id"]) for item in qc if hard_limit(item.get("qc_text"), context["bible"])}
+    # rung found serious (2026-10-12 evening review of a50407e). Writing on an object the plan
+    # asks for with its own markings is not one (2026-10-13).
+    serious = {
+        int(item["id"])
+        for item in qc
+        if hard_limit(item.get("qc_text"), context["bible"], context.get("markings") or ())
+    }
     serious |= {
         int(item.get("id") or 0)
         for item in (earlier or {}).get("findings") or []

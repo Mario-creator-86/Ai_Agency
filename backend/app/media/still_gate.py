@@ -176,6 +176,7 @@ from app.media.fix_check import (
     fix_status,
     minor_traces,
 )
+from app.media.markings import markings_ro, named
 from app.media.picture_qc import StillJudgement, judge_still
 from app.media.qc import PANEL_BAND_SHARE, flat_band, still_is_degenerate
 from app.media.toolchain import find_ffmpeg
@@ -331,6 +332,11 @@ class StillPlan:
     #: persists is refused (`decide`, ``finding_persists``). Clip QC reads the motion layer's
     #: items from the same field of its own plan (`assembler._clip_plan`).
     must_fix: tuple[dict[str, Any], ...] = ()
+    #: The objects the plan names that carry their own markings (`markings.planned_markings`;
+    #: the Owner, 2026-10-13, the Kelvin film's thermometer refused for its digits): the look
+    #: is told their scale is not writing, and a writing refusal of such a still is the
+    #: Director's to overturn (`may_be_overturned`), never a hard limit of the bible.
+    expected_markings: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -367,6 +373,8 @@ class StillReport:
     #: The items whose trace the look called minor: accepted, carried as a warning on the take
     #: (`fix_check.record_take_note`) and on the stills step's entry.
     minor: tuple[dict[str, str], ...] = ()
+    #: The plan's objects that carry their own markings (`StillPlan.expected_markings`).
+    expected_markings: tuple[str, ...] = ()
 
     @property
     def matched_plan(self) -> bool:
@@ -1088,7 +1096,17 @@ def decide(
                 )
                 violations.append("faces")
         if verdict.readable_text:
-            vision_reasons.append(f"Modelul de vedere a văzut text lizibil în imagine {said}")
+            marked = tuple(getattr(plan, "expected_markings", ()) or ())
+            if marked:
+                # The plan asks for an object with its own scale: the look was told so, and
+                # what it still reads as writing is the Director's to judge (2026-10-13).
+                vision_reasons.append(
+                    f"Modelul de vedere a văzut text lizibil în imagine, deși planul cere "
+                    f"{markings_ro(marked)}, care își poartă scala; Directoarea decide dacă "
+                    f"scrisul e al obiectului {said}"
+                )
+            else:
+                vision_reasons.append(f"Modelul de vedere a văzut text lizibil în imagine {said}")
             violations.append("readable_text")
         if not verdict.one_picture:
             # 2026-10-09: scene 5's triptych of three similar tunnels had no flat band to
@@ -1148,6 +1166,7 @@ def decide(
         measured=measured,
         fixes=tuple(fixes),
         minor=tuple(minor_traces(fixes)),
+        expected_markings=tuple(getattr(plan, "expected_markings", ()) or ()),
     )
 
 
@@ -1199,19 +1218,34 @@ def may_be_overturned(report: StillReport) -> bool:
     is bought for its scene: a refusal the gate measured whole (nothing unmeasured) whose
     reasons are a reading — the plan, the scene, the look, the technique, a corrected mistake
     seen again — and none of the bible's hard limits (`fix_check.HARD_LIMITS`: a face where
-    faces are forbidden, writing, panels, a blank field), which stay the code's."""
+    faces are forbidden, writing, panels, a blank field), which stay the code's. Writing on a
+    still whose plan asks for an object with its own markings (``expected_markings``) is a
+    reading, hers: a thermometer's scale is not the bible's writing (2026-10-13)."""
+    hard = set(report.violations) & HARD_LIMITS
+    if report.expected_markings:
+        hard.discard("readable_text")
     return (
         report.decision == "BLOCKED"
         and bool(report.violations)
         and not report.unmeasured
-        and not set(report.violations) & HARD_LIMITS
+        and not hard
         and report.outcome != "compose_locally"
     )
 
 
-def positive_instruction(violations: Iterable[str]) -> str:
-    """The violations rewritten as words the image model obeys (English, for the model)."""
-    words = [POSITIVE_WORDS[code] for code in dict.fromkeys(violations) if code in POSITIVE_WORDS]
+def positive_instruction(violations: Iterable[str], markings: Sequence[str] = ()) -> str:
+    """The violations rewritten as words the image model obeys (English, for the model). A
+    writing violation on a plan that asks for an object with its own markings (``markings``)
+    keeps that object's scale and asks every other surface plain (2026-10-13)."""
+    words: list[str] = []
+    for code in dict.fromkeys(violations):
+        if code == "readable_text" and markings:
+            words.append(
+                f"only {named(markings)}'s own scale and markings, every other surface plain "
+                "and unmarked, signs left blank"
+            )
+        elif code in POSITIVE_WORDS:
+            words.append(POSITIVE_WORDS[code])
     return "; ".join(words)
 
 
@@ -1280,7 +1314,7 @@ def next_step(report: StillReport, *, rerolls_done: int, words_correct: bool = F
     if rerolls_done < MAX_REROLLS:
         return NextStep(
             "reroll",
-            positive_instruction(report.violations),
+            positive_instruction(report.violations, report.expected_markings),
             f"Scena {report.scene}: imaginea se reface ({rerolls_done + 1}/{MAX_REROLLS}): {first}",
         )
     return NextStep(

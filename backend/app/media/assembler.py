@@ -10216,6 +10216,7 @@ def _clip_plan(
     a factual film and the composed beat for the serial (`stills_stage._scene_picture`), never
     the compiled still prompt that ``visual_prompt`` holds."""
     from app.media import stills_stage as stills  # noqa: PLC0415 - stills_stage imports us
+    from app.media.markings import planned_markings  # noqa: PLC0415
     from app.media.prompt_lint import bible_face_rule  # noqa: PLC0415
     from app.media.still_gate import StillPlan  # noqa: PLC0415
 
@@ -10225,6 +10226,7 @@ def _clip_plan(
     asked = intent.get("camera_move") if isinstance(intent, dict) else None
     look = str(package.get("look_block") or "")
     words = " ".join(str(package.get("still_prompt") or scene.get("visual_prompt") or "").split())
+    picture = stills._scene_picture(package, str(scene.get("visual_prompt") or ""), words)
     return StillPlan(
         scene=int(scene["scene_index"]),
         still_prompt=words,
@@ -10233,12 +10235,15 @@ def _clip_plan(
         bible_rules=stills._bible_rules(bible),
         look_block=look,
         palette_words=stills._palette_words(look),
-        scene_picture=stills._scene_picture(package, str(scene.get("visual_prompt") or ""), words),
+        scene_picture=picture,
         narration=" ".join(
             str(scene.get("voiceover_segment") or scene.get("narration") or "").split()
         ),
         purpose=str(scene.get("story_purpose") or ""),
         must_fix=tuple(must_fix),
+        # A thermometer's scale is not writing: the look is told, and her look may overturn
+        # a writing refusal of such a clip (`qc.look_may_overturn`, 2026-10-13).
+        expected_markings=planned_markings(words, picture),
     )
 
 
@@ -10332,6 +10337,7 @@ def _check_shot(
             face_counter=face_counter,
             judge=judge,
             **({"must_fix": plan.must_fix} if plan.must_fix else {}),
+            **({"expected_markings": plan.expected_markings} if plan.expected_markings else {}),
         )
 
     checked_takes: list[str] = [take_id]
