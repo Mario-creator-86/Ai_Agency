@@ -14,6 +14,7 @@ from app.agents.models import Agent, AgentMessage, ModelRecord, Role
 from app.agents.services import seed_initial_workforce
 from app.media.assembler import SCENE_PROMPTS_REWRITTEN_EVENT, motion_plan
 from app.media.models import SceneTake, StoryboardScene
+from app.media.prompt_agent import motion_prompt_for
 from app.media.scene_rewrite import (
     BRIEF_EVENT,
     MOTION,
@@ -290,7 +291,11 @@ def test_her_brief_rewrites_the_motion_and_the_shot_is_bought_again_and_passes(
         clip_check=ScriptedCheck("PASSED"),
     )
     assert models.posts() == posted + 1
-    assert spy.asked[-1]["prompt"] != spy.asked[0]["prompt"]
+    # The words sent are the rewritten package as rendered, not merely other words
+    # (2026-10-13): a retry's firmer prompt or a stale intent would also differ.
+    expected, _negative = motion_prompt_for(after.prompt_json, "seedance2_5", None)
+    assert spy.asked[-1]["prompt"] == expected
+    assert "from left to right" in expected and "from left to right" not in spy.asked[0]["prompt"]
     (entry,) = summary["scenes"]
     assert entry["status"] == "PAID"
 

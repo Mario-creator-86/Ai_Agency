@@ -48,6 +48,7 @@ from app.db import lock_for_write
 from app.factual.editorial import dangles
 from app.factual.models import FactualClaim
 from app.media.cards import film_finish
+from app.media.markings import planned_markings
 from app.media.models import (
     MediaAsset,
     QualityControlReport,
@@ -2219,8 +2220,13 @@ def check_clip(
     judge: Callable[[list[Path]], Any] | None = None,
     work_dir: Path | None = None,
     must_fix: Sequence[Mapping[str, Any]] = (),
+    expected_markings: Sequence[str] = (),
 ) -> ClipReport:
     """Measure one bought clip before it is cut into the film, at 0 credits.
+
+    ``expected_markings`` (2026-10-13): the plan's objects that carry their own markings
+    (`still_gate.StillPlan.expected_markings`), kept on ``measured["picture"]`` so that a
+    writing refusal of such a clip is the Director's to overturn (`look_may_overturn`).
 
     - motion: mean YDIF at 540 px against the floor of its camera move (`motion_check`);
     - cuts: a hard cut inside the clip fails it (`cut_spikes`);
@@ -2307,6 +2313,8 @@ def check_clip(
             }
             if fixes:
                 measured["picture"]["fixes"] = fixes
+            if expected_markings:
+                measured["picture"]["planned_markings"] = [str(n) for n in expected_markings]
     finally:
         if owned:
             shutil.rmtree(folder, ignore_errors=True)
@@ -2642,7 +2650,11 @@ def look_may_overturn(report: ClipReport) -> bool:
     picture = (report.measured or {}).get("picture") or {}
     flags = picture.get("verdict") if isinstance(picture, dict) else None
     flags = flags if isinstance(flags, dict) else {}
-    if flags.get("readable_text") or flags.get("one_picture") is False:
+    if flags.get("one_picture") is False:
+        return False
+    # Writing on a clip whose plan asks for an object with its own markings (a thermometer's
+    # scale, ``planned_markings``) is a reading, hers to judge (2026-10-13).
+    if flags.get("readable_text") and not picture.get("planned_markings"):
         return False
     faces = next((item for item in report.checks if item.code == "faces"), None)
     forbidden = faces is not None and faces.status != "NOT_APPLICABLE"
@@ -3756,6 +3768,9 @@ def span_picture_qc(
                         faces_forbidden=faces_forbidden,
                         bible_rules=rules,
                         look_block=str(asked.get("look_block") or ""),
+                        # A thermometer's scale is not writing (2026-10-13): the look is
+                        # told, and her second look at the scene may overturn the reading.
+                        expected_markings=planned_markings(asked.get("still_prompt")),
                     )
                     judgement = judge([path for _at, _moment, path in looked_at], plan)
                 picture = _picture_check(judgement, faces_forbidden=faces_forbidden)

@@ -5071,6 +5071,62 @@ def _still_newer_than_film(session: Session, storyboard_id: str, scene: int, ass
     return str(approved.id) != in_film.get("still")
 
 
+def _corrected_for_film(
+    session: Session, storyboard_id: str, scene: int, asset_id: str
+) -> dict[str, Any] | None:
+    """The scene's words as the Director's ladder corrected them for the failed film
+    ``asset_id`` and nobody bought on yet: her newest ``media.prompts_rewritten`` for the
+    scene, written after the film was rendered and after every take of the scene — {"layer",
+    "event_id"}; None when there is none (nothing corrected for this film, or a take bought on
+    the correction since).
+
+    2026-10-13: a paid redo under his ask-me rule is corrected first (`_correct_before_redo`)
+    and then asked, his yes bound to the corrected plan; the walk that resumed after his yes
+    corrected the scene AGAIN before spending it — the same words came back and the redo was
+    refused PROMPT_NOT_CORRECTED, or new words made a new plan and he was asked again — so the
+    redo he approved was never bought. On the resume, words corrected for this film and not
+    bought yet are the words his yes was asked on: neither her look nor his rewrite is asked
+    again before it is spent (`_apply_repairs`)."""
+    from app.media.assembler import SCENE_PROMPTS_REWRITTEN_EVENT  # noqa: PLC0415
+    from app.media.models import SceneTake  # noqa: PLC0415
+    from app.media.scene_rewrite import DECIDED_BY, REWRITE_REASON, _after  # noqa: PLC0415
+
+    film = session.get(MediaAsset, asset_id) if asset_id else None
+    if film is None:
+        return None
+    newest_take = session.scalar(
+        select(SceneTake.created_at)
+        .where(SceneTake.storyboard_id == storyboard_id, SceneTake.scene_number == scene)
+        .order_by(SceneTake.created_at.desc())
+        .limit(1)
+    )
+    floor = str(film.created_at or "")
+    if newest_take and _after(newest_take, floor):
+        floor = str(newest_take)
+    for event in session.scalars(
+        select(DomainEvent)
+        .where(
+            DomainEvent.event_type == SCENE_PROMPTS_REWRITTEN_EVENT,
+            DomainEvent.aggregate_id == storyboard_id,
+        )
+        .order_by(DomainEvent.sequence.desc())
+    ):
+        payload = event.payload if isinstance(event.payload, dict) else {}
+        if payload.get("scene_index") != scene:
+            continue
+        # Only her brief's rewrite (`scene_rewrite.REWRITE_REASON`): the serial's
+        # recomposition and its technical re-roll write the same event as the Director's,
+        # on words that may not have changed (the Codex review of c6dc05c).
+        if (
+            payload.get("decided_by") != DECIDED_BY
+            or payload.get("reason") != REWRITE_REASON
+            or not _after(event.timestamp, floor)
+        ):
+            return None
+        return {"layer": payload.get("layer"), "event_id": str(event.event_id)}
+    return None
+
+
 def _correct_before_redo(
     engine: Engine,
     registry: ProviderRegistry | None,
@@ -5558,7 +5614,16 @@ def _apply_repairs(
     nothing for the scene: it is listed in ``result['overturned']`` with her reason, the takes
     and the carry key of the picture it was about, and her next reading counts its findings as
     settled (`picture_qc.earlier_acceptances`). Her look confirming it adds her words to what
-    the rewrite before the purchase reads; no look (no model, no frames) changes nothing."""
+    the rewrite before the purchase reads; no look (no model, no frames) changes nothing.
+
+    Money spent again on a layer the film already paid for once (a second still, a second
+    clip of the scene) passes the Accountant after the correction and before the purchase
+    (`economy.repurchase_gate.before_paid_redo`, the Owner's rule of 2026-10-13): her refusal
+    is discussed with the Director, who insists (bought, both opinions recorded), accepts the
+    defect as minor (listed ``overturned``, like her look) or closes the scene (held, in
+    ``result['refused']``); no verdict holds the scene for the next try. The first purchase of
+    a layer, a redo his ceiling or the day's budget refuses, and a resumed walk on a plan they
+    already decided are not asked of her."""
     from app.media import director_qc  # noqa: PLC0415 - media imports runbook
     from app.media.assembler import (  # noqa: PLC0415 - media imports runbook
         SceneRedoRefused,
@@ -5627,6 +5692,7 @@ def _apply_repairs(
         propose_redo_cap_card,
         redo_allowance,
     )
+    from app.economy import repurchase_gate  # noqa: PLC0415 - economy imports media
 
     with Session(engine) as session:
         allowed_more = redo_allowance(session, storyboard_id)
@@ -5663,7 +5729,18 @@ def _apply_repairs(
                 {"scene_index": scene, "per_scene": per_scene, "per_film": per_film}
             )
             continue
+        corrected = None
         if continues is None:
+            with Session(engine) as session:
+                corrected = _corrected_for_film(session, storyboard_id, scene, asset_id)
+        if corrected is not None:
+            # The words his yes was asked on (2026-10-13, `_corrected_for_film`): the walk
+            # that resumes after it neither looks nor corrects again before spending it. A
+            # correction that turned to the picture buys the still and its motion, as the
+            # first walk did.
+            if corrected.get("layer") == "still" and "still" not in paid[scene]:
+                paid[scene].insert(0, "still")
+        elif continues is None:
             # She looks at the scene once more before anything is bought for it (2026-10-12):
             # free, and the purchase is not. The motion that continues a new still was looked
             # at with that still.
@@ -5732,6 +5809,32 @@ def _apply_repairs(
                         "refacere nepornită de tine nu o retrage.",
                     )
                 replacing = sorted(retiring & his_all)
+                # Money spent again on a layer this film already paid for passes the Accountant
+                # first, and her refusal is discussed with the Director (the Owner, 2026-10-13:
+                # «Nadia și Sarah discută … ei să hotărască»; `economy.repurchase_gate`). A
+                # hold raises the redo's refusal; her ACCEPT_MINOR comes back as a look that
+                # buys nothing; what they agreed, or decided for this plan before, buys below.
+                accepted = repurchase_gate.before_paid_redo(
+                    engine,
+                    registry,
+                    settings,
+                    reading,
+                    proposals,
+                    scene,
+                    kind,
+                    plan,
+                    rounds=rounds,
+                    per_scene=per_scene,
+                    per_film=per_film,
+                    environment=environment,
+                    measured=_measured_serious_scene(reading, scene),
+                    correlation=correlation,
+                )
+                if accepted is not None:
+                    result.setdefault("overturned", []).append(
+                        _overturned_entry(engine, reading, scene, paid[scene], accepted)
+                    )
+                    break
                 done = redo_scene(
                     engine,
                     storyboard_id,

@@ -31,6 +31,14 @@ money, because rewriting text costs nothing and re-filming a shot costs dollars.
   Every version read is an `editorial.judged` event; the chosen version's scores stay on its
   story_json (`editorial`) for the weekly review, and a version it supersedes is marked so,
   owing the room nothing more (`runbook.stages.script_work`).
+
+- **Her letter reaches the writer** (2026-10-13, the Owner: «Directorul comunică cu fiecare
+  și poate întoarce către el indicații noi?»): a REVISE or REJECT used to be posted to her
+  own inbox, where the Scriptwriter never read it. It is now a REQUEST_REVIEW addressed to
+  him, with her retention row and the span where she loses the viewer in its words
+  (`letter_to_writer`); it enters his every run until a later draft of the story passes and
+  `_settle_writer_letters` resolves it. When a story ships, what it scored and her last note
+  become one AGENT_OPINION on his memory (`remember_shipped_story`).
 """
 
 from __future__ import annotations
@@ -45,17 +53,26 @@ from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
 from app.agents.editorial_judgement import (
+    CRITERION_KEYS,
     FACTUAL_SHORT,
+    MAX_SCORE,
+    EditorialOutcome,
     Version,
     editorial_loop,
     letter_to_owner,
     record_rounds,
 )
-from app.agents.identity import parse_structured
-from app.agents.memory import agent_for_role
-from app.agents.messages import post_message
+from app.agents.identity import cut_at_word, parse_structured
+from app.agents.memory import agent_for_role, remember
+from app.agents.messages import post_message, resolve_message
+from app.agents.models import AgentMessage
 from app.agents.services import run_agent_task
-from app.factual.agent_pipeline import NoVerifiedClaims, ScriptRejected, agent_write_script
+from app.factual.agent_pipeline import (
+    PREFERRED_WRITER_ROLE,
+    NoVerifiedClaims,
+    ScriptRejected,
+    agent_write_script,
+)
 from app.factual.editorial import expected_seconds, failed, revision_notes, story_checks
 from app.factual.grounding import grounding_check, script_grounding
 from app.factual.models import ScriptDraft, StoryReview
@@ -221,6 +238,78 @@ def stalled_rounds(history: list[StoryReview]) -> int:
     return stalled
 
 
+def retention_sentence(retention: dict[str, Any]) -> str:
+    """Her retention row as a sentence the writer reads: «Reținerea la care se așteaptă
+    Directorul: 100% la 0 s, 70% la 3 s, 40% la final; pierde publicul la 3-9: …». A mark she
+    left at 0 is not said (the row's default is 0 for a mark she did not give); empty when no
+    model answered and the row is empty."""
+    marks = []
+    for mark in MARKS:
+        value = retention.get(f"at_{mark}")
+        if not isinstance(value, int | float) or isinstance(value, bool):
+            continue
+        if value <= 0 and mark != "0":
+            continue
+        marks.append(f"{int(value)}% la {'final' if mark == 'end' else f'{mark} s'}")
+    if not marks:
+        return ""
+    said = "Reținerea la care se așteaptă Directorul: " + ", ".join(marks)
+    span = " ".join(str(retention.get("collapse_at") or "").split())
+    why = " ".join(str(retention.get("why") or "").split())
+    if span:
+        said += f"; pierde publicul la {span}" + (f": {why}" if why else "")
+    elif why:
+        said += f"; {why}"
+    return said + "."
+
+
+def letter_to_writer(verdict: str, notes: list[str], retention: dict[str, Any]) -> str:
+    """The words of her letter to the Scriptwriter: the verdict, her notes, and where she
+    expects to lose the viewer (`retention_sentence`), so the next draft is written to the
+    row she judged against, not only to the notes."""
+    words = (
+        f"Scenariul nu poate intra în producție așa cum e ({review_verdict(verdict)}). "
+        + " ".join(str(note) for note in notes[:6])
+    ).strip()
+    expected = retention_sentence(retention)
+    return f"{words} {expected}".strip() if expected else words
+
+
+def _settle_writer_letters(
+    session: Session,
+    *,
+    writer_id: str | None,
+    topic_id: str | None,
+    script_id: str,
+    resolved_by: str,
+    correlation_id: str,
+) -> int:
+    """The story-review letters still open on the writer's desk for this topic, resolved now
+    that a draft of it passed: what they asked for is done, and a letter left open would sit
+    in his every prompt beside the next story's. Returns how many were resolved."""
+    if writer_id is None or not topic_id:
+        return 0
+    rows = session.scalars(
+        select(AgentMessage).where(
+            AgentMessage.to_agent_id == writer_id, AgentMessage.status == "OPEN"
+        )
+    ).all()
+    settled = 0
+    for row in rows:
+        body = row.body_json if isinstance(row.body_json, dict) else {}
+        if body.get("kind") != "story_review" or body.get("topic_id") != topic_id:
+            continue
+        resolve_message(
+            session,
+            row.id,
+            resolution=f"Versiunea {script_id[:8]} a trecut recenzia de poveste.",
+            resolved_by=resolved_by,
+            correlation_id=correlation_id,
+        )
+        settled += 1
+    return settled
+
+
 def _script_facts(session: Session, script: ScriptDraft) -> dict[str, Any]:
     """Everything the review reads, from the rows the studio already has."""
     from app.factual.models import FactualClaim, TopicIdea  # noqa: PLC0415
@@ -379,6 +468,12 @@ def review_story(
         exchange = len(history) + 1
         reviewer = agent_for_role(session, REVIEWER_ROLE)
         reviewer_id = reviewer.id if reviewer else None
+        reviewer_name = reviewer.display_name if reviewer else REVIEWER_ROLE
+        # The writer her letter goes to (2026-10-13): the one who holds the role, as
+        # `agent_write_script` resolves him; without one, her inbox, as before.
+        writer = agent_for_role(session, PREFERRED_WRITER_ROLE)
+        writer_id = writer.id if writer else None
+        topic_id = script.topic_id
         # What she said the last time she read this story, so this reading continues the
         # conversation instead of starting a new one.
         previous = None
@@ -509,18 +604,38 @@ def review_story(
                 event_id=event.event_id,
             )
         )
-        if verdict != "PASS" and reviewer_id is not None:
+        if verdict == "PASS":
+            _settle_writer_letters(
+                session,
+                writer_id=writer_id,
+                topic_id=topic_id,
+                script_id=script_id,
+                resolved_by=reviewer_name,
+                correlation_id=correlation,
+            )
+        elif reviewer_id is not None:
+            # Her letter goes to the writer (2026-10-13, the Owner: «Directorul comunică cu
+            # fiecare și poate întoarce către el indicații noi?»). It was posted to her own
+            # inbox (`to_agent_id=None`), so the one employee who had to act on it never read
+            # it in his prompt; the retention row she judged against was stored and never
+            # told. A REQUEST_REVIEW addressed to him enters his every run
+            # (`identity._open_messages`) until a later draft of this story passes.
             post_message(
                 session,
-                intent="CHALLENGE" if verdict == "REJECT" else "REQUEST_REVIEW",
+                intent="REQUEST_REVIEW",
                 subject=f"Povestea «{facts['title'][:60]}»: {review_verdict(verdict)}",
-                body={"kind": "story_review", "verdict": verdict, "failed": broken[:6]},
-                body_text=(
-                    "Scenariul nu poate intra în producție așa cum e "
-                    f"({review_verdict(verdict)}). " + " ".join(notes[:6])
-                ),
+                body={
+                    "kind": "story_review",
+                    "verdict": verdict,
+                    "failed": broken[:6],
+                    "topic_id": topic_id,
+                    "script_id": script_id,
+                    "exchange": exchange,
+                    "retention": retention,
+                },
+                body_text=letter_to_writer(verdict, notes, retention),
                 from_agent_id=reviewer_id,
-                to_agent_id=None,
+                to_agent_id=writer_id,
                 correlation_id=correlation,
             )
     logger.info(
@@ -742,6 +857,51 @@ def _version_of_script(
     )
 
 
+def remember_shipped_story(
+    session: Session, outcome: EditorialOutcome, *, title: str, writer_id: str
+) -> None:
+    """One AGENT_OPINION on the writer's own memory when a story ships (2026-10-13): the
+    title, how many versions she read, what the shipped one scored, and her last note — her
+    KEEP / CHANGE / AVOID after the last version she sent back, else her reasons on the two
+    weakest criteria of the one that shipped. The weekly review measures the film later; this
+    is what he can learn before any measurement, among the records his next run recalls."""
+    shipped = outcome.shipped
+    judged = shipped.judgement
+    if judged is None:
+        said = f"a plecat nejudecată ({outcome.stopped})"
+    else:
+        scored = ", ".join(f"{key} {judged.scores[key]}" for key in CRITERION_KEYS)
+        said = f"a plecat versiunea {shipped.number} cu {judged.total}/50 ({scored})" + (
+            "" if outcome.passed else ", sub prag"
+        )
+    briefed = next(
+        (item for item in reversed(outcome.rounds) if item.brief and item.judgement), None
+    )
+    if briefed is not None and briefed.judgement is not None:
+        note = " ".join(briefed.judgement.answer.brief.words().split())
+    elif judged is not None:
+        reasons = judged.answer.reasons()
+        note = "; ".join(
+            f"{key} ({judged.scores[key]}/{MAX_SCORE}): {reasons[key]}"
+            for key in judged.weakest
+            if reasons.get(key)
+        )
+    else:
+        note = ""
+    remember(
+        session,
+        memory_class="AGENT_OPINION",
+        content=(
+            f"Povestea «{title[:80]}»: "
+            f"{count(len(outcome.rounds), 'versiune citită', 'versiuni citite')} de Director; "
+            f"{said}. Ultima ei notă: {cut_at_word(note, 300) or 'niciuna'}"
+        ),
+        source_type="run" if judged is not None and judged.run_id else "system",
+        source_id=judged.run_id if judged is not None and judged.run_id else shipped.version.id,
+        agent_id=writer_id,
+    )
+
+
 def judged_story(
     engine: Engine,
     registry: Any,
@@ -842,6 +1002,11 @@ def judged_story(
             director_id=director_id,
             correlation_id=correlation,
         )
+        writer = agent_for_role(session, PREFERRED_WRITER_ROLE)
+        if writer is not None:
+            remember_shipped_story(
+                session, outcome, title=shipped.version.title, writer_id=writer.id
+            )
     return {
         "script_id": shipped_id,
         "review": reviews.get(shipped_id, passed),

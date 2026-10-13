@@ -157,6 +157,7 @@ from app.media.cost_plan import (
 from app.media.disk import LOW_DISK, disk_refusal
 from app.media.faces import FaceCounter
 from app.media.fix_check import STILL_LAYER, open_findings
+from app.media.markings import planned_markings
 from app.media.mode_guard import PurchaseGuard, unasked_refusal
 from app.media.models import SceneTake, Storyboard, StoryboardScene
 from app.media.picture_qc import StillJudgement, judge_still
@@ -244,10 +245,25 @@ def _bible_bans_faces(bible: Mapping[str, Any] | None) -> bool:
     return any(BIBLE_NO_FACES.search(text) for text in texts)
 
 
-def still_negative(package: Mapping[str, Any] | None, bible: Mapping[str, Any] | None) -> str:
-    """The negative prompt of one still: `STILL_NEGATIVE`, the faces when the bible forbids
-    them, then the plan's own `avoid` items, each once, within `NEGATIVE_CHARS`."""
-    terms: list[str] = list(STILL_NEGATIVE)
+#: Of `STILL_NEGATIVE`, the terms a scene whose plan names an object with its own markings
+#: leaves out (`markings.planned_markings`, 2026-10-13): a negative channel told «text,
+#: lettering» beside «the thermometer keeps its scale» draws a blank instrument. Captions,
+#: subtitles, a logo and a watermark stay out of every still.
+_MARKED_OBJECT_KEEPS: frozenset[str] = frozenset({"text", "lettering"})
+
+
+def still_negative(
+    package: Mapping[str, Any] | None,
+    bible: Mapping[str, Any] | None,
+    markings: Sequence[str] = (),
+) -> str:
+    """The negative prompt of one still: `STILL_NEGATIVE` (without «text» and «lettering»
+    when the plan names an object that carries its own markings, ``markings``), the faces
+    when the bible forbids them, then the plan's own `avoid` items, each once, within
+    `NEGATIVE_CHARS`."""
+    terms: list[str] = [
+        term for term in STILL_NEGATIVE if not (markings and term in _MARKED_OBJECT_KEEPS)
+    ]
     if _bible_bans_faces(bible):
         terms += STILL_NEGATIVE_FACES
     avoid = (package or {}).get("avoid")
@@ -375,6 +391,9 @@ class _Scene:
     #: What the scene's current words were rewritten to fix (`fix_check.open_findings`), for
     #: the gate to verify on every still bought for it (`still_gate.StillPlan.must_fix`).
     must_fix: tuple[dict[str, str], ...] = ()
+    #: The plan's objects that carry their own markings (`markings.planned_markings`), for the
+    #: gate (`still_gate.StillPlan.expected_markings`): a thermometer's scale is not writing.
+    expected_markings: tuple[str, ...] = ()
 
 
 @dataclass
@@ -483,6 +502,7 @@ def _still_plan(scene: _Scene, *, faces_forbidden: bool, rules: tuple[str, ...])
         narration=scene.narration,
         purpose=scene.purpose,
         must_fix=scene.must_fix,
+        expected_markings=scene.expected_markings,
     )
 
 
@@ -533,6 +553,8 @@ def _read_scenes(engine: Engine, storyboard_id: str) -> tuple[dict[str, Any], li
                 except ReferenceRequired as exc:
                     missing = str(exc)
             identity = still_fields(visual, reference)
+            picture = _scene_picture(package, visual, words, serial=serial)
+            marked = planned_markings(words, picture)
             scene = _Scene(
                 index=int(row.scene_index),
                 kind=kind,
@@ -543,10 +565,11 @@ def _read_scenes(engine: Engine, storyboard_id: str) -> tuple[dict[str, Any], li
                 source=package.get("source") if isinstance(package.get("source"), str) else None,
                 reference=reference,
                 needs_reference=missing,
-                negative=still_negative(package, bible),
-                picture=_scene_picture(package, visual, words, serial=serial),
+                negative=still_negative(package, bible, marked),
+                picture=picture,
                 narration=" ".join(str(row.voiceover_segment or "").split()),
                 purpose=str(row.story_purpose or ""),
+                expected_markings=marked,
             )
             if kind == LIVE_KIND:
                 # The picture's open items only: a finding treated in the motion's words is
