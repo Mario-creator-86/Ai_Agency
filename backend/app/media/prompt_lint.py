@@ -104,6 +104,130 @@ SHOT_SIZE = re.compile(
     re.IGNORECASE,
 )
 
+# A still is one frozen moment: a camera move, a tempo or a span of the clip's seconds is
+# the motion prompt's and has no place in the picture's words (the Owner, 2026-10-13: «în
+# promptul de imagine nu are ce să caute indicații de mișcare»). The compiler leaves them out
+# of the still (`prompt_agent._clauses_of`: a clause that moves the camera is dropped, a tempo
+# is taken out of its clause) and `lint_still_prompt` says when a stored still prompt still
+# carries one (STILL_MOTION).
+#: A tempo or a span of the clip inside a clause: taken out of the still's words.
+STILL_TEMPO = re.compile(
+    r"\b(?:slowly|steadily|gradually|gently|smoothly|quickly|rapidly|swiftly|briskly"
+    r"|continuously|unhurriedly|over\s+the\s+(?:clip|shot)(?:'s)?(?:\s+seconds)?"
+    r"|throughout\s+the\s+(?:clip|shot)|for\s+the\s+whole\s+(?:clip|shot)"
+    r"|across\s+the\s+(?:whole\s+)?(?:clip|shot)|over\s+\d+\s+seconds?"
+    r"|as\s+the\s+(?:clip|shot)\s+(?:goes\s+on|runs|ends)"
+    r"|by\s+the\s+end\s+of\s+the\s+(?:clip|shot)|from\s+the\s+first\s+frame\s+to\s+the\s+last"
+    r"|frame\s+by\s+frame|second\s+by\s+second)\b",
+    re.IGNORECASE,
+)
+#: The camera itself as the subject of a verb of movement: the whole clause is the motion's.
+#: Only the camera, the lens and a drone: «the frame holds only the place and the things
+#: named» (`prompt_agent.NO_PEOPLE_SENTENCE`) is a composition, and «the shot shows» a
+#: picture; and only verbs that move it — a camera that «holds» or «stays» is a still.
+CAMERA_MOVING = re.compile(
+    r"\b(?:the\s+)?(?:camera|lens|drone)\s+"
+    r"(?:(?:slowly|gently|steadily|smoothly|then)\s+)?"
+    r"(?:moves?|moving|glides?|gliding|push(?:es|ing)|pulls?|pulling|tracks?|tracking"
+    r"|follows?|following|circles?|circling|orbits?|orbiting|rises?|rising|descends?"
+    r"|descending|sweeps?|sweeping|drifts?|drifting|pans?|panning|tilts?|tilting|zooms?"
+    r"|zooming|cranes?|craning|arcs?|arcing|travels?|travell?ing|swings?|swinging|creeps?"
+    r"|creeping|floats?|floating|clos(?:es|ing)\s+in|eases?\s+(?:in|out|closer|back)"
+    r"|easing\s+(?:in|out|closer|back))\b",
+    re.IGNORECASE,
+)
+#: The named moves a still prompt may say without moving anything: a locked camera is a
+#: composition, a handheld look is grain.
+_STILL_MAY_NAME = frozenset({"static", "handheld drift"})
+#: Where a named move is the camera's and not the subject's own: the clause names the camera
+#: or its stand-ins, or the move is said in the cinema's own words. «Earth orbits the Sun»
+#: and «she pulls back the curtain» are the subject's moment and stay (the Codex review of
+#: c6dc05c, 2026-10-13: a bare «orbits» emptied an astronomy scene's still).
+_CAMERA_CONTEXT = re.compile(
+    r"\b(?:camera|lens|shot|frame|framing|view|viewpoint|drone|pov|point\s+of\s+view)\b",
+    re.IGNORECASE,
+)
+_CAMERA_ONLY_MOVE = re.compile(
+    r"\b(?:doll(?:y|ies|ying)|crane(?:s|ing)?|pedestal|boom(?:s|ing)?\s+(?:up|down)"
+    r"|track(?:s|ing)?\s+(?:shot\s+)?(?:to\s+the\s+)?(?:left|right)|truck(?:s|ing)?"
+    r"|pan(?:s|ning)?\s+(?:left|right)|push[- ]in|pull[- ](?:back|out)|aerial\s+drift"
+    r"|rack[- ]focus|focus\s+(?:racks?|pulls?|pulling)|pull(?:s|ing)?\s+focus|zoom\w*)\b",
+    re.IGNORECASE,
+)
+
+
+def _camera_moves_in(text: str) -> list[tuple[int, str]]:
+    """(start, words) of each named move in ``text`` that is the camera's: not a locked camera
+    or a handheld look (`_STILL_MAY_NAME`), and either said beside the camera
+    (`_CAMERA_CONTEXT`) or in the cinema's own words (`_CAMERA_ONLY_MOVE`)."""
+    lowered = text.lower()
+    beside_the_camera = bool(_CAMERA_CONTEXT.search(text))
+    found: list[tuple[int, str]] = []
+    for move, written in camera_moves(text):
+        if move in _STILL_MAY_NAME:
+            continue
+        if not beside_the_camera and not _CAMERA_ONLY_MOVE.search(written):
+            continue
+        at = lowered.find(written.lower())
+        if at >= 0:
+            found.append((at, written))
+    return found
+
+
+def still_motion(text: str) -> str:
+    """The earliest words of a still prompt that move the camera (a named move of the camera,
+    or the camera as the subject of a verb of movement) or give a tempo or a span of the
+    clip, else ""."""
+    found: list[tuple[int, str]] = []
+    for pattern in (CAMERA_MOVING, STILL_TEMPO):
+        match = pattern.search(text)
+        if match:
+            found.append((match.start(), match.group(0).strip()))
+    found += _camera_moves_in(text)
+    return min(found)[1] if found else ""
+
+
+def moves_the_camera(text: str) -> bool:
+    """Whether a clause of a plan field moves the camera (`CAMERA_MOVING`, or a named move
+    that is the camera's, `_camera_moves_in`)."""
+    return bool(CAMERA_MOVING.search(text)) or bool(_camera_moves_in(text))
+
+
+#: What joins a subject's moment to the camera's move in one clause ("the mercury rises as
+#: the camera pushes in"): cut off with the move, the moment stays.
+_BEFORE_CAMERA = re.compile(r"\s*(?:,|;|\b(?:as|while|and|with|then|before|until)\b)\s*$")
+
+
+def static_clause(text: str) -> str:
+    """A clause of a plan field as a still may say it: without the camera's movement. A clause
+    that only moves the camera is "" (the motion prompt's); one that says a moment first
+    ("the mercury rises as the camera pushes in on the scale") keeps the moment ("the mercury
+    rises") when at least two words of it stay whole."""
+    starts = [match.start() for match in CAMERA_MOVING.finditer(text)]
+    starts += [at for at, _written in _camera_moves_in(text)]
+    if not starts:
+        return text
+    first = min(starts)
+    head = _BEFORE_CAMERA.sub("", text[:first]).strip()
+    # The move was named by a subject of its own ("the camera"): the head ends before it.
+    head = re.sub(r"\s*\b(?:the|a|an)\s*$", "", head, flags=re.IGNORECASE).strip(" ,;")
+    if len(head.split()) < 2 or dangling(head):
+        return ""
+    # A head that is only the camera's own name ("the view", "the camera") says no picture.
+    if _CAMERA_CONTEXT.fullmatch(re.sub(r"^(?:the|a|an)\s+", "", head, flags=re.IGNORECASE)):
+        return ""
+    return head
+
+
+def without_tempo(text: str) -> str:
+    """``text`` with its tempo and clip-span words taken out (`STILL_TEMPO`), the spacing and
+    the punctuation closed up: "cloud rolls steadily across the ridges" is "cloud rolls across
+    the ridges"."""
+    said = STILL_TEMPO.sub(" ", text)
+    said = re.sub(r"\s+([,;.!?])", r"\1", re.sub(r"\s{2,}", " ", said))
+    return said.strip()
+
+
 # The tempo a motion prompt must say once. "Smooth", "fluid", "deliberate" and "sweeping"
 # are the cinema's tempo words for an ample move (2026-10-11); "fast" and "quick" stay for a
 # plan that asks for them (production_policy reads "fast" as a fast-motion need).
@@ -861,6 +985,21 @@ def lint_still_prompt(
                 f"Promptul imaginii trimite la altă scenă („{pointer.group(0)}”). Modelul de "
                 "imagine nu știe cum arată „scena N” și poate desena mai multe tablouri "
                 "într-unul; descrieți locul în cuvinte.",
+            )
+        )
+    # WARN, as STILL_SEQUENCE: the compiler keeps movement out of the still (2026-10-13); this
+    # tells the Owner when a stored prompt still carries a camera move, a tempo or a span.
+    moving = still_motion(text)
+    if moving:
+        findings.append(
+            _finding(
+                "STILL_MOTION",
+                WARN,
+                scene,
+                moving,
+                f"Promptul imaginii cere mișcare („{moving}”). O imagine este un singur moment "
+                "nemișcat: mișcarea camerei, tempoul și durata clipului se spun doar în "
+                "promptul de mișcare. Descrieți ce se vede în acel moment.",
             )
         )
 
