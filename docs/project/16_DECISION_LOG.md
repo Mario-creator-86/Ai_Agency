@@ -2,6 +2,32 @@
 
 The source remains local-first, single-owner and loopback-bound. SQLite records, workflow state and committed domain events are authoritative. Durable leases, outbox events, idempotent commands, credentials encryption and Owner STOP/approval/budget rules remain required. The active presentation is the side-view pixel studio; legacy 3D sources remain archival. Treasury and virtual financing are retired from the active interface. Paid vendors are optional existing adapters, never automatic replacements for local integrations. Film QC, research provenance and rights gates remain mandatory. New architectural decisions must document reason, alternatives, compatibility, migration, tests and rollback. The private operational decision history remains only in the original application; this publication summary does not change the indexed normative architecture.
 
+## 2026-10-13 — The Owner's «Scrie episodul» runs the serial's whole ladder for the day
+
+Reason: he pressed «Scrie episodul» in the serial room's «Zile închise»; Marcus wrote «The
+Nine-Scene Rewrite» (DRAFT) and the Director never read it («De ce nu-l citește? Nu trebuie
+să o facă automat?»): the button called `write_episode` alone, and the reading, the editorial
+judgement, the approval under policy and the storyboard lived only in the daily run's serial
+stage, which took the draft up at the next run. Decision: a route `POST
+/story/logs/{log_id}/tell` and a service `serial_stage.tell_day_now` run `_tell_the_day` —
+the stage's own ladder, not a copy — for the one closed day pressed: an unread DRAFT of the
+day is read, a refused day is rewritten with its notes while `MAX_DRAFTS_PER_DAY` lasts, a
+PASS is approved under the channel's policy and storyboarded, the filming is queued (no media
+stage follows a press). The stop refuses in the studio's words; a quiet day, a day that has
+its episode or used its drafts, and an episode of another day waiting for him are 409 states;
+an answer refused before it was stored is 422, as the write route says it; one answer per
+`command_id` (`recall_command`). The backend says where the episode ended (`words`) and the
+page prints it, choosing only the tone. Alternatives: running the serial stage itself on the
+press (refused: it picks its own day and resumes other days' episodes, and he pressed on one
+day); the page chaining `/episodes/write`, `/review` and `/storyboard` (refused: three
+requests across minutes of model time, with the editorial judgement, the rewrite and the
+policy approval the page's to redo); keeping the bare write (refused: it is the reported
+fault). Compatibility/migration: none; `/story/episodes/write` is unchanged and the
+`command_record` table already exists. Test impact: `tests/test_serial_tell_now.py` (the
+ladder, the limits, the stop, the replay, the route); `frontend/tests/serial_room.test.js`
+(the words' tone). Rollback: point the button back at `/story/episodes/write` (`main.js
+tellDay`), drop the route and `tell_day_now`; stored `TellDay` command records are inert.
+
 ## 2026-10-13 — The serial's words-per-beat band is a recommendation the Director decides
 
 Reason: the Owner («nu trebuie să fie ceva fix, este ceva recomandat, dar nici să respingi

@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-10-13 — Office serial: «Scrie episodul» writes, reads, approves and readies in one press
+
+- The serial room's «Scrie episodul» («Zile închise») calls `POST /story/logs/{log_id}/tell`
+  (`serial_stage.tell_day_now`), the daily run's serial ladder for that one closed day: the
+  day's unread DRAFT is taken up, else a draft is written (as the rewrite of the day's last
+  refused draft, with the notes, while `MAX_DRAFTS_PER_DAY` lasts), then `judged_review`, the
+  approval under the channel's policy, the storyboard and the filming queued (PRODUCTION).
+  The same limits (`MAX_DRAFTS` per press, `MAX_DRAFTS_PER_DAY`), the Owner's stop (409, in
+  the studio's words), one answer per `command_id`. Before: the button called
+  `/story/episodes/write` alone, Marcus wrote «The Nine-Scene Rewrite» (DRAFT) and the
+  Director read it only at the next run («De ce nu-l citește? Nu trebuie să o facă
+  automat?»). That route is unchanged.
+- While it runs the button says «Se scrie și se citește…»; afterwards the page prints the
+  backend's words of where the episode ended: «a trecut citirea Directorului și e aprobat;
+  pregătit de filmare», «așteaptă aprobarea ta», «respins de Director: …», «respins de
+  verificările calculate: …», «ziua și-a folosit cele 3 ciorne» (`tellOutcomeMessage`).
+- Tests: `tests/test_serial_tell_now.py`, `frontend/tests/serial_room.test.js`.
+
 ## 2026-10-13 — Office serial: words per beat is a recommendation; a computed rejection is signed by the checks
 
 - `words_per_beat` is `advisory` (the Owner: «nu trebuie să fie ceva fix, este ceva recomandat,

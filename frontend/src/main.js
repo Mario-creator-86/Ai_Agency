@@ -16,7 +16,7 @@ import './style.css';
 import './office_scene.css';
 import './serial_room.css';
 import './owner_decisions.css';
-import { approvalMessage, daysClosedNote, episodeHtml, journalCoverHtml, serialBoardHtml, serialStageNotes } from './serial_room.js';
+import { approvalMessage, daysClosedNote, episodeHtml, journalCoverHtml, serialBoardHtml, serialStageNotes, tellOutcomeMessage } from './serial_room.js';
 import { initSettings } from './settings.js';
 import { mountGpuSwitch } from './gpu_switch.js';
 import { acceptSnapshot } from './projection.js';
@@ -5563,7 +5563,7 @@ async function loadStoryLogs() {
       )
       .join(''));
     listEl.querySelectorAll('.btn-write-episode').forEach((btn) => {
-      /** @type {HTMLElement} */ (btn).onclick = () => writeEpisode(btn);
+      /** @type {HTMLElement} */ (btn).onclick = () => tellDay(btn);
     });
   } catch (err) {
     replaceActivityHtml(listEl, `<div class="text-error">${escapeHtml(err.message)}</div>`);
@@ -5651,26 +5651,44 @@ element('story-episodes').addEventListener('click', (event) => {
   target.focus({ preventScroll: true });
 });
 
-async function writeEpisode(button) {
+/**
+ * The writing, the Director's reading and her editorial judgement are model calls that take
+ * minutes on the Owner's machine, and the press answers only at the end of them; the request
+ * is given that time, as the quick publish is given its upload's.
+ */
+const TELL_TIMEOUT_MS = 30 * 60 * 1000;
+
+/**
+ * «Scrie episodul» on a closed day: written, read by the Director, approved under the
+ * channel's policy, storyboarded and queued for filming in one press (router.py post_tell).
+ * Until 2026-10-13 the button called `/story/episodes/write` alone: Marcus wrote «The
+ * Nine-Scene Rewrite», it stood a DRAFT, and nobody read it until the next run («De ce nu-l
+ * citește? Nu trebuie să o facă automat?»). The answer's words say where the episode ended
+ * (serial_room.js tellOutcomeMessage); a refusal — a quiet day, the stop, a day that has its
+ * episode, an answer the studio would not store — is the studio's own sentence.
+ */
+async function tellDay(button) {
   const logId = button.getAttribute('data-log-id');
+  const label = button.textContent;
   button.disabled = true;
-  storyStatus('Showrunnerul scrie din evenimentele zilei…', false);
+  button.textContent = 'Se scrie și se citește…';
+  storyStatus('Showrunnerul scrie din evenimentele zilei, apoi Directorul citește episodul…', false);
   try {
-    const result = await api('/story/episodes/write', {
+    const result = await api(`/story/logs/${logId}/tell`, {
       method: 'POST',
-      body: JSON.stringify({ command_id: crypto.randomUUID(), log_id: logId }),
+      body: JSON.stringify({ command_id: crypto.randomUUID() }),
+      timeoutMs: TELL_TIMEOUT_MS,
     });
-    const episode = result.episode;
-    storyStatus(
-      `„${episode.title}” — ${countLabel((episode.beats || []).length, 'beat', 'beat-uri')}, ${countLabel((episode.grounded_event_ids || []).length, 'eveniment real citat', 'evenimente reale citate')}.`,
-      false,
-    );
+    const said = tellOutcomeMessage(result);
+    storyStatus(said.text, said.error);
     await loadEpisodes();
+    soon('serial');
   } catch (err) {
-    // A rejected episode, or a quiet day, is the system working.
+    // A refused day, the stop, a draft nobody could store: the system working, in its words.
     storyStatus(err.message, true);
   } finally {
     button.disabled = false;
+    button.textContent = label;
   }
 }
 
