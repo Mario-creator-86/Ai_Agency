@@ -86,6 +86,13 @@ def test_a_clause_that_moves_the_camera_leaves_the_still_and_the_moment_stays():
         ("wind bends the young rice in long waves", "wind bends the young rice in long waves"),
         ("a static camera on the empty hall", "a static camera on the empty hall"),
         ("the ledger open on the desk, the camera drifting closer", "the ledger open on the desk"),
+        # The subject's own moment, in words the cinema also uses (the Codex review of
+        # c6dc05c): a bare «orbits» or «pulls back» moves no camera.
+        ("Earth orbits the Sun", "Earth orbits the Sun"),
+        ("she pulls back the curtain", "she pulls back the curtain"),
+        ("the view orbits the tower", ""),
+        ("a dolly in toward the ledger", ""),
+        ("the hall, tracking left along the benches", "the hall"),
     ],
 )
 def test_the_camera_leaves_a_still_clause(clause, static):
@@ -130,6 +137,7 @@ def test_the_lint_warns_about_a_still_prompt_that_moves(prompt, evidence):
         PEOPLE_SENTENCE,
         COMPOSITION_SENTENCE,
         "The shot shows the ledger open on the desk; the camera stays on it.",
+        "Earth orbits the Sun, its night side dark; she pulls back the curtain.",
     ],
 )
 def test_a_still_that_stands_still_is_not_flagged(prompt):

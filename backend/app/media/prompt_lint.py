@@ -139,29 +139,58 @@ CAMERA_MOVING = re.compile(
 #: The named moves a still prompt may say without moving anything: a locked camera is a
 #: composition, a handheld look is grain.
 _STILL_MAY_NAME = frozenset({"static", "handheld drift"})
+#: Where a named move is the camera's and not the subject's own: the clause names the camera
+#: or its stand-ins, or the move is said in the cinema's own words. «Earth orbits the Sun»
+#: and «she pulls back the curtain» are the subject's moment and stay (the Codex review of
+#: c6dc05c, 2026-10-13: a bare «orbits» emptied an astronomy scene's still).
+_CAMERA_CONTEXT = re.compile(
+    r"\b(?:camera|lens|shot|frame|framing|view|viewpoint|drone|pov|point\s+of\s+view)\b",
+    re.IGNORECASE,
+)
+_CAMERA_ONLY_MOVE = re.compile(
+    r"\b(?:doll(?:y|ies|ying)|crane(?:s|ing)?|pedestal|boom(?:s|ing)?\s+(?:up|down)"
+    r"|track(?:s|ing)?\s+(?:shot\s+)?(?:to\s+the\s+)?(?:left|right)|truck(?:s|ing)?"
+    r"|pan(?:s|ning)?\s+(?:left|right)|push[- ]in|pull[- ](?:back|out)|aerial\s+drift"
+    r"|rack[- ]focus|focus\s+(?:racks?|pulls?|pulling)|pull(?:s|ing)?\s+focus|zoom\w*)\b",
+    re.IGNORECASE,
+)
+
+
+def _camera_moves_in(text: str) -> list[tuple[int, str]]:
+    """(start, words) of each named move in ``text`` that is the camera's: not a locked camera
+    or a handheld look (`_STILL_MAY_NAME`), and either said beside the camera
+    (`_CAMERA_CONTEXT`) or in the cinema's own words (`_CAMERA_ONLY_MOVE`)."""
+    lowered = text.lower()
+    beside_the_camera = bool(_CAMERA_CONTEXT.search(text))
+    found: list[tuple[int, str]] = []
+    for move, written in camera_moves(text):
+        if move in _STILL_MAY_NAME:
+            continue
+        if not beside_the_camera and not _CAMERA_ONLY_MOVE.search(written):
+            continue
+        at = lowered.find(written.lower())
+        if at >= 0:
+            found.append((at, written))
+    return found
 
 
 def still_motion(text: str) -> str:
-    """The earliest words of a still prompt that move the camera (a named move, or the camera
-    as the subject of a verb of movement) or give a tempo or a span of the clip, else ""."""
+    """The earliest words of a still prompt that move the camera (a named move of the camera,
+    or the camera as the subject of a verb of movement) or give a tempo or a span of the
+    clip, else ""."""
     found: list[tuple[int, str]] = []
     for pattern in (CAMERA_MOVING, STILL_TEMPO):
         match = pattern.search(text)
         if match:
             found.append((match.start(), match.group(0).strip()))
-    lowered = text.lower()
-    for move, written in camera_moves(text):
-        if move not in _STILL_MAY_NAME:
-            found.append((lowered.find(written.lower()), written))
+    found += _camera_moves_in(text)
     return min(found)[1] if found else ""
 
 
 def moves_the_camera(text: str) -> bool:
     """Whether a clause of a plan field moves the camera (`CAMERA_MOVING`, or a named move
-    that is not a locked camera or a handheld look)."""
-    if CAMERA_MOVING.search(text):
-        return True
-    return any(move not in _STILL_MAY_NAME for move, _written in camera_moves(text))
+    that is the camera's, `_camera_moves_in`)."""
+    return bool(CAMERA_MOVING.search(text)) or bool(_camera_moves_in(text))
 
 
 #: What joins a subject's moment to the camera's move in one clause ("the mercury rises as
@@ -174,18 +203,18 @@ def static_clause(text: str) -> str:
     that only moves the camera is "" (the motion prompt's); one that says a moment first
     ("the mercury rises as the camera pushes in on the scale") keeps the moment ("the mercury
     rises") when at least two words of it stay whole."""
-    if not moves_the_camera(text):
-        return text
     starts = [match.start() for match in CAMERA_MOVING.finditer(text)]
-    lowered = text.lower()
-    for move, written in camera_moves(text):
-        if move not in _STILL_MAY_NAME:
-            starts.append(lowered.find(written.lower()))
-    first = min(start for start in starts if start >= 0)
+    starts += [at for at, _written in _camera_moves_in(text)]
+    if not starts:
+        return text
+    first = min(starts)
     head = _BEFORE_CAMERA.sub("", text[:first]).strip()
     # The move was named by a subject of its own ("the camera"): the head ends before it.
     head = re.sub(r"\s*\b(?:the|a|an)\s*$", "", head, flags=re.IGNORECASE).strip(" ,;")
     if len(head.split()) < 2 or dangling(head):
+        return ""
+    # A head that is only the camera's own name ("the view", "the camera") says no picture.
+    if _CAMERA_CONTEXT.fullmatch(re.sub(r"^(?:the|a|an)\s+", "", head, flags=re.IGNORECASE)):
         return ""
     return head
 

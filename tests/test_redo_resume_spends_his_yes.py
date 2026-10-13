@@ -20,11 +20,11 @@ import pytest
 from app.media.assembler import SCENE_PROMPTS_REWRITTEN_EVENT
 from app.media.models import MediaAsset, SceneTake, VideoRenderJob
 from app.media.prompt_agent import motion_prompt_for
-from app.media.scene_rewrite import BRIEF_EVENT
+from app.media.scene_rewrite import BRIEF_EVENT, REWRITE_REASON, SERIAL_RECOMPOSE_REASON
 from app.media.toolchain import find_ffmpeg
 from app.models import ApprovalRequest, OwnerPolicy
 from app.runbook import stages
-from app.services import utc_now
+from app.services import append_event, utc_now
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from test_approvals import answer
@@ -192,3 +192,53 @@ def test_his_yes_on_a_corrected_motion_redo_is_spent_on_the_resume(
     expected, _negative = motion_prompt_for(corrected, "seedance2_5", None)
     (asked,) = spy.asked
     assert asked["prompt"] == expected and "from left to right" in asked["prompt"]
+
+
+def test_only_her_briefs_rewrite_counts_as_the_correction(engine, tmp_path):
+    """The Codex review of c6dc05c: the serial's recomposition and its technical re-roll
+    write the same event as her brief's rewrite, with `decided_by: director`, on words that
+    may not have changed. Only the brief's rewrite (`REWRITE_REASON`), newer than the film
+    and than every take of the scene, is the correction his yes was asked on."""
+    storyboard_id = a_planned_film(engine, tmp_path, still_by="owner")
+    asset_id = _failed_film(engine, tmp_path, storyboard_id)
+    with Session(engine) as session, session.begin():
+        # The film and its takes well before any rewrite below.
+        session.get(MediaAsset, asset_id).created_at = "2026-10-01T00:00:00+00:00"
+        for take in session.scalars(
+            select(SceneTake).where(SceneTake.storyboard_id == storyboard_id)
+        ):
+            take.created_at = "2026-10-01T00:00:00+00:00"
+
+    def rewritten(reason: str, layer: str = "motion") -> None:
+        with Session(engine) as session, session.begin():
+            append_event(
+                session,
+                SCENE_PROMPTS_REWRITTEN_EVENT,
+                "storyboard",
+                storyboard_id,
+                1,
+                {
+                    "storyboard_id": storyboard_id,
+                    "scene_index": 1,
+                    "reason": reason,
+                    "decided_by": "director",
+                    "layer": layer,
+                },
+                str(uuid4()),
+            )
+
+    def corrected() -> dict | None:
+        with Session(engine) as session:
+            return stages._corrected_for_film(session, storyboard_id, 1, asset_id)
+
+    assert corrected() is None, "nothing corrected yet"
+    rewritten(SERIAL_RECOMPOSE_REASON, layer="still")
+    assert corrected() is None, "a recomposition is not her brief's correction"
+    rewritten(REWRITE_REASON)
+    found = corrected()
+    assert found is not None and found["layer"] == "motion"
+    # A take bought on the correction since: the words are spent, nothing to resume.
+    with Session(engine) as session, session.begin():
+        take = session.scalar(select(SceneTake).where(SceneTake.storyboard_id == storyboard_id))
+        take.created_at = utc_now()
+    assert corrected() is None
