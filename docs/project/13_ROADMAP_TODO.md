@@ -1,5 +1,70 @@
 # Roadmap / TODO v3
 
+## Agency loop diagnosis — 2026-10-14
+
+- [x] Exclude confirmed uploaded films from repair/writes/purchases; settle stale reports.
+- [x] Recover only the dead exclusive workers correlated text sheet calls at startup.
+- [x] Test Sarah/Kael with actual providers: classify unusable output by parsed work.
+- [x] Scope batches to explicit scene indices; keep complete shared evidence.
+- [x] Keep object-list predicates; a negative comma list cannot become positive content.
+- [x] Sarah compared actual probes and selected the verified model that delivered.
+- [x] Final scene-2 probe: 889 output tokens, changed prompts, no local block, review TREATS.
+- [ ] At Owner-requested next start, prove new still acceptance before video and defect QC.
+
+Studio stopped by Owner; monitor PAUSED. Evidence: AGENCY_LOOP_DIAGNOSIS_2026-10-14.md.
+
+## Prompt/QC follow-up — 2026-10-14
+
+- [x] Inspect nine frozen examples; preserve visible endpoint clauses beside scene pointers.
+- [x] Preserve the first action after identity/spatial intros and valid object pronouns.
+- [x] Native cap before editorial word target; explicit motionless world stays motionless.
+- [x] Layer-aware composition checks keep accepted source images without ignoring real QC.
+- [x] Remove remaining six-finding/text/JSON cuts; complete reply and before/after to Sarah.
+- [x] Nine offline proposals with exact old/new text, roles and required semantic review.
+- [ ] Activate/evaluate through real Director/model/GPU/QC after credit restoration. Six
+  recorded packages remain blocked with old fields; the nine proposals are unapplied drafts,
+  not approvals. Closed/rejected films stay closed.
+
+Evidence: PROMPT_CONTRACT_FOLLOWUP_2026-10-14.md and PROMPT_REPAIR_PROPOSALS_2026-10-14.md.
+
+## Prompt/QC completeness — 2026-10-14
+
+- [x] Read-only audit of every recorded LIVE scene: 85 scenes, 170 prompt texts, 14 boards.
+- [x] Supply initial QC conditions; batch complete scenes/claims; preserve canonical wardrobe.
+- [x] Include factual final frames; block lost conditions before spending; respect static plans.
+- [x] Complete mail/Director/QC context; retain every relevant finding and negative condition.
+- [x] Connect existing RunPod input guard; remove editorial daily ceilings; preserve Owner gates.
+- [ ] Real models after credit restoration: applicable candidates need editorial review;
+  activate normally and prove reviewed words → actual request → result → defect-specific QC.
+
+Evidence: PROMPT_CONTRACT_AUDIT_2026-10-14.md, its JSON inventory and test transcript.
+
+## Director reviews replacement prompts and waiting work — 2026-10-14
+
+- [x] Trace actual Kelvin old/generic-retry requests and Sarah's untreated face finding.
+- [x] Route image/video rerolls through the reviewed rewrite, including unavailable looks.
+- [x] Prove exact reviewed text reaches the generator in a controlled integration test.
+- [x] Give take selection the full character bible/plan and serial writers the composition rules.
+- [x] Free Director work during GPU waiting and configurable five-minute general checks.
+- [x] Preserve paused schedule, Owner STOP, budgets and the single queue worker.
+- [ ] Verify activation and live review → generation → QC; mocks do not prove quality.
+
+Evidence: DIRECTOR_REGENERATION_REVIEW_2026-10-14.md.
+
+## Kelvin: Director handles terminal delivery failures — 2026-10-13
+
+- [x] Reproduce the missing ladder link for RUNPOD.EXPIRED_UNDELIVERED.
+- [x] Reuse Sarah's brief for verified terminal delivery recovery; retain QC rewrites,
+  budgets, paid-attempt counts, approvals and ambiguous submission safeguards.
+- [x] Separate Director waiting from Owner waiting in the media report and register.
+- [x] Regression tests and lint; existing type errors compared against HEAD.
+- [x] Verify the real Kelvin continuation: Sarah's delivery decision and new request at
+  23:39; request queued at 23:50. No extra restart during its generation.
+- [ ] Later register/stale-prompt refinements load at the next normal restart; clip delivery
+  and visual acceptance remain separate external outcomes.
+
+Evidence: DIRECTOR_DELIVERY_ROUTING_2026-10-13.md.
+
 ## Director token allowance x2 — 2026-10-11
 
 - [x] Inspect the cyclotron QC failure: first answer fails existing reason-length

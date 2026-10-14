@@ -411,6 +411,13 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
                     },
                 )
         if settings.worker_enabled and (lock_path is None or worker_lock is not None):
+            # Only the exclusive queue owner may clear its predecessor's interrupted calls.
+            # A previous editor call otherwise blocks fresh work for the 45-minute fallback.
+            from app.agents.recovery import recover_interrupted_sheet_runs  # noqa: PLC0415
+
+            await asyncio.to_thread(
+                recover_interrupted_sheet_runs, engine, started_at=process_started
+            )
             # The one process that runs the worker takes back the film purchase leases that
             # earlier processes left (2026-10-03: a redo whose process had been stopped held
             # the Owner's film «în lucru» for hours). A lease another live process renews is
@@ -547,17 +554,18 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
                 first_run_at=_utc_now_plus(900),
                 active=True,
             )
-            # And the Director's own pass over the company, four times a day: blockers found
+            # And the Director's regular pass over the company: blockers found
             # in the morning are not work for tomorrow. It assigns at most three things and
             # skips a matter already under an open decision, so it cannot become noise.
             ensure_scheduled_job(
                 engine,
                 name=DIRECTOR_LOOP_JOB_NAME,
                 workflow_type=DIRECTOR_LOOP,
-                interval_seconds=21600,
+                interval_seconds=settings.director_check_interval_seconds,
                 missed_policy="SKIP",
-                first_run_at=_utc_now_plus(1800),
+                first_run_at=_utc_now_plus(settings.director_check_interval_seconds),
                 active=True,
+                follow_interval=True,
             )
             # The database's backup, once a day on the studio's clock (REL-04): SQLite's online
             # copy, its check, the wrapped key beside it, then the pruning of old housekeeping

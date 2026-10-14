@@ -8486,6 +8486,7 @@ STUDIO_DEFECT_RELEASED_EVENT = "media.studio_defect_hold_released"
 #: was queued, or on the Owner's own card (`media.runpod_unsent`). Same payload keys as
 #: `STUDIO_DEFECT_RELEASED_EVENT` (``released_event_id`` first); `scene_memory` skips it too.
 RUNPOD_UNSENT_RELEASED_EVENT = "media.runpod_unsent_hold_released"
+DELIVERY_RETRY_EVENT = "media.delivery_retry_authorized"
 #: The key under which a hold left by an unanswered RunPod /run names what it rests on (since
 #: 2026-10-09): {"job_row_ids": [...], "take_ids": [...]}, the journal rows with no job id and
 #: their REFUSED takes. `media.runpod_unsent` finds them by it even after a redo sent the same
@@ -8510,6 +8511,7 @@ def runpod_hold_items(refused: dict[str, str] | None) -> dict[str, Any]:
 HOLD_RELEASED_EVENTS: tuple[str, ...] = (
     STUDIO_DEFECT_RELEASED_EVENT,
     RUNPOD_UNSENT_RELEASED_EVENT,
+    DELIVERY_RETRY_EVENT,
 )
 #: The failure kinds a REFUSED take may carry as its code when the vendor named none.
 _KIND_CODES: tuple[str, ...] = (
@@ -8607,6 +8609,8 @@ def take_failure(row: SceneTake) -> FailureRecord | None:
         return None
     if code == UNANSWERED_FAILURE_CODE:
         kind = "UNKNOWN"
+    elif code == "RUNPOD.EXPIRED_UNDELIVERED":
+        kind = "BAD_OUTPUT"
     elif code in _KIND_CODES:
         kind = code
     elif code == "VENDOR.NO_OUTPUT":
@@ -8764,11 +8768,17 @@ def scene_memory(
                     decided.setdefault(scene_of[event.aggregate_id], []).append(stamp)
         said: dict[int, list[tuple[datetime | None, dict[str, Any]]]] = {}
         released = _released_holds(session, storyboard_id)
+        delivery_retries: set[str] = set()
         for event in session.scalars(
             select(DomainEvent)
             .where(
                 DomainEvent.event_type.in_(
-                    (hold_event, SCENE_MODEL_SET_EVENT, SCENE_PROMPTS_REWRITTEN_EVENT)
+                    (
+                        hold_event,
+                        SCENE_MODEL_SET_EVENT,
+                        SCENE_PROMPTS_REWRITTEN_EVENT,
+                        DELIVERY_RETRY_EVENT,
+                    )
                 ),
                 DomainEvent.aggregate_id == storyboard_id,
             )
@@ -8777,6 +8787,10 @@ def scene_memory(
             if event.event_id in released:
                 continue  # a hold our own malformed request left, released on the books
             payload = event.payload if isinstance(event.payload, dict) else {}
+            if event.event_type == DELIVERY_RETRY_EVENT:
+                if payload.get("decided_by") == DIRECTOR_REWRITE and payload.get("take_id"):
+                    delivery_retries.add(str(payload["take_id"]))
+                continue  # a delivery decision releases its hold, never the paid-attempt count
             stamp = _stamp(event.timestamp)
             if event.event_type == SCENE_MODEL_SET_EVENT:
                 index = payload.get("scene_index")
@@ -8845,6 +8859,21 @@ def scene_memory(
                     "cumpără din nou până nu decide Proprietarul pe foaia de filmare."
                 )
         if hold is None:
+            for row in reversed(mine):
+                if row.status in ("PAID", "APPROVED", "SUBMITTED"):
+                    break
+                if take_failure(row) is None:
+                    continue
+                if (
+                    row.failure_code == "RUNPOD.EXPIRED_UNDELIVERED"
+                    and row.id not in delivery_retries
+                ):
+                    hold = (
+                        f"Scena {index}: furnizorul nu a livrat fișierul; Directoarea verifică "
+                        "livrarea înainte de o nouă cumpărare."
+                    )
+                break
+        if hold is None:
             # Quality control's refusal, with no hold event of the step (the step stopped
             # between the refusal and its retry): the Director's rewrite comes before any
             # new purchase, the same as when the step itself held the scene.
@@ -8880,6 +8909,8 @@ def _released_holds(session: Session, storyboard_id: str | None = None) -> set[s
     for payload in session.scalars(query):
         if isinstance(payload, dict) and payload.get("released_event_id"):
             found.add(str(payload["released_event_id"]))
+        if isinstance(payload, dict) and payload.get("decided_by") == "director":
+            found.update(str(value) for value in payload.get("released_event_ids") or [])
     return found
 
 
@@ -11113,9 +11144,40 @@ class _ShotRounds:
         if self.over_attempts(state.index):
             state.outcome = {"status": "NEEDS_OWNER", "reason": self.attempts_reason(state.index)}
             return []
+        from app.media.input_guard import (  # noqa: PLC0415
+            REFUSAL_CODE,
+            identity_of_request,
+            record_refusal,
+            refused_before,
+        )
+
+        request = self._request(state, seed=seed, prompt=prompt)
+        identity = identity_of_request(request)
+        with Session(self.engine) as session, session.begin():
+            refusal = refused_before(session, identity)
+            if refusal is not None:
+                record_refusal(session, identity, refusal, correlation_id=self.correlation_id)
+        if refusal is not None:
+            state.outcome = {
+                "status": "NEEDS_STILL" if refusal.layer == "still" else "NEEDS_OWNER",
+                "failure_code": REFUSAL_CODE,
+                "rewrite": refusal.layer is not None,
+                "layer": refusal.layer,
+                "reason": refusal.reason_ro,
+            }
+            if refusal.layer == "still":
+                _send_still_back_for_clip(
+                    self.engine,
+                    self.storyboard_id,
+                    state.index,
+                    state.still.id,
+                    refusal.reason_ro,
+                    self.correlation_id,
+                )
+            return []
         state.attempts += 1
         self.sent[state.index] = self.sent.get(state.index, 0) + 1
-        return [self._request(state, seed=seed, prompt=prompt)]
+        return [request]
 
     def price(self, requests: list[Any]) -> float:
         """A round's credits: each shot's price and one GPU start (cold start + idle tail)."""
@@ -11373,6 +11435,7 @@ class _ShotRounds:
     ) -> dict[str, Any]:
         from app.media.gpu_batch import run_rounds  # noqa: PLC0415 - gpu_batch reads runpod
         from app.providers.runpod.batch import UNCERTAIN  # noqa: PLC0415
+        from app.workflows.director_upkeep import director_wait_work  # noqa: PLC0415
 
         first: list[Any] = []
         for state in shots:
@@ -11398,6 +11461,7 @@ class _ShotRounds:
                     shots[0].adapter, credit_usd=self.credit_usd
                 ),
                 on_unsent=self.unsent,
+                on_wait=director_wait_work(self.engine, self.registry),
             )
         if summary.get("stopped") and summary.get("stopped") != UNCERTAIN:
             self.stop = self.stop or summary["stopped"]

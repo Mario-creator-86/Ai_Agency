@@ -776,8 +776,8 @@ def test_an_analysis_without_its_object_is_asked_again_with_native_thinking(engi
             select(AgentRun).where(AgentRun.task_type == "director_review")
         ).all()
         assert sorted(r.prompt_template_version for r in runs) == [
-            "director-review-v1",
-            "director-review-v1+think",
+            "director-review-v2",
+            "director-review-v2+think",
         ]
         assert session.get(AgentMessage, hold_id).status == "RESOLVED"
 

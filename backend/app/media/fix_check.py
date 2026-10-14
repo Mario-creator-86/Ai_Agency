@@ -80,9 +80,7 @@ from app.models import DomainEvent
 
 logger = logging.getLogger("studio.fix_check")
 
-#: At most this many items are checked on one picture or clip, each at most this long: the
-#: look stays one look, and the refusal's words stay inside a take's failure detail.
-MAX_ITEMS = 4
+#: Length of the legacy finding summaries; the original domain events remain evidence.
 MAX_CHARS = 300
 #: The layers an item is checked on (`scene_rewrite.STILL`, `scene_rewrite.MOTION`), and the
 #: mark of an item whose layer is not known: it is checked on both.
@@ -95,7 +93,7 @@ PICTURE_LAYER = STILL_LAYER
 #: of it is left (accepted, a warning), or it is there again (refused).
 GONE, MINOR, PERSISTS = "gone", "minor", "persists"
 FIX_STATUSES = (GONE, MINOR, PERSISTS)
-#: Where an item comes from, in the order they are ranked under the cap.
+#: Where an item comes from, in the order they are ranked.
 FROM_REVIEW, FROM_DIRECTOR_QC, FROM_FILM = "review", "director_qc", "film"
 #: Two items whose content words overlap this much are one finding said twice: her review's
 #: ``qc_text`` and her QC verdict's text, or two paraphrases of one picture (`token_overlap`).
@@ -342,12 +340,12 @@ def _item(
     treated: bool = True,
 ) -> dict[str, Any]:
     return {
-        "finding": _cut(_said(finding)),
-        "expected": _cut(_said(expected)),
+        "finding": _said(finding),
+        "expected": _said(expected),
         "layer": layer,
         "source": source,
         "source_id": str(source_id) if source_id else None,
-        "cause": _cut(_said(cause)),
+        "cause": _said(cause),
         "severity": _severity(severity),
         "treated": bool(treated),
         "at": str(at or ""),
@@ -600,7 +598,7 @@ def open_findings(
     session: Session, storyboard_id: str, scene_index: int, layer: str = STILL_LAYER
 ) -> list[dict[str, Any]]:
     """What the scene's next picture (``layer`` still) or clip (``layer`` motion) must show
-    corrected: `open_items` of that layer, ranked (`_ranked`), at most `MAX_ITEMS`. Empty when
+    corrected: every `open_items` entry of that layer, ranked (`_ranked`). Empty when
     nothing was rewritten or refused for it, or when a still approved (a clip passed) after
     it already answered."""
     items = [
@@ -608,7 +606,7 @@ def open_findings(
         for item in open_items(session, storyboard_id, scene_index)
         if _on(item, layer)
     ]
-    return _ranked(items, layer)[:MAX_ITEMS]
+    return _ranked(items, layer)
 
 
 # ----------------------------------------------------------- what a look says about the items
@@ -1033,8 +1031,8 @@ class FilmReasonsSeen(BaseModel):
     def _sights(cls, value: Any) -> Any:
         if not isinstance(value, list):
             return value
-        # At most what one look checks (`MAX_ITEMS`), each cut as an item is.
-        return [_cut(_said(text)) for text in value if _said(text)][:MAX_ITEMS]
+        # Complete observed findings; output formatting must not erase later defects.
+        return [_said(text) for text in value if _said(text)]
 
 
 _FILM_READ_INSTRUCTIONS = (
@@ -1129,9 +1127,9 @@ def read_film_reasons(
         for scene, brief in unread:
             reasons = _film_reasons(brief)
             prompt = _FILM_READ_INSTRUCTIONS.format(
-                scene=scene, limit=MAX_ITEMS
+                scene=scene, limit=max(1, len(reasons))
             ) + wrap_in_inert_boundary(
-                json.dumps({"film_reasons": reasons}, ensure_ascii=False)[:6000], "film-reasons"
+                json.dumps({"film_reasons": reasons}, ensure_ascii=False), "film-reasons"
             )
             parsed, first, second = structured_run(
                 engine,

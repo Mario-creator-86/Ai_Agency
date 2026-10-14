@@ -231,7 +231,7 @@ def test_a_fresh_attempt_a_rewrite_or_a_brief_being_written_waits(engine, settin
     assert fresh not in [t.payload["storyboard_id"] for t in continuations(engine)]
 
 
-def test_a_walk_just_run_waits_and_six_retries_a_day_are_the_limit(
+def test_a_walk_just_run_waits_but_editorial_retries_have_no_daily_limit(
     engine, settings, tmp_path, monkeypatch
 ):
     from app.workflows.passes import ladder_retry
@@ -249,12 +249,11 @@ def test_a_walk_just_run_waits_and_six_retries_a_day_are_the_limit(
     assert run_pass(engine, settings) == {"queued": []}
 
     monkeypatch.setattr(ladder_retry, "RETRY_MINUTES", 0)
-    for n in range(1, 7):
+    for n in range(1, 10):
         assert run_pass(engine, settings) == {"queued": [storyboard_id]}, n
         finish(engine)
-    assert run_pass(engine, settings) == {"queued": []}  # the sixth was the last today
-    assert len(continuations(engine)) == 6
-    assert len({t.idempotency_key for t in continuations(engine)}) == 6
+    assert len(continuations(engine)) == 9
+    assert len({t.idempotency_key for t in continuations(engine)}) == 9
 
 
 def test_a_film_that_is_not_the_ladders_is_left_alone(engine, settings, tmp_path):

@@ -1201,7 +1201,8 @@ def annotate_verdicts(
     from app.media.picture_qc import settle_family  # noqa: PLC0415 - shared render evidence
 
     findings = {int(item["id"]): item for item in context.get("findings") or []}
-    keys = context.get("_settle_keys") if isinstance(context.get("_settle_keys"), Mapping) else {}
+    raw_keys = context.get("_settle_keys")
+    keys = raw_keys if isinstance(raw_keys, Mapping) else {}
     owner_scenes: set[int] = set()
     for scene in context.get("scenes") or []:
         in_film = scene.get("in_film") or {}
@@ -2632,6 +2633,15 @@ def look_entries(
                 "picture_prompt": _short(package.get("still_prompt") or visual, 800),
                 "look": _short(package.get("look_block"), 400) or None,
                 "camera_move": package.get("camera_move"),
+                # The picture prompt can omit these under its character cap. A look that
+                # sees only that truncated text invents the wardrobe from the candidate
+                # itself, then later QC refuses it against the actual character bible.
+                "character_bible": package.get("characters") or [],
+                "in_frame": package.get("in_frame") or [],
+                "shot_plan": {
+                    key: package.get(key)
+                    for key in ("subject", "action", "camera", "shot_size", "ending_frame")
+                },
             }
             if kind != "still":
                 view["motion_prompt"] = _short(package.get("motion_prompt"), 400) or None

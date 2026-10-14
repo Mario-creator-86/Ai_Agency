@@ -273,7 +273,7 @@ def test_repairs_continue_beyond_two_attempts_without_asking_the_owner(engine, f
     from datetime import UTC, datetime, timedelta
 
     reading = sheet(engine, film)
-    rounds = repair.MAX_SAME_ISSUES_PER_DAY
+    rounds = 9
     for n in range(rounds):
         reading = {**reading, "sheet_hash": str(uuid4())}
         dispatched = repair.submit_sheet_issues(engine, reading)

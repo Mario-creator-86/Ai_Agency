@@ -596,6 +596,7 @@ class LintScene:
     motion_prompt: str = ""
     model_id: str | None = None
     contract: Mapping[str, Any] | None = None
+    composition_issues: tuple[str, ...] = ()
 
 
 class PromptLintBlocked(Exception):
@@ -1284,6 +1285,8 @@ def lint_scene(
             )
         ]
     findings: list[Finding] = []
+    for issue in scene.composition_issues:
+        findings.append(_finding("REQUIRED_CONTENT_LOST", BLOCK, scene.scene, issue, issue))
     if not scene.still_prompt.strip():
         findings.append(
             _finding(
@@ -1343,7 +1346,7 @@ def _camera_language(
             return [
                 _finding(
                     "SAME_CAMERA_EVERY_SCENE",
-                    BLOCK,
+                    WARN if first[1] == "static" else BLOCK,
                     None,
                     first[2],
                     "Toate cele "

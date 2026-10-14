@@ -548,6 +548,15 @@ def reserve_item(
             lock_for_write(s)
             row = s.scalar(select(GenerationJob).where(GenerationJob.idempotency_key == key))
             if row is None:
+                from app.media.input_guard import (  # noqa: PLC0415
+                    REFUSAL_CODE,
+                    identity_of_request,
+                    refused_before,
+                )
+
+                refusal = refused_before(s, identity_of_request(asked))
+                if refusal is not None:
+                    raise BatchRefused(REFUSAL_CODE, refusal.reason_ro)
                 current = _fresh(asked, _seeds_used(s, asked))
                 payload = journal_payload(current)
                 hashed = digest(payload)

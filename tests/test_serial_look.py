@@ -280,7 +280,8 @@ def test_the_prompt_agent_writes_the_serial_shots_with_the_look_and_the_room(
 
     # One call: the look is the series', so no visual bible is asked of the model.
     assert [c["task"] for c in calls] == ["shot_prompts"]
-    assert calls[0]["template"] == "serial-shot-prompts-v1"
+    assert calls[0]["template"] == "serial-shot-prompts-v3"
+    assert "Do not repeat that description in action" in calls[0]["prompt"]
     prompt = calls[0]["prompt"]
     assert "office serial" in prompt and "facing the viewer" in prompt
     assert block in prompt and "Content, floor 2" in prompt

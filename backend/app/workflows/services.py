@@ -689,6 +689,7 @@ def ensure_scheduled_job(
     active: bool = True,
     run_at_local: str | None = None,
     timezone: str | None = None,
+    follow_interval: bool = False,
 ) -> dict:
     """The named job, created if it does not exist and left alone if it does.
 
@@ -701,6 +702,9 @@ def ensure_scheduled_job(
     interval anchored to now. The hour is configuration, so it is the one thing an existing
     job does follow: a changed setting reaches the row and moves its next slot, without
     touching whether the job is active — following the hour is not starting the clock.
+
+    ``follow_interval`` follows a configured cadence on an existing job, preserving its
+    active state and bringing a later slot forward. The Director uses it for backlog checks.
     """
     with Session(engine) as session, session.begin():
         # Read, then the hour rewritten: the lock first. At start-up the outbox dispatcher, the
@@ -709,6 +713,10 @@ def ensure_scheduled_job(
         lock_for_write(session)
         existing = session.scalars(select(ScheduledJob).where(ScheduledJob.name == name)).first()
         if existing is not None:
+            if follow_interval and existing.interval_seconds != interval_seconds:
+                existing.interval_seconds = interval_seconds
+                following = (datetime.now(UTC) + timedelta(seconds=interval_seconds)).isoformat()
+                existing.next_run_at = min(existing.next_run_at, following)
             if run_at_local is not None and timezone is not None:
                 if (existing.run_at_local, existing.timezone) != (run_at_local, timezone):
                     existing.run_at_local = run_at_local

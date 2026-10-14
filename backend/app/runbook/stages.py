@@ -982,8 +982,8 @@ def _script_and_storyboard(
     """Draft the voiceover for the selected topic, and storyboard what has been approved.
 
     A film still waiting for its shot plan (NEEDS_SHOT_PLAN), or one the prompt lint held, is
-    asked of the model again here, once a business day on at most `SHOT_PLAN_REASK_DAYS`
-    days (`_reask_shot_plans`): text only, no media credit (A4).
+    asked of the model again here, once a business day until usable (`_reask_shot_plans`):
+    text only, no media credit (A4).
 
     The draft stops at VERIFIED_PASS until the Director has read it: a PASS from her story
     review approves it (`_director_approves`), a rewrite follows her notes for up to
@@ -1199,7 +1199,7 @@ def _reask_shot_plans(
     """Ask the model again for the shot plan of each factual film that is waiting for one.
 
     A NEEDS_SHOT_PLAN storyboard, or an APPROVED one whose last recorded day was a lint BLOCK,
-    is asked again once a business day, on at most `SHOT_PLAN_REASK_DAYS` days, counted by
+    is asked again once a business day until usable, counted by
     the day's own events: text only, no media credit. Only the POST /prompts route asked again
     before, so a plan the model lost stayed lost. A film holding a bought take is never asked:
     new prompts are new still identities, and a still bought for the old words would be bought
@@ -1248,7 +1248,7 @@ def _reask_shot_plans(
                     )
                 )
             }
-            if today in days or len(days) >= SHOT_PLAN_REASK_DAYS:
+            if today in days:
                 continue
             candidates.append(board.id)
     for storyboard_id in candidates:
@@ -1568,7 +1568,7 @@ def _film_staircase(
                     break
                 rung = _director_rung(engine, registry, storyboard_id, refused, correlation)
                 rounds.append(rung)
-                if not rung["rewritten"]:
+                if not rung["rewritten"] and not rung.get("recovered"):
                     # Nobody's decision: the Director's rewrite did not land (her brief
                     # refused, no Director, a fault), and the studio tries again by itself
                     # (`passes.ladder_retry`). The film's words say so, not «decide el».
@@ -1649,16 +1649,33 @@ def _held_words(engine: Engine, storyboard_id: str, stair_ro: str, scenes: list[
     Owner's decision on the shooting sheet. 2026-10-12: «scena 6 așteaptă decizia
     Proprietarului» reached him for a clip quality control had refused — hers, not his."""
     hers = set(_quality_scenes(engine, storyboard_id, scenes))
+    from app.media.scene_rewrite import DELIVERY_CODES, last_failure_code  # noqa: PLC0415
+
+    with Session(engine) as session:
+        deliveries = {
+            index
+            for index in hers
+            if last_failure_code(session, storyboard_id, index) in DELIVERY_CODES
+        }
+    quality = hers - deliveries
     his = [scene for scene in scenes if scene not in hers]
     parts: list[str] = []
-    if hers:
-        parts.append(_scenes_ro(sorted(hers), refused=True) + " așteaptă rescrierea Directoarei")
+    if quality:
+        parts.append(_scenes_ro(sorted(quality), refused=True) + " așteaptă rescrierea Directoarei")
+    if deliveries:
+        parts.append(
+            _scenes_ro(sorted(deliveries)) + " așteaptă remedierea livrării de către Directoare"
+        )
     if his:
         parts.append(_scenes_ro(his) + " așteaptă decizia Proprietarului pe foaia de filmare")
     ending = (
         "nu se cumpără din nou până nu decide el."
         if not hers
-        else "nu se cumpără din nou până nu o rescrie ea."
+        else (
+            "nu se cumpără din nou până nu stabilește ea remedierea."
+            if deliveries
+            else "nu se cumpără din nou până nu o rescrie ea."
+        )
         if not his
         else "nu se cumpără din nou până atunci."
     )
@@ -1926,8 +1943,8 @@ def _held_stair(
 # Owner stopped every later film; its topic counted as in production until a render COMPLETED,
 # so no new topic was chosen either; a film without a shot plan was never asked of the model
 # again. Now: the films are walked oldest first (`_media_staircase`); a film's day is recorded
-# (`FILM_STATE_EVENT`), so a NEEDS_SHOT_PLAN or lint-blocked film is asked again on at most two
-# days (`_reask_shot_plans`) and one that stood still longer than `film_wait_days` is retired
+# (`FILM_STATE_EVENT`), so a NEEDS_SHOT_PLAN or lint-blocked film is asked again once per business
+# day (`_reask_shot_plans`) and one that stood still longer than `film_wait_days` is retired
 # by the Director with a letter (`retire_stale_films`). A film waiting only for his yes, his
 # money or his budget is never retired. In TEST he is told once per film why the day does not
 # buy and what would (`_test_environment_letter`), and every staircase letter says what the
@@ -1943,7 +1960,6 @@ SHOT_PLAN_REASKED_EVENT = "runbook.shot_plan_reasked"
 FILM_RETIRED_LETTER_KIND = "owner_film_retired"
 TEST_ENVIRONMENT_LETTER_KIND = "owner_test_environment"
 #: On how many business days a film's shot plan is asked of the model again.
-SHOT_PLAN_REASK_DAYS = 2
 #: Refusals that are the account's, not the film's: the next film would meet them as well, so
 #: the walk stops there, and a film waiting on the Owner's money or budget is never retired.
 ACCOUNT_WIDE = frozenset(
@@ -2776,6 +2792,7 @@ def _media_staircase(
     serial_assets: list[str] = []
     awaiting_owner: list[dict[str, Any]] = []
     waiting: list[str] = []
+    director_waiting: list[str] = []
     bought_lines: list[str] = []
     bought_steps: list[dict[str, Any]] = []
     refused: list[dict[str, Any]] = []
@@ -2986,7 +3003,10 @@ def _media_staircase(
             if film.get("approval_id") and not asked_correlation:
                 asked_correlation = correlation
         elif film["status"] == "WAITING":
-            waiting.append(f"«{title}»: {reason}")
+            if _ladder_scenes(engine, storyboard_id, film):
+                director_waiting.append(f"«{title}»: {reason}")
+            else:
+                waiting.append(f"«{title}»: {reason}")
         else:
             held.append(f"{storyboard_id[:8]}: {reason}")
         _sheet_letter(engine, storyboard_id, film, plan_cost, correlation)
@@ -3009,6 +3029,8 @@ def _media_staircase(
             + "; ".join(waiting)
             + ". Foaia de filmare și scrisoarea i-au fost trimise."
         )
+    if director_waiting:
+        parts.append("Directoarea preia remedierea: " + "; ".join(director_waiting) + ".")
     if refused:
         parts.append(f"{count(len(refused), *REFUSED_RENDERS)}: {_no_stop(refused[0]['said'])}.")
     if held:
@@ -5389,19 +5411,21 @@ def _failed_film_frames(
     if not film:
         return []
     cut = frames_at(film, ffmpeg_path, [number for _at, number in chosen], Path(folder) / "film")
-    frames = [cut.get(number) for _at, number in chosen]
-    if not all(frames):
+    picture_paths = [cut.get(number) for _at, number in chosen]
+    if not all(picture_paths):
         return []
     rows = caption_rows(production)
     if rows is None:
-        return [frame for frame in frames if frame is not None]
+        return [frame for frame in picture_paths if frame is not None]
     # The film burns the narration's subtitles in: shown the picture above the rows they draw
     # in, never our own words (a frame with the rows painted over would read as a band).
     above: list[Any] = []
-    for (at, _number), frame in zip(chosen, frames, strict=True):
+    for (at, _number), picture_path in zip(chosen, picture_paths, strict=True):
+        if picture_path is None:
+            return []
         pieces = cut_caption_rows(
             ffmpeg,
-            Path(frame),
+            Path(picture_path),
             rows,
             Path(folder) / f"film_{at}_deasupra.png",
             Path(folder) / f"film_{at}_dedesubt.png",

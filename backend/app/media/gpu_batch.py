@@ -293,6 +293,7 @@ def run_rounds(
     sleep: Callable[[float], None] = time.sleep,
     credits_for_seconds: Callable[[float], float] | None = None,
     on_unsent: Callable[[list[ItemOutcome], dict[str, Any]], None] | None = None,
+    on_wait: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
     """Buy the step's rounds inside one GPU session; returns what happened.
 
@@ -466,6 +467,10 @@ def run_rounds(
                     run.cancel(halted)
                     summary["stopped"] = halted
                     continue
+                if on_wait is not None:
+                    on_wait()
+                    # Free Director calls may take time; renew before the next poll too.
+                    forced = _keep_alive(session)
                 sleep(poll_every)
             # Items RunPod never made are not charged: their share of the round goes back.
             unmade = [

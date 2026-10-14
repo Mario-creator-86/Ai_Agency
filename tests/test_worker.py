@@ -207,12 +207,17 @@ def test_a_film_that_is_gone_or_retired_is_not_continued(engine, settings, monke
 
 
 def _a_paid_shot(engine, tmp_path) -> tuple[str, str]:
+    from hashlib import sha256
+
+    from app.media.assembler import motion_fields, scene_clip_context, take_hash
     from app.media.models import SceneTake
     from test_film_costing import a_film
 
     storyboard_id = a_film(engine, tmp_path, scenes=2)
     clip = tmp_path / "hero.mp4"
     clip.write_bytes(b"a clip")
+    scene, still_sha, _ = scene_clip_context(engine, storyboard_id, 1)
+    identity = take_hash(motion_fields(scene, still_sha, from_prompt=False), "seedance2_5")
     take_id = str(uuid4())
     with Session(engine) as session, session.begin():
         session.add(
@@ -221,12 +226,12 @@ def _a_paid_shot(engine, tmp_path) -> tuple[str, str]:
                 storyboard_id=storyboard_id,
                 scene_number=1,
                 kind="test_shot",
-                prompt_hash="p" * 64,
+                prompt_hash=identity,
                 model_id="seedance2_5",
                 resolution="1080:1920",
                 status="PAID",
                 path=str(clip),
-                sha256="s" * 64,
+                sha256=sha256(clip.read_bytes()).hexdigest(),
                 created_at="2026-10-02T10:00:00+00:00",
                 updated_at="2026-10-02T10:00:00+00:00",
             )

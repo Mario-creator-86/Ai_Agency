@@ -1,5 +1,77 @@
 # Architectural / Product Decision Log v5
 
+## ADR-AGENCY-REPAIR-PROGRESS-MUST-BE-OBSERVABLE (2026-10-14)
+
+Use the exact publication/render asset relationship to retire production work, regardless
+of title/privacy or storyboard label. Recover previous-worker agent calls only with the
+exclusive queue lock, known pre-start correlated text task and preserved retry accounting.
+A provider reply is not a usable shot plan. Scope indices explicitly and retain all evidence;
+learn output allowance from assigned-model/provider outcomes within existing budget gates.
+Whole comma lists retain their predicate and negation scope, preventing positive ghosts.
+Sarah compared real failed/successful work and selected a verified replacement for Kael via
+versioned DIRECTOR_REPAIR assignment. Test scene writes stay in copies; production costs
+and model calls remain truthful. Do not equate text review with visual media acceptance.
+Owner requests commit and stop; no automatic studio restart or monitoring wakeups.
+Evidence and rollback inputs: AGENCY_LOOP_DIAGNOSIS_2026-10-14.md and its proof JSON.
+
+## ADR-PROMPT-REPAIR-LAYER-AND-CURRENT-EVIDENCE (2026-10-14)
+
+Nine recorded candidate losses reveal compiler omissions and contradictory shot fields.
+Keep visible ending clauses beside unusable scene pointers and the first action after an
+identity/position introduction. The editorial 95-word target must not lose mandatory serial
+motion that fits the native cap. A declared motionless world receives no invented movement.
+Check composition on the layer being bought: an unchanged accepted still is visual evidence,
+not a reason to force a new picture because its historical words omit a minimum identity.
+Real QC rejection of that picture still routes to the still layer. Keep complete current
+finding/cause/correction/negative context and both prompt versions in correspondence; bounded
+historical summaries remain. Nine frozen offline proposals are review data only, never copied
+to production or treated as Director approval; narrative/scientific conflicts stay with the
+appropriate agents. No migration or policy/spend/runtime change. Rollback and proof:
+PROMPT_CONTRACT_FOLLOWUP_2026-10-14.md. Original architecture hashes are unchanged.
+
+## ADR-PROMPT-CONTRACT-COMPLETENESS (2026-10-14)
+
+Owner prioritizes first-generation and repair prompts, complete QC feedback and autonomous
+editorial repair. Required endpoints, actor/wardrobe constraints and findings must survive
+composition/context transport; otherwise the sheet blocks before purchase and the editor
+gets the specific loss. Large initial plans batch whole scenes with claims/bibles intact.
+Recorded examples exposed 57 stored scenes with missing conditions; the deterministic audit
+covers 85 LIVE scenes/14 boards, including history; nine candidate packages still need editing.
+Connect input_guard to RunPod stage submissions/new reservations: seed changes do not fix
+rejected content. Remove daily editorial ceilings (sheet five, ladder six, shot-plan two days)
+and truncated evidence; keep cooldowns, single continuation, provider pauses, paid caps and
+Owner STOP/approvals. An intentional static camera is advisory for variety. Prompt/QC/mail
+versions change explicitly. No DB migration, model calls, runtime restart or paid generation.
+Validation, limitations and rollback: PROMPT_CONTRACT_AUDIT_2026-10-14.md. Real visual quality
+and runtime activation remain unverified. This supersedes older editorial retry ceilings,
+not Owner spending or platform capability limits; architecture hashes remain unchanged.
+
+## ADR-REGENERATION-REQUIRES-REVIEWED-WORDS (2026-10-14)
+
+Owner requires Sarah to verify replacement prompts before every regeneration. The old
+candidate's second look is not such a review: Kelvin's 23:56 generic calmer retry ignored
+her face/camera diagnosis and failed again. Production image/video rerolls now enter the
+existing brief → Editor rewrite → Sarah TREATS review ladder before any replacement purchase.
+Take selection receives the same complete character/shot facts used by QC. Serial agents
+receive exact composer limits instead of repeatedly adding corrections the composer drops.
+Free backlog work shares the one worker during GPU waits; its five-minute configurable
+cadence also updates the existing Director schedule without activating paused schedules.
+Rejected: another queue worker, unreviewed generic rerolls, database verdict overrides and
+raising Owner budgets. No migration of takes. Tests, limitations and rollback are in
+DIRECTOR_REGENERATION_REVIEW_2026-10-14.md; architecture document hashes remain unchanged.
+
+## ADR-TERMINAL-DELIVERY-IS-DIRECTOR-WORK (2026-10-13)
+
+Owner: Kelvin scene 2 must go to Sarah, not wait for his decision. The ladder existed
+but admitted only visual QC failures; a terminal expired delivery became UNKNOWN/Owner.
+Reuse its typed brief: retry_delivery only for RUNPOD.EXPIRED_UNDELIVERED verified in
+the terminal provider journal without an asset. Keep prompts and paid-attempt counts;
+release only the affected step hold and let the existing staircase enforce money,
+approval and STOP. An in-flight/ambiguous submission is never equated with this terminal
+failure. QC still requires its reviewed rewrite. Rollback: revert the selective delivery
+routing/release and report changes; keep the original takes and costs as evidence.
+Tests/proof: DIRECTOR_DELIVERY_ROUTING_2026-10-13.md.
+
 ## ADR-DIRECTOR-JUDGES-QC — every QC refusal passes the Director before money is spent; her looks may pass a film to publication; no quality question reaches the Owner (2026-10-12)
 
 Context: the Owner, 2026-10-12 16:30–23:10, after a day of paid redos that repeated the same defect: «Trebuie să le facem când știm că ceea ce facem este bine! Nu putem permite loopuri pe bani și picarea QC dacă deja a fost aprobată»; «Directoarea acceptă defectele mici! Dar trebuie să înțeleagă de ce apar»; «LLM-ul este pe abonament! Nu costă bani… Generarea de imagini și mișcări costă!»; «după ce se uită directoarea, trebuie să aibă și puterea de a trece de QC și merge mai departe cu publicarea»; and, relayed 22:50, «Dacă "decide Proprietarul" înseamnă că nu este o agenție autonomă».

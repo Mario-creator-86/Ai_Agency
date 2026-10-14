@@ -185,6 +185,49 @@ def test_the_repair_is_narrow_a_valid_plan_is_read_strictly_and_trailing_commas_
 # ------------------------------------------------------------------ 2: one re-ask
 
 
+def test_shot_calls_request_json_and_switch_native_mode_only_for_a_missing_object(monkeypatch):
+    from app.agents import services
+    from app.media.prompt_agent import _run
+
+    calls = []
+
+    def answer(*args, **kwargs):
+        calls.append((args, kwargs))
+        return {"status": "SUCCEEDED", "id": "offline", "output_text": '{"shots": []}'}
+
+    monkeypatch.setattr(services, "run_agent_task", answer)
+    _run(None, None, "editor", "shot_prompts", "plan", "v3", "c", "shots", 7000)
+    _run(
+        None, None, "editor", "shot_prompts", "plan", "v3", "c", "shots", 7000, native_thinking=True
+    )
+    assert calls[0][1]["extra"] == {"format": "json"}
+    assert calls[1][1]["extra"] == {"think": True}
+    assert calls[1][0][5] == "v3+think"
+    assert all(call[1]["max_tokens"] == 7000 for call in calls)
+
+
+@pytest.mark.parametrize("empty", [True, False])
+def test_shot_reask_changes_mode_for_narration_but_keeps_json_for_a_partial_plan(
+    engine, studio, monkeypatch, empty
+):
+    from app.media import prompt_agent
+
+    board_id = _nepal_board(engine)
+    calls = []
+    original = prompt_agent._run
+
+    def tracked(*args, **kwargs):
+        calls.append(kwargs.get("native_thinking", False))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(prompt_agent, "_run", tracked)
+    model = ShotModel(["No structured answer."] if empty else [_four_of_six()])
+    model.shot_answers.append(json.dumps(_valid_pack()))
+    registry, _ = registry_with(studio, model)
+    write_shot_prompts(engine, registry, board_id, str(uuid4()))
+    assert calls[-1] is empty
+
+
 def test_a_plan_with_four_of_six_shots_is_asked_for_again_once_with_the_decoder_error(
     engine, studio
 ):
@@ -202,6 +245,7 @@ def test_a_plan_with_four_of_six_shots_is_asked_for_again_once_with_the_decoder_
 
     assert len(model.shot_prompts) == 2, "asked once, then re-asked exactly once"
     reask = model.shot_prompts[1]
+    assert "Return shots only for these scene_index values: [1, 2, 3, 4, 5, 6]" in reask
     assert decoded.value.msg in reask
     assert f"offset {decoded.value.pos}" in reask
     assert "5, 6" in reask, "the re-ask names the scenes that are missing"
@@ -417,21 +461,31 @@ def test_payload_trimming_drops_whole_claims_and_the_json_sent_always_parses(eng
     registry, _ = registry_with(studio, answer)
     write_shot_prompts(engine, registry, board_id, str(uuid4()))
 
-    assert len(asked) == 2  # the bible, then the shots
+    # The master bible trims whole claims; shot batches retain each scene's full evidence.
+    assert len(asked) == 7  # one master bible, six whole-scene batches
     with Session(engine) as session:
         originals = {row.claim_text for row in session.scalars(select(FactualClaim))}
-    for prompt in asked:
+    shot_indices = []
+    for position, prompt in enumerate(asked):
         body = re.search(
             r"<untrusted_source_evidence[^>]*>\n(.*)\n</untrusted_source_evidence>", prompt, re.S
         )
         assert body is not None
         data = json.loads(body.group(1))  # never cut mid-string
         film = data.get("film", data)
-        assert [scene["scene_index"] for scene in film["scenes"]] == [1, 2, 3, 4, 5, 6]
+        indices = [scene["scene_index"] for scene in film["scenes"]]
+        if position == 0:
+            assert indices == [1, 2, 3, 4, 5, 6]
+        else:
+            shot_indices.extend(indices)
         sent = [claim for scene in film["scenes"] for claim in scene["claims"]]
         assert sent, "the claims that fit are kept"
         assert all(claim in originals for claim in sent), "each claim is whole or absent"
-        assert len(sent) < 6 * 41, "some whole claims were dropped to fit"
+        if position == 0:
+            assert len(sent) < 6 * 41, "the master bible drops whole claims to fit"
+        else:
+            assert len(sent) == len(indices) * 41, "shot writers receive every claim"
+    assert shot_indices == [1, 2, 3, 4, 5, 6]
 
 
 def test_trim_payload_drops_claims_then_scenes_and_never_slices():

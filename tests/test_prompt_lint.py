@@ -141,7 +141,7 @@ def test_lint_film_on_nepal_finds_the_same_camera_everywhere() -> None:
     data = _nepal()
     findings = lint_film(_nepal_scenes(), bible=data["visual_bible"])
     same = _by_code(findings, "SAME_CAMERA_EVERY_SCENE")
-    assert same and same[0].severity == BLOCK
+    assert same and same[0].severity == WARN
     assert same[0].scene is None
     assert has_block(findings)
     # The per-scene findings are part of the film's list too.

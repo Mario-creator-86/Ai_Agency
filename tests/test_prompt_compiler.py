@@ -359,7 +359,13 @@ def test_caps_come_from_the_contract_and_cut_whole_sentences():
             assert text.endswith("."), text
             # Only whole sentences of the uncapped prompt survive, never a slice of one.
             for sentence in re.split(r"(?<=[.!?])\s+", text):
-                assert sentence in full[key], sentence
+                from app.media.prompt_agent import MOVE_SHORT
+
+                assert sentence in full[key] or (
+                    key == "motion_prompt"
+                    and sentence in MOVE_SHORT.values()
+                    and camera_moves(text)[0][0] == camera_moves(full[key])[0][0]
+                ), sentence
     # veo's own promptText limit (1000 UTF-16 units) is the default.
     assert utf16_units(full["still_prompt"]) <= 1000
     for source in ("backend/app/media/prompt_agent.py", "backend/app/media/assembler.py"):
@@ -597,3 +603,45 @@ def test_the_assembler_speaks_the_dialect_of_the_model_that_films_the_scene(engi
     assert not NEGATION.search(sent["prompt"]), sent["prompt"]
     assert "human faces" in sent["extra"]["negative_prompt"]
     assert sent["prompt"] == motion_prompt_for(third, "veo3.1")[0]
+
+
+def test_motion_comma_lists_keep_their_predicate_and_exclusions_cannot_turn_positive():
+    from app.media.prompt_agent import _clauses_of
+
+    text = (
+        "The flask, clamp stand, valve, and tubing stay locked in identical position and shape "
+        "throughout; no extra figure, reflection, or ghost image appears."
+    )
+    assert _clauses_of(text, motion=True) == [
+        "The flask, clamp stand, valve, and tubing stay locked in identical position and shape "
+        "throughout"
+    ]
+
+
+def test_the_real_kelvin_candidate_keeps_hardware_fixed_and_never_requests_a_ghost():
+    import json
+    from pathlib import Path
+
+    from app.media.prompt_agent import compile_prompts
+    from app.media.prompt_lint import utf16_units
+
+    data = json.loads(
+        (Path(__file__).parent / "fixtures" / "kelvin_probe_motion_2026-10-14.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    compiled = compile_prompts(data["package"], data["bible"])
+    motion = compiled["motion_prompt"]
+    assert "stay locked in identical position and shape throughout" in motion
+    assert "ghost image appears" not in motion.lower()
+    assert "The flask. Clamp stand. Valve." not in motion
+    assert "mercury column in the curved glass tube now visibly lower" in motion
+    assert utf16_units(motion) <= 1000
+
+
+def test_still_exclusions_cannot_revive_the_rest_of_a_comma_list():
+    from app.media.prompt_agent import _clauses_of
+
+    assert _clauses_of(
+        "A brass flask on a wooden bench; no extra figure, reflection, or ghost image appears"
+    ) == ["A brass flask on a wooden bench"]

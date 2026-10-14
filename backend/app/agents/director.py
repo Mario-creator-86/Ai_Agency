@@ -53,7 +53,7 @@ def _model_status(result: dict[str, Any]) -> str:
     return f"rularea {stage_status(result.get('status'))}: {detail}"
 
 
-REVIEW_TEMPLATE_VERSION = "director-review-v1"
+REVIEW_TEMPLATE_VERSION = "director-review-v2"
 #: How many inbox messages one review reads. A review is a decision per message; a model
 #: given sixty wrote about them instead of deciding.
 REVIEW_BATCH = 12
@@ -212,7 +212,7 @@ def choose_topic(
         if director is None:
             raise DirectorError("Niciun Director activ")
         director_id = director.id
-    payload = json.dumps({"candidates": candidates}, ensure_ascii=False, default=str)[:12000]
+    payload = json.dumps({"candidates": candidates}, ensure_ascii=False, default=str)
     prompt = _CHOOSE_INSTRUCTIONS + wrap_in_inert_boundary(payload, "production-candidates")
     result = run_agent_task(
         engine,
@@ -516,7 +516,8 @@ def director_review(
             {
                 k: v
                 for k, v in m.items()
-                if k in ("id", "intent", "from_name", "subject", "body_json", "created_at")
+                if k
+                in ("id", "intent", "from_name", "subject", "body_text", "body_json", "created_at")
             }
             for m in inbox
         ],
@@ -527,7 +528,7 @@ def director_review(
         },
         "stage_outcomes": outcomes or {},
     }
-    payload = json.dumps(facts, ensure_ascii=False, default=str)[:16000]
+    payload = json.dumps(facts, ensure_ascii=False, default=str)
     prompt = _INSTRUCTIONS + wrap_in_inert_boundary(payload, "director-inbox")
     from app.agents.structured import structured_run  # noqa: PLC0415
 

@@ -424,6 +424,11 @@ class Settings(BaseSettings):
     #: employees and the independent daily token/USD gates keep their own limits.
     director_token_multiplier: int = Field(default=DEFAULT_DIRECTOR_TOKEN_MULTIPLIER, ge=1, le=4)
 
+    #: Shot-plan output, independent of the Owner's daily token/USD gates. A demonstrated
+    #: exhausted native-thinking call is retried as whole single-scene work, with this cap.
+    shot_plan_output_tokens: int = Field(default=7000, ge=1000, le=65_536)
+    shot_plan_recovery_output_tokens: int = Field(default=21_000, ge=1000, le=65_536)
+
     #: How many versions of one script the Director's editorial judgement reads before the
     #: best-scored one ships (STUDIO_EDITORIAL_ROUNDS): the draft the structural review passed,
     #: then, for every version below her bar, the Scriptwriter's rewrite on her brief. Owner,
@@ -455,6 +460,8 @@ class Settings(BaseSettings):
     # the day on its own would make every other test's timing a coincidence.
     worker_enabled: bool = True
     worker_interval_seconds: int = Field(default=30, ge=5, le=3600)
+    #: Director backlog checks, also while waiting for GPU, without another paid task.
+    director_check_interval_seconds: int = Field(default=300, ge=30, le=3600)
 
     # ------------------------------------------------------------- the day and the clock
     #: When the day starts, on the studio's own wall clock (HH:MM in `timezone`). The daily

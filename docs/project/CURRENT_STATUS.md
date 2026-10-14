@@ -1,4 +1,111 @@
-# CURRENT STATUS — State on 2026-10-12
+# CURRENT STATUS — State on 2026-10-14
+
+## AGENCY_LOOP_DIAGNOSIS — verified, claim released; Owner requests commit and stop (2026-10-14, Codex /root)
+
+The agency was looping: published films re-entered sheet repair; a dead pre-start Kael
+call blocked all new work; GLM-5.3-flash returned no plan even at 21,000 output tokens;
+scene batches did not explicitly scope indices; comma splitting turned a negative ghost
+list positive and dropped the fixed equipment predicate. Shared publication guard and
+closed-report settlement, exclusive-worker text-call recovery, outcome-based configurable
+shot budgets, explicit batch indices and scope-safe list compilation are saved.
+
+Owner stopped the studio and authorized isolated real agent tests. 13 actual calls are
+recorded/billed in production; candidates were written only to DB copies. Sarah chose the
+verified alternative after actual output comparison; Kael now uses mistral-large-4, IDLE,
+through versioned DIRECTOR_REPAIR assignment. Final Kelvin scene-2 test: only index 2,
+889 output tokens, changed prompts, no local scene blocker, all four serious findings
+judged TREATS by Sarah. Production scene remains unchanged; no GPU requests or active jobs.
+The whole new image/video and visual QC chain remains unproven; do not call the draft a film.
+
+Verification: final combined suite 290 passed; after the final still-list protection,
+39 compiler/follow-up/profile regressions passed. Scoped mypy passes five source modules;
+Ruff, formatting, diff/docs/secret checks recorded at commit. User requests local commit
+and then stop. Studio remains stopped; heartbeat urm-rire-agen-ie-amn-ai is PAUSED.
+No active claim remains. Evidence, exact prompts, calls/costs and next steps:
+AGENCY_LOOP_DIAGNOSIS_2026-10-14.md / AGENCY_LOOP_PROOF_2026-10-14.json.
+
+## PROMPT_CONTRACT_FOLLOWUP — local continuation verified (2026-10-14, Codex /root; claim released)
+
+Nine recorded examples have exact stored-before/compiled-after offline proposals, all with
+zero deterministic blocks. They are not Director approvals or applied scene updates.
+Reaudit of old stored fields: 85 LIVE scenes/14 boards, 57 stored loss signals, six packages
+still blocked; three lost endings repaired in composition. Keep first action after identity/
+spatial intros and visible endpoint clauses beside scene pointers. Respect explicit motionless
+worlds/native caps; composition checks follow the layer and accepted source still. Remaining
+six-finding limits and current finding/cause/negative/feedback/film JSON clipping removed;
+reply to Sarah carries full before/after and review. Initial/repair instructions v3, film QC v6.
+Relevant suite: 357 passed (two warnings); final v3/report/Director recheck 84 passed after
+one obsolete v2 expectation updated. 19 new regressions also passed separately without
+warnings. Scoped mypy (--follow-imports silent) passes five edited source modules; unrestricted
+dependency analysis reports 20 errors in other modules and is not declared green. Ruff,
+formatting, Git diff check and document inventory/architecture hashes verified. No model calls,
+studio restart, purchases, production verdict edits or STOP/policy changes. Owner still reported
+no LLM credit. Live activation/scientific/visual evaluation remains pending; preserve accepted
+assets and closed films. Next AI: read PROMPT_CONTRACT_FOLLOWUP_2026-10-14.md and
+PROMPT_REPAIR_PROPOSALS_2026-10-14.md, then use the actual current dossier through Sarah's
+review → exact request → result → defect-specific QC once providers are available. No active
+claim remains for this continuation.
+
+## PROMPT_CONTRACT_AUDIT — local fixes verified; real-model evaluation pending (2026-10-14, Codex /root; claim released)
+
+All 85 recorded LIVE scenes/14 storyboards audited read-only (170 prompt texts, including
+history); 57 stored scenes have required-content loss signals, nine recomposed candidates
+still need editorial changes. No scene/take/Owner policy overwritten. Initial writers receive
+QC conditions and complete scene/claim/character batches. Factual endpoints reach motion;
+serial wardrobe is reserved, static choices respected, face-risk orbits/required-content
+losses block before purchase. Full mail bodies/structured evidence, Director inbox letter
+text and QC/repair findings survive. Specific negatives include bible rules and use the
+local request schema limit instead of silent 400-character trimming. Input_guard is wired
+to RunPod stage sends/new reservations. Sheet five/day, ladder six/day and total shot-plan
+two-day ceilings removed; semantic repair cooldown at most 20 min. Paid caps, single pending
+continuation, provider failure pauses and Owner STOP/approvals stay. Templates versioned.
+Validation: broad offline suite 861 collected, 858 passed; three obsolete expectations
+(Director template v1 and unreviewed paid reroll counts) updated. Final targeted recheck
+228 passed, including all three and the 20 new prompt-audit regressions. Scoped mypy passes
+14 source modules; Ruff, diff check, documentation inventory/architecture hashes pass.
+Full test transcript retained, including the first failures, in
+PROMPT_CONTRACT_TESTS_2026-10-14.txt; report/spec and all before/after texts:
+PROMPT_CONTRACT_AUDIT_2026-10-14.md / .json. No LLM calls, studio restart or media purchases.
+Owner reported no LLM credit; runtime activation, the nine applicable open-scene rewrites
+and real result/QC evaluation remain unverified. Earlier activation helper was cancelled;
+its partial runtime effect was not established. Next AI must preserve STOP/policies and
+accepted assets, activate normally only when providers are available, then prove the actual
+reviewed request/image/video/defect-specific QC chain. No active claim for this audit.
+
+## DIRECTOR_REGENERATION_REVIEW — offline fixes saved; live verification stopped by Owner (2026-10-14, Codex /root)
+
+Owner requires Sarah to verify that the new prompt treats the defect before EVERY
+regeneration. Live Kelvin scene 2 at 23:56 on October 13 exposed a bypass: Sarah
+confirmed a distorted face caused by the camera path, but qc_clip_with_retry bought
+the generic calmer prompt without her rewrite review. Scope: qc.py and the shared
+stills round settlement, regression tests and handoff. Use the existing scene_rewrite
+brief/editor/review ladder; preserve accepted takes, spending/STOP and active GPU jobs.
+Do not restart during an active GPU purchase. Additional Owner reports: scene 4 uses
+approved still 7e4ec124 (actual first-frame JPEG hash matches the RunPod request), but
+director_take_look omits the character bible that later QC uses. Serial rewrite guidance
+does not explain that corrections after `then` and camera wording in ending_frame are
+discarded by the composer. Director upkeep is delayed by GPU polling and a six-hour job.
+Scope extends to that missing scene dossier, explicit composer guidance and free upkeep
+while waiting for GPU. Preserve the one queue worker; upkeep never executes paid tasks.
+
+## DIRECTOR_DELIVERY_ROUTING — core route verified live (2026-10-13, Codex; claim released)
+
+Kelvin scene 2's terminal RUNPOD.EXPIRED_UNDELIVERED now enters the existing Director
+ladder through retry_delivery; journal/provenance/paid-attempt counts and normal spending,
+approval/STOP gates remain. Live 23:39 Bucharest: Sarah's run e8aceeae succeeded,
+her decision is recorded, her instruction to Kael bd316131 is recorded, and new take
+9cc89ba6 was submitted; at 23:50 its LTX-2.5 request is QUEUED, no delivered clip yet.
+Its actual request prompt is identical to the expired request: delivery retry, no visual
+QC rejection. This is real routing evidence, not proof of clip quality. The main studio
+loaded the core changes during this session; this chat performed no studio restart and
+did not change Owner policies. The redundant idle-restart helper was stopped while that
+request remained active. Later refinements (register wording and extra stale-prompt guard)
+are verified offline and load at the next normal restart.
+Tests: 11 new routing regressions; latest combined routing/register/rewrite suite 44 passed;
+existing workflow suite 91, ladder/serial/purchase-bound suites 33 passed. Ruff, formatting,
+diff and document hashes pass. Scoped mypy has five unchanged pre-existing errors, proven
+against HEAD in a disposable snapshot; not declared green. Details and rollback:
+DIRECTOR_DELIVERY_ROUTING_2026-10-13.md. No active claim remains for this task.
 
 Current proof: the 2026-10-01/02 paid film readiness audit was proven on fakes only;
 AGENT_SCENARIO_ACCEPTANCE later used actual Ollama Cloud calls, with normal serial

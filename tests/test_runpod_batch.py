@@ -1655,7 +1655,7 @@ def stills_table():
     )
 
 
-def test_stills_on_runpod_are_rounds_every_scene_first_then_the_rerolls(
+def test_stills_on_runpod_buy_first_candidates_then_wait_for_prompt_review(
     engine, tmp_path, fake_session
 ):
     # Qwen-Image-2512 binds no reference picture, so no scene waits for scene 1's still (its
@@ -1700,17 +1700,18 @@ def test_stills_on_runpod_are_rounds_every_scene_first_then_the_rerolls(
 
     jobs = [cloud.jobs[j]["input"]["items"] for j in sorted(cloud.jobs)]
     scenes = [[int(item["scene_id"]) for item in items] for items in jobs]
-    assert scenes == [[1, 1, 2, 2, 3, 3, 4, 4], [2, 2], [2, 2]]
+    assert scenes == [[1, 1, 2, 2, 3, 3, 4, 4]]
     assert len(fake_session) == 1 and fake_session[0]["closed"]
     by_scene = {entry["scene_index"]: entry for entry in result["scenes"]}
     assert all(by_scene[n]["status"] == "APPROVED" for n in (1, 3, 4))
-    assert by_scene[2]["status"] == "NEEDS_OWNER" and by_scene[2]["rerolls"] == 2
-    assert result["gpu"]["rounds"] == 3
-    # 12 images x 7 credits + 3 GPU starts x 14 credits.
-    assert result["spent_credits_quoted"] == 12 * 7 + 3 * 14  # GPU starts in whole credits
+    assert by_scene[2]["status"] == "NEEDS_OWNER" and by_scene[2]["rerolls"] == 0
+    assert by_scene[2]["rewrite"] is True
+    assert result["gpu"]["rounds"] == 1
+    # Eight initial images and one GPU start; no unreviewed regeneration.
+    assert result["spent_credits_quoted"] == 8 * 7 + 14
     with Session(engine) as s:
         rows = s.scalars(select(SceneTake).where(SceneTake.storyboard_id == storyboard_id)).all()
-        assert len(rows) == 12 and all(r.remote_task_id.startswith("job-") for r in rows)
+        assert len(rows) == 8 and all(r.remote_task_id.startswith("job-") for r in rows)
         assert sorted({r.status for r in rows if r.scene_number == 2}) == ["REJECTED"]
 
 
@@ -1781,7 +1782,7 @@ def proving_session(monkeypatch):
     return opened
 
 
-def test_a_film_whose_scene_one_is_resent_buys_every_scene_first_and_its_rerolls_after(
+def test_a_resent_scene_one_is_not_rerolled_without_prompt_review(
     engine, tmp_path, proving_session
 ):
     """2026-10-09, «The Particle That Shouldn't Exist (But Does)»: scene 1's /run failed with
@@ -1862,15 +1863,13 @@ def test_a_film_whose_scene_one_is_resent_buys_every_scene_first_and_its_rerolls
     jobs = [cloud.jobs[j]["input"]["items"] for j in sorted(cloud.jobs)]
     assert [[int(item["scene_id"]) for item in items] for items in jobs] == [
         [1, 1, 2, 2, 3, 3, 4, 4, 5, 5],
-        [1, 1],
-        [1, 1],
     ]
     assert {item["idempotency_key"] for item in jobs[0][:2]} == first_keys
     by_scene = {entry["scene_index"]: entry for entry in result["scenes"]}
     assert all(by_scene[n]["status"] == "APPROVED" for n in (2, 3, 4, 5))
-    assert by_scene[1]["status"] == "NEEDS_OWNER" and by_scene[1]["rerolls"] == 2
-    # 14 images x 7 credits + 3 GPU starts x 14 credits, inside the approved cap.
-    assert result["spent_credits_quoted"] == 14 * 7 + 3 * 14 <= result["cap_credits"]
+    assert by_scene[1]["status"] == "NEEDS_OWNER" and by_scene[1]["rerolls"] == 0
+    assert by_scene[1]["rewrite"] is True
+    assert result["spent_credits_quoted"] == 10 * 7 + 14 <= result["cap_credits"]
 
 
 # ------------------------------------------------------------------------ the motion step
@@ -1885,7 +1884,7 @@ def motion_table():
     )
 
 
-def test_motion_on_runpod_one_round_per_step_and_the_clip_qc_retry_is_the_next_round(
+def test_motion_on_runpod_requires_prompt_review_after_refusal_and_batches_accepted_scenes(
     engine, tmp_path, fake_session
 ):
     from app.media.assembler import MotionStepRefused, decide_take, motion_plan, run_motion_step
@@ -1929,12 +1928,14 @@ def test_motion_on_runpod_one_round_per_step_and_the_clip_qc_retry_is_the_next_r
     assert hero["cost_credits"] == 14 + 14 and hero["cap_credits"] == 2 * 14 + 2 * 14
 
     result = approved("test_shot", ScriptedCheck("FAILED", "PASSED"))
-    assert [len(cloud.inner.jobs[j]["input"]["items"]) for j in sorted(cloud.inner.jobs)] == [1, 1]
-    first, retry = (cloud.inner.jobs[j]["input"]["items"][0] for j in sorted(cloud.inner.jobs))
-    assert retry["seed"] == first["seed"] + 1 and retry["prompt"] != first["prompt"]
+    assert [len(cloud.inner.jobs[j]["input"]["items"]) for j in sorted(cloud.inner.jobs)] == [1]
     scene = {e["scene_index"]: e for e in result["scenes"]}[1]
-    assert scene["status"] == "PAID" and scene["clip_qc"]["attempts"] == 2
-    assert result["gpu"]["rounds"] == 2 and len(fake_session) == 1
+    assert scene["status"] == "NEEDS_OWNER" and scene["clip_qc"]["attempts"] == 1
+    assert scene["clip_qc"]["status"] == "ESCALATED"
+    assert result["gpu"]["rounds"] == 1 and len(fake_session) == 1
+    # A different film whose hero passes can proceed to its other scenes normally.
+    storyboard_id = a_film(engine, tmp_path, scenes=3)
+    approved("test_shot", ScriptedCheck("PASSED"))
     with Session(engine) as s:
         (paid,) = s.scalars(
             select(SceneTake).where(
@@ -1950,4 +1951,4 @@ def test_motion_on_runpod_one_round_per_step_and_the_clip_qc_retry_is_the_next_r
     assert [it["scene_id"] for it in cloud.inner.jobs[third]["input"]["items"]] == ["2", "3"]
     assert all(e["status"] == "PAID" for e in result["scenes"] if e["scene_index"] in (2, 3))
     assert result["spent_credits_quoted"] == 2 * 14 + 14
-    assert len(fake_session) == 2 and all(s["closed"] for s in fake_session)
+    assert len(fake_session) == 3 and all(s["closed"] for s in fake_session)

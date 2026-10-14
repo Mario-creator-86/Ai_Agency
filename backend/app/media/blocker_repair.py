@@ -50,26 +50,25 @@ logger = logging.getLogger("studio.sheet_repair")
 # The safety the Owner asked for on 2026-10-03 ("pune și o siguranță să nu meargă la infinit"):
 # on his studio the scan had queued a repair of the same sheet every five minutes for an hour,
 # every one UNRESOLVED because every language-model call failed. The repair still continues
-# without asking him; it backs off, has a daily ceiling per set of blockers, waits while the
+# without asking him; it backs off per set of blockers, waits while the
 # language model is failing, and tells him once when it pauses.
 #: Letters to the Owner when the automatic repair of a sheet pauses.
 PAUSED_KIND = "sheet_repair_paused"
 #: The end of a repair whose film is closed («Închide filmul», or the Director's retirement).
 CLOSED_FILM_NOTE = (
-    "Filmul a fost închis: foaia lui nu se mai remediază și nu se cumpără nimic pentru el."
+    "Filmul este închis pentru producție sau deja încărcat: foaia lui nu se mai remediază "
+    "și nu se cumpără nimic pentru el."
 )
-#: Attempts in 24 hours on the same blockers (the same sheet and the same issues).
-MAX_SAME_ISSUES_PER_DAY = 5
 #: The wait before the second retry of the same blockers; it doubles after each one.
 BACKOFF_BASE_SECONDS = 300
-#: The longest wait between two attempts on the same blockers.
-BACKOFF_MAX_SECONDS = 6 * 3600
+#: Semantic repairs stay in the active backlog; provider failures have their own pause.
+BACKOFF_MAX_SECONDS = 20 * 60
 #: The latest model runs read to tell a failing language model from one bad answer.
 MODEL_RUNS_READ = 3
 #: When this studio process started. Attempts that failed before it do not count against the
-#: ceiling or the back-off: a restart usually brings code that fixes what made them fail (the
+#: back-off: a restart usually brings code that fixes what made them fail (the
 #: Owner, 2026-10-03: "să reparăm, și să îi lăsăm pe ei să rezolve"). Within one run of the
-#: studio the ceiling holds.
+#: studio the cooldown holds.
 STUDIO_STARTED_AT = datetime.now(UTC)
 #: The Owner let a paused repair try again now (his accept on the pause card, 2026-10-03):
 #: the attempts before it no longer count against the guard.
@@ -232,19 +231,9 @@ def _repair_guard(
                 "după primul răspuns reușit al modelului. Nu s-a cumpărat nimic."
             ),
         }
-    if len(unresolved) >= MAX_SAME_ISSUES_PER_DAY:
-        return {
-            "status": "PAUSED",
-            "cause": "DAILY_LIMIT",
-            "reason_ro": (
-                f"Remedierea automată a foii „{sheet.get('title') or sheet['storyboard_id']}” "
-                f"a încercat de {len(unresolved)} ori în ultimele 24 de ore aceleași blocaje "
-                "(aceleași coduri pe aceleași scene, oricum ar fi fost rescrise prompturile), "
-                "fără succes, și s-a oprit pentru restul zilei sau până când blocajele se "
-                "schimbă. Blocajele rămân pe foaia de filmare; nu s-a cumpărat nimic."
-            ),
-        }
-    wait = 0 if len(unresolved) < 2 else BACKOFF_BASE_SECONDS * 2 ** (len(unresolved) - 2)
+    # No daily editorial stop. Cap the exponent as well as the delay so a very long
+    # history cannot allocate a huge integer; later attempts keep the maximum cooldown.
+    wait = 0 if len(unresolved) < 2 else BACKOFF_BASE_SECONDS * 2 ** min(len(unresolved) - 2, 16)
     resume = max(unresolved) + timedelta(seconds=min(wait, BACKOFF_MAX_SECONDS))
     if datetime.now(UTC) < resume:
         return {"status": "BACKING_OFF", "retry_after": resume.isoformat()}
@@ -435,6 +424,9 @@ def sheet_issues(sheet: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def submit_sheet_issues(engine: Engine, sheet: dict[str, Any]) -> dict[str, Any]:
+    with Session(engine) as session:
+        if film_is_closed(session, str(sheet["storyboard_id"])):
+            return {"status": "FILM_CLOSED", "reason_ro": CLOSED_FILM_NOTE}
     successor = story_progress(engine, str(sheet["storyboard_id"]))
     if successor.get("replacement_storyboard_id"):
         return {"status": "REVISED", **successor}
@@ -491,6 +483,8 @@ def submit_sheet_issues(engine: Engine, sheet: dict[str, Any]) -> dict[str, Any]
     with Session(engine) as session, session.begin():
         lock_for_write(session)
         _close_pause_letters(session, identifier)
+        if film_is_closed(session, identifier):
+            return {"status": "FILM_CLOSED", "reason_ro": CLOSED_FILM_NOTE}
         # A report survives a process dying between the report commit and queue insertion.
         report = next(
             (
@@ -661,12 +655,13 @@ def _finish(
             "storyboard_id": payload["storyboard_id"],
             **(details or {}),
         }
+        closed_stale = status == "STALE" and film_is_closed(session, payload["storyboard_id"])
         report = session.get(AgentMessage, payload["message_id"])
         director = agent_for_role(session, "Director")
         editor = agent_for_role(session, PROMPT_ROLE)
         if report:
             report.body_json = {**report.body_json, "repair_result": result}
-            if status == "RESOLVED":
+            if status == "RESOLVED" or closed_stale:
                 resolve_message(
                     session,
                     report.id,
@@ -698,7 +693,7 @@ def _finish(
                     to_owner=True,
                     in_reply_to=report.id,
                 )
-        if status == "RESOLVED":
+        if status == "RESOLVED" or closed_stale:
             for message in session.scalars(
                 select(AgentMessage).where(AgentMessage.status == "OPEN")
             ):
@@ -716,6 +711,7 @@ def _finish(
                         resolved_by="verificarea foii",
                         correlation_id=correlation,
                     )
+        if status == "RESOLVED":
             # The sheet's own work done: the film goes on tonight (2026-10-11, f06808c9).
             result["continue_task_id"] = _continue_repaired_film(session, payload, correlation)
         append_event(
@@ -977,6 +973,9 @@ def scan_sheet_issues(engine: Engine, **context: Any) -> dict[str, Any]:
     reported = []
     for identifier in identifiers:
         try:
+            with Session(engine) as session:
+                if film_is_closed(session, identifier):
+                    continue
             if story_progress(engine, identifier).get("replacement_storyboard_id"):
                 continue
             reading = build_sheet(engine, identifier, **({"read_live": False} | context))

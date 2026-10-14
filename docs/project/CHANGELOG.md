@@ -1,5 +1,68 @@
 # Changelog
 
+## 2026-10-14 — Agency loop diagnosis and actual agent probes
+
+Prevent already uploaded films from re-entering repair; settle their obsolete correspondence.
+Recover dead pre-start text calls under the exclusive worker lock. Shot output allowances are
+configurable and learned from real assigned-model outcomes; batches state requested indices.
+Preserve complete motion object lists and negative-list scope for still/video compilation.
+13 actual Sarah/Kael calls exposed GLM empty output and a compiler inversion of ghost exclusions.
+Sarah selected the tested alternative; Kael now uses Mistral Large 4. Final isolated Kelvin
+scene 2: one requested/returned scene, 889 output tokens, prompts changed, no local blocker,
+review TREATS for all four serious findings. Production scene/media untouched; no GPU request.
+Combined relevant suite 290 passed; final still-list/profile/compiler recheck 39 passed.
+Owner stopped the studio, authorized probes, then requested commit and stop; monitor PAUSED.
+Details: AGENCY_LOOP_DIAGNOSIS_2026-10-14.md. Visual generation/QC remains pending.
+
+## 2026-10-14 — Prompt/QC follow-up (offline)
+
+Nine recorded examples now have reviewable proposals and exact before/after text. Preserve
+visible endpoints beside continuity pointers and first actions after identity/position
+introductions. Serial motion prioritizes the native cap; explicit motionless worlds no longer
+get invented life/padding. Composition checks follow the repair layer and accepted source
+still. Remaining current finding/cause/negative/film JSON truncation and six-item caps removed;
+editor's reply carries complete prompts and review. Writer/repair templates v3; film look v6.
+No studio/provider/database activation; scientific/visual review remains external.
+Tests and limitations: PROMPT_CONTRACT_FOLLOWUP_2026-10-14.md.
+
+## 2026-10-14 — Prompt/QC contract audit (offline)
+
+Initial factual/serial writers receive QC constraints and whole scenes with their evidence.
+Factual ending frames reach the motion model; canonical wardrobe is reserved in serial stills;
+lost required meaning blocks the sheet/editor before payment. Explicit static choices persist;
+face-risk orbits are held. Finger-width measurements no longer inject human figures.
+Full mail bodies, structured correspondence, Director inbox text and QC JSON/findings survive.
+Specific negative conditions are no longer silently discarded by the 400-character target.
+Existing input_guard is wired to RunPod stage sends and new request reservations. Remove
+sheet/ladder daily ceilings and total two-day shot-plan ceiling; semantic cooldown at most 20 min.
+Owner STOP, money approvals, budgets, accepted assets and recovery remain. Scoped type defects
+in QC/repair frame variables corrected; templates versioned. Audit: 85 recorded LIVE scenes;
+57 with loss signals in stored words; nine recomposed candidates need editorial changes.
+No external model calls, new purchases, runtime restart or visual-quality claim.
+See PROMPT_CONTRACT_AUDIT_2026-10-14.md and CURRENT_STATUS for final local verification.
+
+## 2026-10-14 — Review replacement prompts before regenerating; Director checks waiting work
+
+Production still/video rerolls use the existing reviewed rewrite ladder. Take selection
+now sees full character/shot facts; serial rewrite guidance explains the composer's actual
+budget and action/ending format. Free management/mail checks run while GPU results wait,
+and regular Director checks use the configurable five-minute interval, preserving paused
+schedules, Owner STOP and the single queue worker. Nine regeneration and seven upkeep
+regressions include exact reviewed-request equality and a batch-adapter wait check.
+Latest focused suite 62 passed; broader suites 312 and 182 passed. Six added/touched upkeep
+source modules pass scoped mypy; earlier scene/stage type errors remain documented.
+Evidence and live activation: DIRECTOR_REGENERATION_REVIEW_2026-10-14.md.
+
+## 2026-10-13 — Kelvin's undelivered test shot goes to the Director
+
+The existing Director ladder now handles RUNPOD.EXPIRED_UNDELIVERED through a typed
+delivery-recovery decision, verified against the terminal request journal. It leaves
+prompts, refused takes, costs and paid-attempt counts intact and returns the retry to
+normal spending/approval/STOP gates. Active, ambiguous or changed requests are not released;
+visual QC still requires its reviewed rewrite. Owner technical questions are withdrawn on
+preluare while spending approvals stay; the media report/register name Director recovery.
+Tests and remaining live activation are recorded in DIRECTOR_DELIVERY_ROUTING_2026-10-13.md.
+
 ## 2026-10-12 — The Director judges every QC refusal before anything is bought, may pass a film to publication on her looks, and learns why each defect appeared
 
 The Owner, 16:30–23:10: «Sistemul trebuie să refacă promptul! … să refacă CE A FOST GREȘIT și să se asigure că ce a fost greșit este acum corectat»; «Directoarea acceptă defectele mici, dar trebuie să înțeleagă de ce apar»; «LLM-ul este pe abonament, nu costă bani; generarea de imagini și mișcări costă»; «după ce se uită directoarea, trebuie să aibă și puterea de a trece de QC și merge mai departe cu publicarea»; «Dacă "decide Proprietarul" înseamnă că nu este o agenție autonomă». Three rounds of fixers in isolated worktrees, each diff reviewed adversarially for money and for intent, merged by path:

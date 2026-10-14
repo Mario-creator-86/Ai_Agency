@@ -1,0 +1,393 @@
+{
+  "reports": [
+    "output/agency-watch/probe-a211e3ce-0042-44f1-8f9e-45963efc6c3e/report.json",
+    "output/agency-watch/probe-19c344b5-6d13-49ad-995a-e2c14448fff4/report.json",
+    "output/agency-watch/probe-19c344b5-6d13-49ad-995a-e2c14448fff4/final-review.json",
+    "output/agency-watch/probe-2306ffc6-8b44-4ae3-84fc-2fa116fd1595/report.json"
+  ],
+  "calls": [
+    {
+      "id": "93480e33-cf2e-4569-a21f-8e296e68d30d",
+      "task_type": "sheet_repair_assignment",
+      "status": "SUCCEEDED",
+      "model_name": "kimi-k3",
+      "completion_tokens": 182,
+      "prompt_tokens": 6804,
+      "cost_vr": "0.003493",
+      "error_detail": null
+    },
+    {
+      "id": "6c7566e3-432e-4175-97b7-36567c79e39f",
+      "task_type": "director_scene_brief",
+      "status": "SUCCEEDED",
+      "model_name": "kimi-k3",
+      "completion_tokens": 678,
+      "prompt_tokens": 10945,
+      "cost_vr": "0.005812",
+      "error_detail": null
+    },
+    {
+      "id": "e62be5c5-dd1a-4a23-8d70-49707a77c569",
+      "task_type": "shot_prompts",
+      "status": "EMPTY_OUTPUT",
+      "model_name": "glm-5.3-flash",
+      "completion_tokens": 21000,
+      "prompt_tokens": 10615,
+      "cost_vr": "0.015808",
+      "error_detail": "Modelul a atins limita de tokeni înainte să răspundă: a folosit bugetul pe raționament intern. Niciun răspuns de folosit."
+    },
+    {
+      "id": "4e6a6ba3-99e0-4b69-8f21-8f02e5bf001d",
+      "task_type": "sheet_repair_assignment",
+      "status": "SUCCEEDED",
+      "model_name": "kimi-k3",
+      "completion_tokens": 164,
+      "prompt_tokens": 6804,
+      "cost_vr": "0.003484",
+      "error_detail": null
+    },
+    {
+      "id": "b4e61c83-6b56-4209-967f-aca9c514d936",
+      "task_type": "director_scene_brief",
+      "status": "SUCCEEDED",
+      "model_name": "kimi-k3",
+      "completion_tokens": 584,
+      "prompt_tokens": 10945,
+      "cost_vr": "0.005765",
+      "error_detail": null
+    },
+    {
+      "id": "28ed6f09-651e-4380-8584-b159251c4f11",
+      "task_type": "shot_prompts",
+      "status": "SUCCEEDED",
+      "model_name": "mistral-large-4",
+      "completion_tokens": 4210,
+      "prompt_tokens": 10705,
+      "cost_vr": "0.007458",
+      "error_detail": null
+    },
+    {
+      "id": "66ebdbcd-716a-4b08-831e-1729782c1003",
+      "task_type": "director_rewrite_review",
+      "status": "SUCCEEDED",
+      "model_name": "kimi-k3",
+      "completion_tokens": 1133,
+      "prompt_tokens": 10555,
+      "cost_vr": "0.005844",
+      "error_detail": null
+    },
+    {
+      "id": "6b42240a-f92e-4cba-ba05-92cacbc664bc",
+      "task_type": "director_rewrite_review",
+      "status": "SUCCEEDED",
+      "model_name": "kimi-k3",
+      "cost_vr": "0.006018",
+      "prompt_tokens": 11052,
+      "completion_tokens": 984,
+      "error_detail": null
+    },
+    {
+      "id": "744fa66b-c3ee-4a1d-8616-8f29ddcb31ca",
+      "task_type": "director_editor_model_choice",
+      "status": "SUCCEEDED",
+      "model_name": "kimi-k3",
+      "cost_vr": "0.003921",
+      "prompt_tokens": 7688,
+      "completion_tokens": 153,
+      "error_detail": null
+    },
+    {
+      "id": "82887fc1-1450-4ebd-a458-0041424fb115",
+      "task_type": "sheet_repair_assignment",
+      "status": "SUCCEEDED",
+      "model_name": "kimi-k3",
+      "completion_tokens": 216,
+      "prompt_tokens": 6804,
+      "cost_vr": "0.00351",
+      "error_detail": null
+    },
+    {
+      "id": "020b04a4-879f-42d8-b334-0663eb003ccb",
+      "task_type": "director_scene_brief",
+      "status": "SUCCEEDED",
+      "model_name": "kimi-k3",
+      "completion_tokens": 578,
+      "prompt_tokens": 10945,
+      "cost_vr": "0.005762",
+      "error_detail": null
+    },
+    {
+      "id": "853d8cde-26c5-4b3f-801d-c00d03feb346",
+      "task_type": "shot_prompts",
+      "status": "SUCCEEDED",
+      "model_name": "mistral-large-4",
+      "completion_tokens": 889,
+      "prompt_tokens": 10772,
+      "cost_vr": "0.005831",
+      "error_detail": null
+    },
+    {
+      "id": "e858c422-6811-496e-8e03-120e2adf4ca3",
+      "task_type": "director_rewrite_review",
+      "status": "SUCCEEDED",
+      "model_name": "kimi-k3",
+      "completion_tokens": 770,
+      "prompt_tokens": 10597,
+      "cost_vr": "0.005684",
+      "error_detail": null
+    }
+  ],
+  "call_count": 13,
+  "prompt_tokens": 125231,
+  "completion_tokens": 31541,
+  "cost_vr": "0.078390",
+  "production_scene_edits": false,
+  "gpu_requests": 0,
+  "latest_review": {
+    "verdict": "TREATS",
+    "reason_ro": "Toate cele patru constatări sunt tratate: cercetătorul a fost scos complet din cadru, hardware-ul este descris concret și blocat ca poziție și formă, camera este statică, iar prompturile nu mai invită fața fantomă sau deriva cadrului.",
+    "findings": [
+      {
+        "id": 1,
+        "qc_text": "Scena 2: privit la 1080 px: nu arată ce cere planul",
+        "finding": "nu arată ce cere planul (plan mediu din spate, fără față)",
+        "treated": true,
+        "by": "A brass laboratory flask about ten centimetres across, round and heavy, held by a heavy iron clamp stand with a single vertical rod, a small brass valve wheel fixed at the flask's right joint, a curved glass tube rising from the flask holding a silver mercury column that sinks, frost blooming along the brass fittings.",
+        "why_not": "",
+        "severity": "serious",
+        "layer": "still",
+        "accepted": false,
+        "field": "",
+        "locked": false,
+        "lock": "",
+        "source": "test_shot"
+      },
+      {
+        "id": 2,
+        "qc_text": "are deformări sau artefacte",
+        "finding": "deformări sau artefacte (față și figură fantomă)",
+        "treated": true,
+        "by": "The shot ends on the mercury column rests low in the curved glass tube; frost is thick on the brass joint beside it; the round brass flask is centred in the upper two thirds of the vertical frame; the clamp stand and valve wheel hold their fixed positions; the frosted window glows soft behind; no person, face, hand.",
+        "why_not": "",
+        "severity": "serious",
+        "layer": "still",
+        "accepted": false,
+        "field": "",
+        "locked": false,
+        "lock": "",
+        "source": "test_shot"
+      },
+      {
+        "id": 3,
+        "qc_text": "cele trei cadre nu sunt același plan continuu",
+        "finding": "cele trei cadre nu sunt același plan continuu",
+        "treated": true,
+        "by": "Static camera on a fixed tripod, steady, the life of the scene moving inside the fixed frame.",
+        "why_not": "",
+        "severity": "serious",
+        "layer": "motion",
+        "accepted": false,
+        "field": "",
+        "locked": false,
+        "lock": "",
+        "source": "test_shot"
+      },
+      {
+        "id": 4,
+        "qc_text": "încalcă biblia vizuală: the brass laboratory flask and mercury column in scene 2 remain unchanged in lighting and position («The middle frame shows a translucent ghost face and figure superimposed on the left, the clamp stand and valve hardware change shape and position between frames, and the last frame is a profile close-up of the researcher rather than the planned medium shot from behind.»)",
+        "finding": "încalcă biblia vizuală: hardware-ul își schimbă forma și poziția între cadre",
+        "treated": true,
+        "by": "The flask, tubing, clamp stand and valve wheel stay locked in identical position and shape throughout.",
+        "why_not": "",
+        "severity": "serious",
+        "layer": "motion",
+        "accepted": false,
+        "field": "",
+        "locked": false,
+        "lock": "",
+        "source": "test_shot"
+      }
+    ],
+    "observations": [
+      "The still no longer carries the explicit composition sentence 'Vertical 9:16 frame, main subject in the upper two thirds, lower quarter calm and uncluttered'; the vertical frame is restated only in the motion ending frame. Advisory only.",
+      "The ending-frame sentence in the motion prompt has a grammar slip ('The shot ends on the mercury column rests low'); meaning is clear, polish recommended."
+    ],
+    "broken_lessons": [],
+    "blocking": [],
+    "locked_only": false,
+    "lock": null,
+    "locked_words": [],
+    "minor": [],
+    "cause": "The still named 'a researcher seen only from behind, small, in a dark wool coat' without fixing his position and left the clamp stand and valve hardware undescribed, while the motion's 'Steady tracking left alongside the subject' and 'The researcher's shoulder shifts as he turns it' let the camera drift onto a face and the hardware change shape between frames.",
+    "lesson": "When a scene's subject is an apparatus, write no person anywhere in the frame; describe the hardware's exact parts and fixed position first, and state that every part stays locked in identical position and shape throughout.",
+    "run_id": "e858c422-6811-496e-8e03-120e2adf4ca3",
+    "reason": ""
+  },
+  "before": {
+    "visual_prompt": "Documentary photograph, natural and unposed, true-to-life colour. Muted natural palette of deep slate blue, frosted silver, warm brass. Natural 35mm lens perspective with gentle depth of field, fine film grain and crisp detail. Medium shot, 50mm lens. A solid brass laboratory flask about ten centimetres across, round and heavy, connected to a curved glass tube holding a silver mercury column, a researcher seen only from behind, small, in a dark wool coat. Wooden bench, the brass flask and tubing fixed in a clamp stand, frost whitening the metal joints, the frosted window behind, pale and cold. Vertical 9:16 frame, main subject in the upper two thirds, lower quarter calm and uncluttered. No text, no logo.",
+    "package": {
+      "story_purpose": "EVIDENCE",
+      "narration": "But cool a gas one degree, and it shrinks a sliver of its volume. Keep going, and at minus 273, the gas is gone.",
+      "writer_visual": "A brass laboratory flask connected to glass tubing, a mercury column dropping steadily as frost forms along the metal, a researcher seen from behind adjusting a valve.",
+      "seconds": 9.0,
+      "subject": "A solid brass laboratory flask about ten centimetres across, round and heavy, connected to a curved glass tube holding a silver mercury column; a researcher seen only from behind, small, in a dark wool coat",
+      "action": "The mercury column sinks steadily down the glass tube while frost blooms along the brass fittings; the researcher, seen from behind at the far end of the bench, reaches out and turns a small valve wheel a quarter turn",
+      "environment": "The same dim laboratory: wooden bench, the brass flask and tubing fixed in a clamp stand, frost whitening the metal joints; the frosted window behind, pale and cold",
+      "camera": "Medium shot, 50mm, shallow depth of field; a slow tracking left over 9 seconds, starting on the researcher at the far end of the bench and travelling along the tubing to end on the falling mercury column",
+      "lighting": "Single soft window light from frame right, raking along the bench so the brass glows warm ochre against deep slate shadow; the mercury column reads as a bright silver thread",
+      "composition": "Vertical frame: the flask centred in the middle third, the glass tube rising through the upper third, the researcher small and low at frame right at the start, gone from frame by the end",
+      "motion": "The mercury column drops slowly and continuously; frost spreads along the brass joints; the valve wheel turns once, slowly; the researcher's shoulder shifts as he turns it; dust drifts in the light",
+      "emotion": "Patient, methodical discovery — quiet concentration",
+      "background": "The researcher stays small, distant and turned away; the bench and window are still; nothing else moves",
+      "continuity": "Same laboratory, same window light and palette as scene 1; the brass flask, tubing and mercury column established here keep this exact lighting and position for the rest of the film",
+      "ending_frame": "The mercury column low in the tube, frost thick on the brass joint beside it, the flask centred",
+      "audio_intent": "A faint metallic tick as the valve turns, the soft hiss of cooling air, room tone under the narration",
+      "transition": "Cut on the mercury settling to the dark paper of the curve",
+      "avoid": [
+        "on-screen text or captions",
+        "warped or extra hands and fingers",
+        "plastic or waxy skin",
+        "cartoon or 3D-render look when realism is asked for",
+        "unmotivated camera movement",
+        "clothing, hair or weather changing without reason",
+        "faces or bodies morphing mid-shot",
+        "watermarks or logos",
+        "any text, numbers or gauge markings",
+        "the researcher's face or hands in close-up",
+        "extra fingers or warped hands",
+        "modern equipment or clothing",
+        "harsh shadows or a second light source"
+      ],
+      "characters": [],
+      "camera_move": "tracking left",
+      "source": "model",
+      "second_framing": {
+        "subject": "The mercury column mid-fall inside the glass tube, frost on the brass joint below",
+        "centre_x": 0.5,
+        "centre_y": 0.35
+      },
+      "scene_kind": "LIVE",
+      "shot_type": "MEDIUM",
+      "still_prompt": "Documentary photograph, natural and unposed, true-to-life colour. Muted natural palette of deep slate blue, frosted silver, warm brass. Natural 35mm lens perspective with gentle depth of field, fine film grain and crisp detail. Medium shot, 50mm lens. A solid brass laboratory flask about ten centimetres across, round and heavy, connected to a curved glass tube holding a silver mercury column, a researcher seen only from behind, small, in a dark wool coat. Wooden bench, the brass flask and tubing fixed in a clamp stand, frost whitening the metal joints, the frosted window behind, pale and cold. Vertical 9:16 frame, main subject in the upper two thirds, lower quarter calm and uncluttered. No text, no logo.",
+      "motion_prompt": "Steady tracking left alongside the subject at walking pace, the background sliding past behind it. Dust drifts in the light. The mercury column drops slowly and continuously. Frost spreads along the brass joints. The valve wheel turns once. Slowly. The researcher's shoulder shifts as he turns it. Reaches out and turns a small valve wheel a quarter turn. In the final seconds the camera eases to a steady hold on the subject, and everything in the frame keeps moving. Continuous, seamless shot. No subtitles, no on-screen text.",
+      "negative_prompt": null,
+      "look_block": "Documentary photograph, natural and unposed, true-to-life colour. Muted natural palette of deep slate blue, frosted silver, warm brass. Natural 35mm lens perspective with gentle depth of field, fine film grain and crisp detail.",
+      "shot_size": "medium",
+      "motion_family": "seedance",
+      "motion_intent": {
+        "camera_move": "tracking left",
+        "world": "Dust drifts in the light.",
+        "subject": "The mercury column drops slowly and continuously, frost spreads along the brass joints, the valve wheel turns once, slowly, the researcher's shoulder shifts as he turns it.",
+        "subject_clauses": [
+          "The mercury column drops slowly and continuously.",
+          "Frost spreads along the brass joints.",
+          "The valve wheel turns once.",
+          "Slowly.",
+          "The researcher's shoulder shifts as he turns it."
+        ],
+        "action_clauses": [
+          "Reaches out and turns a small valve wheel a quarter turn."
+        ],
+        "seconds": 9.0,
+        "amplitude": "ample",
+        "constraints": [
+          "any text, numbers or gauge markings",
+          "the researcher's face or hands in close-up",
+          "extra fingers or warped hands",
+          "modern equipment or clothing",
+          "harsh shadows or a second light source"
+        ],
+        "faces_banned": false,
+        "people": true
+      }
+    }
+  },
+  "after": {
+    "visual_prompt": "Documentary photograph, natural and unposed, true-to-life colour. Muted natural palette of deep slate blue, frosted silver, warm brass. Natural 35mm lens perspective with gentle depth of field, fine film grain and crisp detail. Medium shot, 50mm lens. A brass laboratory flask about ten centimetres across, round and heavy, held by a heavy iron clamp stand with a single vertical rod, a small brass valve wheel fixed at the flask's right joint, a curved glass tube rising from the flask holding a silver mercury column that sinks, frost blooming along the brass fittings. A dim 1950s physics laboratory: a wooden bench, a frosted glass window behind, deep slate blue walls, warm brass catching a single soft light. No text, no logo.",
+    "package": {
+      "story_purpose": "EVIDENCE",
+      "narration": "But cool a gas one degree, and it shrinks a sliver of its volume. Keep going, and at minus 273, the gas is gone.",
+      "writer_visual": "A brass laboratory flask connected to glass tubing, a mercury column dropping steadily as frost forms along the metal, a researcher seen from behind adjusting a valve.",
+      "seconds": 9.0,
+      "subject": "A brass laboratory flask about ten centimetres across, round and heavy, held by a heavy iron clamp stand with a single vertical rod; a small brass valve wheel fixed at the flask's right joint; a curved glass tube rising from the flask holding a silver mercury column that sinks steadily; frost blooming along the brass fittings.",
+      "action": "The mercury column drops a fraction lower in the glass tube; frost creeps further along the brass joint beside it; a cold breath of still air stirs dust motes in the window light.",
+      "environment": "A dim 1950s physics laboratory: a wooden bench, a frosted glass window behind, deep slate blue walls, warm brass catching a single soft light. No person is in frame.",
+      "camera": "Medium shot, 50mm, shallow depth of field, fixed tripod. Static: no zoom, no dolly, no pan, no reframe at any point over the clip's nine seconds.",
+      "lighting": "Single soft natural light from the frosted window at frame right, directional, cool frosted silver against warm brass, deep shadows, visible dust motes drifting in the beam.",
+      "composition": "Vertical 9:16 frame; the flask and falling mercury column sit in the upper two thirds, centred slightly left; the frosted window glows behind at the lower third; the clamp stand anchors the left edge.",
+      "motion": "The mercury column sinks steadily through the glass tube; frost spreads slowly along the brass joint; dust motes drift lazily through the window light. The flask, tubing, clamp stand and valve wheel stay locked in identical position and shape throughout; no extra figures, reflections or ghost images appear.",
+      "emotion": "Quiet inevitability — the slow, patient approach of a floor. Believable intensity: restrained, almost meditative.",
+      "background": "The frosted window and wooden bench hold still; only dust in the light moves. Nothing competes with the falling column.",
+      "continuity": "Matches the bible: the brass flask and mercury column keep identical lighting and position from scene to scene; the frost pattern on the glass and metal is continuous with the thermometer's frost in scenes 1, 4 and 5; the palette stays deep slate blue, frosted silver, warm brass.",
+      "ending_frame": "The mercury column rests low in the curved glass tube; frost is thick on the brass joint beside it; the round brass flask is centred in the upper two thirds of the vertical frame; the clamp stand and valve wheel hold their fixed positions; the frosted window glows soft behind; no person, face, hand",
+      "audio_intent": "A low, steady laboratory hum; the faint tick of cooling metal; a single soft breath of air through the tube. No music sting — let the drop feel physical.",
+      "transition": "Cut on the settled mercury column to the next scene's dark paper and hand-drawn curve.",
+      "avoid": [
+        "on-screen text or captions",
+        "warped or extra hands and fingers",
+        "plastic or waxy skin",
+        "cartoon or 3D-render look when realism is asked for",
+        "unmotivated camera movement",
+        "clothing, hair or weather changing without reason",
+        "faces or bodies morphing mid-shot",
+        "watermarks or logos",
+        "any person, face, hand, shoulder or figure anywhere in frame",
+        "any camera movement, zoom, dolly, pan or reframe",
+        "on-screen text, captions, numbers, labels or written symbols",
+        "plastic or waxy surfaces, cartoon or 3D-render look",
+        "modern laboratory equipment or clothing",
+        "bright saturated colours, multiple light sources or harsh shadows",
+        "any change in the clamp stand, valve wheel or flask position",
+        "ghost images, reflections of people, or extra figures"
+      ],
+      "characters": [],
+      "camera_move": "static",
+      "source": "model",
+      "second_framing": {
+        "subject": "A closer detail of the curved glass tube with the silver mercury column low inside it, frost thick on the brass joint beside it, centred in the frame.",
+        "centre_x": 0.5,
+        "centre_y": 0.4
+      },
+      "scene_kind": "LIVE",
+      "shot_type": "MEDIUM",
+      "still_prompt": "Documentary photograph, natural and unposed, true-to-life colour. Muted natural palette of deep slate blue, frosted silver, warm brass. Natural 35mm lens perspective with gentle depth of field, fine film grain and crisp detail. Medium shot, 50mm lens. A brass laboratory flask about ten centimetres across, round and heavy, held by a heavy iron clamp stand with a single vertical rod, a small brass valve wheel fixed at the flask's right joint, a curved glass tube rising from the flask holding a silver mercury column that sinks, frost blooming along the brass fittings. A dim 1950s physics laboratory: a wooden bench, a frosted glass window behind, deep slate blue walls, warm brass catching a single soft light. No text, no logo.",
+      "motion_prompt": "Static camera on a fixed tripod, steady, the life of the scene moving inside the fixed frame. Dust motes drift lazily through the window light. The mercury column sinks steadily through the glass tube. Frost spreads slowly along the brass joint. The flask, tubing, clamp stand and valve wheel stay locked in identical position and shape throughout. The mercury column drops a fraction lower in the glass tube. A cold breath of still air stirs dust motes in the window light. The shot ends on the mercury column rests low in the curved glass tube; frost is thick on the brass joint beside it; the round brass flask is centred in the upper two thirds of the vertical frame; the clamp stand and valve wheel hold their fixed positions; the frosted window glows soft behind; no person, face, hand. Continuous, seamless shot. No subtitles, no on-screen text.",
+      "negative_prompt": null,
+      "look_block": "Documentary photograph, natural and unposed, true-to-life colour. Muted natural palette of deep slate blue, frosted silver, warm brass. Natural 35mm lens perspective with gentle depth of field, fine film grain and crisp detail.",
+      "shot_size": "medium",
+      "motion_family": "seedance",
+      "motion_intent": {
+        "camera_move": "static",
+        "world": "Dust motes drift lazily through the window light.",
+        "subject": "The mercury column sinks steadily through the glass tube, frost spreads slowly along the brass joint, The flask, tubing, clamp stand and valve wheel stay locked in identical position and shape throughout.",
+        "subject_clauses": [
+          "The mercury column sinks steadily through the glass tube.",
+          "Frost spreads slowly along the brass joint.",
+          "The flask, tubing, clamp stand and valve wheel stay locked in identical position and shape throughout."
+        ],
+        "action_clauses": [
+          "The mercury column drops a fraction lower in the glass tube.",
+          "A cold breath of still air stirs dust motes in the window light."
+        ],
+        "seconds": 9.0,
+        "amplitude": "ample",
+        "constraints": [
+          "any text, numbers, or symbols in the picture",
+          "modern laboratory equipment or clothing",
+          "bright, saturated colors",
+          "multiple light sources or harsh shadows",
+          "any human faces or hands in close-up",
+          "on-screen text, captions, numbers, labels or written symbols",
+          "plastic or waxy surfaces, cartoon or 3D-render look",
+          "bright saturated colours, multiple light sources or harsh shadows",
+          "any change in the clamp stand, valve wheel or flask position",
+          "ghost images, reflections of people, or extra figures"
+        ],
+        "faces_banned": false,
+        "people": false,
+        "ending_frame": "The mercury column rests low in the curved glass tube; frost is thick on the brass joint beside it; the round brass flask is centred in the upper two thirds of the vertical frame; the clamp stand and valve wheel hold their fixed positions; the frosted window glows soft behind; no person, face, hand"
+      },
+      "composition_issues": []
+    }
+  }
+}

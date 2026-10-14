@@ -44,7 +44,7 @@ from app.media.director_qc import (
     owner_approved_take_ids,
     record_look,
 )
-from app.media.models import SceneTake
+from app.media.models import SceneTake, StoryboardScene
 from app.providers.base import GenerateResult, HealthResult
 from app.providers.registry import ProviderRegistry
 from app.services import utc_now
@@ -130,6 +130,14 @@ class SeeingDirector:
         elif "director-qc" in prompt:
             self.asked.append(prompt)
             said = self.decide(prompt) if callable(self.decide) else self.decide
+        elif 'hash="repurchase-verdict"' in prompt:
+            said = json.dumps(
+                {
+                    "verdict": "APPROVE",
+                    "reason": "Refacerea este în plafon.",
+                    "cheaper_alternative": "",
+                }
+            )
         else:
             said = "{}"
         return GenerateResult(said, 10, 40, None)
@@ -243,6 +251,11 @@ def test_she_chooses_a_refused_candidate_and_the_film_is_rejoined_for_free(
     from app.workflows.passes import director_qc_review
 
     film = failed_film(engine)  # scene 5: his LOCAL_MOVE
+    character = {
+        "name": "Nadia Accountant",
+        "face_hair": "Chestnut hair in a low bun, round tortoiseshell glasses",
+        "outfit": "Plum blouse under a dark violet cardigan",
+    }
     model = SeeingDirector(answer(verdicts_for(film), "REPAIR", REPAIR_5), _choose("panouri"))
     registry = _registry(studio, model)
     _her_eyes(engine, studio)
@@ -253,6 +266,19 @@ def test_she_chooses_a_refused_candidate_and_the_film_is_rejoined_for_free(
     first = _walk(engine, settings, registry, film)
 
     assert first["outcome"] == "BOUGHT_WAITING"
+    with Session(engine) as session, session.begin():
+        row = session.scalar(
+            select(StoryboardScene).where(
+                StoryboardScene.storyboard_id == film["board"],
+                StoryboardScene.scene_index == 5,
+            )
+        )
+        row.prompt_json = {
+            **dict(row.prompt_json or {}),
+            "characters": [character],
+            "in_frame": [character],
+            "action": "Nadia holds the pen; Sarah's shoulder at the edge.",
+        }
     state = decision_state(engine, film["report"])
     assert state["pending"] and state["look"] and not state["ready"]
     # Her look is owed, not his: the watchdog puts the film before her.
@@ -273,6 +299,9 @@ def test_she_chooses_a_refused_candidate_and_the_film_is_rejoined_for_free(
     assert [c["gate_reasons"] for c in shown["candidates"]] == [[NIGHT_SKY]]
     assert shown["scene"]["scene_index"] == 5 and shown["refused_by"] == "the stills gate"
     assert shown["scene"]["picture_prompt"] and "bible_rules" in shown
+    assert shown["scene"]["character_bible"] == [character]
+    assert shown["scene"]["in_frame"] == [character]
+    assert "Sarah's shoulder" in shown["scene"]["shot_plan"]["action"]
     (look,) = events(engine, LOOK_EVENT)
     assert look.payload["decision"] == "CHOOSE" and look.payload["approved"] is True
     assert look.payload["chosen_take_id"] == night

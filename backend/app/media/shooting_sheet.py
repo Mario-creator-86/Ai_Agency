@@ -1270,6 +1270,9 @@ def _sheet(
                 str(package.get("still_prompt") or scene.get("visual_prompt") or "").split()
             )
             motion_text, negative = motion_prompt_for(package, model_id, None)
+        from app.media.prompt_agent import composition_issues  # noqa: PLC0415
+
+        still = stills.get(index)
         lint_scenes.append(
             LintScene(
                 scene=index,
@@ -1277,9 +1280,18 @@ def _sheet(
                 still_prompt=still_text,
                 motion_prompt=motion_text,
                 model_id=entry.get("model_id") if kind == "LIVE" else None,
+                composition_issues=tuple(
+                    composition_issues(
+                        package,
+                        still_text,
+                        motion_text,
+                        layers=("motion",) if still is not None else ("still", "motion"),
+                    )
+                )
+                if kind == "LIVE"
+                else (),
             )
         )
-        still = stills.get(index)
         view = moving_view.get(index, {})
         motion = {
             key: entry.get(key)
@@ -1952,16 +1964,35 @@ class FilmClosed(FilmBusy):
 
 
 def film_is_closed(session: Session, storyboard_id: str) -> bool:
-    """Whether nothing more is bought for this film: REJECTED, with no finished render.
+    """Whether no further production is allowed: confirmed upload or closed unrendered film.
 
     That is a film the Owner closed («Închide filmul»), one the Director retired after it stood
     still, or one a newer storyboard of its script replaced. A REJECTED film that has a
     finished render is a viewing the Director refused: its redos are the way back to a film,
-    so it is not closed here."""
+    so it is not closed here. A render already uploaded to a channel is final for production,
+    even when its storyboard still says APPROVED/RENDERED; privacy/metadata work stays separate.
+    Match the immutable render asset, never a title that may have changed for publication."""
     from app.media.models import VideoRenderJob  # noqa: PLC0415
+    from app.publishing.models import PublicationRecord  # noqa: PLC0415
 
     board = session.get(Storyboard, storyboard_id)
-    if board is None or board.status != "REJECTED":
+    if board is None:
+        return False
+    uploaded = session.scalar(
+        select(PublicationRecord.id)
+        .join(VideoRenderJob, VideoRenderJob.output_asset_id == PublicationRecord.media_asset_id)
+        .where(
+            VideoRenderJob.storyboard_id == storyboard_id,
+            VideoRenderJob.status == "COMPLETED",
+            PublicationRecord.status.in_(("PUBLISHED", "SCHEDULED", "REMOTE_CONFIRMED")),
+            PublicationRecord.remote_video_id.is_not(None),
+            PublicationRecord.remote_video_id != "",
+        )
+        .limit(1)
+    )
+    if uploaded is not None:
+        return True
+    if board.status != "REJECTED":
         return False
     rendered = session.scalar(
         select(VideoRenderJob.id)

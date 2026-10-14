@@ -529,15 +529,13 @@ def test_the_repair_card_is_withdrawn_when_the_repair_resumes(engine, film):  # 
     assert cards(engine, "sheet_repair_paused")[0].status == "WITHDRAWN"
 
 
-def _paused_for_the_day(engine, film_id):
+def _after_many_failed_repairs(engine, film_id):
     from app.media import blocker_repair as repair
 
     reading = sheet(engine, film_id)
-    for n in range(repair.MAX_SAME_ISSUES_PER_DAY):
+    for n in range(9):
         dispatched = repair.submit_sheet_issues(engine, reading)
         unresolved(engine, dispatched, minutes_ago=600 - n)
-    paused = repair.submit_sheet_issues(engine, reading)
-    assert paused["status"] == "PAUSED" and paused["cause"] == "DAILY_LIMIT"
     return reading
 
 
@@ -548,7 +546,7 @@ def test_a_repair_paused_for_the_day_puts_nothing_in_front_of_him(engine, film):
     API still works and is recorded once."""
     from app.media import blocker_repair as repair
 
-    reading = _paused_for_the_day(engine, film)
+    reading = _after_many_failed_repairs(engine, film)
     assert cards(engine, "sheet_repair_paused") == []
     assert [
         letter for letter in paused_letters(engine) if letter.body_json.get("to") == "Owner"
@@ -585,7 +583,7 @@ def test_a_day_paused_template_sheet_is_not_turned_into_a_question_either(engine
     with Session(engine) as session, session.begin():
         scene = session.scalar(select(StoryboardScene).where(StoryboardScene.storyboard_id == film))
         scene.prompt_json = {**scene.prompt_json, "source": "template"}
-    _paused_for_the_day(engine, film)
+    _after_many_failed_repairs(engine, film)
 
     assert cards(engine, "sheet_repair_paused") == []
     assert sheet_overrides(engine, film) == {}

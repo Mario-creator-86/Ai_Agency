@@ -77,6 +77,7 @@ ROLE_WORDS_RO: dict[str, str] = {
 #: A RunPod session opened for a step, and a round sent to it, are the Video Editor's work
 #: (the stills and the motion are his); the GPU going off is the studio's own housekeeping.
 _ROLE_BY_PREFIX: tuple[tuple[str, str], ...] = (
+    ("media.delivery_retry_authorized", "Director"),
     ("media.director_", "Director"),
     ("media.scene_take", "VideoEditor"),
     ("media.still", "VideoEditor"),
@@ -582,6 +583,17 @@ def _brief_words(payload: Mapping[str, Any], name: str, film: str, editor: str) 
     """The Director's brief for one scene (`media.director_scene_brief`): which layer she
     opened, whether the editor's rewrite landed, or came back with the same words."""
     scene = payload.get("scene_index") or payload.get("scene_number")
+    if payload.get("action") == "retry_delivery":
+        if payload.get("resumed"):
+            return (
+                f"{name} a cerut lui {editor} reluarea livrării scenei {scene}{film}; "
+                "promptul aprobat se păstrează, rezultatul urmează să fie verificat.",
+                f"{editor}, reia livrarea scenei {scene}.",
+            )
+        return (
+            f"{name} verifică livrarea scenei {scene}{film}; nu s-a autorizat o nouă cumpărare.",
+            "Verific livrarea înainte de reluare.",
+        )
     layer = str(payload.get("layer") or "")
     asked = str(payload.get("asked_layer") or "")
     layer_ro = _LAYER_RO.get(layer, "")
@@ -1142,6 +1154,12 @@ def _words(
 
     if kind == "media.scene_take_recorded":
         return _take_words(payload, name, where, film)
+    if kind == "media.delivery_retry_authorized":
+        return (
+            f"{name} a autorizat reluarea livrării scenei {scene}{film}; "
+            "pasul urmează verificările de buget și aprobare.",
+            f"Reluăm livrarea scenei {scene}.",
+        )
     if kind == "media.still_needs_owner":
         tries = int(payload.get("rerolls") or 0)
         cause = _cause(payload)

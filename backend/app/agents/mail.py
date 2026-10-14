@@ -68,7 +68,7 @@ from app.services import append_event, utc_now
 logger = logging.getLogger("studio.mail")
 
 MAIL_TASK = "answer_mail"
-MAIL_TEMPLATE_VERSION = "mail-v1"
+MAIL_TEMPLATE_VERSION = "mail-v2"
 
 #: How many letters one round answers. The worker comes round every half minute; a bound
 #: keeps a burst of mail from holding it for an hour.
@@ -204,6 +204,10 @@ def _thread_text(messages: list[AgentMessage], names: dict[str, str]) -> str:
         text = (m.body_text or "").strip()
         if text:
             lines.append(text)
+        if m.body_json:
+            lines.append(
+                "Structured evidence: " + json.dumps(m.body_json, ensure_ascii=False, default=str)
+            )
         lines.append("")
     return "\n".join(lines).strip()
 
@@ -224,7 +228,7 @@ def _books_for(engine: Engine, role: str | None) -> str | None:
     except (SQLAlchemyError, ValueError, KeyError):
         logger.warning("mail_books_unreadable", exc_info=True)
         return None
-    return json.dumps(figures, ensure_ascii=False, default=str)[:12000]
+    return json.dumps(figures, ensure_ascii=False, default=str)
 
 
 def _answered_letter(reply: AgentMessage, letters: dict[str, AgentMessage]) -> AgentMessage | None:
@@ -864,7 +868,11 @@ def _unread_replies(session: Session) -> list[AgentMessage]:
 
 
 def correspondence_round(
-    engine: Engine, registry: ProviderRegistry, now: datetime | None = None
+    engine: Engine,
+    registry: ProviderRegistry,
+    now: datetime | None = None,
+    *,
+    limit: int = LETTERS_PER_ROUND,
 ) -> dict[str, Any]:
     """Answer the letters that are waiting, then let the Director read what came back.
 
@@ -881,7 +889,7 @@ def correspondence_round(
         policy = session.get(OwnerPolicy, 1)
         if policy is not None and policy.autonomy_stopped:
             return {"answered": [], "refused": [], "review": None, "reason": "autonomy stopped"}
-        waiting = letters_awaiting_answer(session, now=moment)
+        waiting = letters_awaiting_answer(session, limit=max(1, limit), now=moment)
     answered: list[dict[str, Any]] = []
     held: list[dict[str, Any]] = []
     refused: list[dict[str, Any]] = []

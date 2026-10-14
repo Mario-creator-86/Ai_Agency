@@ -2692,19 +2692,20 @@ def qc_clip_with_retry(
     cap_credits: float,
     look: Callable[[ClipReport], Mapping[str, Any] | None] | None = None,
 ) -> ClipQCOutcome:
-    """Check a bought clip; when it fails, buy it again ONCE on the same model with seed + 1
-    and a firmer motion prompt, only when the approved cap still covers that; otherwise, or
-    when the retry fails too, hand the scene to the Owner. `buy(seed, prompt)` is the caller's
-    purchase of one shot and returns the new clip, or None when nothing was delivered. A clip
-    whose still is at fault buys nothing and comes back BACK_TO_STILL.
+    """Check a bought clip. Production supplies ``look``: a refusal goes to the existing
+    Director rewrite/review ladder before a replacement is bought. Without that workflow
+    callback the standalone helper retains its one mechanical retry inside the cap.
+    ``buy(seed, prompt)`` returns the delivered clip or None. A clip whose still is at fault
+    buys nothing and comes back BACK_TO_STILL.
 
     ``look(report)`` (2026-10-12; the Owner: «trece imaginile picate de la QC pe la Directoare
     și să decidă dacă au picat corect sau nu și dacă trebuie refăcute») is the Director's
     second look at a refused clip (`fix_check.director_second_look`), asked before the retry is
     bought and before a refusal goes on to a rewrite, wherever she may overturn it
     (`look_may_overturn`): a look that lets the clip stand (`fix_check.look_accepts`) buys
-    nothing more — ACCEPTED_BY_LOOK, the clip kept as hers; a confirmation goes with the retry
-    in its reason; no answer leaves everything as before. A clip sent back to its still only by
+    nothing more — ACCEPTED_BY_LOOK, the clip kept as hers. Otherwise the replacement words
+    require her separate review; an unavailable look cannot authorize a mechanical retry.
+    A clip sent back to its still only by
     a reading (`sent_back_by_reading`) is shown to her too before a new still is bought; a
     refusal clip QC measured (`measured_refusal`) is kept only as «not in the clip»."""
     from app.media.fix_check import look_accepts  # noqa: PLC0415 - a small module
@@ -2758,6 +2759,25 @@ def qc_clip_with_retry(
             (first,),
             0.0,
             decision.reason_ro + _her_words(seen),
+            "",
+            look=seen,
+        )
+    if look is not None:
+        # The production caller has the Director's ladder. Her look at the OLD clip is
+        # not approval of replacement words: Kelvin's distorted face was followed by a
+        # generic calmer suffix that ignored her diagnosis. Route the refusal to her
+        # brief, the Editor's rewrite and her review before buying a replacement, also
+        # when the second look was unavailable or ineligible for a hard limit.
+        return ClipQCOutcome(
+            "ESCALATED",
+            None,
+            1,
+            (seed,),
+            (first,),
+            0.0,
+            f"Scena {first.scene}: promptul de înlocuire trebuie verificat de Directoare "
+            "pentru defectul constatat înainte de regenerare. Refuzul merge la rescriere; "
+            "nu se cumpără reluarea automată." + _her_words(seen),
             "",
             look=seen,
         )

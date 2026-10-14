@@ -299,7 +299,7 @@ def test_the_application_seeds_the_daily_job_only_when_the_worker_is_on(settings
     assert jobs[DAILY_JOB_NAME].timezone == settings.timezone
     assert jobs[DIRECTOR_LOOP_JOB_NAME].workflow_type == DIRECTOR_LOOP
     assert jobs[DIRECTOR_LOOP_JOB_NAME].is_active
-    assert jobs[DIRECTOR_LOOP_JOB_NAME].interval_seconds == 21600
+    assert jobs[DIRECTOR_LOOP_JOB_NAME].interval_seconds == settings.director_check_interval_seconds
     assert jobs[MODEL_REVIEW_JOB_NAME].workflow_type == MODEL_REVIEW
     assert jobs[MODEL_REVIEW_JOB_NAME].is_active
     assert jobs[MODEL_REVIEW_JOB_NAME].interval_seconds == 86400
@@ -1107,7 +1107,7 @@ def test_a_lapsed_task_with_no_attempts_left_is_interrupted_not_reclaimed_and_to
     told = _letters(engine, "day_interrupted")
     assert len(told) == 1, "one letter, not one per pass"
     letter = f"{told[0].subject} {told[0].body_text}"
-    assert "întreruptă" in letter and "nu o repornesc singur" in letter
+    assert "întreruptă" in letter and "reiau singur" in letter
 
 
 def test_a_lapsed_task_with_attempts_left_is_still_reclaimed_by_the_queue(engine):
@@ -1176,7 +1176,7 @@ def test_a_killed_day_is_left_interrupted_and_the_clock_starts_no_second_one(
         assert by_name["serial_next"]["status"] == "BLOCKED"
     told = _letters(engine, "day_interrupted")
     assert len(told) == 1
-    assert "«" in told[0].body_text and "nu o repornesc singur" in told[0].body_text
+    assert "«" in told[0].body_text and "reiau singur" in told[0].body_text
 
     # The clock fires again today (a restart, the slot put back): no second day.
     _due_job(engine)

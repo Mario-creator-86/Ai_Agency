@@ -226,8 +226,9 @@ STILL_NEGATIVE: tuple[str, ...] = (
     "watermark",
 )
 STILL_NEGATIVE_FACES: tuple[str, ...] = ("visible faces", "portrait")
-#: The negative prompt is at most this long: a list, not a second prompt.
-NEGATIVE_CHARS = 400
+#: The actual local request schema's limit; a 400-character aesthetic target used to
+#: erase scene-specific corrections while retaining generic exclusions.
+NEGATIVE_CHARS = 20000
 
 
 def _bible_bans_faces(bible: Mapping[str, Any] | None) -> bool:
@@ -266,17 +267,22 @@ def still_negative(
     ]
     if _bible_bans_faces(bible):
         terms += STILL_NEGATIVE_FACES
-    avoid = (package or {}).get("avoid")
-    if isinstance(avoid, list):
+    for avoid in ((bible or {}).get("avoid"), (package or {}).get("avoid")):
+        if not isinstance(avoid, list):
+            continue
         for item in avoid:
             words = " ".join(str(item or "").split()).strip(" .;,").lower()
-            if words and len(words) <= 60 and words not in terms:
+            if words and words not in terms:
                 terms.append(words)
     said = ""
     for term in terms:
         more = term if not said else f"{said}, {term}"
         if len(more) > NEGATIVE_CHARS:
-            break
+            raise StillsStageRefused(
+                "NEGATIVE_PROMPT_TOO_LONG",
+                "Condițiile imaginii depășesc limita cererii; "
+                "scurtați-le fără a pierde corecțiile.",
+            )
         said = more
     return said
 
@@ -1183,10 +1189,10 @@ def _settle_round(
 ) -> _RoundEnd:
     """One judged round of one scene, the same in the per-request path, the RunPod rounds and
     the paid still redo: the gate's best candidate APPROVED; else, before anything more is
-    bought, her look at the refused ones; else the next step (`still_gate.round_step`) — a
-    re-roll with the violations as positive words, the scene's words sent back to her ladder
-    (a corrected mistake seen again on a picture that shows its plan), the local compositor or
-    the Owner. A round with no candidate at all goes to the Owner («nicio imagine»)."""
+    bought, her look at the refused ones; else the next step (`still_gate.round_step`). A
+    proposed reroll goes to her brief/editor/review ladder before buying replacement words;
+    a second look at the old image cannot approve the new prompt. The local compositor and
+    unavailable measurements retain their own outcomes. No candidates: «nicio imagine»."""
     reports = [report for _take, report in verdicts]
     best = choose_best(reports)
     _set_verdicts(engine, verdicts, best)
@@ -1211,15 +1217,16 @@ def _settle_round(
             _after_approval(engine, storyboard_id, scene, looked, correlation_id)
             return looked
         confirmed = looked.confirmed
-        if step.action == "reroll" and looked.confirmed_content:
-            # 2026-10-12 (the review of 5fc7468, finding 4): she looked and confirmed that the
-            # picture is not what the words should give; a re-roll on the same words was up to
-            # four paid stills of the same mistake, bought blind. The words go back to her
-            # ladder (free); only a technical refusal is re-rolled.
+        if step.action in ("reroll", "needs_owner") and any(
+            report.violations for report in reports
+        ):
+            # Her second look concerns the old image, never the replacement prompt. Every
+            # regeneration goes through the existing brief/editor/review ladder, including
+            # technical faults, unavailable looks and hard limits she cannot overturn.
             step = rewrite_step(
                 scene.index,
-                "Directoarea a privit și confirmă că imaginea nu arată ce cere scena; o altă "
-                "sămânță pe aceleași cuvinte ar cumpăra aceeași greșeală.",
+                "promptul de înlocuire trebuie verificat de Directoare pentru defectul "
+                "constatat înainte de regenerare; o completare automată nu este o revizuire.",
             )
     if step.action == "rewrite":
         _mark_for_rewrite(engine, verdicts)
@@ -1574,9 +1581,31 @@ class _StillRounds:
                 "reason": attempts_reason(state.scene.index, state.requests, self.limit),
             }
             return []
+        from app.media.input_guard import (  # noqa: PLC0415
+            REFUSAL_CODE,
+            identity_of_request,
+            record_refusal,
+            refused_before,
+        )
+
+        requests = self._requests(state)
+        identity = identity_of_request(requests[0])
+        with Session(self.engine) as session, session.begin():
+            refusal = refused_before(session, identity)
+            if refusal is not None:
+                record_refusal(session, identity, refusal, correlation_id=self.correlation_id)
+        if refusal is not None:
+            state.outcome = {
+                "status": "NEEDS_OWNER",
+                "failure_code": REFUSAL_CODE,
+                "rewrite": refusal.layer is not None,
+                "layer": refusal.layer,
+                "reason": refusal.reason_ro,
+            }
+            return []
         state.requests += 1
         state.verdicts, state.failed = [], []
-        return self._requests(state)
+        return requests
 
     # ------------------------------------------------------------------ callbacks
 
@@ -1810,6 +1839,7 @@ class _StillRounds:
         stopped: Callable[[], str | None],
     ) -> dict[str, Any]:
         from app.media.gpu_batch import run_rounds  # noqa: PLC0415 - gpu_batch reads runpod
+        from app.workflows.director_upkeep import director_wait_work  # noqa: PLC0415
 
         buying = {scene.index for scene, _entry in deferred}
         first: list[BatchRequest] = []
@@ -1863,6 +1893,7 @@ class _StillRounds:
                     self.adapter, credit_usd=self.credit_usd
                 ),
                 on_unsent=self.unsent,
+                on_wait=director_wait_work(self.engine, self.registry),
             )
         if summary.get("stopped") and summary.get("stopped") != UNCERTAIN:
             self.stop = self.stop or summary["stopped"]

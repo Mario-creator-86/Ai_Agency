@@ -92,7 +92,7 @@ def post_message(
     title = " ".join(str(subject).split())[:200]
     if not title:
         raise MessageError("A message needs a subject")
-    letter = str(body_text or "").strip()[:8000] or None
+    letter = str(body_text or "").strip() or None
     if to_owner:
         each_time = str(dict(body or {}).get("kind") or "") in OWNER_LETTERS_EACH_TIME
         # One open letter per matter. The same subject already waiting for the Owner's answer

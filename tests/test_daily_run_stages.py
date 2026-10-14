@@ -2088,8 +2088,8 @@ def test_under_mode_a_first_still_that_never_passes_is_bought_once_not_every_day
         stages._media(engine, settings, None, None)
         asked.append(len(world["images"].asked))
 
-    # Scene 1: one request and its two re-rolls, then the Owner; scene 2 waits for Figure 1.
-    assert asked == [3, 3, 3], asked
+    # Scene 1: one rejected request waits for the reviewed rewrite; scene 2 waits for Figure 1.
+    assert asked == [1, 1, 1], asked
     assert world["models"].posts() == 0
     sheet = build_sheet(
         engine, storyboard_id, capabilities=[SEEDANCE], resolution="1080p", read_live=False
@@ -2098,7 +2098,7 @@ def test_under_mode_a_first_still_that_never_passes_is_bought_once_not_every_day
     assert sheet["steps"]["stills"]["to_buy"] == []
     scene_one = next(s for s in sheet["scenes"] if s["scene_index"] == 1)
     assert scene_one["still_hold"]["status"] == "NEEDS_OWNER"
-    assert "Proprietar" in scene_one["still_hold"]["reason_ro"]
+    assert "Directoarea" in scene_one["still_hold"]["reason_ro"]
     # Quality control's refusal of a scene is the Director's to answer (her ladder in the walk,
     # the `ladder_retry` pass after it), never a letter to the Owner (2026-10-12, 75f2267: the
     # sheet's letter reached him while the rung was composing scene 3 again). His letters are
@@ -2125,9 +2125,8 @@ def test_under_mode_a_hero_that_fails_clip_qc_twice_is_bought_once_not_every_day
         outcomes.append(stages._media(engine, settings, None, None))
         posts.append(world["models"].posts())
 
-    # The hero and clip QC's one retry, on the first day only; no other scene became the
-    # test shot in its place.
-    assert posts == [2, 2, 2], posts
+    # The rejected hero waits for Director/editor review; no unreviewed retry is bought.
+    assert posts == [1, 1, 1], posts
     assert len(world["images"].asked) == 2
     films = outcomes[-1]["artefacts"]["films"]
     assert films[0]["status"] == "WAITING" and films[0]["refusal"] == "NEEDS_OWNER"
@@ -2135,7 +2134,7 @@ def test_under_mode_a_hero_that_fails_clip_qc_twice_is_bought_once_not_every_day
     # Clip QC's refusal is the Director's to answer (her ladder), never a letter to the Owner
     # (2026-10-12, 75f2267); his letters are for his matters only.
     assert _owner_letters(engine, "owner_shooting_sheet") == []
-    # Every purchase is in the books once: the stills and the two shots.
+    # Every purchase is in the books once: the stills and the one shot.
     steps = sorted(cost.attribution_json["step"] for cost in _provider_costs(engine))
     assert steps == ["stills", "test_shot"]
 
@@ -2435,11 +2434,11 @@ def test_a_stopped_older_film_does_not_stop_the_newer_one(
     ) == len(about_older)
 
 
-def test_a_film_without_its_shot_plan_is_asked_of_the_model_again_once_a_day_for_two_days(
+def test_a_film_without_its_shot_plan_is_asked_again_without_a_two_day_ceiling(
     engine, settings, tmp_path, monkeypatch
 ):
     """NEEDS_SHOT_PLAN, and a film the lint held: the shot plan is asked of the model again
-    (text only, no media credit) once a business day, on at most two days."""
+    (text only, no media credit) once a business day until usable."""
     from app.media.models import Storyboard, StoryboardScene
     from app.media.prompt_agent import ShotPlanUnusable
     from app.models import DomainEvent
@@ -2477,7 +2476,7 @@ def test_a_film_without_its_shot_plan_is_asked_of_the_model_again_once_a_day_for
         # ...and the script stage asks the model for both plans again, once that day.
         stages._script_and_storyboard(engine, registry, "en", 30, settings=settings)
 
-    assert sorted(asked) == sorted([waiting, waiting, linted, linted]), asked
+    assert sorted(asked) == sorted([waiting, waiting, waiting, linted, linted, linted]), asked
     with Session(engine) as session:
         events = list(
             session.scalars(
@@ -2489,6 +2488,8 @@ def test_a_film_without_its_shot_plan_is_asked_of_the_model_again_once_a_day_for
         "2026-10-02",
         "2026-10-03",
         "2026-10-03",
+        "2026-10-04",
+        "2026-10-04",
     ]
     assert world["images"].asked == [] and world["models"].posts() == 0
     assert _approvals(engine) == [] and _provider_costs(engine) == []

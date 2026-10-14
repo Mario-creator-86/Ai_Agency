@@ -349,9 +349,7 @@ def test_a_candidate_with_a_face_is_rejected_by_the_face_gate_and_never_judged(e
 # ------------------------------------------- 3. two re-rolls, positive words, then the Owner
 
 
-def test_a_failing_scene_is_rerolled_twice_with_positive_words_then_needs_the_owner(
-    engine, tmp_path
-):
+def test_a_failing_scene_goes_to_prompt_review_without_paid_rerolls(engine, tmp_path):
     storyboard_id = a_film(engine, tmp_path)
 
     def pictures(prompt, call):
@@ -363,17 +361,13 @@ def test_a_failing_scene_is_rerolled_twice_with_positive_words_then_needs_the_ow
     result = approved_run(engine, storyboard_id, tmp_path, adapter, judge)
 
     scene_two = [c for c in adapter.asked if SUBJECTS[2] in c["prompt"]]
-    assert MAX_REROLLS == 2
-    assert len(scene_two) == 1 + MAX_REROLLS
+    assert len(scene_two) == 1
     assert "faces not visible" not in scene_two[0]["prompt"]
-    for call in scene_two[1:]:
-        assert "figures small and distant, seen from behind, faces not visible" in call["prompt"]
-        assert "avoid" not in call["prompt"].lower()
 
     by_scene = {entry["scene_index"]: entry for entry in result["scenes"]}
     assert by_scene[2]["status"] == "NEEDS_OWNER"
-    assert "Proprietar" in by_scene[2]["reason"]
-    assert by_scene[2]["rerolls"] == MAX_REROLLS
+    assert "Directoare" in by_scene[2]["reason"] and by_scene[2]["rewrite"] is True
+    assert by_scene[2]["rerolls"] == 0
     # The other scenes go on; scene 2 is never pushed on with a failing still.
     assert all(by_scene[n]["status"] == "APPROVED" for n in (1, 3, 4))
     rows = [t for t in takes(engine, storyboard_id) if t.scene_number == 2]
@@ -397,7 +391,7 @@ def test_without_a_passing_scene_one_no_later_scene_is_bought(engine, tmp_path):
 
     result = approved_run(engine, storyboard_id, tmp_path, adapter, SpyJudge())
 
-    assert len(adapter.asked) == 1 + MAX_REROLLS
+    assert len(adapter.asked) == 1
     assert all(SUBJECTS[1] in c["prompt"] for c in adapter.asked)
     by_scene = {entry["scene_index"]: entry for entry in result["scenes"]}
     assert by_scene[1]["status"] == "NEEDS_OWNER"

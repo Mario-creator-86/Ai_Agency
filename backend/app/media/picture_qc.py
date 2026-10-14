@@ -114,7 +114,7 @@ PICTURE_TASK = "picture_qc"
 #: subtitles are the studio's own (film babcf272 was failed for its own captions).
 #: v5 (2026-10-12 review): the look is told which scene numbers its frames are, since a scene
 #: carried forward is not shown and a frame numbered by its position named the wrong scene.
-TEMPLATE_VERSION = "picture-qc-v5"
+TEMPLATE_VERSION = "picture-qc-v6"
 
 #: The departments asked to look, in order. The Video Editor owns the pictures, so the
 #: department that made them is the department that answers for them; the Director is asked
@@ -1088,7 +1088,12 @@ def earlier_acceptances(
 
     def same_picture(index: int, recorded: Any) -> bool:
         key = keys.get(index) if keys else None
-        return bool(key) and isinstance(recorded, Mapping) and dict(recorded) == dict(key)
+        return (
+            key is not None
+            and bool(key)
+            and isinstance(recorded, Mapping)
+            and dict(recorded) == dict(key)
+        )
 
     found: dict[int, EarlierAcceptance] = {}
     decided: set[int] = set()
@@ -1097,7 +1102,8 @@ def earlier_acceptances(
         at = str(newest.get("_at") or "")
         # Her second looks, from every event of this decision: they win over its verdicts.
         for payload in events:
-            done = payload.get("done") if isinstance(payload.get("done"), Mapping) else {}
+            raw_done = payload.get("done")
+            done = raw_done if isinstance(raw_done, Mapping) else {}
             for look in done.get("overturned") or []:
                 if not isinstance(look, Mapping) or not isinstance(look.get("scene_index"), int):
                     continue
@@ -1537,7 +1543,7 @@ def evaluate_pictures(
             StudioText(source=source, captions_burned_in=burned, headline=headline)
         ),
     )
-    body = wrap_in_inert_boundary(json.dumps(shown, ensure_ascii=False)[:14000], "the-film")
+    body = wrap_in_inert_boundary(json.dumps(shown, ensure_ascii=False), "the-film")
 
     from app.agents.structured import structured_run  # noqa: PLC0415
 
@@ -1628,14 +1634,14 @@ def evaluate_pictures(
         reask_run_id = again_run.get("id")
         if again is not None and again.scenes:
             renumbered = _renumbered([verdict.scene for verdict in again.scenes], shown_indices)
-            for verdict in again.scenes:
-                index = (renumbered or {}).get(verdict.scene, verdict.scene)
+            for extra_verdict in again.scenes:
+                index = (renumbered or {}).get(extra_verdict.scene, extra_verdict.scene)
                 if index in missing and index not in answered:
-                    answered[index] = verdict
-            for verdict in again.characters:
-                index = (renumbered or {}).get(verdict.scene, verdict.scene)
+                    answered[index] = extra_verdict
+            for person_verdict in again.characters:
+                index = (renumbered or {}).get(person_verdict.scene, person_verdict.scene)
                 if index in missing:
-                    people.setdefault((index, verdict.character.strip()), verdict)
+                    people.setdefault((index, person_verdict.character.strip()), person_verdict)
     unanswered = [index for index in shown_indices if index not in answered]
     measured_scenes = 0
     for scene in looked:
@@ -1871,16 +1877,14 @@ STILL_TASK = "still_qc"
 #: moments ("A slow drift through a dark particle-detector cavern…", "…dissolving into a
 #: glowing spiral of particles, then a vast laboratory complex…" on the database copy): the
 #: still is judged against its first moment, as against the plan's.
-STILL_TEMPLATE_VERSION = "still-qc-v3"
+STILL_TEMPLATE_VERSION = "still-qc-v4"
 #: The same, for a still bought after its scene's words were rewritten: it is also asked, item
 #: by item, whether each mistake the rewrite answered is gone (`StillPlan.must_fix`,
 #: `_FIXES_NOTE`). Only such a still is asked this way; any other is asked as above.
 #: fixes2 (2026-10-12, late evening): each item is answered gone, minor or persists (the
 #: Owner: «DIRECTOAREA ACCEPTĂ DEFECTELE MICI!»), the correction's words are guidance, not a
 #: second plan, and an item about the movement is left to the clip, which is checked for it.
-STILL_FIX_TEMPLATE_VERSION = "still-qc-v3-fixes2"
-#: The most `must_fix` items one look answers (`fix_check.MAX_ITEMS` gives at most 4).
-MAX_FIXES = 8
+STILL_FIX_TEMPLATE_VERSION = "still-qc-v4-fixes"
 #: The answers one item may get (`fix_check.FIX_STATUSES`).
 FixStatus = Literal["gone", "minor", "persists"]
 #: The width the still is shown at. A 2K still (1530x2720) is scaled down to it.
@@ -2001,7 +2005,7 @@ class StillVerdict(BaseModel):
     #: The answer to each `StillPlan.must_fix` item (2026-10-12). Asked only of a still whose
     #: scene was rewritten, and then required for every item (`still_report_schema`); a still
     #: with nothing to verify is asked nothing and reads none.
-    fixes: list[FixAnswer] = Field(default_factory=list, max_length=MAX_FIXES)
+    fixes: list[FixAnswer] = Field(default_factory=list)
     _clip_violations = field_validator("bible_violations", mode="before")(clipped(300))
     _clip_reason = field_validator("reason", mode="before")(clipped(300))
 
@@ -2070,11 +2074,11 @@ def still_report_schema(asked: int) -> type[StillJudgeReport]:
 
 
 def fix_items(plan: Any) -> list[dict[str, str]]:
-    """The ``must_fix`` items of a plan as the look is shown them (`MAX_FIXES` at most): what
+    """Every ``must_fix`` item of a plan as the look is shown it: what
     quality control saw (``finding``), the correction's words (``expected``, guidance) and,
     from her QC verdict, why it appeared (``cause``) when known."""
     items: list[dict[str, str]] = []
-    for item in (getattr(plan, "must_fix", ()) or ())[:MAX_FIXES]:
+    for item in getattr(plan, "must_fix", ()) or ():
         said = dict(item or {})
         shown = {
             "finding": str(said.get("finding") or ""),
@@ -2090,7 +2094,7 @@ def _studio_words(fixes: Sequence[FixAnswer], items: Sequence[Mapping[str, str]]
     """The answers with the studio's own words for each finding; a number beyond the list
     answers nothing."""
     return [
-        fix.model_copy(update={"finding": str(items[fix.item - 1]["finding"])[:300]})
+        fix.model_copy(update={"finding": str(items[fix.item - 1]["finding"])})
         for fix in fixes
         if fix.item <= len(items)
     ]
@@ -2274,8 +2278,7 @@ def judge_still(
         "purpose": getattr(plan, "purpose", "") or "",
     }
     if must_fix:
-        # Before the look and the rules: the shown JSON is cut at 8000 characters, and these
-        # items are what this look is for.
+        # Each required correction travels whole with the scene's rules.
         shown["must_fix"] = [{"item": number, **item} for number, item in enumerate(must_fix, 1)]
     shown.update(
         {
@@ -2294,7 +2297,7 @@ def judge_still(
         _STILL_INSTRUCTIONS.format(scene=plan.scene)
         + (_FIXES_NOTE if must_fix else "")
         + (markings_note(marked) + "\n" if marked else "")
-        + wrap_in_inert_boundary(json.dumps(shown, ensure_ascii=False)[:8000], "the-still")
+        + wrap_in_inert_boundary(json.dumps(shown, ensure_ascii=False), "the-still")
     )
 
     from app.agents.structured import structured_run  # noqa: PLC0415
@@ -2367,14 +2370,14 @@ CLIP_TASK = "clip_qc"
 #: v3 (2026-10-10): a film's frames come with `studio_text_note` (where they were cut from, and
 #: the narration's subtitles named as the studio's) and, when their caption rows were cut out,
 #: the strip of each below them; a bought clip's prompt is unchanged.
-CLIP_TEMPLATE_VERSION = "clip-qc-v4"
+CLIP_TEMPLATE_VERSION = "clip-qc-v5"
 #: The same, for a clip bought after the scene's movement was rewritten to correct what quality
 #: control found (2026-10-12, late evening; the review of 9ac0195, finding 5): it is also asked,
 #: item by item, whether each mistake is gone, minor or persists (`StillPlan.must_fix` of the
 #: motion layer, `_CLIP_FIXES_NOTE`). Until then a finding treated in the motion's words was
 #: put to the still, which cannot show a movement, answered «fixed» without looking, and was
 #: never checked on the clip at all.
-CLIP_FIX_TEMPLATE_VERSION = "clip-qc-v4-fixes"
+CLIP_FIX_TEMPLATE_VERSION = "clip-qc-v5-fixes"
 #: The frames shown per clip, in order: first, middle, last.
 CLIP_FRAMES = 3
 
@@ -2403,7 +2406,7 @@ class ClipVerdict(BaseModel):
     reason: str = Field(min_length=1, max_length=300)
     #: The answer to each motion-layer ``must_fix`` item (2026-10-12), asked only of a clip
     #: whose scene's movement was rewritten (`clip_report_schema`), as on `StillVerdict`.
-    fixes: list[FixAnswer] = Field(default_factory=list, max_length=MAX_FIXES)
+    fixes: list[FixAnswer] = Field(default_factory=list)
     _clip_violations = field_validator("bible_violations", mode="before")(clipped(300))
     _clip_reason = field_validator("reason", mode="before")(clipped(300))
 
@@ -2629,7 +2632,7 @@ def judge_clip(
         )
         + (_CLIP_FIXES_NOTE if must_fix else "")
         + (markings_note(marked) + "\n" if marked else "")
-        + wrap_in_inert_boundary(json.dumps(shown, ensure_ascii=False)[:8000], "the-clip")
+        + wrap_in_inert_boundary(json.dumps(shown, ensure_ascii=False), "the-clip")
     )
 
     from app.agents.structured import structured_run  # noqa: PLC0415
