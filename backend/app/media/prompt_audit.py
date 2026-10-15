@@ -18,9 +18,12 @@ against the plan, the bible and the studio's prompt lessons. Her yes is recorded
 words (`AUDIT_EVENT`, by digest) and asked once per text; her no is a brief in the same shape
 her ladder uses (`scene_rewrite.SceneBrief`), handed to the same rewrite
 (`scene_rewrite.rewrite_scene`: the Editor's rewrite, her review, the words stored on the
-scene), after which the sheet is rebuilt and the new words are audited in their turn. A scene
-she cannot approve after `AUDIT_ROUNDS` briefs waits for her (NEEDS_PROMPT_APPROVAL), never for
-the Owner and never bought. Text only: nothing here costs credits.
+scene), after which the sheet is rebuilt and the new words are audited in their turn. The
+rounds have no cap and no minimum — the Owner, 2026-10-15 18:15Z: «prompturile nu costă
+bani, imaginile și video costă; lăsăm până când se ajunge la un prompt perfect» — only a
+bound on one walk's LLM time (`ROUNDS_PER_WALK`), after which the scene waits for her next
+walk (NEEDS_PROMPT_APPROVAL): never for the Owner and never bought on words she refused.
+Text only: nothing here costs credits.
 """
 
 from __future__ import annotations
@@ -41,14 +44,20 @@ logger = logging.getLogger("studio.prompt_audit")
 AUDIT_TASK = "director_prompt_audit"
 AUDIT_TEMPLATE = "director_prompt_audit-v1"
 AUDIT_EVENT = "media.prompt_audited"
-#: Her briefs on one scene's layer before the scene waits for her instead of being bought.
+#: Her rounds on one scene's layer inside ONE walk before the scene waits for her next walk:
+#: a bound on the walk's LLM time, not on her rounds (the Owner, 2026-10-15 18:15Z: no cap
+#: and no minimum on prompts; the next walk goes on from the recorded briefs).
+ROUNDS_PER_WALK = 8
+#: Kept for the old events' sake (`approved_words` reads them): her rounds are no longer
+#: counted toward anything.
 AUDIT_ROUNDS = 2
 NEEDS_PROMPT_APPROVAL = "NEEDS_PROMPT_APPROVAL"
 LAYER_OF_STEP: dict[str, str] = {"stills": "still", "test_shot": "motion", "motion": "motion"}
 APPROVED, REWRITE = "APPROVED", "REWRITE"
-#: Her approval by the Owner's cap: the words as they stand after `AUDIT_ROUNDS` briefs are
-#: bought (2026-10-15 14:57Z, a4ecf40a: eight scenes held «nici după 2 briefuri» and the
-#: film stood «așteaptă Proprietarul»; his rule: «publicăm ce avem», three renders a layer).
+#: Written between 2026-10-15 14:57Z and 18:15Z: words bought under the Owner's renders cap
+#: after her briefs. Never written since his rule of 18:15Z — «cumpărarea de imagini sau
+#: video când e vorba de prompturi nu există sub plafon» — and read only so the clips bought
+#: on those words are not audited again.
 APPROVED_UNDER_CAP = "APPROVED_UNDER_CAP"
 
 _INSTRUCTIONS = (
@@ -375,31 +384,6 @@ def audit_before_purchase(
             if approved_words(session, storyboard_id, scene, layer, digest):
                 result["approved"].append(scene)
                 continue
-            if briefs_given(session, storyboard_id, scene, layer) >= AUDIT_ROUNDS:
-                # Her rounds are spent: the words as they stand, with her briefs worked in,
-                # are bought under the Owner's cap (2026-10-15: «publicăm ce avem»); the
-                # renders cap bounds the money, her look judges the picture.
-                capped = True
-            else:
-                capped = False
-        if capped:
-            _record(
-                engine,
-                storyboard_id=storyboard_id,
-                scene=scene,
-                layer=layer,
-                digest=digest,
-                verdict=APPROVED_UNDER_CAP,
-                reason=(
-                    f"Scena {scene}: după {AUDIT_ROUNDS} briefuri ale Directoarei cuvintele se "
-                    "cumpără așa cum sunt, sub plafonul Proprietarului (2026-10-15)."
-                ),
-                run_id=None,
-                correlation_id=correlation_id,
-            )
-            result["approved"].append(scene)
-            result.setdefault("under_cap", []).append(scene)
-            continue
         to_ask[scene] = context
         digests[scene] = digest
     if not to_ask:
@@ -453,6 +437,7 @@ def audit_before_purchase(
             result["approved"].append(scene)
             continue
         brief = _brief_of(item, layer)
+        rounds = 1  # her brief in the batch above
         while True:
             try:
                 done = rewrite_scene(engine, registry, context, brief, correlation_id)
@@ -474,87 +459,89 @@ def audit_before_purchase(
             if done.get("rewritten"):
                 result["rewritten"].append(scene)
                 break
-            with Session(engine) as session:
-                given = briefs_given(session, storyboard_id, scene, layer)
+            rounds += 1
             # A rewrite the layer cannot make (the findings are in the picture's words the
-            # motion keeps, or in the composer's own sentences) is not helped by another brief.
+            # motion keeps, or in the composer's own sentences) is not helped by another
+            # brief: the fault is the composer's, for the developer; the words stay unbought.
             helpless = bool(done.get("composer_locked") or done.get("layer_exhausted"))
-            if given < AUDIT_ROUNDS and not helpless:
-                # Her second look at the same words, told what his rewrite could not do: the
-                # Owner's rule is that she approves the words before anything is bought, and
-                # the clips of a4ecf40a scenes 6-8 (16:10Z) were bought on words she had
-                # refused after one rewrite that missed her brief — and failed QC on it.
-                again, run = _ask(
-                    engine,
-                    registry,
-                    director_id=director_id,
-                    layer=layer,
-                    contexts={scene: context},
-                    lessons=lessons,
-                    correlation_id=correlation_id,
-                    previous={
-                        scene: {
-                            "brief": brief,
-                            "rewrite_failed": str(done.get("reason") or "fără motiv")[:600],
-                        }
-                    },
+            if helpless:
+                result["held"].append(
+                    {
+                        "scene_index": scene,
+                        "reason": (
+                            f"Scena {scene}: briefului Directoarei nu i se poate răspunde pe "
+                            f"acest strat ({done.get('reason') or 'fără motiv'}); cuvintele "
+                            "refuzate nu se cumpără — defect de unealtă, pentru dezvoltator."
+                        ),
+                        "developer_defect": True,
+                    }
                 )
-                item = next(
-                    (
-                        each
-                        for each in (again.scenes if again is not None else [])
-                        if int(each.scene_index) == scene
-                    ),
-                    None,
+                break
+            if rounds >= ROUNDS_PER_WALK:
+                result["held"].append(
+                    {
+                        "scene_index": scene,
+                        "reason": (
+                            f"Scena {scene}: {rounds} runde ale Directoarei în această trecere "
+                            f"fără un prompt aprobat ({done.get('reason') or 'fără motiv'}); "
+                            "schimburile continuă la trecerea următoare, nimic nu se cumpără."
+                        ),
+                    }
                 )
-                if item is None:
-                    # Nobody could audit the second round: refused words are not bought.
-                    result["held"].append(
-                        {
-                            "scene_index": scene,
-                            "reason": (
-                                f"Scena {scene}: Directoarea nu a putut relua verificarea "
-                                f"({run.get('error_detail') or run.get('status')}); nu se cumpără."
-                            ),
-                        }
-                    )
-                    break
-                if item.approved:
-                    _record(
-                        engine,
-                        storyboard_id=storyboard_id,
-                        scene=scene,
-                        layer=layer,
-                        digest=digests[scene],
-                        verdict=APPROVED,
-                        reason=item.reason,
-                        run_id=run.get("id"),
-                        correlation_id=correlation_id,
-                    )
-                    result["approved"].append(scene)
-                    break
-                brief = _brief_of(item, layer)
-                continue
-            # Her rounds are spent on these words, or no rewrite of this layer can answer
-            # her: the words stand and are bought under the Owner's cap — never a film that
-            # «așteaptă Proprietarul» on words nobody can change (15:41Z, a4ecf40a: the
-            # motion audit of scene 1 objected to the still's own words).
-            _record(
+                break
+            # Her next look at the same words, told what his rewrite could not do: the
+            # Owner's rule is that she approves the words before anything is bought, as many
+            # rounds as it takes (18:15Z); the clips of a4ecf40a scenes 6-8 (16:10Z) were
+            # bought on words she had refused after one rewrite that missed her brief — and
+            # failed QC on it.
+            again, run = _ask(
                 engine,
-                storyboard_id=storyboard_id,
-                scene=scene,
+                registry,
+                director_id=director_id,
                 layer=layer,
-                digest=digests[scene],
-                verdict=APPROVED_UNDER_CAP,
-                reason=(
-                    f"Scena {scene}: după {given} briefuri ale Directoarei rescrierea nu a "
-                    f"răspuns ({done.get('reason') or 'fără motiv'}); cuvintele se cumpără "
-                    "așa cum sunt, sub plafonul Proprietarului (2026-10-15)."
-                ),
-                run_id=run.get("id"),
+                contexts={scene: context},
+                lessons=lessons,
                 correlation_id=correlation_id,
+                previous={
+                    scene: {
+                        "brief": brief,
+                        "rewrite_failed": str(done.get("reason") or "fără motiv")[:600],
+                    }
+                },
             )
-            result["approved"].append(scene)
-            result.setdefault("under_cap", []).append(scene)
-            break
+            item = next(
+                (
+                    each
+                    for each in (again.scenes if again is not None else [])
+                    if int(each.scene_index) == scene
+                ),
+                None,
+            )
+            if item is None:
+                # Nobody could audit this round: refused words are not bought.
+                result["held"].append(
+                    {
+                        "scene_index": scene,
+                        "reason": (
+                            f"Scena {scene}: Directoarea nu a putut relua verificarea "
+                            f"({run.get('error_detail') or run.get('status')}); nu se cumpără."
+                        ),
+                    }
+                )
+                break
+            if item.approved:
+                _record(
+                    engine,
+                    storyboard_id=storyboard_id,
+                    scene=scene,
+                    layer=layer,
+                    digest=digests[scene],
+                    verdict=APPROVED,
+                    reason=item.reason,
+                    run_id=run.get("id"),
+                    correlation_id=correlation_id,
+                )
+                result["approved"].append(scene)
+                break
+            brief = _brief_of(item, layer)
     return result

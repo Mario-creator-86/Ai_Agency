@@ -1081,10 +1081,10 @@ def test_the_director_audits_a_scenes_words_before_the_first_purchase(
     third = prompt_audit.audit_before_purchase(
         engine, object(), storyboard_id=board, step="stills", scenes=[1, 2], correlation_id="c"
     )
-    # Her rounds spent: scene 2's words are bought as they stand, under the Owner's cap
-    # (2026-10-15 14:57Z: a film stood «așteaptă Proprietarul» on one held scene).
-    assert third["approved"] == [1, 2] and third["rewritten"] == [], third
-    assert third["held"] == [] and third["under_cap"] == [2] and third["asked"] is False
+    # No cap on her rounds (the Owner, 18:15Z): scene 2's unchanged words are asked about
+    # again, her brief rewritten again; nothing is bought on words she refused.
+    assert third["approved"] == [1] and third["rewritten"] == [2], third
+    assert third["held"] == [] and "under_cap" not in third and third["asked"] is True
     assert "Judge ONLY words_to_send" in prompt_audit._INSTRUCTIONS
     assert prompt_audit._plan_without_props(
         {
@@ -1134,23 +1134,27 @@ def test_the_director_audits_a_scenes_words_before_the_first_purchase(
                 **dict(row.prompt_json or {}),
                 "still_prompt": "A fresh desk by a cork wall; a hand lifts a cup.",
             }
+    before = len(asked)
     fourth = prompt_audit.audit_before_purchase(
         engine, object(), storyboard_id=board, step="stills", scenes=[1], correlation_id="c"
     )
-    assert fourth["held"] == [] and fourth["approved"] == [1], fourth
-    assert fourth["under_cap"] == [1] and fourth["asked"] is True, fourth
-    # Her second round, in the same walk: the same words, her earlier brief and why the
-    # rewrite could not answer it (16:10Z: clips bought on refused words after one miss).
+    # Her rounds in the same walk, each with her earlier brief and why the rewrite could not
+    # answer it (16:10Z: clips bought on refused words after one miss), up to the walk's
+    # bound; then the scene waits for her next walk — approved by nobody, bought by nobody.
+    assert fourth["approved"] == [] and "under_cap" not in fourth and fourth["asked"] is True
+    assert len(asked) - before == prompt_audit.ROUNDS_PER_WALK - 1  # the batch ask + 6 rounds
     assert "previous_round" in asked[-1]["prompt"] and "stratul still" in asked[-1]["prompt"]
     assert "say the wall is bare" in asked[-1]["prompt"]
+    (held,) = fourth["held"]
+    assert held["scene_index"] == 1 and "trecerea următoare" in held["reason"], held
     with Session(engine) as session:
-        assert prompt_audit.briefs_given(session, board, 1, "still") == prompt_audit.AUDIT_ROUNDS
+        assert prompt_audit.briefs_given(session, board, 1, "still") == prompt_audit.ROUNDS_PER_WALK
     with Session(engine) as session:
         scene_rows = session.scalars(
             select(StoryboardScene).where(StoryboardScene.storyboard_id == board)
         ).all()
         assert len(scene_rows) == 2
-        assert prompt_audit.briefs_given(session, board, 2, "still") == prompt_audit.AUDIT_ROUNDS
+        assert prompt_audit.briefs_given(session, board, 2, "still") == 3  # one per call
 
 
 def test_the_walk_audits_before_it_pays_and_her_hold_is_not_the_owners():

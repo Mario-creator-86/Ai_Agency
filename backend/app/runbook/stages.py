@@ -3285,7 +3285,11 @@ def _media_staircase(
             if film.get("approval_id") and not asked_correlation:
                 asked_correlation = correlation
         elif film["status"] == "WAITING":
-            if _ladder_scenes(engine, storyboard_id, film):
+            if _ladder_scenes(engine, storyboard_id, film) or (
+                film.get("refusal") == "NEEDS_PROMPT_APPROVAL"
+            ):
+                # Her rounds on the words (no cap, 18:15Z) are hers, never «așteaptă
+                # Proprietarul» (15:41Z, a4ecf40a: the register said so of her audit).
                 director_waiting.append(f"«{title}»: {reason}")
             else:
                 waiting.append(f"«{title}»: {reason}")

@@ -1,5 +1,9 @@
 # Architectural / Product Decision Log v5
 
+## Prompturile nu au plafon (Proprietarul, 2026-10-15 18:15Z) (2026-10-15)
+
+Decizie: auditul prompturilor de către Directoare nu are plafon și nici minim; Directoarea și Editorul fac schimburi până la promptul aprobat de ea, iar imaginile și clipurile se cumpără numai pe cuvinte aprobate. Motiv: textul nu costă, randările costă; la 16:10Z clipurile cumpărate «sub plafon» pe cuvinte refuzate au picat QC exact pe obiecțiile ei. Înlocuiește decizia «plafon de audit după 2 briefuri» (14:57Z). Respins: a păstra plafonul cu mai multe runde (orice plafon cumpără cuvinte refuzate). Limita rămasă e doar una de timp LLM pe o trecere (ROUNDS_PER_WALK=8), după care rundele continuă la trecerea următoare.
+
 ## The day ends on its goal, not on its stages (2026-10-15)
 
 **The day ends on its goal, not on its stages.** The Owner, 2026-10-15 15:20Z: the agency's job in a day is one short and one serial episode published; the day may stop only on a problem he must solve (a bug, an authorisation) or once both are out, and otherwise must solve the problem and go on. Decision: the watchdog pass `day_goal` re-queues the day's run (the same manual run his button queues) while the goal is unmet and nothing of the day is at work, and stops with one letter to him after `DAY_GOAL_RUNS_PER_DAY` (6) runs, a spent daily budget, safe mode or his autonomy stop. Rejected: a loop inside `execute_daily_run` (a day cut off mid-loop could not be resumed by the existing resume, and the stages' own records would blur); raising the schedule to several fixed runs a day (a fixed cadence does not know whether the goal is met); unbounded re-runs (the same refusal repeated is his problem, and LLM time is not free in hours).
