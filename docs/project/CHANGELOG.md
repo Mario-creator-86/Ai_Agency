@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-15 — A lapsed repair is put before the Director at once
+
+- `workflows/passes/director_qc_review.py`: a repair that lapsed (what was bought for it came back refused, or his no) and that no walk has read since is queued at once, like a ready one; walked since, it waits the hour. Test in `test_director_decides_qc` (100 passed with redo-cap).
+
 ## 2026-10-15 — The film's Figure 1 goes only to a scene in its own room
 
 Episode 2's penthouse and research-room scenes were drawn in the render bay through five paid rounds, whatever the words said: the film's Figure 1 (scene 1's still, Kael in the render bay) went with every later scene «for its light», and the edit model copied its room.

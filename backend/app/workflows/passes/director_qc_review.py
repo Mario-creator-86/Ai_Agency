@@ -181,7 +181,9 @@ def queue_director_reviews(context: WatchdogContext) -> dict[str, Any]:
             # hour after her 10:24Z decision had passed, the Owner asking where the
             # publication was. A walk that ran since (``unheard``) is throttled as before, so
             # a film the walk cannot move is not walked every ten minutes.
-            carried_on_now = (state["ready"] or state["look"]) and unheard == 0
+            # A repair that lapsed (what was bought for it came back refused, his no) is hers
+            # again on the same terms: read now, once; walked since, it waits the hour.
+            carried_on_now = (state["ready"] or state["look"] or state["lapsed"]) and unheard == 0
             if moments and not carried_on_now:
                 last = datetime.fromisoformat(max(moments))
                 if last.tzinfo is None:

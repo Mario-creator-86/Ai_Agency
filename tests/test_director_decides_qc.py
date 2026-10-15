@@ -4648,3 +4648,32 @@ def test_a_ready_repair_is_carried_on_the_moment_it_is_ready_not_an_hour_later(
         )
     assert decision_state(engine, film["report"])["ready"] is True
     assert _pass(engine, settings) == {"queued": []}
+
+
+def test_a_lapsed_repair_is_put_before_her_at_once_not_an_hour_later(
+    engine, settings, studio, monkeypatch
+):
+    """11:29Z, 2d276038: the stills bought for her repair came back refused by her own look,
+    the repair lapsed, and the report was hers again — but not before an hour had passed
+    since her decision. A lapsed repair no walk has read since is queued at once; the hour
+    holds once a walk ran for it."""
+    from app.runbook import stages
+    from app.workflows.passes import director_qc_review
+
+    film = failed_film(engine, local_move=False)
+    repairs = [{"scene_index": 5, "redo": "still", "reason": "three stacked panels"}]
+    registry, _model = director_says(studio, answer(verdicts_for(film), "REPAIR", repairs))
+    redo = FakeRedoPath(engine, monkeypatch, still_status="PAID")
+    _production(engine)
+    assert director_qc_review.RETRY_MINUTES == 60
+    stages.director_decides_failed_film(
+        engine, settings, None, registry, film["report"], film["asset"]
+    )
+    (new_still,) = redo.new_stills
+
+    _his_look(engine, new_still, "REJECTED")
+
+    state = decision_state(engine, film["report"])
+    assert state["lapsed"] and not state["final"]
+    assert _pass(engine, settings) == {"queued": [film["board"]]}
+    assert _pass(engine, settings) == {"queued": []}
