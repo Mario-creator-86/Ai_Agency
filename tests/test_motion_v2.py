@@ -683,6 +683,74 @@ def test_stillness_in_a_motion_prompt_is_a_warning_with_the_words_as_evidence():
     )
 
 
+#: A factual plan of a shot at rest, as scene 1 of «Why the Speed of Light Is Exactly
+#: 299,792,458 m/s» (7c26a7ce) was planned: a static camera on a bar in its case, the
+#: motion field saying «nothing moves» beside an exclusion, the ending in the plan's label.
+AT_REST_PLAN = {
+    "subject": (
+        "The platinum-iridium bar, a silvery platinum-white rectangular metal bar, resting "
+        "inside its glass display case"
+    ),
+    "action": (
+        "The bar rests still inside its glass case, the soft pool of light on its silvery "
+        "surface; nothing moves; no hand is in frame."
+    ),
+    "environment": "The windowless measurement laboratory: charcoal and slate blue walls",
+    "camera": "Wide establishing shot, straight-on, 24mm wide: static — the framing holds",
+    "lighting": "A soft fixed pool of light on the bar in its case, falling from above",
+    "composition": "the glass case centred and large, the bar bright at the centre",
+    "motion": (
+        "The bar rests still in its case across the shot's seconds; the soft pool of light "
+        "on it stays fixed and even; the dark room around it does not change; no hand "
+        "enters, nothing moves."
+    ),
+    "ending_frame": (
+        "The final frame holds the bar in its case exactly as it began: the silvery "
+        "rectangular bar resting inside the glass case, the soft pool of light on it, the "
+        "dark charcoal room around — nothing has moved."
+    ),
+    "camera_move": "static",
+    "seconds": 7.6,
+    "scene_kind": "LIVE",
+    "shot_type": "MEDIUM",
+}
+
+
+def test_a_shot_at_rest_says_its_stillness_once_and_names_what_the_frame_holds():
+    """2026-10-15, 7c26a7ce scene 1 (the Director, twice): «words_to_send opens with
+    'Static camera on a fixed tripod' and then immediately says 'Shadows drift and the light
+    shifts across the scene' … It also repeats the ending twice ('Nothing moves.' then the
+    full ending_frame sentence) … The bar is never named as the subject of the shot.»"""
+    compiled = compile_prompts(AT_REST_PLAN, FACELESS_BIBLE, {"model_id": "LTX-2.5"})
+    prompt = compiled["motion_prompt"]
+    assert compiled["camera_move"] == "static"
+    # The camera said short, no «life of the scene moving», and no drifting-shadows default.
+    assert prompt.startswith(MOVE_SHORT["static"]), prompt
+    assert DEFAULT_WORLD_MOTION not in prompt, prompt
+    assert "drift" not in prompt.lower() and "shifts" not in prompt.lower(), prompt
+    # The stillness said once, as the world of the shot.
+    assert prompt.count("Nothing moves.") == 1, prompt
+    # The thing the frame holds is named, from the plan's action.
+    assert "the bar rests still inside its glass case" in prompt.lower(), prompt
+    # The ending in the plan's label is said as the visible final image, once.
+    assert "The shot ends on the bar in its case exactly as it began" in prompt, prompt
+    assert "final frame holds" not in prompt.lower(), prompt
+    assert prompt.count("The shot ends") == 1, prompt
+    # A stored intent from before this fix (the drift default beside «Nothing moves.» in its
+    # action) is said in the corrected words too.
+    stored = dict(
+        compiled["motion_intent"], world=DEFAULT_WORLD_MOTION, action_clauses=["Nothing moves."]
+    )
+    again, _ = render_motion(stored, "seedance")
+    assert DEFAULT_WORLD_MOTION not in again and again.startswith(MOVE_SHORT["static"]), again
+    assert again.count("Nothing moves.") == 1, again
+    assert motion_prompt_for(compiled, "LTX-2.5")[0] == prompt
+    findings = lint_motion_prompt(
+        prompt, scene=1, still_prompt=compiled["still_prompt"], model_id="LTX-2.5"
+    )
+    assert not _blocks(findings), findings
+
+
 # ----------------------------------------------------- 6. clip QC and the one retry
 
 

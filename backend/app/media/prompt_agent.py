@@ -2269,7 +2269,11 @@ _ENDING_PREPOSITION = re.compile(r"^(?:on|with|at|in|as)\b", re.IGNORECASE)
 #: the rewrite's ending_frame began «The shot ends on the same medium close-up»).
 _ENDING_LEAD = re.compile(
     r"^(?:(?:the\s+(?:shot|clip|scene|frame)|it)\s+(?:ends|closes|finishes|settles)\b"
-    r"(?:\s+(?:on|with|at|in)\b)?|ending\s+(?:on|with|at|in)\b)[\s:;,.–—-]*",
+    r"(?:\s+(?:on|with|at|in)\b)?|ending\s+(?:on|with|at|in)\b"
+    # «The final frame holds the bar in its case» (2026-10-15, 7c26a7ce scene 1: said as
+    # «The shot ends on the final frame holds the bar…», refused by the Director twice).
+    r"|(?:the\s+)?(?:final|last|closing)\s+frame\s+(?:holds|shows|keeps|is)\b"
+    r"(?:\s+on)?)[\s:;,.–—-]*",
     re.IGNORECASE,
 )
 _POSSESSIVE = re.compile(r"['’]s$")
@@ -2767,6 +2771,14 @@ DEFAULT_WORLD_MOTION = (
 )
 _MOTIONLESS_WORLD = re.compile(
     r"\bnothing\s+(?:(?:in|around)\s+(?:the\s+)?(?:world|scene|background)\s+)?moves\b",
+    re.IGNORECASE,
+)
+#: The subject's stillness in a shot at rest («the bar rests still inside its glass case»):
+#: no verb of motion, yet it names the thing the frame holds, which a clip of a still scene
+#: must say or the model moves the room instead (2026-10-15, 7c26a7ce scene 1).
+_AT_REST_CLAUSE = re.compile(
+    r"\b(?:rests?|stays?|remains?|sits?|lies?|hangs?|holds?)\s+"
+    r"(?:still|fixed|motionless|unmoved|steady|in\s+place|exactly)\b",
     re.IGNORECASE,
 )
 #: A chain word inside a plan's motion or action, read for the video model: the chain is
@@ -3288,7 +3300,12 @@ def _motion_intent(
         *from_action,
         *_clauses_of(package.get("environment"), motion=True),
     ]
-    explicit_stillness = next((c for c in from_motion if _MOTIONLESS_WORLD.search(c)), "")
+    # «nothing moves» may stand in the action when the motion field said it beside an
+    # exclusion that dropped its clause («no hand enters, nothing moves»): either field makes
+    # the shot one at rest, and its world is then that stillness, not the default drift.
+    explicit_stillness = next(
+        (c for c in [*from_motion, *from_action] if _MOTIONLESS_WORLD.search(c)), ""
+    )
     world = explicit_stillness or next(
         (
             clause
@@ -3304,7 +3321,10 @@ def _motion_intent(
     action_clauses: list[str] = []
     for clause in from_action:
         key = clause.casefold()
-        if key in said or not lint.SUBJECT_MOTION.search(clause):
+        moves = lint.SUBJECT_MOTION.search(clause) or (
+            explicit_stillness and _AT_REST_CLAUSE.search(clause)
+        )
+        if key in said or not moves:
             continue
         said.add(key)
         action_clauses.append(clause)
@@ -3369,9 +3389,14 @@ def render_motion(
     world = str(intent.get("world") or "")
     if not world or world in lint.LEGACY_STILLNESS:
         world = DEFAULT_WORLD_MOTION
-    at_rest = bool(_MOTIONLESS_WORLD.search(" ".join([world, *map(str, subjects)])))
+    at_rest = bool(_MOTIONLESS_WORLD.search(" ".join([world, *map(str, subjects), *actions])))
     if at_rest and move == "static":
         camera = MOVE_SHORT["static"]
+    if at_rest and world == DEFAULT_WORLD_MOTION:
+        # A stored intent whose stillness stood in its action: the drifting-shadows default
+        # contradicted it («Static camera… Shadows drift and the light shifts… Nothing
+        # moves.» — 2026-10-15, 7c26a7ce scene 1, refused by the Director twice).
+        world = ""
     amplitude = str(intent.get("amplitude") or AMPLE)
     seconds = _seconds_of(intent)
     two_beats = amplitude != MEASURED and move != "static" and seconds >= TWO_BEAT_SECONDS

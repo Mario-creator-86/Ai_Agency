@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-15 — Shot at rest: one stillness, the subject named, the ending once
+
+- `media/prompt_agent.py`: a shot at rest («nothing moves» in motion or action) never says the drifting-shadows default, keeps the action's at-rest clause so the subject is named, and says «The final frame holds X» as «The shot ends on X» (7c26a7ce scene 1, refused twice by the Director; the Owner: «verifică promptul să corecteze greșeala»). Test: `test_motion_v2.py::test_a_shot_at_rest_…`.
+
 ## 2026-10-15 — O singură imagine pe scenă (Proprietarul, 21:10Z)
 
 **O singură imagine pe scenă, nu două** (`backend/app/media/cost_plan.py` `STILL_CANDIDATES`=1; suita de teste păstrează 2 printr-un fixture de sesiune în `tests/conftest.py`, iar `tests/test_film_costing.py::test_production_buys_one_still_per_scene` citește valoarea de producție din sursă; `tests/test_agent_reviews.py` citește valoarea modulului). Proprietarul, 21:10Z, văzând shortul Speed of Light cumpărând 10 imagini pentru 5 scene (2,94 USD): «ne costă bani pentru că facem câte două imagini, vreau să facem doar 1». Logica: promptul e aprobat de Directoare înainte de cumpărare, deci o singură imagine e pariul; una refuzată se reface pe un prompt revizuit, sub plafonul randărilor, niciodată două la întâmplare. Efect: jumătate din costul pasului de imagini. Testate: film_costing, fix_is_verified, stills_stage, take_choice_words, director_looks_at_pictures (1 picat dinainte), shooting_sheet, agent_reviews, phase7_analytics, budget — 252 passed.
