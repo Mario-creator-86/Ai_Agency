@@ -3201,6 +3201,16 @@ def shot_frame(camera: Any, shot_type: Any = "") -> tuple[str, str]:
     return size, _sentence(", ".join(parts))
 
 
+#: A plan's camera text that locks the frame: the clip's move is «static», not the size's.
+_LOCKED_CAMERA = re.compile(
+    r"\b(?:locked|motionless|static|fixed|frozen)\s+(?:camera|frame|framing|shot)\b"
+    r"|\bcamera\s+(?:is\s+|stays\s+|held\s+)?(?:locked|static|motionless|fixed|still)\b"
+    r"|\b(?:single\s+)?still\s+frame\b|\bno\s+(?:camera\s+)?movement\b"
+    r"|\bframing\s+holds\b|\bframe\s+(?:is\s+)?locked\b",
+    re.IGNORECASE,
+)
+
+
 def choose_camera_move(
     package: dict[str, Any],
     size: str,
@@ -3219,11 +3229,15 @@ def choose_camera_move(
     stated = str(package.get("camera_move") or "").strip().lower()
     if stated in lint.CAMERA_MOVES:
         return stated
-    named = [
-        move for move, _ in lint.camera_moves(_flatten(package.get("camera"))) if move != "static"
-    ]
+    camera_text = _flatten(package.get("camera"))
+    named = [move for move, _ in lint.camera_moves(camera_text) if move != "static"]
     if len(named) == 1:
         return named[0]
+    if not named and _LOCKED_CAMERA.search(camera_text):
+        # The plan locks the frame in so many words («A single still frame, the camera
+        # locked and motionless»): a varied move contradicts the plan, and the Director
+        # refuses the clip on the plan's words (23:34Z, 7c26a7ce scene 2: a tilt down).
+        return "static"
     choices = SIZE_MOVES.get(size) or SIZE_MOVES["medium"]
     last = previous[-1] if previous else None
     allowed = [move for move in choices if move not in avoid] or list(choices)
@@ -3303,12 +3317,17 @@ def _motion_intent(
     and was not said already. Neither describes the picture. Chains are kept as sequences
     without their "then" (`_continuous`).
     """
-    from_motion = _clauses_of(_continuous(package.get("motion")), motion=True)
-    from_action = _clauses_of(_continuous(package.get("action")), motion=True)
+    # The composer's own sentences, pasted back into a plan's field by a rewrite («Shadows
+    # drift and the light shifts…» stood in scene 2's motion field, 23:34Z, 7c26a7ce, and
+    # the Director refused it twice as the plan's word), are not the plan's words.
+    motion_text = _without_composer_sentences(_continuous(package.get("motion")))
+    action_text = _without_composer_sentences(_continuous(package.get("action")))
+    from_motion = _clauses_of(motion_text, motion=True)
+    from_action = _clauses_of(action_text, motion=True)
     candidates = [
         *from_motion,
         *from_action,
-        *_clauses_of(package.get("environment"), motion=True),
+        *_clauses_of(_without_composer_sentences(package.get("environment")), motion=True),
     ]
     # «nothing moves» may stand in the action when the motion field said it beside an
     # exclusion that dropped its clause («no hand enters, nothing moves»): either field makes
@@ -3347,7 +3366,9 @@ def _motion_intent(
     amplitude = str(package.get("motion_amplitude") or AMPLE).strip().lower()
     return {
         "camera_move": move,
-        "world": _sentence(world) if world else DEFAULT_WORLD_MOTION,
+        # A static camera gets no drift by default: its life is the subject's own action,
+        # and a plan that names no world motion for a locked frame means none.
+        "world": _sentence(world) if world else ("" if move == "static" else DEFAULT_WORLD_MOTION),
         "subject": _sentence(subject),
         "subject_clauses": [_sentence(clause) for clause in subject_clauses],
         "action_clauses": [_sentence(clause) for clause in action_clauses],
@@ -3358,6 +3379,33 @@ def _motion_intent(
         "people": people,
         "ending_frame": str(package.get("ending_frame") or ""),
     }
+
+
+def _without_composer_sentences(text: Any) -> str:
+    """The plan's words without the composer's fixed sentences (the drift default, the pads,
+    the beats, the face rule, the closing line): a rewrite that pasted a sent prompt back
+    into a field gave the composer its own words as the plan's."""
+    said = " ".join(str(text or "").split())
+    if not said:
+        return ""
+    for sentence in _COMPOSER_SENTENCES:
+        said = said.replace(sentence, " ")
+    return " ".join(said.split())
+
+
+_COMPOSER_SENTENCES: tuple[str, ...] = (
+    DEFAULT_WORLD_MOTION,
+    MOTION_PAD,
+    MOTIONLESS_PAD,
+    END_BEAT,
+    MOTIONLESS_END_BEAT,
+    MEASURED_SENTENCE,
+    FACES_CONSTRAINT,
+    NO_PEOPLE_SENTENCE,
+    lint.MOTION_CLOSING,
+    lint.VEO_MOTION_CLOSING,
+    *lint.LEGACY_STILLNESS,
+)
 
 
 def _intent_clauses(intent: dict[str, Any], key: str) -> list[str]:
@@ -3407,7 +3455,7 @@ def render_motion(
     at_rest = bool(_MOTIONLESS_WORLD.search(" ".join([world, *map(str, subjects), *actions])))
     if at_rest and move == "static":
         camera = MOVE_SHORT["static"]
-    if at_rest and world == DEFAULT_WORLD_MOTION:
+    if (at_rest or move == "static") and world == DEFAULT_WORLD_MOTION:
         # A stored intent whose stillness stood in its action: the drifting-shadows default
         # contradicted it («Static camera… Shadows drift and the light shifts… Nothing
         # moves.» — 2026-10-15, 7c26a7ce scene 1, refused by the Director twice).

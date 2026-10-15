@@ -5,6 +5,14 @@ AGENT_SCENARIO_ACCEPTANCE later used actual Ollama Cloud calls, with normal seri
 acceptance and real GPU/media/upload still pending. Current local UI evidence is reported
 separately below and does not prove those external workflows.
 
+## A locked frame in the plan is static; the composer's sentences are not the plan's (2026-10-15)
+
+**Claim:** after the 23:18Z fresh start the Director approved scene 1's motion words at once and the test shot was bought (0,38 USD; its clip QC then found the window in the approved still — the loop briefed Kael for the picture). Scene 2's motion was refused twice (23:34–23:35Z) for words the composer, not the Editor, put there: the plan's camera said «A single still frame, the camera locked and motionless» and the compiler gave the medium size's tilt down; Kael's rewrite had pasted the sent prompt back into the motion field, so «Shadows drift and the light shifts…» came back as the plan's own word; his second rewrite could not remove it («a dat aceleași cuvinte») and the Director took over.
+
+**Fix (`media/prompt_agent.py`):** `choose_camera_move` returns «static» when the plan's camera text locks the frame (`_LOCKED_CAMERA`) and names no move — the plan's own `camera_move` and a named move still win; `_motion_intent` reads the plan's fields without the composer's own sentences (`_without_composer_sentences`: the drift default, the pads, the beats, the face rule, the closing line); a static camera gets no drift default (world empty unless the plan names one), in the intent and in `render_motion` for stored intents.
+
+**Tested:** `test_motion_v2.py::test_a_plan_that_locks_its_frame_is_static_and_the_composers_drift_is_not_the_plans`; 126 passed across the compiler files (4 known motion_v2 fixture failures); ruff, mypy clean. Live after the next restart: scene 2 recompiles on Kael's next rewrite; the audit renders from the intent.
+
 ## Audit reads the words the sheet sends; endings as sentences; the cap on continuations; the guard counts this process only (2026-10-15)
 
 **Claim:** after the 22:18Z restart (424bc79) the Speed of Light walk (7c26a7ce) hit four more tool defects in one minute, and The Zero Script Club (f06808c9) waited instead of shipping under the cap; the Cyclotron (aa170155) was accepted under the cap and published (https://youtube.com/shorts/E83FwHyl5K0, 22:20:51Z).

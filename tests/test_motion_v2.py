@@ -799,6 +799,44 @@ def test_the_editors_rewrite_of_a_shot_at_rest_ends_as_a_sentence_and_rests_once
     )
 
 
+def test_a_plan_that_locks_its_frame_is_static_and_the_composers_drift_is_not_the_plans():
+    """23:34Z, 7c26a7ce scene 2: the plan's camera said «A single still frame, the camera
+    locked and motionless» and the compiler gave the medium size's tilt down; the Editor's
+    rewrite had pasted the sent prompt back into the motion field, so «Shadows drift and the
+    light shifts…» came back as the plan's own word and the Director refused it twice."""
+    plan = {
+        **PLAN,
+        "camera": (
+            "A single still frame, the camera locked and motionless. Medium shot, 50mm lens, "
+            "from behind her: her hands and the bar centred at the case."
+        ),
+        "motion": (
+            "Smooth tilt down from the top of the scene, steady, settling on the subject "
+            "below. " + DEFAULT_WORLD_MOTION + " Her hand and forearm point along the thin "
+            "warm-red laser line on the dark floor. The case, the bench and the walls stay "
+            "locked in identical position and shape. " + MOTION_CLOSING
+        ),
+        "action": "Her hand and forearm point along the thin warm-red laser line on the floor.",
+        "environment": "The windowless laboratory: charcoal walls, one steel workbench",
+        "shot_type": "MEDIUM",
+        "seconds": 4.8,
+    }
+    plan.pop("camera_move", None)
+    compiled = compile_prompts(plan, FACELESS_BIBLE, {"model_id": "LTX-2.5"})
+    prompt = compiled["motion_prompt"]
+    assert compiled["camera_move"] == "static", compiled["camera_move"]
+    assert prompt.startswith(MOVE_SENTENCES["static"]), prompt
+    assert DEFAULT_WORLD_MOTION not in prompt and "tilt" not in prompt.lower(), prompt
+    assert "point along the thin warm-red laser line" in prompt.lower(), prompt
+    assert compiled["motion_intent"]["world"] == ""
+    # The plan's own choice and a named move still win over the lock words.
+    assert choose_camera_move({**plan, "camera_move": "slow push-in"}, "medium") == "slow push-in"
+    assert choose_camera_move({"camera": "a handheld medium shot, 35mm"}, "medium") == (
+        "handheld drift"
+    )
+    assert choose_camera_move({"camera": "Medium shot, 50mm lens"}, "medium") != "static"
+
+
 # ----------------------------------------------------- 6. clip QC and the one retry
 
 

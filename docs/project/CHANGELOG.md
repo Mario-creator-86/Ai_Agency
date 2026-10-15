@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-15 — Locked frame is static; composer sentences are not the plan's
+
+- `media/prompt_agent.py`: a plan whose camera text locks the frame compiles to «static»; the composer's own sentences pasted back into a plan's field are not read as the plan's; a static camera gets no drift default (7c26a7ce scene 2, refused twice at 23:34Z).
+
 ## 2026-10-15 — Audit on the sent words, endings as sentences, the cap on continuations
 
 - `media/prompt_audit.py`: the audit renders the motion words from the intent as the sheet does (`prompt_text`); the loop guard counts refusals made in this process only (`PROCESS_STARTED_AT`), `GUARD_VERSION` 3.
