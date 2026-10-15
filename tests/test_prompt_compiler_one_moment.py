@@ -430,3 +430,7 @@ def test_a_hyphenated_compound_ending_in_a_particle_is_a_whole_word():
     assert not dangling("a lamp switched-on")
     assert dangling("the card resting on")
     assert dangling("the card seen straight on")
+    # 19:43Z, the same scene: «stay exactly as they are» is a whole clause; «the lamps are» is not.
+    assert not dangling("the bench and the equipment behind stay exactly as they are")
+    assert not dangling("the room left as it is")
+    assert dangling("the lamps are")

@@ -445,9 +445,24 @@ _PARTICLE_END = re.compile(
 )
 
 
+#: «stay exactly as they are», «the room as it is», «left where they were»: a clause that ends
+#: in a form of «to be» after «as / how / where / what + pronoun» is whole, not broken.
+#: 2026-10-15 19:43Z, 7c26a7ce scene 3: the Editor's whole sentence «… and the bench and the
+#: equipment behind stay exactly as they are» was refused as a fragment three repairs running.
+_WHOLE_END = re.compile(
+    r"\b(?:as|how|where|what|the\s+way)\s+(?:they|it|she|he|we|you|things|everything)\s+"
+    r"(?:are|is|were|was)\s*$",
+    re.IGNORECASE,
+)
+
+
 def dangling(text: str) -> bool:
     """Whether a clause breaks off: it ends in a function word that needs what follows."""
-    return bool(DANGLING_END.search(text)) and not _PARTICLE_END.search(text)
+    return (
+        bool(DANGLING_END.search(text))
+        and not _PARTICLE_END.search(text)
+        and not _WHOLE_END.search(text)
+    )
 
 
 _ASIDE = re.compile(r"\s*\(([^()]*)\)")
