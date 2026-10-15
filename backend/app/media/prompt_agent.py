@@ -2597,27 +2597,27 @@ MOTION_MIN_WORDS, MOTION_MAX_WORDS = lint.MOTION_WORDS
 #: prompt_lint.camera_moves reads it), carries its tempo (prompt_lint.SPEED_WORDS) and its
 #: path, and spells its own key, so a stored package's move is readable in its prompt. The
 #: older keys keep their "slow": a plan or a rewrite that names them by name asked for that.
+#: The move sentences name no framing of their own since 2026-10-15 17:19Z (a4ecf40a scenes 6
+#: and 8: «dolly in from a wide view to a close framing» on a shot the plan fixes as a close-up —
+#: the Director refused the words twice and no rewrite could change a composer sentence) and no
+#: pace (scene 7: «tracking left at walking pace» on a seated subject). The framing is the
+#: shot's, the move only tightens, widens or slides.
 MOVE_SENTENCES: dict[str, str] = {
     "static": (
         "Static camera on a fixed tripod, steady, the life of the scene moving inside the "
         "fixed frame."
     ),
     "slow push-in": (
-        "Slow push-in from the wide view toward the subject, steady all the way, ending close "
-        "on it."
+        "Slow push-in toward the subject, steady all the way, the framing tightening on it."
     ),
     "slow pull-back": (
-        "Slow pull-back from close on the subject to the wide view, steady all the way, the "
-        "space opening around it."
+        "Slow pull-back from the subject, steady all the way, the space opening around it."
     ),
     "dolly in": (
-        "Steady dolly in from a wide view to a close framing of the subject, the foreground "
-        "sliding past the lens."
+        "Steady dolly in toward the subject, the framing tightening, the foreground sliding "
+        "past the lens."
     ),
-    "dolly out": (
-        "Steady dolly out from a close framing of the subject to a wide view, revealing the "
-        "whole space around it."
-    ),
+    "dolly out": ("Steady dolly out from the subject, the space around it widening into view."),
     "slow pan left": (
         "Slow pan left, smooth and with a clear start and end, sweeping from the right side "
         "of the scene across to the subject."
@@ -2627,12 +2627,10 @@ MOVE_SENTENCES: dict[str, str] = {
         "of the scene across to the subject."
     ),
     "tracking left": (
-        "Steady tracking left alongside the subject at walking pace, the background sliding "
-        "past behind it."
+        "Steady tracking left alongside the subject, the background sliding past behind it."
     ),
     "tracking right": (
-        "Steady tracking right alongside the subject at walking pace, the background sliding "
-        "past behind it."
+        "Steady tracking right alongside the subject, the background sliding past behind it."
     ),
     "tilt up": (
         "Smooth tilt up from the base of the scene to its top, steady, ending on the subject."
