@@ -100,7 +100,7 @@ _STILL_NOTE = (
     "The picture is ONE frozen moment, the first of the plan: the plan's later moments "
     "(«then…», «lowers», «points») belong to the clip's words and are never in a picture's — "
     "do not refuse a picture for lacking them. The studio composes the picture's words from "
-    "the plan's fields within a budget of about 120 words, the room, the light and the "
+    "the plan's fields within a budget of about 900 words, the room, the light and the "
     "composition after the subject: when one of them is missing, the subject or the action "
     "is too long — brief the Video Editor to SHORTEN that field (fewer clauses), never to add "
     "more.\n"

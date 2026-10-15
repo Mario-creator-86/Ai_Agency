@@ -44,7 +44,17 @@ DEFAULT_PROMPT_MAX_UTF16 = 1000
 #: fit (2026-10-14), so the route it is bought on must be the one it is judged against.
 ALLOWANCES: dict[str, int] = {model: MAX_PROMPT for model in WORKFLOWS}
 
-STILL_WORDS = (60, 120)
+# The still prompt's band of words: the studio's own editorial bound, not a vendor's — the
+# RunPod worker allows 20 000 characters (`runpod_worker.contract.MAX_PROMPT`), Runway 1 000
+# UTF-16 units (`DEFAULT_PROMPT_MAX_UTF16`, kept by the composer's cap). 60-120 since the
+# money staircase after the Nepal film (2026-10-01: long prompts drew mixed-up pictures);
+# 60-900 since 2026-10-15 20:07Z — the Owner: «de ce 120 de cuvinte? cine o impune?», then
+# «MUTĂ LA 900! PENTRU AMBELE! DACĂ NE PERMITE» — so a full subject, the action, the room, the
+# light and the composition fit together instead of giving way to one another (7c26a7ce
+# scene 2: four rounds for a room the budget had cut). It permits: the vendor's character cap
+# still bounds the composed prompt (`prompt_cap`) — on the RunPod route 20 000 characters
+# (about 3 000 words), on Runway's legacy figure 1 000.
+STILL_WORDS = (60, 900)
 # The motion prompt's band of words. 20-70 since the Nepal film (2026-09-27); 25-95 since
 # «Mișcare v2» (2026-10-11): a camera move said with its path and its tempo, a second beat
 # of camera on a clip of seven seconds or more, the subject's own action and the world in
@@ -54,7 +64,10 @@ STILL_WORDS = (60, 120)
 # (a4ecf40a scenes 6 and 7): the serial clip also names who is in the frame and nobody
 # else, and that the faces keep their features — the two causes of the day's paid refusals —
 # and those did not fit beside the ending and the room's life in ninety-five.
-MOTION_WORDS = (25, 110)
+# 25-900 since 2026-10-15 20:07Z, the Owner's figure for both prompts (see STILL_WORDS): the
+# move, the whole action, the ending, the cast, the faces and the room's life all fit; the
+# vendor's character cap (`prompt_cap`) is the bound that remains.
+MOTION_WORDS = (25, 900)
 MAX_INLINE_EXCLUSIONS = 2
 EVIDENCE_CHARS = 120
 

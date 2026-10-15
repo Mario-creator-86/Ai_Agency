@@ -646,7 +646,7 @@ def test_the_video_editor_is_asked_for_ample_specific_movement():
 
 
 def test_the_word_band_is_wider_and_every_rule_that_reads_it_follows():
-    assert MOTION_WORDS == (25, 110)
+    assert MOTION_WORDS == (25, 900)
     assert (prompt_agent.MOTION_MIN_WORDS, prompt_agent.MOTION_MAX_WORDS) == MOTION_WORDS
     base = "Steady dolly in from a wide view to the subject while cloud drifts."
     fixed = len(base.split()) + len(MOTION_CLOSING.split())

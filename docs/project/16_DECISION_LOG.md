@@ -1,5 +1,9 @@
 # Architectural / Product Decision Log v5
 
+## Benzile de cuvinte ale prompturilor sunt 900 (Proprietarul, 2026-10-15 20:07Z) (2026-10-15)
+
+Decizie: STILL_WORDS 60–900 și MOTION_WORDS 25–900. Motiv: limitele de 120/110 erau ale studioului (după filmul Nepal, 1.10), nu ale furnizorului; compozitorul renunța la cameră, lumină și acțiune ca să încapă în ele și Directoarea refuza prompturile pentru ce lipsea — runde fără capăt. Furnizorul permite: worker-ul RunPod 20 000 de caractere pe prompt; plafonul de caractere rămâne singura plasă (prompt_cap). Respins: 160 (estimarea mea prudentă) — Proprietarul a cerut explicit 900 pentru ambele. Înlocuiește decizia benzilor din 1.10 și 11.10.
+
 ## Prompturile nu au plafon (Proprietarul, 2026-10-15 18:15Z) (2026-10-15)
 
 Decizie: auditul prompturilor de către Directoare nu are plafon și nici minim; Directoarea și Editorul fac schimburi până la promptul aprobat de ea, iar imaginile și clipurile se cumpără numai pe cuvinte aprobate. Motiv: textul nu costă, randările costă; la 16:10Z clipurile cumpărate «sub plafon» pe cuvinte refuzate au picat QC exact pe obiecțiile ei. Înlocuiește decizia «plafon de audit după 2 briefuri» (14:57Z). Respins: a păstra plafonul cu mai multe runde (orice plafon cumpără cuvinte refuzate). Limita rămasă e doar una de timp LLM pe o trecere (ROUNDS_PER_WALK=8), după care rundele continuă la trecerea următoare.
