@@ -832,6 +832,33 @@ def test_only_a_confirmed_lesson_refuses_a_rewrite():
         proven.model_validate({**answer, "broken_lessons": [{**broken, "field": "subject"}]})
 
 
+def test_an_audit_brief_is_reviewed_against_its_own_diagnosis_not_a_refused_candidates(
+    engine, tmp_path
+):
+    """2026-10-15, 7c26a7ce scene 1: her audit refused the motion words before the clip was
+    bought and briefed the Editor; her review of his rewrite was then handed the still gate's
+    findings on the candidate it had refused beside the approved one («a bright window with
+    daylight») and refused the clean rewrite as locked to the picture. A brief from the audit
+    is answered by its diagnosis; a quality-control brief still by quality control's words."""
+    from app.media.prompt_audit import AuditedScene, _brief_of
+    from app.media.scene_rewrite import AUDIT_BRIEF, findings_to_treat
+
+    storyboard_id = a_refused_scene(engine, tmp_path, detail=QC_WORDS)
+    context = scene_context(engine, storyboard_id, 1)
+    assert [item["qc_text"] for item in review_findings(context)] == [QC_WORDS]
+    brief = _brief_of(
+        AuditedScene(scene_index=1, approved=False, reason="the words contradict the plan"),
+        "motion",
+    )
+    assert brief["source"] == AUDIT_BRIEF and brief["layer"] == "motion"
+    (only,) = findings_to_treat(context, brief)
+    assert only["source"] == "director_brief" and only["qc_text"] == brief["diagnosis"]
+    # The same scene under a quality-control brief answers quality control.
+    assert [item["qc_text"] for item in findings_to_treat(context, dict(brief, source=None))] == [
+        QC_WORDS
+    ]
+
+
 def test_her_own_diagnoses_are_observations_and_a_minor_finding_does_not_refuse(
     engine, tmp_path, studio
 ):

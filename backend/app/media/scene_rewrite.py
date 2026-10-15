@@ -2124,11 +2124,22 @@ def review_findings(context: dict[str, Any]) -> list[dict[str, Any]]:
     return found
 
 
+#: A brief the Director wrote in her audit of the words before a purchase
+#: (`prompt_audit._brief_of`): the rewrite treats her diagnosis, not quality control's past.
+AUDIT_BRIEF = "prompt_audit"
+
+
 def findings_to_treat(context: dict[str, Any], brief: dict[str, Any]) -> list[dict[str, Any]]:
     """The findings her review answers: quality control's (`review_findings`) or, when it named
     nothing a picture could show (only the studio's own notes), her brief's diagnosis, which is
-    then what the rewrite was asked to treat."""
-    found = review_findings(context)
+    then what the rewrite was asked to treat.
+
+    A brief from her audit of the words (``source`` AUDIT_BRIEF) is answered by its diagnosis
+    alone: no picture was refused — the words were — and a refusal in the scene's history is
+    another candidate's (2026-10-15, 7c26a7ce scene 1: the motion rewrite her audit asked was
+    reviewed against the still gate's findings on the candidate it had refused, beside the one
+    it approved — «a bright window with daylight» — and refused as «locked to the picture»)."""
+    found = [] if brief.get("source") == AUDIT_BRIEF else review_findings(context)
     if found:
         return found
     return [

@@ -5,6 +5,16 @@ AGENT_SCENARIO_ACCEPTANCE later used actual Ollama Cloud calls, with normal seri
 acceptance and real GPU/media/upload still pending. Current local UI evidence is reported
 separately below and does not prove those external workflows.
 
+## The audit's brief is reviewed against its own diagnosis, not a refused candidate's findings (2026-10-15)
+
+**Claim:** the Director's review of a rewrite her prompt audit asked was judged against quality control's findings on a refused still candidate instead of her audit's diagnosis (7c26a7ce scene 1, 21:48:10-21:48:15Z: Kael's motion rewrite was «clean on its own terms» by her own observations, yet refused as «locked to the picture» for «a bright window with daylight» — the still gate's refusal of candidate f171687f, beside candidate 6039267a which it approved; the studio declared a tool defect and she took over the remediation). The Owner, 21:50Z: «ce face Sarah?».
+
+**Cause:** `scene_rewrite.findings_to_treat` always took `review_findings(context)` — the scene's newest failure, whatever take — and only fell back to the brief's diagnosis when quality control had named nothing. A brief from `prompt_audit._brief_of` carried no mark of where it came from.
+
+**Fix:** the audit's brief carries `source: "prompt_audit"` (`scene_rewrite.AUDIT_BRIEF`); `findings_to_treat` answers such a brief by its diagnosis alone (no picture was refused, the words were); a quality-control brief still answers quality control's words.
+
+**Tested:** `tests/test_rewrite_learns.py::test_an_audit_brief_is_reviewed_against_its_own_diagnosis_not_a_refused_candidates`; 156 passed across test_rewrite_learns, test_publishes_alone, test_prompt_contract_audit, test_fix_is_verified (the known failure `test_the_films_findings_reach_the_brief_with_the_cause_she_found` unchanged); ruff, mypy clean on the files. Goes live with 621eb89 at the next boundary restart.
+
 ## Shot at rest: the motion composer says its stillness once (7c26a7ce scene 1) (2026-10-15)
 
 **Claim:** the motion composer contradicted itself on a shot at rest (7c26a7ce scene 1, the Director refused the motion words twice, 21:36-21:38Z: «Static camera on a fixed tripod… Shadows drift and the light shifts… Nothing moves. The shot ends on the final frame holds the bar…»). The Owner, 21:40Z: «verifică promptul să corecteze greșeala» — a tool defect is mine, the words are Kael's.

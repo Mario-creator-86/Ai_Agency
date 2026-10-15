@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-15 — An audit brief is answered by its diagnosis
+
+- `media/scene_rewrite.py`, `media/prompt_audit.py`: a rewrite the Director's prompt audit asked is reviewed against her audit's diagnosis (`AUDIT_BRIEF`), never against quality control's findings on another still candidate the gate refused (7c26a7ce scene 1: a clean motion rewrite refused for «a bright window with daylight» of the candidate beside the approved one). Test in `test_rewrite_learns.py`.
+
 ## 2026-10-15 — Shot at rest: one stillness, the subject named, the ending once
 
 - `media/prompt_agent.py`: a shot at rest («nothing moves» in motion or action) never says the drifting-shadows default, keeps the action's at-rest clause so the subject is named, and says «The final frame holds X» as «The shot ends on X» (7c26a7ce scene 1, refused twice by the Director; the Owner: «verifică promptul să corecteze greșeala»). Test: `test_motion_v2.py::test_a_shot_at_rest_…`.

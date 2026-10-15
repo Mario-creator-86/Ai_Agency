@@ -561,6 +561,9 @@ def _brief_of(item: AuditedScene, layer: str) -> dict[str, Any]:
         }
     brief["layer"] = layer
     brief["action"] = "rewrite"
+    # Her review of the rewrite answers this diagnosis, not a refused candidate's findings
+    # (`scene_rewrite.findings_to_treat`).
+    brief["source"] = "prompt_audit"
     return brief
 
 
