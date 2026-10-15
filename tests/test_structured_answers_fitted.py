@@ -285,7 +285,9 @@ def test_a_failure_of_shape_alone_is_fitted_and_never_reaches_a_second_attempt(e
 
     assert parsed is not None and parsed.verdict == "REAL" and parsed.reason == words(120)
     assert second is None and len(adapter.calls) == 1
-    assert adapter.calls[0]["extra"] == {"format": "json"}
+    # The first attempt bounds the thinking (2026-10-15): JSON, thinking off, for every model
+    # but the narrators (`structured.NARRATES_WITHOUT_THINKING`).
+    assert adapter.calls[0]["extra"] == {"format": "json", "think": False}
     assert "refusal" not in first and first["error_detail"] is None
 
 
@@ -297,7 +299,10 @@ def test_an_object_refused_for_its_content_is_asked_again_without_thinking_with_
     parsed, first, second = ask(engine, studio, adapter)
 
     assert parsed is not None and parsed.findings == [1, 2]
-    assert [call["extra"] for call in adapter.calls] == [{"format": "json"}, {"format": "json"}]
+    assert [call["extra"] for call in adapter.calls] == [
+        {"format": "json", "think": False},
+        {"format": "json", "think": False},
+    ]
     again = adapter.calls[1]["prompt"]
     assert again.startswith(adapter.calls[0]["prompt"])
     assert "Your previous answer was refused: " in again
@@ -329,7 +334,10 @@ def test_no_object_at_all_still_gets_the_thinking_retry(engine, studio):
     parsed, first, second = ask(engine, studio, adapter)
 
     assert parsed is not None
-    assert [call["extra"] for call in adapter.calls] == [{"format": "json"}, {"think": True}]
+    assert [call["extra"] for call in adapter.calls] == [
+        {"format": "json", "think": False},
+        {"think": True},
+    ]
     assert adapter.calls[0]["prompt"] == adapter.calls[1]["prompt"]
     assert "refusal" not in first and first["error_detail"] is None
     assert [run.prompt_template_version for run in runs(engine)] == ["judge-v1", "judge-v1+think"]

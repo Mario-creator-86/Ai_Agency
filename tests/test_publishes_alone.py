@@ -910,3 +910,61 @@ def test_the_daily_budget_counts_media_and_reports_the_subscriptions_tokens_apar
         spend = spend_since(session, "2026-10-14T21:00:00+00:00")
     assert spend["spent_usd_micros"] == 1_470_000
     assert spend["agent_usd_micros"] > 0 and spend["agent_runs"] == 1
+
+
+# ------------------------------------------------------ 15. a structured first attempt
+
+
+def test_a_structured_first_attempt_bounds_the_thinking_except_for_a_narrating_model(
+    engine, monkeypatch
+):
+    """deepseek-v4.1-flash, asked nothing about thinking, reasoned to its 393k-token limit on
+    the Director's rewrite review twice (05:45Z, 08:04Z) and answered nothing — twelve minutes
+    each. The first attempt asks for JSON with thinking off; glm-5.3-flash, which narrates when
+    told not to think, is asked nothing; the second attempt thinks natively for everyone."""
+    from app.agents import structured
+    from app.agents.models import Agent
+    from app.agents.services import seed_initial_workforce
+    from pydantic import BaseModel
+
+    assert structured.first_attempt_extra("deepseek-v4.1-flash") == {
+        "format": "json",
+        "think": False,
+    }
+    assert structured.first_attempt_extra("glm-5.3-flash") == {"format": "json"}
+    assert structured.first_attempt_extra(None) == {"format": "json", "think": False}
+
+    class Answer(BaseModel):
+        ok: bool
+
+    seed_initial_workforce(engine)
+    with Session(engine) as session:
+        sarah = session.scalar(select(Agent).where(Agent.display_name.like("Sarah%")))
+        sarah_id = sarah.id
+    monkeypatch.setattr(structured, "_model_name", lambda engine_, aid, mid: "deepseek-v4.1-flash")
+    calls: list[dict] = []
+
+    def fake_run(engine_, registry, agent_id, task_type, prompt, version, correlation, **kw):
+        calls.append(dict(kw.get("extra") or {}))
+        return {
+            "id": str(uuid4()),
+            "status": "SUCCEEDED",
+            "output_text": "not an object" if len(calls) == 1 else '{"ok": true}',
+            "model_name": "deepseek-v4.1-flash",
+        }
+
+    monkeypatch.setattr(structured, "run_agent_task", fake_run)
+    parsed, first, second = structured.structured_run(
+        engine,
+        None,
+        sarah_id,
+        "director_rewrite_review",
+        "P",
+        "v1",
+        "c",
+        Answer,
+        "",
+        max_tokens=100,
+    )
+    assert parsed is not None and parsed.ok is True
+    assert calls == [{"format": "json", "think": False}, {"think": True}]
