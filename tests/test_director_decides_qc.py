@@ -4784,6 +4784,59 @@ def test_a_scene_at_the_renders_cap_is_not_bought_again_and_the_film_ships_as_it
     assert _pass(engine, settings) == {"queued": []}
 
 
+def test_a_motion_continuing_its_stills_round_is_still_under_the_renders_cap(
+    engine, settings, studio, monkeypatch
+):
+    """22:21Z, f06808c9 scene 4: three shots of the scene had been made; her REPAIR asked a
+    fourth, as the motion of the scene's new still (it continues that still's round, so the
+    round counts did not apply), the Accountant refused it on the cap's own words, and the
+    film waited. The renders cap holds for a continuation too: nothing is bought and the
+    film ships under the cap."""
+    from app.runbook import stages
+
+    film = failed_film(engine, local_move=False)
+    now = utc_now()
+    with Session(engine) as session, session.begin():
+        for n in range(3):
+            take_id = str(uuid4())
+            session.add(
+                SceneTake(
+                    id=take_id,
+                    storyboard_id=film["board"],
+                    scene_number=5,
+                    kind="motion",
+                    prompt_hash=uuid4().hex,
+                    model_id="seedance",
+                    resolution="1080:1920",
+                    status="REJECTED",
+                    failure_code="QC.CLIP",
+                    path=f"storage/{take_id}.bin",
+                    sha256=uuid4().hex,
+                    remote_task_id=f"shot-{n}",
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+        assert stages._renders_made(session, film["board"])[(5, "motion")] >= 3
+    monkeypatch.setattr(stages, "_open_still_rounds", lambda session, board: {5: "round-1"})
+    repairs = [{"scene_index": 5, "redo": "motion", "reason": "the clip warps"}]
+    registry, model = director_says(studio, answer(verdicts_for(film), "REPAIR", repairs))
+    redo = FakeRedoPath(engine, monkeypatch, still_status="PAID")
+    _production(engine)
+
+    done = stages.director_decides_failed_film(
+        engine, settings, None, registry, film["report"], film["asset"]
+    )
+
+    assert redo.calls == []  # nothing bought
+    assert done["outcome"] == "ACCEPTED" and done["passed_asset"] == film["asset"]
+    (repair,) = done["repairs"]
+    assert repair["limited"] and repair["limited"][0]["scene_index"] == 5
+    assert repair["limited"][0]["renders"]["motion"] >= stages.RENDERS_PER_LAYER
+    decided = events(engine, DECISION_EVENT)[-1].payload
+    assert decided["decision"] == "ACCEPT" and decided["accepted_under_cap"]["limited"] == [5]
+
+
 def test_a_report_whose_repair_was_bought_twice_ships_as_it_stands(
     engine, settings, studio, monkeypatch
 ):

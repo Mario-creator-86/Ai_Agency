@@ -2263,6 +2263,16 @@ SERIAL_LIFE_SENTENCE = (
 #: wrote one («with her eyes on the pen»).
 SERIAL_ENDING_SENTENCE = "The shot ends on {ending}."
 _ENDING_PREPOSITION = re.compile(r"^(?:on|with|at|in|as)\b", re.IGNORECASE)
+#: An ending written as a whole sentence — its first clause carries a finite verb («The
+#: silvery bar rests inside its glass display case, …») — is said «The shot ends as …», not
+#: «The shot ends on the silvery bar rests …» (2026-10-15 22:19Z, 7c26a7ce scene 1: the
+#: Director refused the fragment twice and the guard called it a tool defect).
+_FINITE_VERB = re.compile(
+    r"\b(?:rests?|stays?|remains?|holds?|sits?|lies?|stands?|hangs?|keeps?|is|are|has|have"
+    r"|does|looks?|faces?|glows?|settles?|comes?|goes?|falls?|rises?|turns?|moves?|waits?"
+    r"|burns?|shines?|hovers?|floats?|drifts?|spins?|pulses?)\b",
+    re.IGNORECASE,
+)
 #: An ending the writer already began with the composer's own words («The shot ends on …»,
 #: «The clip ends with …», «Ending on …»): those words are dropped before the sentence is said,
 #: or the clip is asked «The shot ends on the shot ends on …» (2026-10-12, f06808c9 scene 4:
@@ -3321,10 +3331,15 @@ def _motion_intent(
     action_clauses: list[str] = []
     for clause in from_action:
         key = clause.casefold()
-        moves = lint.SUBJECT_MOTION.search(clause) or (
-            explicit_stillness and _AT_REST_CLAUSE.search(clause)
-        )
+        at_rest = bool(explicit_stillness and _AT_REST_CLAUSE.search(clause))
+        moves = lint.SUBJECT_MOTION.search(clause) or at_rest
         if key in said or not moves:
+            continue
+        # The subject's stillness is said once: an at-rest clause of the action whose words
+        # the motion's clauses mostly carry already («The bar rests still inside its glass
+        # case» after «The silvery rectangular bar rests inside its glass case») is theirs
+        # (22:19Z, 7c26a7ce scene 1: refused as «the bar's rest said twice»).
+        if at_rest and lesson_overlap(clause, " ".join(subject_clauses)) >= 0.5:
             continue
         said.add(key)
         action_clauses.append(clause)
@@ -3452,11 +3467,12 @@ def _ending_sentence(value: Any) -> str:
         return ""
     if ending.split()[0].casefold() in ("the", "a", "an"):
         ending = ending[:1].lower() + ending[1:]
-    return _sentence(
-        f"The shot ends {ending}"
-        if _ENDING_PREPOSITION.match(ending)
-        else f"The shot ends on {ending}"
-    )
+    if _ENDING_PREPOSITION.match(ending):
+        return _sentence(f"The shot ends {ending}")
+    first_clause = re.split(r"\s*(?:[,;:]|—|–|\s-\s)\s*", ending, maxsplit=1)[0]
+    if _FINITE_VERB.search(first_clause):
+        return _sentence(f"The shot ends as {ending}")
+    return _sentence(f"The shot ends on {ending}")
 
 
 def incomplete_plan_fields(

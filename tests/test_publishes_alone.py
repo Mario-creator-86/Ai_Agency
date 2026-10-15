@@ -1355,6 +1355,18 @@ def test_a_new_finding_after_two_of_the_same_is_not_a_tool_defect(engine, tmp_pa
     # Two of the same, then a new finding: three rewrites, no defect, the rounds go on.
     assert [o["rewritten"] for o in outcomes] == [[1], [1], [1]], outcomes
     assert all(o["held"] == [] for o in outcomes)
+    # A refusal from before this process is another composer's words: not counted (22:19Z,
+    # 7c26a7ce scene 1 — four refusals of the old composer's words made «6 in a row» at once).
+    worded = "finding number 4, worded on its own"
+    bound, began = prompt_audit.REFUSALS_IN_A_ROW, prompt_audit.PROCESS_STARTED_AT
+    prompt_audit.REFUSALS_IN_A_ROW = 3
+    try:
+        with Session(engine) as session:
+            assert prompt_audit.same_finding_streak(session, board, 1, "still", worded) >= 3
+            prompt_audit.PROCESS_STARTED_AT = "2999-01-01T00:00:00+00:00"
+            assert prompt_audit.same_finding_streak(session, board, 1, "still", worded) == 1
+    finally:
+        prompt_audit.REFUSALS_IN_A_ROW, prompt_audit.PROCESS_STARTED_AT = bound, began
     # …but not for ever: REFUSALS_IN_A_ROW refusals of one scene, however each is worded,
     # are the tool's (20:44-20:47Z: seven, each a little different, slipped under the guard).
     briefs.extend(

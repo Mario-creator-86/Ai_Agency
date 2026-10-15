@@ -6154,11 +6154,17 @@ def _apply_repairs(
             for redo in paid[scene]
             if renders.get((scene, redo), 0) >= RENDERS_PER_LAYER
         }
-        if continues is None and (
-            rounds.get(scene, 0) >= per_scene
-            or sum(rounds.values()) >= per_film
-            or over_renders
-            or report_rounds >= REPAIR_ROUNDS_PER_REPORT
+        # A motion that continues its still's round is not a new round, but it is a render:
+        # three shots of the scene made, the fourth is not bought (22:21Z, f06808c9 scene 4:
+        # the continuation skipped the cap, the Accountant refused it on the cap's own words,
+        # and the film waited instead of shipping under the cap).
+        if over_renders or (
+            continues is None
+            and (
+                rounds.get(scene, 0) >= per_scene
+                or sum(rounds.values()) >= per_film
+                or report_rounds >= REPAIR_ROUNDS_PER_REPORT
+            )
         ):
             result["limited"].append(
                 {

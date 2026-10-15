@@ -749,6 +749,54 @@ def test_a_shot_at_rest_says_its_stillness_once_and_names_what_the_frame_holds()
         prompt, scene=1, still_prompt=compiled["still_prompt"], model_id="LTX-2.5"
     )
     assert not _blocks(findings), findings
+    # The audit reads the words the sheet would send — said again from the intent — not a
+    # stored string of a composer since corrected (22:19Z: four refusals of stale words).
+    from app.media import prompt_audit
+
+    stale = dict(compiled, motion_prompt="Static camera. Shadows drift. Nothing moves.")
+    assert prompt_audit.prompt_text(stale, "motion") == prompt
+    assert prompt_audit.prompt_text({"motion_prompt": "old words only"}, "motion") == (
+        "old words only"
+    )
+
+
+def test_the_editors_rewrite_of_a_shot_at_rest_ends_as_a_sentence_and_rests_once():
+    """22:19Z, 7c26a7ce scene 1, the Editor's rewrite on her brief: the motion field now
+    names the bar at rest and the ending is a whole sentence. The composer said «The shot
+    ends on the silvery rectangular bar rests inside…» (a fragment) and the bar's rest twice
+    (the motion's clause and the action's); she refused twice and the guard fired."""
+    rewritten = dict(
+        AT_REST_PLAN,
+        motion=(
+            "Static camera on a fixed tripod, steady, the frame locked and motionless. The "
+            "silvery rectangular bar rests inside its glass case, the dark charcoal room "
+            "around it. Nothing moves."
+        ),
+        ending_frame=(
+            "The silvery rectangular bar rests inside its glass display case, the soft pool "
+            "of light on it fixed and even, the dark charcoal room around it — nothing has "
+            "moved from the first frame to the last."
+        ),
+    )
+    compiled = compile_prompts(rewritten, FACELESS_BIBLE, {"model_id": "LTX-2.5"})
+    prompt = compiled["motion_prompt"]
+    assert prompt.startswith(MOVE_SHORT["static"]), prompt
+    assert "The shot ends as the silvery rectangular bar rests inside its glass display case" in (
+        prompt
+    ), prompt
+    assert "ends on the silvery rectangular bar rests" not in prompt, prompt
+    # The bar's rest: once in the motion's words, once more only in the ending.
+    assert "the bar rests still inside its glass case" not in prompt.lower(), prompt
+    assert prompt.count("Nothing moves.") == 1, prompt
+    assert not _blocks(
+        lint_motion_prompt(
+            prompt, scene=1, still_prompt=compiled["still_prompt"], model_id="LTX-2.5"
+        )
+    )
+    # An ending that is not a sentence keeps «on».
+    assert prompt_agent._ending_sentence("the bar in its case, the room dark") == (
+        "The shot ends on the bar in its case, the room dark."
+    )
 
 
 # ----------------------------------------------------- 6. clip QC and the one retry

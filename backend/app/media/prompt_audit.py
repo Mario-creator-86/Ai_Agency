@@ -31,6 +31,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -83,7 +84,12 @@ REFUSALS_IN_A_ROW = 6
 SAME_FINDING_OVERLAP = 0.75
 #: The guard's version, written on every TOOL_DEFECT: a defect recorded by an older, looser
 #: guard does not hold the scene once the guard is corrected.
-GUARD_VERSION = 2
+GUARD_VERSION = 3
+#: When this process began: a refusal from before it was of another composer's words (the
+#: developer's restart is the fix landing), and is not counted toward a tool defect. 22:19Z,
+#: 7c26a7ce scene 1: four refusals of the old composer's words plus two of the corrected one
+#: made «6 in a row» at once, before the corrected words had two rounds.
+PROCESS_STARTED_AT = datetime.now(UTC).isoformat()
 
 _INSTRUCTIONS = (
     "You are the Director. The studio is about to PAY the generation model for the {what} of "
@@ -192,9 +198,22 @@ class PromptAudit(BaseModel):
 
 
 def prompt_text(package: dict[str, Any], layer: str) -> str:
-    """The words the step would send for this layer, as stored on the scene."""
-    key = "still_prompt" if layer == "still" else "motion_prompt"
-    return " ".join(str(package.get(key) or "").split())
+    """The words the step would send for this layer: the stored picture words; the clip's
+    said again from the scene's motion intent, as the sheet says them (`motion_prompt_for`
+    renders every purchase from the intent — 22:19Z, 7c26a7ce scene 1: the audit read the
+    stored string of a composer since corrected and refused words the sheet would not have
+    sent), or the stored string of a scene from before the intents."""
+    if layer == "still":
+        return " ".join(str(package.get("still_prompt") or "").split())
+    from app.media import prompt_lint as lint  # noqa: PLC0415
+    from app.media.prompt_agent import render_motion  # noqa: PLC0415
+
+    intent = package.get("motion_intent")
+    if isinstance(intent, dict) and intent.get("camera_move") in lint.CAMERA_MOVES:
+        family = str(package.get("motion_family") or "") or None
+        words, _negative = render_motion(intent, family, lint.prompt_cap(None, "motion"))
+        return " ".join(words.split())
+    return " ".join(str(package.get("motion_prompt") or "").split())
 
 
 def prompt_digest(text: str) -> str:
@@ -211,7 +230,7 @@ def _audits(session: Session, storyboard_id: str, scene: int, layer: str) -> lis
     for row in rows:
         payload = row.payload if isinstance(row.payload, dict) else {}
         if int(payload.get("scene_index") or -1) == scene and payload.get("layer") == layer:
-            out.append(payload)
+            out.append({**payload, "_at": str(row.timestamp or "")})
     return out
 
 
@@ -249,6 +268,8 @@ def same_finding_streak(
     for audit in reversed(_audits(session, storyboard_id, scene, layer)):
         if audit.get("verdict") != REWRITE or audit.get("instructions") != AUDIT_TEMPLATE:
             break  # a refusal under other instructions is another conversation
+        if str(audit.get("_at") or "") < PROCESS_STARTED_AT:
+            break  # a refusal from before this process: another composer's words
         in_a_row += 1
         if in_a_row >= REFUSALS_IN_A_ROW:
             return in_a_row  # however worded: this many in a row is the tool's, not his

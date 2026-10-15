@@ -5,6 +5,19 @@ AGENT_SCENARIO_ACCEPTANCE later used actual Ollama Cloud calls, with normal seri
 acceptance and real GPU/media/upload still pending. Current local UI evidence is reported
 separately below and does not prove those external workflows.
 
+## Audit reads the words the sheet sends; endings as sentences; the cap on continuations; the guard counts this process only (2026-10-15)
+
+**Claim:** after the 22:18Z restart (424bc79) the Speed of Light walk (7c26a7ce) hit four more tool defects in one minute, and The Zero Script Club (f06808c9) waited instead of shipping under the cap; the Cyclotron (aa170155) was accepted under the cap and published (https://youtube.com/shorts/E83FwHyl5K0, 22:20:51Z).
+
+**Causes and fixes:**
+1. The audit read the scene's stored `motion_prompt` string (the old composer's words) while the sheet sends `motion_prompt_for` — a render from the intent: the Director refused words that would never be sent (30094). `prompt_audit.prompt_text` now renders the motion words from the intent as the sheet does (stored string only for a scene without an intent).
+2. The Editor's rewrite gave a whole-sentence ending («The silvery rectangular bar rests inside its glass display case, …») and the composer said «The shot ends on the silvery rectangular bar rests…» (30110, 30114). `_ending_sentence` says an ending whose first clause carries a finite verb (`_FINITE_VERB`) as «The shot ends as …».
+3. The bar's rest was said twice (the motion's clause and the action's at-rest clause). `_motion_intent` drops an at-rest action clause whose words the motion's clauses mostly carry (`lesson_overlap` ≥ 0.5).
+4. The loop guard counted the four refusals of the old composer's words with the two of the corrected one: «6 în rând» at once (30114, guard 2). `same_finding_streak` counts refusals since `PROCESS_STARTED_AT` only (a restart is the developer's fix landing); `GUARD_VERSION` = 3 releases the held scene.
+5. f06808c9 scene 4: three shots made; her REPAIR asked a fourth as the motion of the scene's new still — a continuation skips the round counts, and so skipped the renders cap; the Accountant refused it on the cap's words and the film waited («nimic din refacerea hotărâtă nu se putea face»). `_apply_repairs` applies `RENDERS_PER_LAYER` to a continuation too → `limited` → `accepted_by_cap` → the film ships.
+
+**Tested:** test_motion_v2 (`test_the_editors_rewrite_of_a_shot_at_rest_ends_as_a_sentence_and_rests_once`, prompt_text in the at-rest test), test_publishes_alone (the cutoff in `test_a_new_finding_after_two_of_the_same_is_not_a_tool_defect`), test_director_decides_qc (`test_a_motion_continuing_its_stills_round_is_still_under_the_renders_cap`; 7 cap tests pass); 155 passed across publishes_alone/prompt_contract_audit/fix_is_verified/rewrite_learns (known failure unchanged); ruff, mypy clean. Known: 4 motion_v2 fixture failures.
+
 ## Letters about the performance intake carry the studio's measurements (Dr. Aris has the data) (2026-10-15)
 
 **Claim:** Dr. Aris, asked by the Director on the performance intake's report for per-film click-through and retention (21:38Z), answered that he needed «access to the analytics dashboard or a CSV» (21:39Z). The Owner, 22:04Z: «Are acces la informațiile cerute?» — no: the figures stood in the studio's own `analytics_snapshot` table (YouTube Analytics API, read at 21:37Z: views, watch time, average percentage viewed, likes, comments, shares), and the letter task (`agents/mail.py::answer_mail`) gave him the thread alone, as it did the Accountant before her books (2026-10-11).

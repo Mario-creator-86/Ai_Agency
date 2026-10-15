@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-15 — Audit on the sent words, endings as sentences, the cap on continuations
+
+- `media/prompt_audit.py`: the audit renders the motion words from the intent as the sheet does (`prompt_text`); the loop guard counts refusals made in this process only (`PROCESS_STARTED_AT`), `GUARD_VERSION` 3.
+- `media/prompt_agent.py`: an ending written as a sentence is said «The shot ends as …»; an at-rest action clause the motion's words already carry is said once.
+- `runbook/stages.py`: the renders cap (three a layer a scene) holds for a motion continuing its still's round; the film ships under the cap (f06808c9 scene 4 waited on the Accountant's refusal).
+
 ## 2026-10-15 — Letters about the performance intake carry the measurements
 
 - `agents/mail.py`: a letter in a thread opened by the performance intake's report carries the studio's measured audience per film (`story_performance`: views, average percentage viewed, engagement, editorial scores, sample size) and says the source reports no impressions or click-through — Dr. Aris answered the Director that he needed «access to the analytics dashboard» while the figures stood in the studio's table. Test in `test_mail.py`.
