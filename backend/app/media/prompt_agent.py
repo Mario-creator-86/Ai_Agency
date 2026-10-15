@@ -3034,6 +3034,17 @@ def _phrase(clauses: list[str], max_words: int) -> str:
     return ", ".join(fitted)
 
 
+def _without_clauses_said_by(action: str, subject: str) -> str:
+    """The action without the clauses whose content words the subject already carries
+    (`lesson_overlap` >= 0.7); whole when nothing of it is said twice, empty when all is."""
+    kept: list[str] = []
+    for clause in re.split(r"\s*[;,]\s*", " ".join(str(action or "").split()).rstrip(". ")):
+        if clause and lesson_overlap(clause, subject) < 0.7:
+            kept.append(clause)
+    said = ", ".join(kept)
+    return _sentence(said) if said else ""
+
+
 def _shorter_subject(subject: str) -> list[str]:
     """The subject said with fewer of its later clauses, longest first, down to its first
     clause: «A, B; C: D» → «A, B; C», «A, B», «A». Each is a whole sentence."""
@@ -3636,6 +3647,11 @@ def compile_prompts(
     action = said("action")
     if action and subject and action.casefold() == subject.casefold():
         action = ""
+    elif action and subject:
+        # A clause of the action the subject already says is not said twice (2026-10-15
+        # 20:34Z, 7c26a7ce scene 2: «the bar lowered at her side» in both sentences, and the
+        # Director: «say each movement once; two movements invite the model to render both»).
+        action = _without_clauses_said_by(action, subject)
     environment = said("environment")
     if environment and environment.casefold() in (subject.casefold(), action.casefold()):
         environment = ""

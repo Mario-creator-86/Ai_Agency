@@ -221,3 +221,30 @@ def test_the_room_is_kept_before_a_long_subject():
     assert len(still.split()) <= STILL_WORDS[1]
     shorter = _shorter_subject("A, B; C: D")
     assert shorter == ["A, B, C.", "A, B.", "A."]
+
+
+def test_a_clause_of_the_action_the_subject_already_says_is_said_once():
+    """2026-10-15 20:34Z, 7c26a7ce scene 2: «the bar lowered at her side» stood in the subject
+    and again in the action; the Director: «say each movement once». The composer keeps the
+    action's own clauses and drops the one the subject carries."""
+    from app.media.prompt_agent import _without_clauses_said_by, compile_prompts
+
+    subject = (
+        "The scientist's hands, the silvery platinum-iridium bar held low at her side, seen "
+        "from behind"
+    )
+    action = (
+        "Her hand points along the thin warm-red laser line on the floor, the silvery "
+        "platinum-iridium bar held low at her side"
+    )
+    assert _without_clauses_said_by(action, subject) == (
+        "Her hand points along the thin warm-red laser line on the floor."
+    )
+    assert _without_clauses_said_by("Her hand points along the line", "The bar in its case") == (
+        "Her hand points along the line."
+    )
+    still = compile_prompts(
+        {"subject": subject, "action": action, "camera": "Medium shot, 50mm lens"},
+        {"continuity_rules": ["No human faces appear"]},
+    )["still_prompt"]
+    assert still.count("held low at her side") == 1, still

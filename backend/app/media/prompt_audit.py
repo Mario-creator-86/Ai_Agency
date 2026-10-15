@@ -67,8 +67,14 @@ APPROVED_UNDER_CAP = "APPROVED_UNDER_CAP"
 #: not asked about again while the words stand (`tool_defect_on`).
 TOOL_DEFECT = "TOOL_DEFECT"
 SAME_FINDING_ROUNDS = 3
-#: How much of the newest refusal the one before must already say to be the same finding.
-SAME_FINDING_OVERLAP = 0.6
+#: How much of the newest finding the one before must already say to be the same finding —
+#: compared on her brief's own words (diagnosis + change), not on the long reason: 20:35Z the
+#: first guard read «the action is written twice» as the same finding as «the action stops
+#: at raise it a little» because both reasons share action, pointing, laser and bar.
+SAME_FINDING_OVERLAP = 0.75
+#: The guard's version, written on every TOOL_DEFECT: a defect recorded by an older, looser
+#: guard does not hold the scene once the guard is corrected.
+GUARD_VERSION = 2
 
 _INSTRUCTIONS = (
     "You are the Director. The studio is about to PAY the generation model for the {what} of "
@@ -204,18 +210,31 @@ def approved_words(
     )
 
 
+def finding_of(item: AuditedScene) -> str:
+    """Her finding in her brief's own words — the diagnosis and what to change — the reason
+    when she gave no brief."""
+    if item.brief is not None:
+        change = "; ".join(str(c) for c in item.brief.change if str(c).strip())
+        said = f"{item.brief.diagnosis} {change}".strip()
+        if said:
+            return said
+    return str(item.reason or "")
+
+
 def same_finding_streak(
-    session: Session, storyboard_id: str, scene: int, layer: str, reason: str
+    session: Session, storyboard_id: str, scene: int, layer: str, finding: str
 ) -> int:
     """How many of the newest refusals of this scene's layer, back from the newest, say what
-    ``reason`` says (`lesson_overlap` >= SAME_FINDING_OVERLAP), ``reason`` itself counted."""
+    ``finding`` says (`lesson_overlap` >= SAME_FINDING_OVERLAP on the briefs' own words),
+    ``finding`` itself counted."""
     from app.media.prompt_agent import lesson_overlap  # noqa: PLC0415
 
     streak = 1
     for audit in reversed(_audits(session, storyboard_id, scene, layer)):
         if audit.get("verdict") != REWRITE:
             break
-        if lesson_overlap(str(reason or ""), str(audit.get("reason") or "")) < SAME_FINDING_OVERLAP:
+        older = str(audit.get("finding") or audit.get("reason") or "")
+        if lesson_overlap(str(finding or ""), older) < SAME_FINDING_OVERLAP:
             break
         streak += 1
     return streak
@@ -229,7 +248,11 @@ def tool_defect_on(
     for audit in reversed(_audits(session, storyboard_id, scene, layer)):
         if audit.get("verdict") == APPROVED and audit.get("digest") == digest:
             return None
-        if audit.get("verdict") == TOOL_DEFECT and audit.get("digest") == digest:
+        if (
+            audit.get("verdict") == TOOL_DEFECT
+            and audit.get("digest") == digest
+            and audit.get("guard") == GUARD_VERSION
+        ):
             return audit
     return None
 
@@ -297,6 +320,7 @@ def _record(
     run_id: str | None,
     correlation_id: str,
     rewritten: bool | None = None,
+    finding: str | None = None,
 ) -> None:
     from app.services import append_event  # noqa: PLC0415 - services imports media
 
@@ -314,6 +338,8 @@ def _record(
                 "digest": digest,
                 "verdict": verdict,
                 "reason": reason[:600],
+                "finding": (finding or "")[:400] or None,
+                "guard": GUARD_VERSION if verdict == TOOL_DEFECT else None,
                 "run_id": run_id,
                 "rewritten": rewritten,
             },
@@ -458,11 +484,12 @@ def _repeated_finding(
 ) -> bool:
     """Her refusal said for the SAME_FINDING_ROUNDS-th time running: recorded a TOOL_DEFECT,
     noted for the developer, the scene held — True; else False and the rounds go on."""
+    finding = finding_of(item)
     with Session(engine) as session:
-        streak = same_finding_streak(session, storyboard_id, scene, layer, item.reason or "")
+        streak = same_finding_streak(session, storyboard_id, scene, layer, finding)
     if streak < SAME_FINDING_ROUNDS:
         return False
-    reason = item.reason or str((item.brief.diagnosis if item.brief else "") or "")
+    reason = item.reason or finding
     _record(
         engine,
         storyboard_id=storyboard_id,
@@ -473,6 +500,7 @@ def _repeated_finding(
         reason=reason,
         run_id=run_id,
         correlation_id=correlation_id,
+        finding=finding,
     )
     _note_tool_defect(
         engine,
@@ -669,6 +697,7 @@ def audit_before_purchase(
                 run_id=run.get("id"),
                 correlation_id=correlation_id,
                 rewritten=bool(done.get("rewritten")),
+                finding=finding_of(item),
             )
             try:
                 _learn_from_brief(

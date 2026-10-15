@@ -1271,6 +1271,92 @@ def test_the_same_refusal_three_rounds_running_is_a_tool_defect_for_the_develope
         assert "small distant figures" in str(notes[0].body_text)
 
 
+def test_a_new_finding_after_two_of_the_same_is_not_a_tool_defect(engine, tmp_path, monkeypatch):
+    """20:35Z, 7c26a7ce scene 2: the first guard read «the action is written twice» as the
+    same finding as «the action stops at raise it a little» — the long reasons share action,
+    pointing, laser, bar — and held a scene whose rounds were converging. The guard compares
+    her briefs' own words; a new finding starts the count again."""
+    from app.agents.services import seed_initial_workforce
+    from app.media import prompt_audit
+    from app.media.models import StoryboardScene
+    from test_film_costing import a_film
+
+    board = a_film(engine, tmp_path, scenes=1)
+    with Session(engine) as session, session.begin():
+        for row in session.scalars(
+            select(StoryboardScene).where(StoryboardScene.storyboard_id == board)
+        ):
+            row.prompt_json = {
+                **dict(row.prompt_json or {}),
+                "subject": "the scientist's hands on the bar",
+                "action": "her hands lift the bar",
+                "still_prompt": "Hands lift the bar, take 0, along the laser line on the floor.",
+            }
+    seed_initial_workforce(engine)
+    briefs = [
+        (
+            "the action stops at 'raise it a little' and drops the pointing along the laser line",
+            ["write the pointing as the first clause of the action"],
+        ),
+        (
+            "the action stops at 'raise it a little' and drops the pointing along the laser line",
+            ["write the pointing as the first clause of the action"],
+        ),
+        (
+            "the bar-lifting clause is written twice, in the subject and in the action; two "
+            "movements invite the model to render both",
+            ["say each movement once"],
+        ),
+    ]
+    calls = {"n": 0}
+
+    def refusing(engine_, registry, agent_id, task_type, prompt, *a, **kw):
+        diagnosis, change = briefs[min(calls["n"], len(briefs) - 1)]
+        calls["n"] += 1
+        answer = prompt_audit.PromptAudit(
+            scenes=[
+                prompt_audit.AuditedScene(
+                    scene_index=1,
+                    approved=False,
+                    reason=f"The words_to_send: {diagnosis}; the laser line, the bar and the "
+                    "pointing along the floor are the beat the narration rides on.",
+                    brief=prompt_audit.AuditBrief(
+                        diagnosis=diagnosis,
+                        layer="still",
+                        avoid=[],
+                        keep=["the hands"],
+                        change=change,
+                        summary_ro="Rescrie.",
+                    ),
+                )
+            ]
+        )
+        return answer, {"id": "run-y", "status": "SUCCEEDED"}, None
+
+    def landing_rewrite(engine_, registry, context, brief, correlation_id):
+        with Session(engine) as session, session.begin():
+            for row in session.scalars(
+                select(StoryboardScene).where(StoryboardScene.storyboard_id == board)
+            ):
+                row.prompt_json = {
+                    **dict(row.prompt_json or {}),
+                    "still_prompt": f"Hands on the bar, take {calls['n']}, the laser line.",
+                }
+        return {"rewritten": True, "layer": "still"}
+
+    monkeypatch.setattr("app.agents.structured.structured_run", refusing)
+    monkeypatch.setattr("app.media.scene_rewrite.rewrite_scene", landing_rewrite)
+    outcomes = [
+        prompt_audit.audit_before_purchase(
+            engine, object(), storyboard_id=board, step="stills", scenes=[1], correlation_id="c"
+        )
+        for _ in range(3)
+    ]
+    # Two of the same, then a new finding: three rewrites, no defect, the rounds go on.
+    assert [o["rewritten"] for o in outcomes] == [[1], [1], [1]], outcomes
+    assert all(o["held"] == [] for o in outcomes)
+
+
 def test_the_walk_audits_before_it_pays_and_her_hold_is_not_the_owners():
     from pathlib import Path
 
