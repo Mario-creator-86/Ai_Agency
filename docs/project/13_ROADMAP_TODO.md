@@ -15,9 +15,11 @@
       instead; `NEEDS_RECONCILIATION` is not in `LIVE_PUBLICATION_STATES` (duplicate risk).
 - [ ] mypy: 20 pre-existing errors in events_feed, input_guard, redo_cap, goal, elevenlabs_lexicon.
 - [ ] A direct test of `_publish_one`'s SKIPPED on `ValueError`/`OSError`.
-- [ ] GPU batching across films (Owner, 2026-10-15): take every storyboard to its GPU boundary, one
-      session for all stills, then one for all motions (`RoundWork`/`run_prepared` serve repairs
-      today; the first-time steps of `_walk_staircase` are synchronous per board).
+- [ ] NEXT CYCLE (the Owner, 2026-10-15 07:05Z: «restart acum cu 1–4, apoi 5»): GPU batching across
+      films — take every storyboard to its GPU boundary, one session for all stills, then one for all
+      motions. `run_stills_stage` must become a `purchase_flow`, and `_media_films`/`_walk_staircase`
+      must walk by layer across boards (leases, holds and questions per board kept); `RoundWork` /
+      `run_prepared` serve repairs today.
 - [ ] Open from the night's structural work (fail on 52bc6e3, passed before): `test_no_paid_path_escapes`
       (3: `reference_image_adapter` reached on the walk with no fake; `gpu_batch.run_rounds` with no
       booking/gate door via `prepared_batch`), `test_runpod_money_adversary` (3), `test_readiness`

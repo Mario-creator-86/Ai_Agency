@@ -1863,6 +1863,22 @@ def _walk_staircase(
         )
         recovered = {}
 
+    # Before the sheet prices a new still for a scene clip QC sent back to its still, she
+    # looks at the refused clip herself (the Owner, 2026-10-15: «ea poate să hotărască că
+    # imaginea este ok»); her yes restores the scene and nothing is bought for it. Free.
+    try:
+        from app.media.fix_check import restore_sent_back_scenes  # noqa: PLC0415
+
+        restored = restore_sent_back_scenes(
+            engine, registry, storyboard_id=storyboard_id, correlation_id=correlation
+        )
+        if restored:
+            logger.info(
+                "scenes_restored_by_look",
+                extra={"storyboard_id": storyboard_id, "scenes": restored},
+            )
+    except Exception:  # noqa: BLE001 - her look never stops the walk
+        logger.exception("restore_by_look_failed", extra={"storyboard_id": storyboard_id})
     for _stair in range(len(SHEET_STEPS) + 1):
         try:
             sheet = build_sheet(

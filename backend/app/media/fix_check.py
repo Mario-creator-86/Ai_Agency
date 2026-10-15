@@ -153,9 +153,11 @@ TAKE_NOTE_EVENT = "media.take_quality_note"
 #: Who approved a take by looking: her second look (`director_second_look`).
 DIRECTOR_LOOK_APPROVER = "director_look"
 #: The violations a look of hers never overturns (the Owner, 2026-10-12: hard-coded rules stay
-#: only where money or the bible's hard limits are at stake — faces where forbidden, writing,
-#: panels; a blank or striped field is no picture at all).
-HARD_LIMITS = frozenset({"faces", "readable_text", "panels", "degenerate"})
+#: only where money or the bible's hard limits are at stake — faces where forbidden, panels; a
+#: blank or striped field is no picture at all). Writing is hers since 2026-10-15 («scrisul,
+#: ea trebuie să hotărască»): the scene's own writing stays, only text laid over the picture
+#: or a logo is serious, and she says which.
+HARD_LIMITS = frozenset({"faces", "panels", "degenerate"})
 #: Her second look's verdicts (`app.media.second_look.second_look`, the shared contract).
 CONFIRMED, OVERTURNED, UNAVAILABLE = "CONFIRMED", "OVERTURNED", "UNAVAILABLE"
 #: How serious her review (or her QC verdict) called a finding; an item without a word is
@@ -938,6 +940,144 @@ def shot_second_look(
         )
     finally:
         shutil.rmtree(folder, ignore_errors=True)
+
+
+#: The words `assembler._send_still_back_for_clip` writes on a still it sends back to the gate
+#: because clip QC blamed the picture; the mark the restore below reads.
+SENT_BACK_FOR_CLIP_MARK = "Controlul clipului a găsit greșeala în imagine"
+SCENE_RESTORED_EVENT = "media.scene_restored_by_look"
+
+
+def restore_sent_back_scenes(
+    engine: Any,
+    registry: Any,
+    *,
+    storyboard_id: str,
+    correlation_id: str,
+    ffmpeg_path: str | None = None,
+) -> list[int]:
+    """Her look at every scene whose still clip QC sent back to the gate (`SENT_BACK_FOR_CLIP_MARK`)
+    and whose refused clip is still on disk, before a new still is bought for it: the clip
+    itself, with clip QC's words (`shot_second_look`). Her yes (`look_accepts`) restores the
+    still (APPROVED, hers) and the clip (PAID, hers, its note written) and nothing is bought
+    for the scene; anything else leaves the scene as it was. Returns the scenes restored.
+
+    2026-10-15, episode 2 scene 1: clip QC blamed the still (ruled papers, a zoom), nobody
+    looked at the clip, the still she had already approved went back to the gate and the
+    scene was about to buy a new still and a new clip. The Owner saw the clip: «este
+    acceptabilă, nu are nimic greșit în ea … ea poate să hotărască că imaginea este ok».
+    """
+    from pathlib import Path  # noqa: PLC0415
+
+    from app.db import lock_for_write  # noqa: PLC0415
+    from app.providers.runpod.wiring import sync_take_quality  # noqa: PLC0415
+    from app.services import append_event, utc_now  # noqa: PLC0415
+
+    if registry is None:
+        return []
+    offered: dict[int, tuple[str, str, str, str]] = {}
+    with Session(engine) as session:
+        stills = session.scalars(
+            select(SceneTake)
+            .where(
+                SceneTake.storyboard_id == storyboard_id,
+                SceneTake.kind == "still",
+                SceneTake.status == "REJECTED",
+            )
+            .order_by(SceneTake.created_at.desc())
+        ).all()
+        for still in stills:
+            scene = int(still.scene_number)
+            if scene in offered:
+                continue
+            if not str(still.failure_detail or "").startswith(SENT_BACK_FOR_CLIP_MARK):
+                continue
+            newer = session.scalar(
+                select(SceneTake.id).where(
+                    SceneTake.storyboard_id == storyboard_id,
+                    SceneTake.scene_number == still.scene_number,
+                    SceneTake.kind == "still",
+                    SceneTake.created_at > still.created_at,
+                )
+            )
+            if newer is not None:
+                continue  # the scene moved on: a later still exists
+            clip = session.scalar(
+                select(SceneTake)
+                .where(
+                    SceneTake.storyboard_id == storyboard_id,
+                    SceneTake.scene_number == still.scene_number,
+                    SceneTake.kind.in_(("test_shot", "motion")),
+                    SceneTake.status == "REJECTED",
+                )
+                .order_by(SceneTake.created_at.desc())
+                .limit(1)
+            )
+            if clip is None or not clip.path or not Path(str(clip.path)).exists():
+                continue
+            offered[scene] = (still.id, clip.id, str(clip.path), str(clip.failure_detail or ""))
+    restored: list[int] = []
+    for scene, (still_id, clip_id, path, detail) in sorted(offered.items()):
+        look = shot_second_look(
+            engine,
+            registry,
+            storyboard_id=storyboard_id,
+            scene_index=scene,
+            clip=Path(path),
+            refusal=[detail],
+            correlation_id=correlation_id,
+            take_ids=[clip_id],
+            ffmpeg_path=ffmpeg_path,
+        )
+        if not look_accepts(look):
+            continue
+        with Session(engine) as session, session.begin():
+            lock_for_write(session)
+            still = session.get(SceneTake, still_id)
+            clip = session.get(SceneTake, clip_id)
+            if (
+                still is None
+                or clip is None
+                or still.status != "REJECTED"
+                or clip.status != "REJECTED"
+            ):
+                continue
+            reason = str(look.get("reason_ro") or "")[:400]
+            for take in (still, clip):
+                take.status = "APPROVED" if take.kind == "still" else "PAID"
+                take.approved_by = DIRECTOR_LOOK_APPROVER
+                take.failure_code = None
+                take.failure_detail = None
+                take.updated_at = utc_now()
+                sync_take_quality(session, take, accepted=True, reason=reason)
+            record_take_note(
+                session,
+                storyboard_id=storyboard_id,
+                scene_number=scene,
+                take_id=clip_id,
+                kind="motion",
+                approved_by=DIRECTOR_LOOK_APPROVER,
+                look=look,
+                correlation_id=correlation_id,
+            )
+            append_event(
+                session,
+                SCENE_RESTORED_EVENT,
+                "scene_take",
+                clip_id,
+                1,
+                {
+                    "storyboard_id": storyboard_id,
+                    "scene_number": scene,
+                    "still_take_id": still_id,
+                    "clip_take_id": clip_id,
+                    "reason": reason,
+                    "severity": look.get("severity"),
+                },
+                correlation_id,
+            )
+        restored.append(scene)
+    return restored
 
 
 def clip_settled(

@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-10-15 — Cycle 4: writing and motion are the Director's, a sent-back scene reaches her look, no regeneration without her review
+
+The Owner's list, one by one, each with its test, the server stopped at his request.
+
+- Writing is the Director's to judge (`second_look`, `fix_check.HARD_LIMITS`, `qc.look_may_overturn`, `reviews.MEASURED_SERIOUS`, her QC brief): the scene's own writing — a book in the background, a thermometer's scale, the page someone writes on — stays; only text laid over the picture like a subtitle, a logo or a watermark is serious, and she says which. Faces where forbidden and panels stay the code's hard limits.
+- A camera move or pace other than the plan's is minor while the scene still tells the same thing (her second-look brief); proven on a clip refused for a zoom and ruled papers: her minor look keeps it, nothing bought.
+- A scene whose still clip QC sent back is shown to her — the clip itself — before a new still is bought (`fix_check.restore_sent_back_scenes`, at the start of every walk); her yes restores still and clip as hers and buys nothing.
+- No regeneration without her review of the prompt: verified on every production path (stills re-rolls through her ladder, clip retries through her look and the ladder) and pinned by a caller check.
+- Open: one GPU bundle for every film's stills, then every film's motions (the stills step is not flow-capable yet; the walk is per film).
+
 ## 2026-10-15 — Cycle 3: a work task carries the inbox's asks, not the whole inbox
 
 - A work task carries only the inbox's asks (handoff, request, challenge), the newest 20, each whole with its thread; the inbox tasks (`answer_mail`, `director_review`, `director_loop`) and an unnamed task carry every open message (`agents/identity.py`). The Director's 152 open messages (105 status reports since 2026-10-03) had put 1.6 million characters into every call of hers and her rewrite reviews came back empty — the model spent its whole output allowance reasoning. Marcus carried 60 open handoffs (611k characters) into every script.

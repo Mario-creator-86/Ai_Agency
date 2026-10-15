@@ -5,6 +5,41 @@ AGENT_SCENARIO_ACCEPTANCE later used actual Ollama Cloud calls, with normal seri
 acceptance and real GPU/media/upload still pending. Current local UI evidence is reported
 separately below and does not prove those external workflows.
 
+## CICLUL 4 — lista Owner-ului: scrisul și mișcarea sunt ale Directoarei, scena trimisă înapoi ajunge la privirea ei, nicio regenerare fără revizuirea promptului (Claude) (2026-10-15)
+
+Owner, 06:45–06:55Z, cu serverul oprit la cererea lui, lista lui de lucru luată pe rând, fiecare
+cu testul ei (clipul 1 al episodului 2, văzut de el: «este acceptabilă, nu are nimic greșit»).
+
+1. **Scrisul e al Directoarei** (`second_look.py`, `fix_check.HARD_LIMITS`, `qc.look_may_overturn`,
+   `reviews.MEASURED_SERIOUS` + brieful ei de QC): scrisul obiectelor din scenă (carte în spate,
+   termometru, foaia pe care scrie cineva) rămâne — OVERTURNED none/minor; doar textul pus peste
+   imagine ca subtitrare, logo-ul sau watermark-ul sunt grave, și tot ea le spune. Cuvintele unui
+   refuz nu mai fac din scris o limită dură; limitele dure rămân fețele (unde biblia le interzice)
+   și panourile/banda. Teste aliniate: `test_second_look`, `test_planned_markings`,
+   `test_fix_is_verified` (131 verzi).
+2. **Mișcarea se judecă după poveste** (brieful celei de-a doua priviri): zoom în loc de static,
+   «nu e același cadru» — minor cât timp scena spune același lucru, cu cauza pentru promptul
+   următor. Dovadă: `test_publishes_alone` (10) — clip refuzat pentru zoom și hârtii cu linii,
+   privirea ei «minor» → ACCEPTED_BY_LOOK, nimic cumpărat.
+3. **Scena trimisă înapoi la imagine din cauza clipului ajunge la privirea ei** înainte de orice
+   imagine nouă (`fix_check.restore_sent_back_scenes`, chemată la începutul fiecărei scări a filmului):
+   ea vede clipul refuzat; da-ul ei readuce imaginea (APPROVED, a ei) și clipul (PAID, a ei, cu
+   nota lui) și nu se cumpără nimic; altfel scena rămâne cum era. Scena 1 a episodului 2 e exact
+   acest caz (imaginea ei aprobată fusese trimisă înapoi de cuvântul «text» al controlului, fără
+   ca ea să vadă clipul). Test: `test_publishes_alone` (11).
+4. **Nicio regenerare fără revizuirea promptului de către ea** — verificat pe cod: re-roll-urile
+   imaginilor (și cele tehnice) merg prin scara ei din noaptea de 12.10 (`_settle_round`), reluarea
+   clipului în producție merge mereu prin privirea ei și apoi prin brief → rescriere → recenzie
+   (`qc_clip_with_retry` primește `look` de la asamblator); reluarea mecanică rămâne doar în
+   helperul fără callback (teste). Dovezi: `test_stills_stage::…without_paid_rerolls`,
+   `test_fix_is_verified::the_director_looks_before_{a_still,a_runpod_round,a_clip_retry}`, plus
+   `test_publishes_alone` (12): orice apel de producție al helperului duce privirea ei.
+5. **Lot GPU pentru toate filmele** — rămâne proiect separat: `run_stills_stage` nu e încă un
+   flux cu prag GPU, iar scara merge film cu film; restructurarea cere ore și testele ei.
+
+Oprirea în timpul unui pas GPU costă: două opriri azi au anulat clipul scenei 2 în zbor
+(0,14 + 0,14 USD). Azi: 1,94 USD.
+
 ## CICLUL 3 — verificările Directoarei ieșeau goale: inbox-ul întreg în fiecare apel; o sarcină de lucru poartă doar cererile (Claude) (2026-10-15)
 
 După repornirea pe 03ceae4 (06:32Z): ziua întreruptă s-a reluat singură (etapele încheiate

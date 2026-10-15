@@ -2634,8 +2634,8 @@ def look_may_overturn(report: ClipReport) -> bool:
     is bought for it: a refusal measured whole (nothing unmeasured) on a reading — the motion
     floor, a cut, the plan, the look, a deformation, a corrected mistake seen again, the still
     sent back by the look's own reading (`sent_back_by_reading`) — and none of the bible's
-    hard limits (a face where faces are forbidden, writing, panels), which stay the code's
-    (the Owner, 2026-10-12).
+    hard limits (a face where faces are forbidden, panels), which stay the code's (the
+    Owner, 2026-10-12); writing is hers (2026-10-15).
 
     2026-10-12 (the review of 5fc7468, finding 8): a clip the look's reading sent back to its
     still bought a new still and new motion with nobody looking whether the reading was right.
@@ -2652,10 +2652,8 @@ def look_may_overturn(report: ClipReport) -> bool:
     flags = flags if isinstance(flags, dict) else {}
     if flags.get("one_picture") is False:
         return False
-    # Writing on a clip whose plan asks for an object with its own markings (a thermometer's
-    # scale, ``planned_markings``) is a reading, hers to judge (2026-10-13).
-    if flags.get("readable_text") and not picture.get("planned_markings"):
-        return False
+    # Writing is hers to judge (2026-10-15, the Owner: the scene's own writing stays; only
+    # text laid over the picture or a logo is serious, and she says which).
     faces = next((item for item in report.checks if item.code == "faces"), None)
     forbidden = faces is not None and faces.status != "NOT_APPLICABLE"
     return not (flags.get("faces_visible") and forbidden)

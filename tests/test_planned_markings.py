@@ -133,7 +133,10 @@ def test_the_still_prompt_lets_the_instrument_keep_its_scale():
 
 
 def test_writing_on_the_planned_object_is_no_hard_limit():
-    assert hard_limits([WRITING], faces_forbidden=False) == ["writing"]
+    # Since 2026-10-15 no writing is a hard limit (the Owner: a book in the background, a
+    # thermometer's scale, a page someone writes on — the scene's own; only text laid over
+    # the picture or a logo is serious, and she says which), with or without markings.
+    assert hard_limits([WRITING], faces_forbidden=False) == []
     assert hard_limits([WRITING], faces_forbidden=False, markings=("thermometer",)) == []
     # Faces and panels stay what they are.
     face = "YuNet a găsit 1 față în imagine; biblia vizuală interzice fețele"
@@ -184,7 +187,7 @@ def test_she_overturns_the_digits_on_a_thermometer_in_one_look(engine):
     assert event["verdict"] == "OVERTURNED" and event["fail_closed"] is False
 
 
-def test_the_same_writing_on_a_plan_of_plain_objects_still_fails_closed(engine):
+def test_the_same_writing_on_a_plan_of_plain_objects_is_hers_too(engine):
     studio = seeded_studio(engine)
     film = failed_film(engine)
     give_vision(engine, studio["agents"]["Director"].model_id)
@@ -192,11 +195,13 @@ def test_the_same_writing_on_a_plan_of_plain_objects_still_fails_closed(engine):
 
     result = look(engine, her_registry(studio, model), film, refusal=[WRITING])
 
-    assert len(model.looked) == 2
-    assert (result["verdict"], result["severity"], result["redo"]) == ("CONFIRMED", "serious", True)
+    # Her look stands as she gave it: writing is no hard limit (2026-10-15), so a «minor»
+    # is not refused and asked again, and nothing fails closed for the words alone.
+    assert len(model.looked) == 1
+    assert result["verdict"] == "OVERTURNED" and result["redo"] is False
     (event,) = events(engine)
-    assert event["hard_limits"] == ["writing"] and "planned_markings" not in event
-    assert event["fail_closed"] is True
+    assert event["hard_limits"] == [] and "planned_markings" not in event
+    assert event["fail_closed"] is False
 
 
 # --------------------------------------------------------------------------- the stills gate
@@ -218,7 +223,8 @@ def test_the_gate_leaves_such_a_writing_refusal_to_her_look():
 
     assert digits.decision == "BLOCKED" and "readable_text" in digits.violations
     assert digits.expected_markings == ("thermometer",)
-    assert may_be_overturned(digits) and not may_be_overturned(lettering)
+    # Both are hers since 2026-10-15: lettering on a plain plan is no hard limit either.
+    assert may_be_overturned(digits) and may_be_overturned(lettering)
     assert "deși planul cere termometrul" in digits.reasons_ro[0]
     assert "Directoarea decide" in digits.reasons_ro[0]
     assert (
@@ -348,8 +354,8 @@ def _clip_refused_for_writing(**picture: Any) -> ClipReport:
     )
 
 
-def test_a_clips_writing_on_the_planned_object_is_hers_to_overturn():
-    assert not look_may_overturn(_clip_refused_for_writing())
+def test_a_clips_writing_is_hers_to_overturn_with_or_without_planned_markings():
+    assert look_may_overturn(_clip_refused_for_writing())
     assert look_may_overturn(_clip_refused_for_writing(planned_markings=["thermometer"]))
 
 

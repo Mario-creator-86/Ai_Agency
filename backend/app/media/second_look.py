@@ -24,8 +24,9 @@ rules in front of her, and decides — verdict and severity tied together:
 
 The bible's hard limits stay fail-closed (review of 2026-10-12: aa170155 scene 1, two faces
 facing camera on a faceless bible, could be waved through as «minor»): when quality control's
-refusal reads one — a face where the bible forbids faces, panels or a flat band, readable or
-garbled writing — she may overturn it only by saying the defect is NOT in the picture (severity
+refusal reads one — a face where the bible forbids faces, panels or a flat band (writing is
+hers since 2026-10-15: only text laid over the picture or a logo is serious, and that she
+says herself) — she may overturn it only by saying the defect is NOT in the picture (severity
 none); a «minor» answer is refused with the rule quoted and asked again, and a second one is
 CONFIRMED.
 
@@ -153,21 +154,19 @@ _PANEL_WORDS = re.compile(
     r"|\b(?:flat|blank) band\b",
     re.IGNORECASE,
 )
-_WRITING_WORDS = re.compile(
-    r"\btext\b|lizibil|\blettering\b|garbled|\bwriting\b|\bwritten words\b|\bletters\b"
-    r"|\blitere\b|inscrip[țţ]i|\blogos?\b|subtitr",
-    re.IGNORECASE,
-)
+# Writing is no hard limit since 2026-10-15 (the Owner: «scrisul, ea trebuie să hotărască…
+# dacă e în spate pe o carte, rămâne; pe termometru, rămâne; pe o foaie pe care scria,
+# e normal; important e să nu fie scris pe imagine ca subtitrare sau logo-uri»): the words
+# of a refusal never bind her on writing; her brief says what is serious (text laid over
+# the picture, a logo) and what is the scene's own.
 #: Each hard limit, as she is quoted it, and as the Owner reads it.
 _HARD_RULES = {
     "faces": "no face may be seen: the visual bible forbids faces",
     "panels": "one continuous picture: no panels, collage, split screen, or flat or blank band",
-    "writing": "no readable or garbled writing, lettering, sign or logo inside the picture",
 }
 _HARD_RO = {
     "faces": "fețe, deși biblia le interzice",
     "panels": "panouri sau o bandă plată",
-    "writing": "scris lizibil sau încâlcit",
 }
 
 
@@ -185,8 +184,6 @@ def hard_limits(
         found.append("faces")
     if _PANEL_WORDS.search(text):
         found.append("panels")
-    if _WRITING_WORDS.search(text) and not markings:
-        found.append("writing")
     return found
 
 
@@ -460,10 +457,21 @@ def _instructions(
         "hardly notice it) and the picture is used as it is: the Owner accepts small defects. A "
         "minor defect is never CONFIRMED and never redone.",
         "A serious defect is: the picture does not show the scene's subject or what the "
-        "narration says; a face where the bible forbids faces; readable or garbled writing that "
-        "draws the eye; panels, a collage, a split screen or a picture with a blank band across "
-        "it; a deformed person (extra or missing limbs, a melted face); for a clip, a broken, "
-        "melting or frozen picture.",
+        "narration says; a face where the bible forbids faces; text laid over the picture like "
+        "a subtitle or a caption, a logo or a watermark; panels, a collage, a split screen or a "
+        "picture with a blank band across it; a deformed person (extra or missing limbs, a "
+        "melted face); for a clip, a broken, melting or frozen picture.",
+        "Writing that belongs to an object in the scene is the scene's own, not a defect (the "
+        "Owner, 2026-10-15): papers or a book in the background, the page someone is writing "
+        "on, a screen, a thermometer's scale. Say OVERTURNED with severity none when the scene "
+        "would show it, minor when it is a small stray trace; CONFIRMED only when it is laid "
+        "over the picture, is a logo, or says something the story must not.",
+        "A camera move or a pace other than the plan's — a zoom where it asked for a static "
+        "frame, a drift the other way, «not the same shot» — is not a defect while the scene "
+        "still tells the same thing: say OVERTURNED with severity minor and the cause, so the "
+        "next prompt says the move; CONFIRMED only when the move changes what the scene says. "
+        "Every regeneration costs the Owner money; a refusal is worth it only for what a viewer "
+        "sees and the story needs.",
     ]
     if hard_rule:
         lines.append(

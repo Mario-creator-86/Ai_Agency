@@ -641,16 +641,13 @@ MEASURED_SERIOUS: tuple[tuple[str, tuple[str, ...]], ...] = (
         ("nu e o singură fotografie", "nu sunt o singură fotografie", "is not one picture"),
     ),
     (
-        "text or a logo in the picture",
+        "a logo, a watermark or text laid over the picture",
         (
-            "apare text sau un logo",
-            "text or a logo",
-            "readable text",
-            "legible text",
-            "garbled lettering",
-            "garbled text",
-            "in-picture writing",
-            "in-picture text",
+            "logo suprapus",
+            "watermark",
+            "subtitrare suprapus",
+            "text laid over",
+            "laid over the picture",
         ),
     ),
     ("a frozen or broken clip", ("Motion QC:", "imagine fixă (fallback)")),
@@ -1297,17 +1294,22 @@ _DIRECTOR_QC_INSTRUCTIONS = (
     "stands), or "
     "ACCEPTED (a real flaw you accept as it is). Every REAL or ACCEPTED finding also names "
     "its severity. serious: the picture does not show the scene's subject or what the "
-    "narration says; faces visible where the bible forbids them; readable or garbled writing "
-    "that draws the eye; panels, a collage or a split screen; deformed people or hands; a "
+    "narration says; faces visible where the bible forbids them; text laid over the picture "
+    "like a subtitle or a caption, a logo or a watermark; panels, a collage or a split screen; "
+    "deformed people or hands; a "
     "broken or frozen clip; wrong or missing sound. minor: a small mark or stray detail; "
     "framing a little off the plan that does not change what the scene says; a camera move "
     "or pace other than the plan's (a zoom where it asked for a static frame, a drift the "
     "other way) while the scene still tells the same thing — the story's meaning decides, "
     "not the plan's letter, because every clip bought again costs the Owner money; background "
     "figures a bit larger than asked; an ending pose slightly different; a small colour or "
-    "light drift. A finding marked measured_serious is a defect quality control measured as "
-    "serious (a face YuNet counted where the bible forbids faces, panels, text or a logo, a "
-    "frozen or broken clip, no audio stream): if it is really there it is serious; if quality "
+    "light drift; writing that belongs to an object in the scene (papers or a book in the "
+    "background, the page someone writes on, a screen, a scale) that does not say what the "
+    "story must not — the Owner, 2026-10-15: such writing stays. A finding marked "
+    "measured_serious is a defect quality control measured as "
+    "serious (a face YuNet counted where the bible forbids faces, panels, a logo or text laid "
+    "over the picture, a frozen or broken clip, no audio stream): if it is really there it is "
+    "serious; if quality "
     "control misread the film it is FALSE. A serious defect is never ACCEPTED: it is REAL and "
     "redone, and when only the Owner's limits (paid_redos_left 0) stop its redo, REPAIR it "
     "anyway: nothing is bought, and the Owner is asked on a card. A minor defect is ACCEPTED "

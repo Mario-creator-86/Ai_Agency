@@ -546,3 +546,213 @@ def test_a_work_task_carries_the_asks_of_the_inbox_bounded_and_the_inbox_tasks_c
             full = compose_identity(session, agent, task_type=task)
             assert len(full.context["open_message_ids"]) == 55, task
             assert "Remediere foaie: RESOLVED 0" in full.system
+
+
+# ------------------------------------------------------------------ 10. a motion fault by meaning
+
+
+def test_a_clip_refused_for_a_move_other_than_the_plans_is_hers_and_her_yes_buys_nothing(
+    tmp_path,
+):
+    """2026-10-15, the Owner: «mișcarea influențează cu ceva povestea ca să fie respinsă? nu-i de
+    ajuns să zică quality control că e de la mișcare, că nu e același cadru; ea poate să
+    hotărască că imaginea este ok». Clip QC refuses a clip for a zoom where the plan said static
+    and for papers with writing in the background; her look says OVERTURNED, minor, the story
+    intact: the clip is kept as hers (ACCEPTED_BY_LOOK) and no retry, no new still is bought."""
+    from app.media import qc
+
+    clip = tmp_path / "scene_01.mp4"
+    clip.write_bytes(b"\x00" * 64)
+    refusal = (
+        "Scena 1: privit la 1080 px: apare text sau un logo; nu arată ce cere planul: camera "
+        "zooms when the plan requires a static shot; papers show ruled lines in the background"
+    )
+    report = qc.ClipReport(
+        scene=1,
+        path=str(clip),
+        checks=(
+            qc.ClipCheck("motion", "PASSED", True, 0.4, "mișcare măsurată"),
+            qc.ClipCheck("cuts", "PASSED", True, 0.0, "fără tăieturi"),
+            qc.ClipCheck("picture", "FAILED", True, None, refusal),
+        ),
+        passed=False,
+        blocks_ro=(refusal,),
+        warnings_ro=(),
+        unmeasured=(),
+        measured={"picture": {"verdict": {"readable_text": True, "matches_plan": False}}},
+        back_to_still=True,
+    )
+    bought: list[tuple] = []
+    looked: list[qc.ClipReport] = []
+
+    def look(seen):
+        looked.append(seen)
+        return {
+            "verdict": "OVERTURNED",
+            "severity": "minor",
+            "redo": False,
+            "reason_ro": "Zoom-ul ușor și liniile de pe hârtii nu schimbă ce spune scena.",
+            "cause": "the prompt said static and blank papers; the model drifted",
+            "layer": "motion",
+        }
+
+    outcome = qc.qc_clip_with_retry(
+        clip,
+        check=lambda path: report,
+        buy=lambda seed, prompt: bought.append((seed, prompt)) or None,
+        seed=7,
+        motion_prompt="Static camera. Marcus writes.",
+        camera_move="static",
+        model_id="LTX-2.5",
+        price_credits=24.0,
+        committed_credits=0.0,
+        cap_credits=100.0,
+        look=look,
+    )
+
+    assert len(looked) == 1, "she is asked before anything is bought or sent back"
+    assert outcome.status == qc.ACCEPTED_BY_LOOK and outcome.clip == clip
+    assert bought == [] and outcome.retry_credits == 0.0
+    assert "Directoarea a privit clipul refuzat" in outcome.reason_ro
+
+
+# ------------------------------------------------------- 11. a scene sent back for its clip
+
+
+def test_a_scene_sent_back_for_its_clip_is_restored_by_her_look_and_buys_nothing(
+    engine, tmp_path, monkeypatch
+):
+    """Episode 2, scene 1 (2026-10-15): clip QC blamed the still, the still she had approved
+    went back to the gate REJECTED, the clip REJECTED, and the next walk would buy a new still
+    and a new clip. Before that, she looks at the clip: her yes restores both, hers, with the
+    clip's note; her no leaves the scene as it was."""
+    from app.media import fix_check
+    from app.media.models import SceneTake
+    from app.services import utc_now
+    from test_film_costing import a_film
+
+    board = a_film(engine, tmp_path, scenes=2)
+    clip_file = tmp_path / "test_shot_01.mp4"
+    clip_file.write_bytes(b"\x00" * 64)
+    with Session(engine) as session, session.begin():
+        still = session.scalar(
+            select(SceneTake).where(
+                SceneTake.storyboard_id == board,
+                SceneTake.scene_number == 1,
+                SceneTake.kind == "still",
+            )
+        )
+        still.status = "REJECTED"
+        still.failure_detail = (
+            fix_check.SENT_BACK_FOR_CLIP_MARK + "; imaginea se întoarce la poartă."
+        )
+        session.add(
+            SceneTake(
+                id="clip-1",
+                storyboard_id=board,
+                scene_number=1,
+                kind="test_shot",
+                prompt_hash="h" * 64,
+                model_id="LTX-2.5",
+                resolution="1080p",
+                seconds=5.0,
+                seed=1,
+                credits_quoted=24.0,
+                status="REJECTED",
+                failure_code="QC.CLIP",
+                failure_detail=(
+                    "Controlul clipului: Scena 1: apare text sau un logo; zoom în loc de static"
+                ),
+                path=str(clip_file),
+                sha256="s" * 64,
+                created_at=utc_now(),
+                updated_at=utc_now(),
+            )
+        )
+        still_id = still.id
+
+    asked: list[dict] = []
+    answer = {"verdict": "CONFIRMED", "severity": "serious", "redo": True, "reason_ro": "nu"}
+
+    def look(engine_, registry, **kwargs):
+        asked.append(kwargs)
+        return dict(answer)
+
+    monkeypatch.setattr(fix_check, "shot_second_look", look)
+
+    assert (
+        fix_check.restore_sent_back_scenes(
+            engine, object(), storyboard_id=board, correlation_id="c"
+        )
+        == []
+    )
+    assert [a["scene_index"] for a in asked] == [1] and asked[0]["take_ids"] == ["clip-1"]
+    with Session(engine) as session:
+        assert session.get(SceneTake, still_id).status == "REJECTED"
+        assert session.get(SceneTake, "clip-1").status == "REJECTED"
+
+    answer.update(verdict="OVERTURNED", severity="minor", redo=False, reason_ro="e bine așa")
+    assert fix_check.restore_sent_back_scenes(
+        engine, object(), storyboard_id=board, correlation_id="c"
+    ) == [1]
+    with Session(engine) as session:
+        restored_still = session.get(SceneTake, still_id)
+        restored_clip = session.get(SceneTake, "clip-1")
+        assert (restored_still.status, restored_still.approved_by) == (
+            "APPROVED",
+            fix_check.DIRECTOR_LOOK_APPROVER,
+        )
+        assert (restored_clip.status, restored_clip.approved_by) == (
+            "PAID",
+            fix_check.DIRECTOR_LOOK_APPROVER,
+        )
+        assert restored_clip.failure_code is None
+        note = fix_check.take_note(session, "clip-1")
+        assert note and note["approved_by"] == fix_check.DIRECTOR_LOOK_APPROVER
+    # Nothing left to offer: the scene is restored, the next walk prices nothing for it.
+    assert (
+        fix_check.restore_sent_back_scenes(
+            engine, object(), storyboard_id=board, correlation_id="c"
+        )
+        == []
+    )
+    assert len(asked) == 2
+
+
+# ------------------------------------------------------ 12. no regeneration without her review
+
+
+def test_every_production_purchase_of_a_refused_clip_passes_through_her_look():
+    """2026-10-15, the Owner: «întotdeauna, înainte de a se regenera orice, promptul trebuie
+    verificat, revizuit și aprobat» — any scene, any attempt. The clip helper keeps a
+    mechanical retry only for the standalone case (no look callback); every production caller
+    hands it her look, so a refusal goes to her brief, the Editor's rewrite and her review
+    before a replacement is bought (test_fix_is_verified: the director looks before a still,
+    a RunPod round and a clip retry are bought; test_stills_stage: no paid re-rolls)."""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1] / "backend" / "app"
+    callers: list[tuple[str, bool]] = []
+    helper_users: list[str] = []
+    for path in root.rglob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        at = 0
+        while True:
+            at = text.find("qc_clip_with_retry(", at)
+            if at < 0:
+                break
+            if text[max(0, at - 4) : at] != "def ":
+                depth, close = 0, at + len("qc_clip_with_retry(") - 1
+                for here in range(close, len(text)):
+                    depth += {"(": 1, ")": -1}.get(text[here], 0)
+                    if depth == 0:
+                        close = here
+                        break
+                callers.append((path.name, "look=" in text[at : close + 1]))
+            at += 1
+        if "retry_motion_prompt(" in text and "def retry_motion_prompt" not in text:
+            helper_users.append(path.name)
+    assert callers, "the motion step calls the clip helper"
+    assert all(has_look for _name, has_look in callers), callers
+    # The mechanical retry's words are composed in one place only, inside the helper.
+    assert helper_users == [], helper_users

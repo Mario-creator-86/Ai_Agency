@@ -1726,7 +1726,12 @@ def test_the_director_looks_before_a_runpod_round_is_bought_again(
     assert by_scene[2]["director_confirmed"] == [HER[her]["reason_ro"]] * 2
 
 
-def test_her_look_never_overturns_the_bibles_hard_limits(engine, tmp_path, monkeypatch):
+def test_writing_in_the_picture_is_offered_to_her_look_and_her_yes_buys_nothing(
+    engine, tmp_path, monkeypatch
+):
+    """2026-10-15, the Owner: the scene's own writing stays and she decides; so a still the
+    gate refused for lettering is shown to her, and when she lets it stand nothing more is
+    bought for the scene."""
     looks = Looks(HER["OVERTURNED"])
     monkeypatch.setattr(fix_check, "director_second_look", looks)
     storyboard_id = a_film(engine, tmp_path)
@@ -1734,7 +1739,7 @@ def test_her_look_never_overturns_the_bibles_hard_limits(engine, tmp_path, monke
 
     approved_run(engine, storyboard_id, tmp_path, adapter, OffPlanFirst(lettering=True))
 
-    assert looks.asked == [], "writing in the picture stays the code's refusal"
+    assert len(looks.asked) >= 1, "writing in the picture is hers to judge"
     assert len([c for c in adapter.asked if SUBJECTS[2] in c["prompt"]]) == 1
 
 
@@ -1751,7 +1756,8 @@ def test_who_may_be_overturned():
         environment="TEST",
     )
     assert may_be_overturned(off_plan)
-    assert not may_be_overturned(lettering) and not may_be_overturned(panels)
+    assert may_be_overturned(lettering), "writing is hers (2026-10-15)"
+    assert not may_be_overturned(panels)
     assert not may_be_overturned(unseen)
 
 

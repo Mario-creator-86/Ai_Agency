@@ -1,6 +1,6 @@
 {
-  "observed_at": "2026-10-15T06:37:03.749649+00:00",
-  "event_cursor": 24347,
+  "observed_at": "2026-10-15T07:05:16.920558+00:00",
+  "event_cursor": 24387,
   "claimed_tasks": [],
   "recent_runs": [
     {
@@ -399,38 +399,39 @@
   "studio_status": {
     "autonomy_stopped": false,
     "autonomy_mode": "AUTONOMOUS_CEO",
-    "api_unreachable": false,
-    "daily_run_stored_status": "RUNNING",
+    "api_unreachable": true,
+    "daily_run_stored_status": "INTERRUPTED",
     "daily_run_id": "80c89659-94c2-410c-a35b-9952c98a7c1e",
     "daily_stages_completed": 7,
-    "daily_stages_total": 8,
+    "daily_stages_total": 13,
     "running_db_rows_do_not_prove_active_execution": true,
     "daily_stopped_at_stage": "media",
-    "daily_finished_at": "2026-10-15T06:13:04.969503+00:00",
-    "gpu_off_verified_at": "2026-10-15T06:13:09.670736+00:00",
-    "resumed_from_daily_run": "79bdbdb8-572a-4982-bf54-fb51d592bb28"
+    "daily_finished_at": "2026-10-15T06:39:24.903405+00:00",
+    "gpu_off_verified_at": "2026-10-15T06:45:04.738251+00:00",
+    "resumed_from_daily_run": "79bdbdb8-572a-4982-bf54-fb51d592bb28",
+    "active_film_continue_task": null
   },
   "policy_changed_after_last_report": false,
   "service_check": {
-    "at": "2026-10-15T06:37:03.749649+00:00",
-    "live": 200,
-    "ready": 200,
-    "worker": "BUSY",
+    "at": "2026-10-15T07:05:16.920558+00:00",
+    "live": "UNREACHABLE",
+    "ready": "UNREACHABLE",
+    "shutdown_previously_confirmed": true,
     "service_started_by_monitor": false
   },
   "last_run_inspected": {
-    "id": "451d5493-0342-499d-a3d8-59cb74f251a1",
-    "task_type": "director_rewrite_review",
+    "id": "e3a3786b-d5e3-45b7-b4a1-70d48b5b0048",
+    "task_type": "director_review",
     "model_name": "deepseek-v4.1-flash",
-    "status": "EMPTY_OUTPUT",
-    "started_at": "2026-10-15T06:00:37.619187+00:00",
-    "finished_at": "2026-10-15T06:13:04.950501+00:00"
+    "status": "SUCCEEDED",
+    "started_at": "2026-10-15T06:37:53.511016+00:00",
+    "finished_at": "2026-10-15T06:38:49.679605+00:00"
   },
   "last_event_inspected": {
-    "sequence": 24347,
-    "event_id": "2e2c9d65-1291-4253-aea3-6ee4f55d2072",
-    "event_type": "media.scene_take_recorded",
-    "timestamp": "2026-10-15T06:33:23.836008+00:00"
+    "sequence": 24387,
+    "event_id": "9b0996eb-359d-4f95-bfe5-e25648b0207e",
+    "event_type": "runpod.gpu_off_verified",
+    "timestamp": "2026-10-15T06:45:04.738251+00:00"
   },
   "local_reference_and_response_repairs": {
     "reference_doc": "REFERENCE_ROUTE_WARDROBE_AND_STUDIO_WAIT_2026-10-15.md",
@@ -492,13 +493,21 @@
   "last_quiet_check": {
     "decision": "DONT_NOTIFY",
     "reason": "studio_remains_stopped_no_new_events_runs_mail_or_generation",
-    "event_cursor_unchanged": 24325,
-    "active_queue_count": 0,
+    "event_cursor_unchanged": 24387,
+    "active_queue": [
+      {
+        "id": "1085c8ce-0662-4efd-9cb1-57bc4c7ac782",
+        "task_type": "DIRECTOR_LOOP",
+        "status": "QUEUED",
+        "attempts": 0,
+        "updated_at": "2026-10-15T06:40:31.760193+00:00"
+      }
+    ],
     "documents_read": [
       {
         "name": "CURRENT_STATUS",
-        "modified": "2026-10-15T06:19:33.125626+00:00",
-        "characters": 789476
+        "modified": "2026-10-15T07:02:03.073668+00:00",
+        "characters": 794288
       },
       {
         "name": "SERIAL_PROMPT_MODEL_LIMIT_2026-10-14",
@@ -651,10 +660,10 @@
     "queue_task_id": "96d61072-6b90-4148-a505-9f92b5c34804",
     "manual": true,
     "requested_at_utc": "2026-10-15T04:56:15.831186+00:00",
-    "status": "RUNNING",
+    "status": "INTERRUPTED",
     "stage": "media",
     "stages_completed": 7,
-    "stages_total": 8,
+    "stages_total": 13,
     "episode_run_id": "22fd19eb-9a07-4dbb-aa79-7ac57abe4e03",
     "actual_episode_model": "kimi-k3",
     "episode_day": "2026-10-14",
@@ -664,7 +673,7 @@
     "no_new_cloud_generation": false,
     "id": "80c89659-94c2-410c-a35b-9952c98a7c1e",
     "stopped_at_stage": "media",
-    "finished_at": "2026-10-15T06:13:04.969503+00:00",
+    "finished_at": "2026-10-15T06:39:24.903405+00:00",
     "resumed_from": "79bdbdb8-572a-4982-bf54-fb51d592bb28",
     "prior_stages_reused_without_new_llm_calls": true
   },
@@ -2011,16 +2020,17 @@
       "image_request_count": 14,
       "image_prompt_char_min": 1730,
       "image_prompt_char_max": 1930,
-      "video_request_count": 2,
+      "video_request_count": 3,
       "new_requests_after_rewrite": 0,
       "all_match_saved_at_0614_check": true,
       "all_match_saved_at_0634_check": true,
-      "new_image_regeneration_after_rewrite": false
+      "new_image_regeneration_after_rewrite": false,
+      "latest_motion_matches_saved": true
     },
     "second_video_request_verified": {
       "job_id": "6d6739c7-1cc8-42c1-b397-d0c1f9962a9d",
       "actual_model": "LTX-2.5",
-      "status": "QUEUED",
+      "status": "CANCELLED",
       "kind": "test_shot",
       "scene_number": 2,
       "motion_prompt_chars": 542,
@@ -2033,7 +2043,12 @@
       "source_jpeg_matches_journal": true,
       "accepted_png_sha_verified": true,
       "same_as_rejected_scene1_source": false,
-      "no_completed_clip_or_qc_result_yet": true
+      "no_completed_clip_or_qc_result_yet": true,
+      "accepted": null,
+      "finished_at": "2026-10-15T06:39:23.399753+00:00",
+      "error_code": "CANCELLED",
+      "cancelled_during_studio_shutdown": true,
+      "new_clip_qc_result": false
     },
     "scene2_accepted_first_frame_visual_discrepancy": {
       "scene_number": 2,
@@ -2048,6 +2063,63 @@
       "first_frame_same_defect_category_as_rejected_scene1": true,
       "manual_verdict_written_to_production": false,
       "risk_not_new_clip_qc_verdict": true
+    },
+    "last_director_mail_review": {
+      "run_id": "e3a3786b-d5e3-45b7-b4a1-70d48b5b0048",
+      "task_type": "director_review",
+      "actual_model": "deepseek-v4.1-flash",
+      "status": "SUCCEEDED",
+      "does_not_prove_rewrite_review_recovered": true
+    },
+    "scene2_retry_after_shutdown": {
+      "job_id": "87d27740-6c39-42a6-a923-1a745a6ce023",
+      "actual_model": "LTX-2.5",
+      "status": "CANCELLED",
+      "created_at": "2026-10-15T06:40:35.434542+00:00",
+      "scene_number": 2,
+      "kind": "test_shot",
+      "motion_prompt_chars": 542,
+      "actual_motion_equals_saved": true,
+      "source_digest": {
+        "sha256": "5f4396f6cd6553ac563601c7fc53e881ce887abfa26749ebcac718108ffff709",
+        "bytes": 586431,
+        "mime": "image/jpeg"
+      },
+      "source_matches_previously_verified_approved_scene2_take": true,
+      "retries_cancelled_request_not_content_rejection": true,
+      "prior_request_id": "6d6739c7-1cc8-42c1-b397-d0c1f9962a9d",
+      "known_first_frame_paper_marking_risk_already_reported": true,
+      "accepted": null,
+      "finished_at": "2026-10-15T06:44:58.793183+00:00",
+      "cancelled_during_another_shutdown": true,
+      "new_clip_qc_result": false
+    },
+    "external_context_fix_handoff_observed": {
+      "document": "CURRENT_STATUS",
+      "document_modified_at": "2026-10-15T06:37:42.350402+00:00",
+      "claim": "Other Claude session changed identity inbox selection to recent requests for work tasks; full inbox retained for mail tasks.",
+      "monitor_did_not_change_parameters_or_code": true,
+      "rewrite_review_success_after_fix_not_observed": true,
+      "local_tests_do_not_prove_new_image_quality": true
+    },
+    "external_second_look_rule_claim": {
+      "document": "CURRENT_STATUS",
+      "modified_at": "2026-10-15T07:02:03.073668+00:00",
+      "section": "CICLUL 4",
+      "other_session_claims": [
+        "Object text and ruled pages may be accepted by Director visual review; overlay text, logos and watermarks remain serious.",
+        "Story-preserving camera changes may be minor.",
+        "Sent-back scene still and clip can be restored only after Director sees the rejected clip.",
+        "No production regeneration without Director review of rewritten prompt."
+      ],
+      "production_director_clip_review_or_restoration_not_yet_observed": true,
+      "local_tests_not_proof_of_new_visual_acceptance": true,
+      "production_rule_or_parameters_not_changed_by_monitor": true,
+      "reported_cancelled_scene2_gpu_costs_usd": [
+        0.14,
+        0.14
+      ],
+      "costs_claimed_by_other_session_not_reconciled_by_monitor": true
     }
   },
   "deferred_findings_reported_after_restart": {
