@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-15 — The day keeps going until a short and a serial episode are out
+
+The Owner, 15:20Z: the day stops only when a short and a serial episode are published, or on a problem he must solve; otherwise it keeps working.
+
+- `workflows/passes/day_goal.py` (watchdog pass `day_goal`, order 190): while the business day's goal — one factual short and one serial episode out on a channel today — is not met, the day's run is queued again (the same `manual` run the Owner's button queues, cause `day_goal`) once the last run ended, nothing is queued or running and no film continuation is at work, `DAY_GOAL_GAP_MINUTES` after the last run; it stops with one letter to the Owner when the autonomy is stopped, safe mode is on, the daily budget is spent or `DAY_GOAL_RUNS_PER_DAY` runs were queued without the two publications. PRODUCTION only; buys nothing itself.
+- Tests: `tests/test_day_goal.py`; the pass boundary scans.
+
 ## 2026-10-15 — The prompt audit buys under the cap after its rounds
 
 Episode 3's filming (14:50Z) was stopped by the prompt audit: all eight scenes refused twice, mostly for props that were in the character bible, not in the words, and the walk said «1 film așteaptă Proprietarul».

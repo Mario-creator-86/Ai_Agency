@@ -5,6 +5,37 @@ AGENT_SCENARIO_ACCEPTANCE later used actual Ollama Cloud calls, with normal seri
 acceptance and real GPU/media/upload still pending. Current local UI evidence is reported
 separately below and does not prove those external workflows.
 
+## The day ends on its goal: a short and a serial episode published, or a problem for the Owner (2026-10-15)
+
+**Owner, 15:20Z:** «Ce nu înțeleg eu este de ce se oprește tot fluxul și revine mâine … noi ar
+trebui să avem un flux și să ne oprim doar atunci când am publicat ceva. Ăsta este rolul agenției
+într-o zi, să publice un short și un serial. Ziua se oprește când apare o problemă peste care nu
+poate trece — un bug, ceva ce are nevoie de intervenția mea — sau după ce cele două au fost
+publicate. Altfel nu are voie să se oprească și trebuie să rezolve problema.»
+
+**Ce era.** Rularea zilei se încheia când se încheiau etapele ei: un scenariu refuzat de formă,
+un subiect trimis înapoi la cercetare, un episod refuzat de citirea Directoarei — toate așteptau
+rularea de mâine, iar ziua se închidea fără nimic publicat. Azi Owner-ul a apăsat «Pornește
+rularea de azi» de trei ori cu mâna (14:03, 14:15, 14:36Z); abia a treia a dus scenariul la
+scris și episodul 3 la filmare.
+
+**Ce este (`workflows/passes/day_goal.py`).** Pasul `day_goal` al supraveghetorului (la fiecare
+10 minute) citește ținta zilei de afaceri — un short factual și un episod al serialului ieșite pe
+canal azi (`day_goal`: publicări PUBLISHED/SCHEDULED/REMOTE_CONFIRMED pe ziua lor, filmul
+serial după `series_key`) — și, cât nu e atinsă, pune din nou la coadă rularea zilei (aceeași
+rulare `manual` pe care o pune butonul lui; cauza `day_goal`): după ce ultima rulare s-a
+încheiat, fără rulare în coadă sau în lucru, fără continuare de film în lucru (filmarea
+serialului e munca zilei), la `DAY_GOAL_GAP_MINUTES` (5) de la sfârșitul ultimei. Se oprește și
+spune o singură dată (scrisoare către Owner, `ESCALATE`, subiect fix) când ziua nu mai poate fi
+mișcată de încă o rulare: autonomia oprită, modul sigur, bugetul zilnic cheltuit, sau
+`DAY_GOAL_RUNS_PER_DAY` (6) rulări pornite de pas azi fără cele două publicări — aceeași
+refuzare de multe ori e o problemă pentru el. Numai PRODUCTION; nimic cumpărat aici (rularea
+cere orice plătit sub regula lui, ca butonul). Teste: `tests/test_day_goal.py` (4) + scanările
+pasurilor (`test_watchdog_passes`, 36 passed).
+
+**Live la 15:15Z (a44a62c):** plimbarea episodului 3 a reluat singură: toate cele 8 scene aprobate
+sub plafon după cele 2 briefuri, 4,92 USD rezervați pentru imagini, GPU deschis.
+
 ## The prompt audit buys under the cap after its rounds; the Director judges only the words sent (2026-10-15)
 
 **Rularea a treia a Owner-ului (14:36–14:50Z, 5fa3565).** Cercetarea a adus paginile potrivite
