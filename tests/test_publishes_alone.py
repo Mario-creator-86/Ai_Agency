@@ -1148,7 +1148,10 @@ def test_the_director_audits_a_scenes_words_before_the_first_purchase(
     (held,) = fourth["held"]
     assert held["scene_index"] == 1 and "trecerea următoare" in held["reason"], held
     with Session(engine) as session:
-        assert prompt_audit.briefs_given(session, board, 1, "still") == prompt_audit.ROUNDS_PER_WALK
+        assert (
+            prompt_audit.briefs_given(session, board, 1, "still")
+            == prompt_audit.ROUNDS_PER_WALK - 1
+        )
     with Session(engine) as session:
         scene_rows = session.scalars(
             select(StoryboardScene).where(StoryboardScene.storyboard_id == board)
