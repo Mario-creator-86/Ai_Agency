@@ -235,16 +235,16 @@ def build_task_handlers(
             # how many times the day was cut off. Measured 2026-10-15: a day cut off once,
             # with three runs on its date (two finished ones before it), had its one resume
             # refused «și-a folosit cele 3 încercări» and stood still until the Owner.
-            if cut_count > settings.daily_max_attempts:
-                return {
-                    "status": "SKIPPED",
-                    "reason": (
-                        f"Ziua {today} a fost întreruptă de {cut_count} ori, peste cele "
-                        f"{settings.daily_max_attempts} reluări; reluarea ei este decizia "
-                        "Owner-ului."
-                    ),
-                    "run_id": resume_of,
-                }
+            # How many times the day was cut off is logged, never a reason to stop: the
+            # Owner's rule (2026-10-15 15:20Z) is that the day ends on its goal or on a
+            # problem only he can solve, and a resume is asked once per start of the studio
+            # (`passes.resume_interrupted_day`), so a crash loop is bounded by the starts
+            # themselves. 17:17Z: the fifth cut of the day (a developer restart) was refused
+            # «reluarea ei este decizia Owner-ului» and the day stood still.
+            logger.info(
+                "daily_run_resume",
+                extra={"run_id": resume_of, "cut_count": cut_count, "date": today},
+            )
             runners = resume_runners(previous_stages, stage_runners or {}, resume_of)
         elif not manual:
             if cut_id is not None:

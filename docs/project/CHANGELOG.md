@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-15 — O zi tăiată se reia oricâte tăieri a avut
+
+**O zi tăiată se reia oricâte tăieri a avut** (`backend/app/workflows/worker.py`, test în `tests/test_resume_after_finished_runs.py`). Trăit 17:17Z: a cincea tăiere a zilei (repornirea mea de la 17:08, după cele patru de azi-noapte/dimineață) a primit la reluare «Ziua a fost întreruptă de 5 ori, peste cele 3 reluări; reluarea ei este decizia Owner-ului» și ziua a stat pe loc — o oprire ascunsă sub regula «ziua se termină la țintă». Reluarea e cerută o singură dată la fiecare pornire a studioului (`resume_interrupted_day`), deci o buclă de căderi e mărginită de pornirile însele; numărul tăierilor se scrie în jurnal, nu mai oprește. (Rularea manuală a `day_goal` nu era afectată: ramura `attempt > daily_max_attempts` e doar pentru rulările programate.)
+
 ## 2026-10-15 — Mișcările de cameră fără cadru propriu și fără ritm de mers
 
 **Propozițiile mișcărilor de cameră nu mai spun un cadru al lor și nici un ritm de mers** (`backend/app/media/prompt_agent.py` `MOVE_SENTENCES`). Trăit 16:10Z–17:19Z pe a4ecf40a: scenele 6 și 8 — «dolly in from a wide view to a close framing» pe un cadru pe care planul îl fixează prim-plan mediu; scena 7 — «tracking left alongside the subject at walking pace» pe o persoană așezată. Directoarea a refuzat cuvintele de două ori de fiecare dată, iar rescrierile nu puteau schimba o propoziție a compozitorului: clipurile s-au cumpărat sub plafon cu cuvinte refuzate. Acum push-in/pull-back/dolly in/dolly out spun doar că încadrarea se strânge sau se lărgește, tracking-ul doar că fundalul alunecă; cadrul rămâne al planului. Testate: motion_v2, serial_ladder, live_prompt_approval, prompt_lint, input_guard, publishes_alone — 189 passed, aceleași 4 fixturi picate dinainte.

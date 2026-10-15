@@ -109,7 +109,7 @@ def test_a_day_cut_off_after_finished_runs_of_its_date_is_still_resumed(
     assert resume_interrupted_days(WatchdogContext(engine, settings, "wd-2"))["queued"] == []
 
 
-def test_a_day_cut_off_more_times_than_the_day_has_attempts_waits_for_the_owner(
+def test_a_day_cut_off_more_times_than_the_day_has_attempts_is_still_resumed(
     engine,
     settings,
     vault,  # noqa: F811
@@ -139,10 +139,13 @@ def test_a_day_cut_off_more_times_than_the_day_has_attempts_waits_for_the_owner(
             engine, settings, vault, runners(engine, calls, shutdown_in_media=False), None
         ),
     )
+    # 2026-10-15 17:17Z: the day's fifth cut (a developer restart) was refused «reluarea ei
+    # este decizia Owner-ului» and the day stood still; the Owner's rule is that the day
+    # ends on its goal, and a resume is asked once per start, so the cuts are no cap.
     assert ran["status"] == "COMPLETED", ran
-    assert ran["outcome"]["status"] == "SKIPPED", ran["outcome"]
-    assert "peste cele" in ran["outcome"]["reason"] and "Owner" in ran["outcome"]["reason"]
-    assert calls["media"] == 1  # nothing ran again
+    assert ran["outcome"]["status"] != "SKIPPED", ran["outcome"]
+    assert ran["outcome"].get("resumed_from") == cut["id"]
+    assert calls["media"] == 2  # the cut stage ran again; the finished ones were replayed
 
 
 def test_a_finished_resume_task_is_not_announced_again_until_the_next_start(
