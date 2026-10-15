@@ -4588,3 +4588,63 @@ def test_her_second_look_sees_the_scene_as_quality_control_judged_it(engine, mon
 
     assert frames == ["a.png", "b.png", "c.png"]
     assert asked == [(film["asset"], 5, [603, 640, 677])]
+
+
+def test_a_ready_repair_is_carried_on_the_moment_it_is_ready_not_an_hour_later(
+    engine, settings, studio, monkeypatch
+):
+    """2026-10-15, 2d276038: her repair's new still was approved at 10:14Z, the decision stood
+    BOUGHT_WAITING at 10:24Z, and the pass would not queue the walk that carries on her list
+    before an hour had passed since her decision — the film stood while the Owner asked where
+    the publication was. A repair that is ``ready`` (or whose candidates wait for her ``look``)
+    and that no walk has read since her decision is queued at once; once a walk ran for it,
+    the hour's throttle applies as before (a walk that cannot move the film is not repeated
+    every ten minutes)."""
+    from datetime import UTC, datetime
+
+    from app.runbook import stages
+    from app.services import append_event
+    from app.workflows.passes import director_qc_review
+
+    film = failed_film(engine, local_move=False)
+    repairs = [{"scene_index": 5, "redo": "still", "reason": "three stacked panels"}]
+    registry, _model = director_says(studio, answer(verdicts_for(film), "REPAIR", repairs))
+    redo = FakeRedoPath(engine, monkeypatch, still_status="PAID")
+    _production(engine)
+    assert director_qc_review.RETRY_MINUTES == 60  # the hour stays what it is
+
+    first = stages.director_decides_failed_film(
+        engine, settings, None, registry, film["report"], film["asset"]
+    )
+    assert first["outcome"] == "BOUGHT_WAITING"
+    assert _pass(engine, settings) == {"queued": []}  # it waits for his look
+
+    (new_still,) = redo.new_stills
+    _his_look(engine, new_still, "APPROVED")
+    state = decision_state(engine, film["report"])
+    assert state["ready"] is True
+    # Ready, and no walk read it since her decision: queued now, within the hour.
+    assert _pass(engine, settings) == {"queued": [film["board"]]}
+    assert _pass(engine, settings) == {"queued": []}  # the one continuation stands queued
+
+    # A walk under this cause ran and the repair is still ready: the hour's throttle holds.
+    with Session(engine) as session, session.begin():
+        task = session.scalars(
+            select(TaskQueueItem).where(TaskQueueItem.task_type == "FILM_CONTINUE")
+        ).all()[-1]
+        task.status = "COMPLETED"
+        append_event(
+            session,
+            "runbook.film_continued",
+            "storyboard",
+            film["board"],
+            1,
+            {
+                "status": "WAITING",
+                "cause": f"{director_qc_review.CAUSE_PREFIX}{film['report']}",
+                "at": datetime.now(UTC).isoformat(),
+            },
+            "c",
+        )
+    assert decision_state(engine, film["report"])["ready"] is True
+    assert _pass(engine, settings) == {"queued": []}

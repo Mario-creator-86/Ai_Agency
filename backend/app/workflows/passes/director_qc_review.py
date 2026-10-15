@@ -174,7 +174,15 @@ def queue_director_reviews(context: WatchdogContext) -> dict[str, Any]:
             asked_at = str(state["last_at"] or "")
             unheard = sum(1 for moment in runs if moment > asked_at)
             moments = [moment for moment in (*runs, asked_at) if moment]
-            if moments:
+            # What her REPAIR waited for has come (``ready``: a take bought for her list is
+            # approved; ``look``: candidates wait for her own look) and no walk has read it
+            # since her decision: carried on now, not an hour from now. 2026-10-15, 2d276038:
+            # her repair's new still was approved at 10:14Z and the film stood until the
+            # hour after her 10:24Z decision had passed, the Owner asking where the
+            # publication was. A walk that ran since (``unheard``) is throttled as before, so
+            # a film the walk cannot move is not walked every ten minutes.
+            carried_on_now = (state["ready"] or state["look"]) and unheard == 0
+            if moments and not carried_on_now:
                 last = datetime.fromisoformat(max(moments))
                 if last.tzinfo is None:
                     last = last.replace(tzinfo=UTC)

@@ -5,6 +5,24 @@ AGENT_SCENARIO_ACCEPTANCE later used actual Ollama Cloud calls, with normal seri
 acceptance and real GPU/media/upload still pending. Current local UI evidence is reported
 separately below and does not prove those external workflows.
 
+## Cycle 7b: a ready repair is carried on at once, not an hour after her decision (2026-10-15)
+
+**Ce s-a văzut după repornirea de la 10:27Z (pe 55b2bb2).** Nimic nu s-a mișcat 35 de minute:
+reluarea zilei (serial_next) s-a încheiat în 0,6 s fără urme, bucla Directoarei a rulat la 5
+minute fără să atingă filmul, iar pasul filmelor serial nefilmate sare orice film cu o randare
+COMPLETED (și pe cea picată la control). Filmul 2d276038 e în mâna pasului `director_qc_review`:
+starea deciziei ei e BOUGHT_WAITING + `ready` (imaginea nouă a scenei 6 aprobată de poartă la
+10:14Z), iar pasul nu pune continuarea la coadă înainte să treacă o oră de la ultima ei decizie
+(10:24:13Z) — filmul stătea până la ~11:25Z cu Owner-ul întrebând unde e publicarea.
+
+**Ce este.** `queue_director_reviews`: o reparație `ready` (sau `look`) pe care nicio plimbare
+nu a citit-o de la decizia ei e pusă la coadă imediat; după o plimbare sub aceeași cauză, ora
+de așteptare (dublată la fiecare plimbare neauzită) rămâne ca înainte, ca un film pe care
+plimbarea nu-l poate mișca să nu fie plimbat la fiecare 10 minute. Test:
+`test_director_decides_qc::test_a_ready_repair_is_carried_on_the_moment_it_is_ready_not_an_hour_later`
+(suita 93 + redo-cap verzi). Intră la următoarea repornire; plimbarea de la ~11:25Z vine oricum
+pe regula veche.
+
 ## Cycle 7: the look names each room by its own furniture; the block puts no monitor in the penthouse (2026-10-15)
 
 **Ce s-a văzut (episodul 2, 2d276038, 10:04–10:16Z).** Controlul filmului a picat (scor 0: Sarah

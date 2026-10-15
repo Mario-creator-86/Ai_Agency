@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-15 — A ready repair is walked at once
+
+- `workflows/passes/director_qc_review.py`: a repair of hers that is ready (a take bought for her list approved) or whose candidates wait for her look, and that no walk has read since her decision, is queued at once instead of an hour after her decision; once a walk ran for it the hour's throttle holds as before. Test in `test_director_decides_qc`.
+
 ## 2026-10-15 — The series look names each room; the style block names no object
 
 Episode 2's film QC failed and six scenes were refused on words no rewrite could change: the look's style block put «glowing monitors … Screens show abstract glow» at the head of every shot, Sarah's penthouse included.
