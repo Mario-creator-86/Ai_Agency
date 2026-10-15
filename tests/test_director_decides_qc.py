@@ -1494,7 +1494,31 @@ def test_a_report_she_could_not_decide_is_asked_again_only_after_a_while(
             {"status": "SKIPPED", "cause": f"director_qc:{film['report']}"},
             "c",
         )
-    assert _pass(engine, settings) == {"queued": []}  # it waits in her inbox now
+    # …except once under the Owner's renders cap (2026-10-15): a film whose tries ran out
+    # before the rule is walked one more time, so her decision runs and the cap ships what
+    # there is; walked under the rule, it waits in her inbox as before.
+    monkeypatch.setattr(director_qc_review, "CAP_RULE_SINCE", "2099-01-01T00:00:00+00:00")
+    assert _pass(engine, settings) == {"queued": [film["board"]]}
+    (cap_task,) = [
+        task
+        for task in _continuations(engine)
+        if str(task.idempotency_key or "").endswith(f"-cap-rule-{film['report']}")
+    ]
+    assert cap_task.payload["cause"] == f"director_qc:{film['report']}"
+    with Session(engine) as session, session.begin():
+        for task in session.scalars(select(TaskQueueItem)):
+            task.status = "DONE"
+        append_event(
+            session,
+            "runbook.film_continued",
+            "storyboard",
+            film["board"],
+            1,
+            {"status": "COMPLETED", "cause": f"director_qc:{film['report']}"},
+            "c",
+        )
+    monkeypatch.setattr(director_qc_review, "CAP_RULE_SINCE", "2000-01-01T00:00:00+00:00")
+    assert _pass(engine, settings) == {"queued": []}  # walked under the rule: it waits
 
 
 def test_after_the_restart_the_continuation_puts_the_film_before_her_and_publishes_it(

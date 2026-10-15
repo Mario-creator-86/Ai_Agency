@@ -49,6 +49,13 @@ LOOKBACK_DAYS = 7
 MAX_TRIES = 24
 #: The continuation's cause, per report: the walk records it on `runbook.film_continued`.
 CAUSE_PREFIX = "director_qc:"
+#: When the Owner's renders cap went live (ea51f27, 2026-10-15: three renders a layer, then
+#: she accepts the best and the film is published). A film that had used up its tries before
+#: that — «The Zero Script Club» (40 walks, 22 renders of scene 4) and the cyclotron (29
+#: walks), both standing since 13-14 October with «nimic nu se putea reface» — gets ONE walk
+#: under the rule, so her decision runs once more and the cap ships what there is. The Owner,
+#: 21:06Z: «Cu acestea ce facem? Le lasă așa?»
+CAP_RULE_SINCE = "2026-10-15T12:30:00+00:00"
 #: How long after her newest decision a walk's record still belongs to the walk that produced
 #: it: that walk heard her (`_heard_until`); a later one did not.
 HEARD_WINDOW = timedelta(minutes=5)
@@ -276,7 +283,18 @@ def queue_director_reviews(context: WatchdogContext) -> dict[str, Any]:
                 if (event.payload or {}).get("cause") == cause and event.timestamp
             )
             if int(state["tries"]) >= MAX_TRIES:
-                continue  # it waits in her inbox; a new report or his answer moves it
+                # It waits in her inbox; a new report or his answer moves it — except once
+                # under the renders cap: a film whose tries ran out before the cap rule has
+                # never been judged under it, and is walked one more time (CAP_RULE_SINCE).
+                if any(moment >= CAP_RULE_SINCE for moment in runs):
+                    continue
+                key = f"film-continue-{storyboard_id}-cap-rule-{report.id}"
+                standing = session.scalar(
+                    select(TaskQueueItem.id).where(TaskQueueItem.idempotency_key == key)
+                )
+                if standing is None:
+                    owed.append((storyboard_id, key, cause, str(report.id)))
+                continue
             # Asked before (a wait of hers, or a walk that ran): not again before RETRY_MINUTES,
             # and after walks that never reached her (safe mode, his mode, the film busy) twice
             # as long each time, so a refusal is neither a loop nor the end of the film.
