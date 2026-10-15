@@ -2099,3 +2099,11 @@ No provider was called, no run was queued, no credit was spent, and
 - Next: a RunPod job queued with no worker for longer than the cold start (06:15 → 07:38,
   today's film: RunPod expired it at its ttl, 83 min) should be given up earlier or the Owner
   told at once; a `scripts/restart.py` for the graceful self-restart (today: a scratchpad script).
+- 2026-10-15 evening — next: a GPU turned off by the guard during a step (`GUARD_STALE`,
+  16:52Z, because the poll was blocked by the Director's company call) ends the walk as
+  «STOPPED» with a letter «așteaptă decizia ta pe foaia de filmare» to the Owner
+  (`runbook/stages.py` ~2845) and the guard's own letter «GPU-ul RunPod a fost oprit de paznic»
+  is `for_owner` — both are the studio's own matter under the letters rule: the next pass
+  re-walks (it does, `serial_unfilmed_after_start`) and the Director is told, not him. Also:
+  `day_goal` counts a run the developer's restart cut (17:08Z) as one of its six.
+
