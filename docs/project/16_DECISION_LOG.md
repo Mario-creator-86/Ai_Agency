@@ -1,5 +1,9 @@
 # Architectural / Product Decision Log v5
 
+## Bucla de audit se oprește singură ca defect de unealtă (Proprietarul, 2026-10-15 20:14Z) (2026-10-15)
+
+Decizie: când Directoarea refuză aceleași cuvinte ale unei scene cu aceeași constatare de trei ori la rând (suprapunere de cuvinte ≥ 0,6), indiferent dacă rescrierile Editorului au aterizat, studioul înregistrează TOOL_DEFECT pe acele cuvinte, scrie nota pentru dezvoltator în firul Directoarei (rezolvată pe loc, niciodată scrisoare către Proprietar), oprește rundele și nu cumpără nimic pe scena aceea până se schimbă cuvintele. Motiv: Proprietarul — «trebuie să avem un proces automat care intervine în astfel de situații»; azi 16 refuzuri pe o scenă pentru propoziții ale compozitorului, pe care Editorul nu le putea atinge. Respins: continuarea nelimitată a rundelor (timp și nervi, fără convergență) și cumpărarea sub plafon (regula lui de la 18:15Z). Rămâne: rundele fără plafon pentru constatări diferite.
+
 ## Benzile de cuvinte ale prompturilor sunt 900 (Proprietarul, 2026-10-15 20:07Z) (2026-10-15)
 
 Decizie: STILL_WORDS 60–900 și MOTION_WORDS 25–900. Motiv: limitele de 120/110 erau ale studioului (după filmul Nepal, 1.10), nu ale furnizorului; compozitorul renunța la cameră, lumină și acțiune ca să încapă în ele și Directoarea refuza prompturile pentru ce lipsea — runde fără capăt. Furnizorul permite: worker-ul RunPod 20 000 de caractere pe prompt; plafonul de caractere rămâne singura plasă (prompt_cap). Respins: 160 (estimarea mea prudentă) — Proprietarul a cerut explicit 900 pentru ambele. Înlocuiește decizia benzilor din 1.10 și 11.10.

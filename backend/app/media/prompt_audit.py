@@ -59,6 +59,16 @@ APPROVED, REWRITE = "APPROVED", "REWRITE"
 #: video când e vorba de prompturi nu există sub plafon» — and read only so the clips bought
 #: on those words are not audited again.
 APPROVED_UNDER_CAP = "APPROVED_UNDER_CAP"
+#: Her refusal repeated for the same finding, round after round, while the Editor's rewrites
+#: keep landing: the words are not his to change — a composer or lint sentence the studio says
+#: by itself. The Owner, 2026-10-15 20:14Z: «trebuie să avem un proces automat care intervine
+#: în astfel de situații». After `SAME_FINDING_ROUNDS` such refusals the scene is recorded a
+#: TOOL_DEFECT: a note for the developer, the rounds stop, nothing is bought on it, and it is
+#: not asked about again while the words stand (`tool_defect_on`).
+TOOL_DEFECT = "TOOL_DEFECT"
+SAME_FINDING_ROUNDS = 3
+#: How much of the newest refusal the one before must already say to be the same finding.
+SAME_FINDING_OVERLAP = 0.6
 
 _INSTRUCTIONS = (
     "You are the Director. The studio is about to PAY the generation model for the {what} of "
@@ -99,7 +109,10 @@ _WHAT = {"still": "picture", "motion": "clip"}
 _STILL_NOTE = (
     "The picture is ONE frozen moment, the first of the plan: the plan's later moments "
     "(«then…», «lowers», «points») belong to the clip's words and are never in a picture's — "
-    "do not refuse a picture for lacking them. The studio composes the picture's words from "
+    "do not refuse a picture for lacking them. When the picture must show a LATER moment of "
+    "the plan's action (the payoff — the pointing, the lowered arm), brief the Video Editor to "
+    "write THAT moment as the action's first clause: the picture shows one moment and which "
+    "one is his to choose, never both. The studio composes the picture's words from "
     "the plan's fields within a budget of about 900 words, the room, the light and the "
     "composition after the subject: when one of them is missing, the subject or the action "
     "is too long — brief the Video Editor to SHORTEN that field (fewer clauses), never to add "
@@ -189,6 +202,81 @@ def approved_words(
         a.get("verdict") in (APPROVED, APPROVED_UNDER_CAP) and a.get("digest") == digest
         for a in _audits(session, storyboard_id, scene, layer)
     )
+
+
+def same_finding_streak(
+    session: Session, storyboard_id: str, scene: int, layer: str, reason: str
+) -> int:
+    """How many of the newest refusals of this scene's layer, back from the newest, say what
+    ``reason`` says (`lesson_overlap` >= SAME_FINDING_OVERLAP), ``reason`` itself counted."""
+    from app.media.prompt_agent import lesson_overlap  # noqa: PLC0415
+
+    streak = 1
+    for audit in reversed(_audits(session, storyboard_id, scene, layer)):
+        if audit.get("verdict") != REWRITE:
+            break
+        if lesson_overlap(str(reason or ""), str(audit.get("reason") or "")) < SAME_FINDING_OVERLAP:
+            break
+        streak += 1
+    return streak
+
+
+def tool_defect_on(
+    session: Session, storyboard_id: str, scene: int, layer: str, digest: str
+) -> dict[str, Any] | None:
+    """The TOOL_DEFECT recorded on exactly these words, if any: the scene waits for the
+    developer, not for another round."""
+    for audit in reversed(_audits(session, storyboard_id, scene, layer)):
+        if audit.get("verdict") == APPROVED and audit.get("digest") == digest:
+            return None
+        if audit.get("verdict") == TOOL_DEFECT and audit.get("digest") == digest:
+            return audit
+    return None
+
+
+def _note_tool_defect(
+    engine: Any, *, storyboard_id: str, scene: int, layer: str, reason: str, correlation_id: str
+) -> None:
+    """The Director's note for the developer, in her own thread, resolved at once (as
+    `agents.director._developer_defect` writes hers): never the Owner's letter."""
+    from app.agents.director import DEVELOPER_DEFECT_KIND  # noqa: PLC0415
+    from app.agents.memory import agent_for_role  # noqa: PLC0415
+    from app.agents.messages import post_message, resolve_message  # noqa: PLC0415
+
+    with Session(engine) as session, session.begin():
+        director = agent_for_role(session, "Director")
+        if director is None:
+            return
+        text = (
+            f"Scena {scene}, stratul {layer}: aceeași constatare refuzată de "
+            f"{SAME_FINDING_ROUNDS} ori la rând, deși Editorul a rescris de fiecare dată — "
+            f"cuvintele refuzate nu sunt ale lui, ci ale compozitorului sau ale lint-ului. "
+            f"Constatarea: {reason}"
+        )
+        row = post_message(
+            session,
+            intent="STATUS",
+            subject=f"Defect de unealtă (pentru dezvoltator): scena {scene}, {layer}",
+            body={
+                "kind": DEVELOPER_DEFECT_KIND,
+                "storyboard_id": storyboard_id,
+                "scene_index": scene,
+                "layer": layer,
+                "note": text,
+            },
+            body_text=text,
+            from_agent_id=director.id,
+            to_agent_id=director.id,
+            correlation_id=correlation_id,
+        )
+        resolve_message(
+            session,
+            row.id,
+            resolution="Notat pentru dezvoltator.",
+            resolved_by=director.display_name,
+            status="RESOLVED",
+            correlation_id=correlation_id,
+        )
 
 
 def briefs_given(session: Session, storyboard_id: str, scene: int, layer: str) -> int:
@@ -356,6 +444,58 @@ def _learn_from_brief(
         )
 
 
+def _repeated_finding(
+    engine: Any,
+    *,
+    result: dict[str, Any],
+    item: AuditedScene,
+    storyboard_id: str,
+    scene: int,
+    layer: str,
+    digest: str,
+    run_id: str | None,
+    correlation_id: str,
+) -> bool:
+    """Her refusal said for the SAME_FINDING_ROUNDS-th time running: recorded a TOOL_DEFECT,
+    noted for the developer, the scene held — True; else False and the rounds go on."""
+    with Session(engine) as session:
+        streak = same_finding_streak(session, storyboard_id, scene, layer, item.reason or "")
+    if streak < SAME_FINDING_ROUNDS:
+        return False
+    reason = item.reason or str((item.brief.diagnosis if item.brief else "") or "")
+    _record(
+        engine,
+        storyboard_id=storyboard_id,
+        scene=scene,
+        layer=layer,
+        digest=digest,
+        verdict=TOOL_DEFECT,
+        reason=reason,
+        run_id=run_id,
+        correlation_id=correlation_id,
+    )
+    _note_tool_defect(
+        engine,
+        storyboard_id=storyboard_id,
+        scene=scene,
+        layer=layer,
+        reason=reason,
+        correlation_id=correlation_id,
+    )
+    result["held"].append(
+        {
+            "scene_index": scene,
+            "reason": (
+                f"Scena {scene}: aceeași constatare de {streak} ori la rând cu rescrieri care "
+                "nu o pot atinge — defect de unealtă, notat pentru dezvoltator; nimic nu se "
+                "cumpără."
+            ),
+            "developer_defect": True,
+        }
+    )
+    return True
+
+
 def _brief_of(item: AuditedScene, layer: str) -> dict[str, Any]:
     """Her brief for the Editor's rewrite, on this layer; a refusal without one is a brief
     of its reason."""
@@ -432,6 +572,20 @@ def audit_before_purchase(
             if approved_words(session, storyboard_id, scene, layer, digest):
                 result["approved"].append(scene)
                 continue
+            defect = tool_defect_on(session, storyboard_id, scene, layer, digest)
+        if defect is not None:
+            result["held"].append(
+                {
+                    "scene_index": scene,
+                    "reason": (
+                        f"Scena {scene}: defect de unealtă notat pentru dezvoltator "
+                        f"({str(defect.get('reason') or '')[:200]}); cuvintele nu se cumpără "
+                        "și nu se mai cer runde până nu se schimbă."
+                    ),
+                    "developer_defect": True,
+                }
+            )
+            continue
         to_ask[scene] = context
         digests[scene] = digest
     if not to_ask:
@@ -483,6 +637,18 @@ def audit_before_purchase(
                 correlation_id=correlation_id,
             )
             result["approved"].append(scene)
+            continue
+        if _repeated_finding(
+            engine,
+            result=result,
+            item=item,
+            storyboard_id=storyboard_id,
+            scene=scene,
+            layer=layer,
+            digest=digests[scene],
+            run_id=run.get("id"),
+            correlation_id=correlation_id,
+        ):
             continue
         brief = _brief_of(item, layer)
         rounds = 1  # her brief in the batch above
@@ -600,6 +766,18 @@ def audit_before_purchase(
                     correlation_id=correlation_id,
                 )
                 result["approved"].append(scene)
+                break
+            if _repeated_finding(
+                engine,
+                result=result,
+                item=item,
+                storyboard_id=storyboard_id,
+                scene=scene,
+                layer=layer,
+                digest=digests[scene],
+                run_id=run.get("id"),
+                correlation_id=correlation_id,
+            ):
                 break
             brief = _brief_of(item, layer)
     return result

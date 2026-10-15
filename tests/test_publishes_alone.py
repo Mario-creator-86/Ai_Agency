@@ -1088,10 +1088,13 @@ def test_the_director_audits_a_scenes_words_before_the_first_purchase(
     third = prompt_audit.audit_before_purchase(
         engine, object(), storyboard_id=board, step="stills", scenes=[1, 2], correlation_id="c"
     )
-    # No cap on her rounds (the Owner, 18:15Z): scene 2's unchanged words are asked about
-    # again, her brief rewritten again; nothing is bought on words she refused.
-    assert third["approved"] == [1] and third["rewritten"] == [2], third
-    assert third["held"] == [] and "under_cap" not in third and third["asked"] is True
+    # No cap on her rounds (the Owner, 18:15Z) — and the same finding a third time running,
+    # while his rewrites land, is a tool defect for the developer (20:14Z): scene 2 is held,
+    # nothing is bought on words she refused, and she is not asked a fourth time.
+    assert third["approved"] == [1] and third["rewritten"] == [], third
+    (held_two,) = third["held"]
+    assert held_two["scene_index"] == 2 and held_two.get("developer_defect") is True
+    assert "under_cap" not in third and third["asked"] is True
     assert "Judge ONLY words_to_send" in prompt_audit._INSTRUCTIONS
     assert prompt_audit._plan_without_props(
         {
@@ -1149,22 +1152,123 @@ def test_the_director_audits_a_scenes_words_before_the_first_purchase(
     # answer it (16:10Z: clips bought on refused words after one miss), up to the walk's
     # bound; then the scene waits for her next walk — approved by nobody, bought by nobody.
     assert fourth["approved"] == [] and "under_cap" not in fourth and fourth["asked"] is True
-    assert len(asked) - before == prompt_audit.ROUNDS_PER_WALK - 1  # the batch ask + 6 rounds
+    # The same finding three rounds running while no rewrite can answer it: a tool defect
+    # for the developer (the Owner, 20:14Z), not a seventh round and not a purchase.
+    assert len(asked) - before == prompt_audit.SAME_FINDING_ROUNDS
     assert "previous_round" in asked[-1]["prompt"] and "stratul still" in asked[-1]["prompt"]
     assert "say the wall is bare" in asked[-1]["prompt"]
     (held,) = fourth["held"]
-    assert held["scene_index"] == 1 and "trecerea următoare" in held["reason"], held
+    assert held["scene_index"] == 1 and held.get("developer_defect") is True, held
+    assert "defect de unealtă" in held["reason"]
     with Session(engine) as session:
         assert (
             prompt_audit.briefs_given(session, board, 1, "still")
-            == prompt_audit.ROUNDS_PER_WALK - 1
+            == prompt_audit.SAME_FINDING_ROUNDS - 1
         )
     with Session(engine) as session:
         scene_rows = session.scalars(
             select(StoryboardScene).where(StoryboardScene.storyboard_id == board)
         ).all()
         assert len(scene_rows) == 2
-        assert prompt_audit.briefs_given(session, board, 2, "still") == 3  # one per call
+        assert prompt_audit.briefs_given(session, board, 2, "still") == 2  # then the defect
+
+
+def test_the_same_refusal_three_rounds_running_is_a_tool_defect_for_the_developer(
+    engine, tmp_path, monkeypatch
+):
+    """The Owner, 2026-10-15 20:14Z: «trebuie să avem un proces automat care intervine în
+    astfel de situații». Scene 2 of 7c26a7ce was refused eight rounds for a sentence the
+    composer kept putting back: after three refusals with the same finding while the Editor's
+    rewrites kept landing, the scene is a TOOL_DEFECT — a developer note, no more rounds,
+    nothing bought, and not asked about again while the words stand."""
+    from app.agents.director import DEVELOPER_DEFECT_KIND
+    from app.agents.models import AgentMessage
+    from app.agents.services import seed_initial_workforce
+    from app.media import prompt_audit
+    from app.media.models import StoryboardScene
+    from test_film_costing import a_film
+
+    board = a_film(engine, tmp_path, scenes=1)
+    with Session(engine) as session, session.begin():
+        for row in session.scalars(
+            select(StoryboardScene).where(StoryboardScene.storyboard_id == board)
+        ):
+            row.prompt_json = {
+                **dict(row.prompt_json or {}),
+                "subject": "the scientist's hands on the bar",
+                "action": "her hands lift the bar",
+                "still_prompt": "Hands on the bar, take 0. Any people appear only as small "
+                "distant figures seen from behind.",
+            }
+    seed_initial_workforce(engine)
+    asked: list[str] = []
+    finding = (
+        "The words carry the wide-frame people clause 'small distant figures seen from behind' "
+        "inside a detail shot of hands; take it out and state the face rule at the shot's scale"
+    )
+
+    def refusing(engine_, registry, agent_id, task_type, prompt, *a, **kw):
+        asked.append(prompt)
+        answer = prompt_audit.PromptAudit(
+            scenes=[
+                prompt_audit.AuditedScene(
+                    scene_index=1,
+                    approved=False,
+                    reason=finding,
+                    brief=prompt_audit.AuditBrief(
+                        diagnosis=finding,
+                        layer="still",
+                        avoid=["small distant figures"],
+                        keep=["the hands"],
+                        change=["state the face rule at the shot's scale"],
+                        summary_ro="Scoate clauza de cadru larg.",
+                    ),
+                )
+            ]
+        )
+        return answer, {"id": "run-x", "status": "SUCCEEDED"}, None
+
+    rewrites: list[int] = []
+
+    def landing_rewrite(engine_, registry, context, brief, correlation_id):
+        # His rewrite lands and changes the words — the composer puts the clause back.
+        rewrites.append(1)
+        with Session(engine) as session, session.begin():
+            for row in session.scalars(
+                select(StoryboardScene).where(StoryboardScene.storyboard_id == board)
+            ):
+                row.prompt_json = {
+                    **dict(row.prompt_json or {}),
+                    "still_prompt": f"Hands on the bar, take {len(rewrites)}. Any people appear "
+                    "only as small distant figures seen from behind.",
+                }
+        return {"rewritten": True, "layer": "still"}
+
+    monkeypatch.setattr("app.agents.structured.structured_run", refusing)
+    monkeypatch.setattr("app.media.scene_rewrite.rewrite_scene", landing_rewrite)
+    outcomes = []
+    for _ in range(4):
+        outcomes.append(
+            prompt_audit.audit_before_purchase(
+                engine, object(), storyboard_id=board, step="stills", scenes=[1], correlation_id="c"
+            )
+        )
+    # Round 1 and 2: rewritten; round 3: the same finding a third time — a tool defect.
+    assert outcomes[0]["rewritten"] == [1] and outcomes[1]["rewritten"] == [1], outcomes
+    (held,) = outcomes[2]["held"]
+    assert held["scene_index"] == 1 and held.get("developer_defect") is True
+    assert "defect de unealtă" in held["reason"] and outcomes[2]["approved"] == []
+    # Round 4: the words stand, nobody is asked, the scene still waits for the developer.
+    assert outcomes[3]["asked"] is False and outcomes[3]["held"][0].get("developer_defect")
+    assert len(asked) == 3 and len(rewrites) == 2
+    with Session(engine) as session:
+        notes = [
+            m
+            for m in session.scalars(select(AgentMessage))
+            if isinstance(m.body_json, dict) and m.body_json.get("kind") == DEVELOPER_DEFECT_KIND
+        ]
+        assert len(notes) == 1 and notes[0].status == "RESOLVED"
+        assert "small distant figures" in str(notes[0].body_text)
 
 
 def test_the_walk_audits_before_it_pays_and_her_hold_is_not_the_owners():
