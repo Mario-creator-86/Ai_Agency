@@ -35,7 +35,12 @@ from app.media.serial_storyboard import (
 from app.models import OwnerPolicy
 from app.services import command_hash, queue_film_continue, recall_command, remember_command
 from app.story.models import DailyStudioLog, StoryEpisode
-from app.story.review import ReviewError, approve_reviewed_episode, judged_review
+from app.story.review import (
+    ReviewError,
+    approve_reviewed_episode,
+    approve_under_drafts_cap,
+    judged_review,
+)
 from app.story.services import (
     DraftRefused,
     NothingHappened,
@@ -457,6 +462,16 @@ def _tell_the_day(
             counts["editorial"] = review.get("editorial")
             break
         notes = review.get("notes") or "; ".join(review.get("reasons") or [])
+        if stored >= MAX_DRAFTS_PER_DAY:
+            # The day's drafts are spent on her reading alone: the newest ships, approved
+            # under the cap (the Owner, 2026-10-15: «publicăm ce avem»), her notes the
+            # lesson for the next episode; a draft the checks refused never ships.
+            shipped = approve_under_drafts_cap(engine, episode_id, notes, str(uuid4()))
+            if shipped is not None:
+                counts["cap_shipped"] = True
+                counts["editorial"] = None
+                review = {**review, "status": "APPROVED", "verdict": "PASS"}
+                break
         if drafts >= MAX_DRAFTS or stored >= MAX_DRAFTS_PER_DAY:
             counts["refusal"] = f"FAIL: {notes}"
             then = (
@@ -484,6 +499,10 @@ def _tell_the_day(
             **counts,
         )
     counts["approved"] += 1
+    if counts.get("cap_shipped"):
+        logger.info(
+            "episode_approved_under_cap", extra={"log_id": log_id, "episode_id": episode_id}
+        )
     if not _ready_for_filming(engine, episode_id, counts, correlation, registry):
         return _outcome(
             COMPLETED, f"Episodul aprobat nu a devenit storyboard: {counts['refusal']}", **counts

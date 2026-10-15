@@ -1258,3 +1258,54 @@ def test_a_line_or_a_narration_without_its_full_stop_gets_one_and_the_writers_ar
     assert scene.narration.endswith("verified.")
     assert "Punctuate every line as speech" in story._INSTRUCTIONS
     assert "semne de punctuație" in agent_pipeline._WRITE_INSTRUCTIONS
+
+
+# ------------------------------------------------------ 20. research reads the topic itself
+
+
+def test_a_found_page_with_no_word_of_the_topic_is_not_read_and_a_title_asks_its_last_words():
+    """2026-10-15, d7d80450: the suggestion search for «Type Ia» found Type Ia supernova — and
+    Type Iax supernova, Type Ia sensory fiber and Type O Negative, read and verified into
+    claims about a metal band; the day before, «Discovery» found the channel and the album.
+    A page whose title shares no word of substance with the topic is left aside; a
+    title-case title asks its last two words too («Dark Energy»)."""
+    from app.research.agent import relevant_pages, search_queries
+
+    title = "The Supernova Surprise: How Distant Explosions Revealed Dark Energy"
+    topic = "Discovery that the universe's expansion is accelerating thanks to Type Ia supernovae"
+    thesis = "In 1998 two teams found distant Type Ia supernovae dimmer than expected."
+    found = [
+        {"url": "https://en.wikipedia.org/wiki/Type_Ia_supernova", "title": "Type Ia supernova"},
+        {"url": "https://en.wikipedia.org/wiki/Type_Iax_supernova", "title": "Type Iax supernova"},
+        {
+            "url": "https://en.wikipedia.org/wiki/Type_Ia_sensory_fiber",
+            "title": "Type Ia sensory fiber",
+        },
+        {"url": "https://ro.wikipedia.org/wiki/Type_O_Negative", "title": "Type O Negative"},
+        {"url": "https://science.nasa.gov/dark-energy", "title": "Dark energy - NASA Science"},
+    ]
+    kept = [page["title"] for page in relevant_pages(found, title, topic, thesis)]
+    assert kept == ["Type Ia supernova", "Type Iax supernova", "Dark energy - NASA Science"]
+    assert relevant_pages(found, "", "", "") == found  # nothing to compare: every page stays
+    queries = search_queries(title, topic)
+    assert "Dark Energy" in queries and "Type Ia" in queries and "Discovery" not in queries
+
+
+def test_the_reader_of_a_source_is_told_the_films_thesis_first():
+    """Ten claims on white dwarfs and none on the 1998 discovery the film rests on
+    (2026-10-15): the reader is told the title and the thesis, as data, and asked for the
+    claims that support or refute the core fact first."""
+    from types import SimpleNamespace
+
+    from app.factual.agent_pipeline import _EXTRACT_INSTRUCTIONS, extraction_thesis_brief
+
+    topic = SimpleNamespace(
+        title="The Supernova Surprise",
+        topic="the accelerating universe",
+        thesis_json={"core_fact": "In 1998 distant supernovae were dimmer.", "hook": "What if"},
+    )
+    brief = extraction_thesis_brief(topic)
+    assert "SUBIECTUL FILMULUI" in brief and "In 1998 distant supernovae were dimmer." in brief
+    assert extraction_thesis_brief(None) == ""
+    assert extraction_thesis_brief(SimpleNamespace(title="", topic="", thesis_json={})) == ""
+    assert "MAI ÎNTÂI" in _EXTRACT_INSTRUCTIONS and "până la 14" in _EXTRACT_INSTRUCTIONS

@@ -683,6 +683,10 @@ def search_queries(title: str, topic: str = "") -> list[str]:
             queries.append(" ".join(group[:4]))
             if len(group) >= 3:
                 queries.append(" ".join(group[:2]))
+            if len(group) >= 5:
+                # A title-case title is one long «run» («How Distant Explosions Revealed
+                # Dark Energy», 2026-10-15): its last two words are what it is about.
+                queries.append(" ".join(group[-2:]))
             if group[0].isupper() and len(group[0]) >= 3:
                 queries.append(group[0])  # an acronym is a name on its own: UNESCO, CERN, LHC
     ordered: list[str] = []
@@ -720,6 +724,78 @@ _FOUND_INSTRUCTIONS = (
     "not in this list is a guess and is not fetched today:\n"
 )
 #: Why a guessed address is set aside when real pages exist; shown in the run's record.
+#: Words that say nothing about a topic (a page is relevant by its other words).
+_PAGE_STOPWORDS = frozenset(
+    {
+        "about",
+        "after",
+        "before",
+        "being",
+        "between",
+        "could",
+        "every",
+        "first",
+        "from",
+        "their",
+        "there",
+        "these",
+        "thing",
+        "things",
+        "those",
+        "through",
+        "under",
+        "where",
+        "which",
+        "while",
+        "with",
+        "would",
+        "wikipedia",
+        "other",
+        "should",
+        "still",
+        "never",
+        "always",
+        "during",
+        "against",
+        "without",
+    }
+)
+
+
+def _topic_words(*texts: str) -> set[str]:
+    words: set[str] = set()
+    for text in texts:
+        for word in re.findall(r"[A-Za-zÀ-ž]+", str(text or "")):
+            low = word.lower()
+            if len(low) >= 5 and low not in _PAGE_STOPWORDS:
+                words.add(low)
+                if low.endswith("s"):
+                    words.add(low[:-1])
+    return words
+
+
+def relevant_pages(
+    found: list[dict[str, Any]], title: str, topic: str = "", thesis: str = ""
+) -> list[dict[str, Any]]:
+    """The found pages whose title shares a word of substance with the topic. 2026-10-15,
+    d7d80450: the suggestion search for «Type Ia» returned Type Ia supernova — and Type Iax
+    supernova, Type Ia sensory fiber and Type O Negative, read and «verified» into 40 claims
+    about a metal band; the day before, «Discovery» found the channel, the album and the
+    ship. A page with no word of the topic in its title is not read. With no words to
+    compare (an empty topic), every page stays."""
+    wanted = _topic_words(title, topic, thesis)
+    if not wanted:
+        return list(found)
+    kept: list[dict[str, Any]] = []
+    for page in found:
+        name = " ".join(
+            (str(page.get("title") or ""), str(page.get("url") or "").rsplit("/", 1)[-1])
+        ).replace("_", " ")
+        if _topic_words(name) & wanted:
+            kept.append(page)
+    return kept
+
+
 GUESS_SET_ASIDE = (
     "adresă ghicită, nefolosită: studioul a găsit pagini reale pentru subiect și citește "
     "doar dintre ele"
@@ -758,6 +834,9 @@ def gather_sources(
             raise NoResearcher("Niciun cercetător activ")
         researcher_id = researcher.id
         title, angle = topic.title, topic.angle
+        thesis = topic.thesis_json if isinstance(topic.thesis_json, dict) else {}
+        core_fact = " ".join(str(v) for v in thesis.values() if isinstance(v, str))
+        subject_line = str(topic.topic or "")
         planned = [h for h in (topic.source_plan_json or []) if h in hosts]
         already = {
             row.url
@@ -772,11 +851,13 @@ def gather_sources(
     # plan that starts from them is read. `found_via` says which way found what and how
     # many engine results fell outside the allowlist.
     found_via: dict[str, Any] = {}
-    found = [
+    found_all = [
         p
-        for p in find_pages(settings, engine, search_queries(title, topic.topic), report=found_via)
+        for p in find_pages(settings, engine, search_queries(title, subject_line), report=found_via)
         if p["url"] not in already
     ]
+    found = relevant_pages(found_all, title, subject_line, core_fact)
+    found_via["set_aside_irrelevant"] = [p["url"] for p in found_all if p not in found]
     payload = json.dumps({"title": title, "angle": angle}, ensure_ascii=False)
     prompt = _SOURCE_INSTRUCTIONS.format(limit=limit, hosts=", ".join(shortlist[:12]))
     if found:
@@ -835,9 +916,12 @@ def gather_sources(
         url = candidate.url.strip()
         if url.rstrip("/") in {u.rstrip("/") for u in already}:
             continue
-        if found and url.rstrip("/") not in found_urls:
-            # Real pages exist for this topic: a guess is not fetched, and its being set
-            # aside is recorded so the Director can see the plan and the choice.
+        if len(found) >= limit and url.rstrip("/") not in found_urls:
+            # Enough real pages exist for this topic: a guess is not fetched, and its
+            # being set aside is recorded so the Director can see the plan and the choice.
+            # Fewer relevant pages than the limit (2026-10-15: one of four, the rest a
+            # metal band and a nerve fibre): the Researcher's own addresses are read too —
+            # a wrong guess answers 404 and costs nothing.
             failed.append({"url": url, "why": GUESS_SET_ASIDE})
             continue
         read(url)

@@ -397,3 +397,29 @@ def test_the_route_says_what_could_not_be_stored_as_the_write_route_does(
         f"/api/v1/story/logs/{quiet['id']}/tell", json={"command_id": str(uuid4())}, headers=headers
     )
     assert quiet_day.status_code == 409 and "liniștită" in quiet_day.json()["detail"]
+
+
+def test_a_day_whose_drafts_her_reading_spent_ships_its_newest_draft_under_the_cap(
+    engine, staffed, settings, monkeypatch
+):
+    """The Owner, 2026-10-15 («publicăm ce avem»): episode 3 was refused three times by the
+    Director's reading and the serial moved to another day. A day whose drafts are spent on
+    her reading alone ships its newest draft, approved under the cap with her notes as the
+    lesson; a draft the computed checks refused never ships (the test above keeps that)."""
+    prompts: list[str] = []
+    log = a_told_day(engine, monkeypatch, prompts)
+    allow_director_approval(engine)
+    fake_director(monkeypatch, "FAIL", notes="Rebuild around one situation that changes.")
+    press(engine, settings, log["id"])
+    assert len(episode_rows(engine)) == 2
+
+    outcome = press(engine, settings, log["id"])
+
+    artefacts = outcome["artefacts"]
+    assert artefacts["written"] == 1 and artefacts["approved"] == 1, outcome
+    assert artefacts.get("cap_shipped") is True
+    rows = episode_rows(engine)
+    assert len(rows) == MAX_DRAFTS_PER_DAY
+    assert [row.status for row in rows] == ["REJECTED", "REJECTED", "APPROVED"]
+    assert "Aprobat sub plafonul ciornelor zilei" in (rows[2].notes or "")
+    assert artefacts["storyboard_id"], outcome

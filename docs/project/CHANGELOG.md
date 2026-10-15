@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-15 — The serial ships its newest draft under the drafts cap; research reads the topic itself
+
+- `story/review.py` `approve_under_drafts_cap` + `story/serial_stage.py`: a day whose drafts the Director's reading alone spent ships its newest draft, approved under the cap with her notes as the lesson (the Owner, 2026-10-15: «publicăm ce avem»); a draft the computed checks refused never ships.
+- `research/agent.py`: `relevant_pages` leaves aside found pages whose title shares no word of substance with the topic; the Researcher's own addresses are read when the relevant pages are fewer than the limit; a title-case title also asks its last two words.
+- `factual/agent_pipeline.py`: `extraction_thesis_brief` tells the reader of a source the film's title and thesis, as data, to extract the claims that carry the story first; up to 14 claims.
+- Tests: `test_publishes_alone` section 20, `test_serial_tell_now`; 212 passed across the serial, research and pipeline suites.
+
 ## 2026-10-15 — The serial shot brief: complete the first time, a scene with living people
 
 - `media/prompt_agent.py` `_SERIAL_SHOTS_INSTRUCTIONS`: the Owner, 2026-10-15 14:15Z («instrucțiunile primului prompt să fie complete din prima; dinamică, suspans, caractere vii; comedie, suspans, frică; creează o scenă, spune o poveste»). The brief now asks, per beat: the room named only by its own objects (no other room's equipment, no screen unless the beat needs one, then dark); the first moment as one short clause before any desk detail (pose, hands, worn props); the beat's movement as a chain of two or three moments with a beginning and an end (the still is the first moment, the clip plays the chain); the feeling shown in the body; the camera as a storytelling choice, varied, never the same move twice in a row, static only for a held breath, never a timid zoom on a face; a sticky note among the objects that carry writing. Test 17 of `test_publishes_alone` pins the phrases (serial suites 85 passed). Goes live at the next restart, before episode 3's shots are described.

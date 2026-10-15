@@ -989,6 +989,42 @@ def _approve(session: Session, episode: StoryEpisode, story: str, correlation: s
     advance_continuity(session, episode, correlation)
 
 
+#: What the approval under the drafts cap writes as the episode's note.
+DRAFTS_CAP_NOTE = (
+    "Aprobat sub plafonul ciornelor zilei (Proprietarul, 2026-10-15: «publicăm ce avem»): "
+    "cea mai nouă ciornă, cu observațiile Directoarei ca lecție pentru episodul următor."
+)
+
+
+def approve_under_drafts_cap(
+    engine: Engine, episode_id: str, notes: str, correlation: str
+) -> dict[str, Any] | None:
+    """The day's newest draft, refused by the Director's reading alone, approved when the
+    day's drafts are spent: the Owner, 2026-10-15 («Nu putem să ne învârtim la nesfârșit
+    la același subiect … publicăm ce avem»). None — nothing changes — when the draft was
+    refused by the computed checks (a stranger cast, an event that did not happen: not
+    hers to wave through), or when the channel's policy does not let her approve alone.
+    Returns {"episode_id", "status": "APPROVED", "note"}."""
+    with Session(engine) as session, session.begin():
+        episode = session.get(StoryEpisode, episode_id)
+        if episode is None or str(episode.reviewed_by or "") != "director":
+            return None
+        if episode.status != "REJECTED" or not director_may_approve_episodes(session):
+            return None
+        note = f"{DRAFTS_CAP_NOTE} Observațiile ei: {' '.join(str(notes or '').split())[:600]}"
+        _approve(session, episode, note, correlation)
+        append_event(
+            session,
+            "story.episode_approved_under_cap",
+            "story_episode",
+            episode.id,
+            4,
+            {"log_id": episode.log_id, "notes": str(notes or "")[:600]},
+            correlation,
+        )
+        return {"episode_id": episode.id, "status": "APPROVED", "note": note}
+
+
 def review_episode(
     engine: Engine,
     registry: ProviderRegistry | None,
