@@ -561,6 +561,12 @@ def _check_required_capabilities(
 
 #: A run still marked RUNNING after this long is one the process never came back to.
 RUN_STALE_AFTER_SECONDS = 45 * 60
+#: When this process started: a RUNNING row older than that was left by a process that
+#: is gone (a restart during the call). 2026-10-15 07:16Z: the Director's
+#: prompt_lesson_reading run outlived a hard stop and for 45 minutes every call of hers
+#: was refused «already has an active task» — no look, no brief, no review, the film
+#: sent back to its still with nobody looking.
+PROCESS_STARTED_AT = utc_now()
 
 
 def _has_live_run(session: Session, agent_id: str) -> bool:
@@ -577,11 +583,15 @@ def _has_live_run(session: Session, agent_id: str) -> bool:
     for run in session.scalars(
         select(AgentRun).where(AgentRun.agent_id == agent_id, AgentRun.status == "RUNNING")
     ):
-        if run.started_at >= limit:
+        if run.started_at >= limit and run.started_at >= PROCESS_STARTED_AT:
             live = True
             continue
         run.status = "ABANDONED"
-        run.error_detail = "Rularea nu s-a mai încheiat: procesul s-a oprit în timpul apelului."
+        run.error_detail = (
+            "Rularea nu s-a mai încheiat: procesul s-a oprit în timpul apelului."
+            if run.started_at >= limit
+            else "Rularea nu s-a mai încheiat: procesul s-a oprit în timpul apelului (veche)."
+        )
         run.finished_at = utc_now()
     return live
 

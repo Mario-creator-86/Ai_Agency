@@ -1,6 +1,6 @@
 {
-  "observed_at": "2026-10-15T07:25:32.098813+00:00",
-  "event_cursor": 24447,
+  "observed_at": "2026-10-15T07:52:16.542640+00:00",
+  "event_cursor": 24533,
   "claimed_tasks": [],
   "recent_runs": [
     {
@@ -393,13 +393,13 @@
       "source_changes_in_this_diagnosis": false
     }
   },
-  "last_reported_event_cursor": 24447,
-  "last_reported_summary": "Sarah/Deepseek a privit efectiv primul clip, l-a acceptat cu abatere minoră și a restaurat imaginea și clipul (ambele accepted=1), fără regenerare. Restul mișcării rămâne blocat HERO_NOT_APPROVED: poarta cadrului de probă citește vechiul QC FAILED pentru clipul PAID/director_look și cere Owner. Nu este refuz bugetar. Filmul nu e finalizat.",
+  "last_reported_event_cursor": 24533,
+  "last_reported_summary": "Lotul video este încheiat: clipuri acceptate pentru scenele1 și4; scenele2,3,5,6 respinse, scena7 încă fără imagine acceptată/clip. Workerul confirmă LTX-2.5 și aceeași revizie de greutăți pentru toate5 clipuri. Sarah nu poate verifica/reface: taskprompt_lesson_reading a82c69f6 RUNNING din07:16UTC(10:16local), toate noile briefs/second looks blocate înainte de apelul modelului. GPU oprit verificat, nicio regenerare nouă, film nefinalizat. ZeroScriptClub rămâne OVER_DAILY_BUDGET.",
   "monitoring_status": "NEW_STILL_ACCEPTED_VISUAL_MISMATCH_AND_OLD_IMAGE_CAP_BLOCKS_VIDEO",
   "studio_status": {
     "autonomy_stopped": false,
     "autonomy_mode": "AUTONOMOUS_CEO",
-    "api_unreachable": true,
+    "api_unreachable": false,
     "daily_run_stored_status": "RUNNING",
     "daily_run_id": "fce118fd-4aa2-443a-813a-66b46ffcb3bb",
     "daily_stages_completed": 11,
@@ -414,25 +414,26 @@
   },
   "policy_changed_after_last_report": false,
   "service_check": {
-    "at": "2026-10-15T07:25:32.098813+00:00",
-    "live": "UNREACHABLE",
-    "ready": "UNREACHABLE",
-    "service_started_by_monitor": false,
-    "no_new_shutdown_event_yet": true
+    "at": "2026-10-15T07:52:16.542640+00:00",
+    "live": 200,
+    "ready": 200,
+    "worker": "OK",
+    "service_started_by_monitor": false
   },
   "last_run_inspected": {
-    "id": "a82c69f6-a01f-4fd2-a020-3e33552aed5a",
-    "task_type": "prompt_lesson_reading",
+    "id": "5a2eb51c-93bb-49d1-b084-b3956b7f6e0e",
+    "task_type": "director_scene_brief",
     "model_name": "deepseek-v4.1-flash",
-    "status": "RUNNING",
-    "started_at": "2026-10-15T07:16:00.170325+00:00",
-    "finished_at": null
+    "status": "BLOCKED_POLICY",
+    "started_at": "2026-10-15T07:49:08.900293+00:00",
+    "finished_at": "2026-10-15T07:49:09.082493+00:00",
+    "provider_model_call_executed": false
   },
   "last_event_inspected": {
-    "sequence": 24447,
-    "event_id": "354d311c-6dd7-48c8-8b9a-a7e39925c7d8",
-    "event_type": "agent.state_changed",
-    "timestamp": "2026-10-15T07:16:00.332452+00:00"
+    "sequence": 24533,
+    "event_id": "617076a1-46ca-46a9-9171-ef9278d015f3",
+    "event_type": "runbook.film_continued",
+    "timestamp": "2026-10-15T07:49:09.093014+00:00"
   },
   "local_reference_and_response_repairs": {
     "reference_doc": "REFERENCE_ROUTE_WARDROBE_AND_STUDIO_WAIT_2026-10-15.md",
@@ -492,12 +493,14 @@
     "stopped_at_stage": "serial_queue"
   },
   "last_quiet_check": {
+    "at": "2026-10-15T07:46:50.006500+00:00",
     "decision": "DONT_NOTIFY",
-    "reason": "local_service_unreachable_and_no_new_events_or_generation",
-    "event_cursor_unchanged": 24447,
-    "known_hero_gate_block_already_reported": true,
+    "reason": "batch_still_in_progress_known_quality_and_director_busy_issues_no_new_kind_of_blocker",
+    "events_inspected_from": 24484,
+    "events_inspected_through": 24501,
     "all_saved_v3_prompts_preserved": true,
-    "request_count": 17,
+    "request_count": 22,
+    "new_gpu_request": false,
     "models_called_by_monitor": false,
     "source_or_policy_changed_by_monitor": false
   },
@@ -663,14 +666,12 @@
     "notification_sent_once": true
   },
   "last_check": {
-    "at": "2026-10-15T07:17:24.858308+00:00",
+    "at": "2026-10-15T07:52:16.542640+00:00",
     "decision": "NOTIFY",
-    "events_inspected_from": 24388,
-    "events_inspected_through": 24447,
-    "service_live": 200,
-    "service_ready": 200,
-    "new_accepted_existing_clip": true,
-    "new_gpu_request": false,
+    "events_inspected_from": 24502,
+    "events_inspected_through": 24533,
+    "all_saved_v3_prompts_preserved": true,
+    "request_count": 22,
     "models_called_by_monitor": false,
     "source_or_policy_changed_by_monitor": false
   },
@@ -2000,12 +2001,14 @@
       "image_request_count": 14,
       "image_prompt_char_min": 1730,
       "image_prompt_char_max": 1930,
-      "video_request_count": 3,
+      "video_request_count": 8,
       "new_requests_after_rewrite": 0,
       "all_match_saved_at_0614_check": true,
       "all_match_saved_at_0634_check": true,
       "new_image_regeneration_after_rewrite": false,
-      "latest_motion_matches_saved": true
+      "latest_motion_matches_saved": true,
+      "latest_five_motion_prompts_match_saved": true,
+      "all_five_first_frames_match_approved_scene_stills": true
     },
     "second_video_request_verified": {
       "job_id": "6d6739c7-1cc8-42c1-b397-d0c1f9962a9d",
@@ -2132,7 +2135,593 @@
       "code_verified": "assembler.hero_gate reads prior media.clip_qc_checked verdict for PAID takes; restored take is PAID with approved_by director_look, so old FAILED remains a gate blocker. Only APPROVED status bypasses that check.",
       "source_path": "backend/app/media/assembler.py",
       "source_line": 10045,
-      "no_gate_or_verdict_changed_by_monitor": true
+      "no_gate_or_verdict_changed_by_monitor": true,
+      "resolved_at_event": 24455,
+      "resolved": true,
+      "new_effective_clip_qc_event": 24453,
+      "effective_verdict": "PASSED",
+      "accepted_by": "director_look",
+      "existing_raw_failed_checks_retained_as_history": true,
+      "new_qc_model_call_not_needed_for_propagating_existing_director_look": true,
+      "rest_of_motion_now_submitted": true
+    },
+    "five_scene_motion_batch": [
+      {
+        "id": "c0db1e79-9656-4999-a0a7-df01a0ee3f33",
+        "project_id": "2d276038-2009-4a6a-a75f-32ba5ab4b1ff",
+        "scene_id": "2",
+        "operation": "video",
+        "model": "LTX-2.5",
+        "status": "COMPLETED",
+        "created_at": "2026-10-15T07:28:56.130720+00:00",
+        "prompt_chars": 542,
+        "actual_motion_equals_saved": true,
+        "saved_version": 3,
+        "source_digest": {
+          "sha256": "5f4396f6cd6553ac563601c7fc53e881ce887abfa26749ebcac718108ffff709",
+          "bytes": 586431,
+          "mime": "image/jpeg"
+        },
+        "source_matches": [
+          {
+            "take_id": "f308b171-12cf-447a-aae1-304f7831a9c4",
+            "scene": 2,
+            "status": "APPROVED",
+            "png_sha_matches": true
+          }
+        ],
+        "accepted": 0,
+        "finished_at": "2026-10-15T07:33:44.638890+00:00",
+        "worker_model": "LTX-2.5",
+        "worker_weights_revision": "346175657989c5c6256985b148153c1b9839a145"
+      },
+      {
+        "id": "44762138-9e18-4fd6-8ab0-3b9c09a560cb",
+        "project_id": "2d276038-2009-4a6a-a75f-32ba5ab4b1ff",
+        "scene_id": "3",
+        "operation": "video",
+        "model": "LTX-2.5",
+        "status": "COMPLETED",
+        "created_at": "2026-10-15T07:28:56.134613+00:00",
+        "prompt_chars": 515,
+        "actual_motion_equals_saved": true,
+        "saved_version": 3,
+        "source_digest": {
+          "sha256": "13dc6ad1cf8e882f76157d4357c5ede08a85c184c0c1f8d5d0c762d62c3e9479",
+          "bytes": 607359,
+          "mime": "image/jpeg"
+        },
+        "source_matches": [
+          {
+            "take_id": "f215456e-ad51-4aaf-aaea-d038be431e4a",
+            "scene": 3,
+            "status": "APPROVED",
+            "png_sha_matches": true
+          }
+        ],
+        "accepted": 0,
+        "finished_at": "2026-10-15T07:36:46.446410+00:00",
+        "worker_model": "LTX-2.5",
+        "worker_weights_revision": "346175657989c5c6256985b148153c1b9839a145"
+      },
+      {
+        "id": "b030a7cc-772e-4055-af68-b31a05a46f80",
+        "project_id": "2d276038-2009-4a6a-a75f-32ba5ab4b1ff",
+        "scene_id": "4",
+        "operation": "video",
+        "model": "LTX-2.5",
+        "status": "COMPLETED",
+        "created_at": "2026-10-15T07:28:56.136822+00:00",
+        "prompt_chars": 525,
+        "actual_motion_equals_saved": true,
+        "saved_version": 3,
+        "source_digest": {
+          "sha256": "c0cb958e7eff3e7ca3ed91acb834b2f2b9c70e4b2bb5f95979daf4bfc5b81ca6",
+          "bytes": 592772,
+          "mime": "image/jpeg"
+        },
+        "source_matches": [
+          {
+            "take_id": "51f8a01e-214d-4b2e-b4b9-25b094370dd4",
+            "scene": 4,
+            "status": "APPROVED",
+            "png_sha_matches": true
+          }
+        ],
+        "accepted": 1,
+        "finished_at": "2026-10-15T07:39:51.618659+00:00",
+        "worker_model": "LTX-2.5",
+        "worker_weights_revision": "346175657989c5c6256985b148153c1b9839a145"
+      },
+      {
+        "id": "f130fc27-e4e5-4a79-bb7c-4bf62e2cba2b",
+        "project_id": "2d276038-2009-4a6a-a75f-32ba5ab4b1ff",
+        "scene_id": "5",
+        "operation": "video",
+        "model": "LTX-2.5",
+        "status": "COMPLETED",
+        "created_at": "2026-10-15T07:28:56.138963+00:00",
+        "prompt_chars": 530,
+        "actual_motion_equals_saved": true,
+        "saved_version": 3,
+        "source_digest": {
+          "sha256": "c805e0d5caa4e36b7ec35236932a19a9118b7cb980eb4128942b8e18fdf69ba8",
+          "bytes": 617559,
+          "mime": "image/jpeg"
+        },
+        "source_matches": [
+          {
+            "take_id": "6586cedd-9ada-42fb-aacb-6b404d71c759",
+            "scene": 5,
+            "status": "APPROVED",
+            "png_sha_matches": true
+          }
+        ],
+        "accepted": 0,
+        "finished_at": "2026-10-15T07:43:15.899906+00:00",
+        "worker_model": "LTX-2.5",
+        "worker_weights_revision": "346175657989c5c6256985b148153c1b9839a145"
+      },
+      {
+        "id": "ba5abad8-ea36-492a-a030-9c6a09558d30",
+        "project_id": "2d276038-2009-4a6a-a75f-32ba5ab4b1ff",
+        "scene_id": "6",
+        "operation": "video",
+        "model": "LTX-2.5",
+        "status": "COMPLETED",
+        "created_at": "2026-10-15T07:28:56.141135+00:00",
+        "prompt_chars": 517,
+        "actual_motion_equals_saved": true,
+        "saved_version": 3,
+        "source_digest": {
+          "sha256": "0175accee41312e5c8710aabc350d5bdcd52e69a89f20977e0621b267b23b0ba",
+          "bytes": 604769,
+          "mime": "image/jpeg"
+        },
+        "source_matches": [
+          {
+            "take_id": "554a086f-291a-452d-b2f0-07602f0fa589",
+            "scene": 6,
+            "status": "APPROVED",
+            "png_sha_matches": true
+          }
+        ],
+        "accepted": null,
+        "finished_at": "2026-10-15T07:46:47.559843+00:00",
+        "worker_model": "LTX-2.5",
+        "worker_weights_revision": "346175657989c5c6256985b148153c1b9839a145"
+      }
+    ],
+    "scene7_still_unresolved": true,
+    "zero_script_club_latest_block": {
+      "mail_id": "a0dd034c-a502-4e83-be1a-f80679cc03a5",
+      "storyboard_id": "f06808c9-40d4-4f40-a980-84b6a5540348",
+      "code": "OVER_DAILY_BUDGET",
+      "step": "stills",
+      "reason": "Step cap exceeds available daily budget.",
+      "different_from_previous_film_budget_or_editorial_claim": true,
+      "repair_event_sequence": 24452,
+      "repair_status": "UNRESOLVED",
+      "tool_error": "ValueError",
+      "assignment_run_id": "2d50f99a-1838-46e0-81cc-68bb6cf7b09b",
+      "assignment_status": "BLOCKED_POLICY",
+      "assignment_error": "Agent already has an active task",
+      "requested_model_name": "deepseek-v4.1-flash",
+      "model_call_not_executed": true,
+      "latest_request_review_mail_id": "cb00d182-9043-4544-abed-c25b583ca73e",
+      "latest_repair_event_sequence": 24526,
+      "status": "UNRESOLVED",
+      "still_over_daily_budget": true
+    },
+    "latest_completed_scene2_delivery": {
+      "job_id": "c0db1e79-9656-4999-a0a7-df01a0ee3f33",
+      "journal_model": "LTX-2.5",
+      "delivery_model_fields": [
+        {
+          "field": "output.model",
+          "value": "LTX-2.5"
+        }
+      ],
+      "worker_weight_checkpoint_independently_declared": true,
+      "local_asset_exists": true,
+      "qc_run_id": "0cdb37bd-db28-4b01-b220-9ace7b77f587",
+      "qc_actual_model": "mistral-large-4",
+      "qc_status": "RUNNING",
+      "accepted": null,
+      "worker_reported_model": "LTX-2.5",
+      "worker_model_matches_request": true,
+      "weights_revision": "346175657989c5c6256985b148153c1b9839a145"
+    },
+    "scene2_and3_video_qc": [
+      {
+        "id": "0cdb37bd-db28-4b01-b220-9ace7b77f587",
+        "actual_model": "mistral-large-4",
+        "status": "SUCCEEDED",
+        "decisions": [
+          {
+            "scene": 2,
+            "verdict": "back_to_still",
+            "reason": "The left monitor displays colorful square content instead of a completely blank screen as the plan requires, and the middle frame shows distorted morphing hands.",
+            "technical_ok": false,
+            "readable_text": false,
+            "matches_plan": false,
+            "bible_violations": "none"
+          }
+        ]
+      },
+      {
+        "id": "73f356ea-2eaf-496a-9a5e-a4019e5e0431",
+        "actual_model": "mistral-large-4",
+        "status": "SUCCEEDED",
+        "decisions": [
+          {
+            "scene": 3,
+            "verdict": "regenerate_motion",
+            "reason": "Middle frame contains garbled on-screen text 'nove tr guee.' which the plan forbids",
+            "technical_ok": true,
+            "readable_text": true,
+            "matches_plan": false,
+            "bible_violations": "Burned-in caption text in middle frame violates no-written-words rule"
+          }
+        ]
+      }
+    ],
+    "blocked_director_clip_reviews": [
+      {
+        "id": "5747b92f-555d-452b-bf8d-bcc7f5606fef",
+        "task_type": "director_second_look",
+        "model_name": "deepseek-v4.1-flash",
+        "status": "BLOCKED_POLICY",
+        "error_detail": "Agent already has an active task",
+        "started_at": "2026-10-15T07:35:13.737226+00:00",
+        "finished_at": "2026-10-15T07:35:13.924367+00:00",
+        "provider_model_call_executed": false,
+        "model_name_is_requested_assignment_only": true
+      },
+      {
+        "id": "4f7013ad-b11b-40e3-b47d-71d3d0d6cf82",
+        "task_type": "director_second_look",
+        "model_name": "deepseek-v4.1-flash",
+        "status": "BLOCKED_POLICY",
+        "error_detail": "Agent already has an active task",
+        "started_at": "2026-10-15T07:37:45.838401+00:00",
+        "finished_at": "2026-10-15T07:37:46.019637+00:00",
+        "provider_model_call_executed": false,
+        "model_name_is_requested_assignment_only": true
+      }
+    ],
+    "worker_model_proof_for_completed_batch": [
+      {
+        "job_id": "c0db1e79-9656-4999-a0a7-df01a0ee3f33",
+        "scene": "2",
+        "request_model": "LTX-2.5",
+        "worker_model": "LTX-2.5",
+        "weights_revision": "346175657989c5c6256985b148153c1b9839a145",
+        "accepted": 0
+      },
+      {
+        "job_id": "44762138-9e18-4fd6-8ab0-3b9c09a560cb",
+        "scene": "3",
+        "request_model": "LTX-2.5",
+        "worker_model": "LTX-2.5",
+        "weights_revision": "346175657989c5c6256985b148153c1b9839a145",
+        "accepted": 0
+      },
+      {
+        "job_id": "b030a7cc-772e-4055-af68-b31a05a46f80",
+        "scene": "4",
+        "request_model": "LTX-2.5",
+        "worker_model": "LTX-2.5",
+        "weights_revision": "346175657989c5c6256985b148153c1b9839a145",
+        "accepted": 1
+      }
+    ],
+    "scene2_source_still_returned": {
+      "event_sequence": 24470,
+      "take_id": "f308b171-12cf-447a-aae1-304f7831a9c4",
+      "status": "REJECTED",
+      "clip_verdict": "back_to_still",
+      "specific_observed_qc_findings": [
+        "colorful_monitor_content",
+        "distorted_morphing_hands"
+      ],
+      "ruled_papers_not_cited_by_this_clip_qc": true,
+      "new_source_image_not_generated": true
+    },
+    "latest_kael_mail_after_old_request": {
+      "id": "9cf8ef4c-bf3e-4d48-981f-0e877b90e74d",
+      "done": false,
+      "claims_scene1_awaits_Owner_despite_actual_restoration_and_gate_acceptance": true,
+      "no_actual_prompt_rewrite_delivered_in_letter": true
+    },
+    "scene4_and5_qc": [
+      {
+        "run_id": "03dcfa4d-aa2c-4fb8-834d-483f82f18e14",
+        "actual_model": "mistral-large-4",
+        "status": "SUCCEEDED",
+        "decisions": [
+          {
+            "scene": 4,
+            "verdict": "keep",
+            "reason": "Sarah holds the blank sheet up at arm's length, looks at it flatly, then sets it down with hands resting on the desk, static camera, warm hand-drawn office look intact with no readable text or artefacts.",
+            "technical_ok": true,
+            "matches_plan": true,
+            "bible_violations": "none"
+          }
+        ]
+      },
+      {
+        "run_id": "0c1235dd-c8f5-489f-a49c-7ac82332435d",
+        "actual_model": "mistral-large-4",
+        "status": "SUCCEEDED",
+        "decisions": [
+          {
+            "scene": 5,
+            "verdict": "back_to_still",
+            "reason": "Dr. Aris matches his character bible and the motion is correct, but the still contains text on the monitor and lines on the paper, violating the blank-surface rule; the still must be regenerated without any text or markings.",
+            "technical_ok": true,
+            "matches_plan": false,
+            "bible_violations": "text/code visible on left monitor screen and ruled lines on desk paper; plan requires all screens and notebooks to be completely blank, unruled and unmarked with no lines, writing or letters"
+          }
+        ]
+      }
+    ],
+    "scene4_accepted_clip": {
+      "take_id": "e37d80eb-01e5-4c22-9a8d-d145d338052e",
+      "job_id": "b030a7cc-772e-4055-af68-b31a05a46f80",
+      "event_sequence": 24486,
+      "qc_verdict": "PASSED",
+      "journal_accepted": true,
+      "qc_model": "mistral-large-4",
+      "worker_model": "LTX-2.5",
+      "new_generation_not_counted_as_finished_film": true
+    },
+    "scene5_returned_to_still": {
+      "event_sequence": 24501,
+      "take_id": "6d45c844-68b9-436c-8212-5d5cdc1a7f08",
+      "qc_model": "mistral-large-4",
+      "reason": "Text/code on left monitor and ruled lines on desk paper. Character and movement otherwise match.",
+      "director_look_run_id": "7e645041-6f30-4a54-b65f-794c94348a15",
+      "director_look_status": "BLOCKED_POLICY",
+      "director_look_model_not_called": true,
+      "new_regeneration_not_observed": true
+    },
+    "accounting_reply_0741": {
+      "mail_id": "622e0dce-f71c-4284-9b93-653a83a05ca4",
+      "actual_agent_model": "mistral-large-4",
+      "done": false,
+      "claims_daily_spent_usd": 16.203852,
+      "claims_daily_reserved_usd": 2.8,
+      "claims_daily_remaining_after_reserve_usd": 0.996148,
+      "claims_warning_and_paid_pause": true,
+      "raw_run_attribution_and_invoices_requested": true,
+      "not_independently_reconciled_by_monitor": true,
+      "no_owner_policy_update_observed": true
+    },
+    "scene6_qc": {
+      "run_id": "f0eef57f-dad7-4f95-9054-0b6c567b08da",
+      "actual_model": "mistral-large-4",
+      "status": "SUCCEEDED",
+      "decisions": [
+        {
+          "scene": 6,
+          "verdict": "back_to_still",
+          "reason": "The still itself contains non-blank screens with abstract glow and a marked desk paper, violating the requirement for completely blank, unmarked screens and notebooks; the still must be regenerated.",
+          "bible_violations": "screens are not blank (foreground monitor shows abstract colorful glow, right monitor shows neon graphics); desk paper has visible lines/text (not unruled and unmarked); Dr. Aris turns away from viewer in middle frame instead of staying centered facing viewer with hands open",
+          "technical_ok": true
+        }
+      ]
+    },
+    "completed_motion_batch_worker_proof": [
+      {
+        "job_id": "c0db1e79-9656-4999-a0a7-df01a0ee3f33",
+        "scene": "2",
+        "status": "COMPLETED",
+        "accepted": 0,
+        "request_model": "LTX-2.5",
+        "worker_model": "LTX-2.5",
+        "weights_revision": "346175657989c5c6256985b148153c1b9839a145"
+      },
+      {
+        "job_id": "44762138-9e18-4fd6-8ab0-3b9c09a560cb",
+        "scene": "3",
+        "status": "COMPLETED",
+        "accepted": 0,
+        "request_model": "LTX-2.5",
+        "worker_model": "LTX-2.5",
+        "weights_revision": "346175657989c5c6256985b148153c1b9839a145"
+      },
+      {
+        "job_id": "b030a7cc-772e-4055-af68-b31a05a46f80",
+        "scene": "4",
+        "status": "COMPLETED",
+        "accepted": 1,
+        "request_model": "LTX-2.5",
+        "worker_model": "LTX-2.5",
+        "weights_revision": "346175657989c5c6256985b148153c1b9839a145"
+      },
+      {
+        "job_id": "f130fc27-e4e5-4a79-bb7c-4bf62e2cba2b",
+        "scene": "5",
+        "status": "COMPLETED",
+        "accepted": 0,
+        "request_model": "LTX-2.5",
+        "worker_model": "LTX-2.5",
+        "weights_revision": "346175657989c5c6256985b148153c1b9839a145"
+      },
+      {
+        "job_id": "ba5abad8-ea36-492a-a030-9c6a09558d30",
+        "scene": "6",
+        "status": "COMPLETED",
+        "accepted": 0,
+        "request_model": "LTX-2.5",
+        "worker_model": "LTX-2.5",
+        "weights_revision": "346175657989c5c6256985b148153c1b9839a145"
+      }
+    ],
+    "batch_completion": {
+      "event_sequence": 24514,
+      "sent_count": 5,
+      "completed_count": 5,
+      "accepted_in_batch_scene_numbers": [
+        4
+      ],
+      "rejected_in_batch_scene_numbers": [
+        2,
+        3,
+        5,
+        6
+      ],
+      "all_film_accepted_scene_numbers": [
+        1,
+        4
+      ],
+      "needs_still_scene_numbers": [
+        2,
+        5,
+        6,
+        7
+      ],
+      "needs_motion_rewrite_scene_numbers": [
+        3
+      ],
+      "gpu_off_verified_event": 24509,
+      "new_gpu_regeneration_after_rejections": false,
+      "workflow_completed_does_not_mean_film_completed": true
+    },
+    "director_busy_block": {
+      "running_rows": [
+        {
+          "id": "a82c69f6-a01f-4fd2-a020-3e33552aed5a",
+          "task_type": "prompt_lesson_reading",
+          "model_name": "deepseek-v4.1-flash",
+          "status": "RUNNING",
+          "started_at": "2026-10-15T07:16:00.170325+00:00",
+          "finished_at": null
+        }
+      ],
+      "blocked_attempts_after_batch": [
+        {
+          "id": "1af07804-e439-46a5-8aba-a0bff9eeda04",
+          "task_type": "director_second_look",
+          "model_name": "deepseek-v4.1-flash",
+          "status": "BLOCKED_POLICY",
+          "error_detail": "Agent already has an active task",
+          "started_at": "2026-10-15T07:48:19.884212+00:00",
+          "provider_call_executed": false,
+          "model_name_is_assignment_not_executed_model": true
+        },
+        {
+          "id": "42cc0056-2433-4323-8264-9a991e573cf1",
+          "task_type": "director_scene_brief",
+          "model_name": "deepseek-v4.1-flash",
+          "status": "BLOCKED_POLICY",
+          "error_detail": "Agent already has an active task",
+          "started_at": "2026-10-15T07:48:24.154432+00:00",
+          "provider_call_executed": false,
+          "model_name_is_assignment_not_executed_model": true
+        },
+        {
+          "id": "0b655fb2-1eb5-4e98-ae34-ebb8c1bd182e",
+          "task_type": "director_scene_brief",
+          "model_name": "deepseek-v4.1-flash",
+          "status": "BLOCKED_POLICY",
+          "error_detail": "Agent already has an active task",
+          "started_at": "2026-10-15T07:48:24.418678+00:00",
+          "provider_call_executed": false,
+          "model_name_is_assignment_not_executed_model": true
+        },
+        {
+          "id": "23b0ec1a-ac15-4e7f-b903-fcc27141b78a",
+          "task_type": "director_scene_brief",
+          "model_name": "deepseek-v4.1-flash",
+          "status": "BLOCKED_POLICY",
+          "error_detail": "Agent already has an active task",
+          "started_at": "2026-10-15T07:48:24.689290+00:00",
+          "provider_call_executed": false,
+          "model_name_is_assignment_not_executed_model": true
+        },
+        {
+          "id": "b5851970-a154-4440-b090-808d1dea6eeb",
+          "task_type": "director_scene_brief",
+          "model_name": "deepseek-v4.1-flash",
+          "status": "BLOCKED_POLICY",
+          "error_detail": "Agent already has an active task",
+          "started_at": "2026-10-15T07:48:25.094120+00:00",
+          "provider_call_executed": false,
+          "model_name_is_assignment_not_executed_model": true
+        },
+        {
+          "id": "f8060432-80f9-4ad9-8a90-30aef9ba1d06",
+          "task_type": "sheet_repair_assignment",
+          "model_name": "deepseek-v4.1-flash",
+          "status": "BLOCKED_POLICY",
+          "error_detail": "Agent already has an active task",
+          "started_at": "2026-10-15T07:49:03.582396+00:00",
+          "provider_call_executed": false,
+          "model_name_is_assignment_not_executed_model": true
+        },
+        {
+          "id": "f9e5875b-c2be-4930-80a5-c1ca1893e5ae",
+          "task_type": "director_second_look",
+          "model_name": "deepseek-v4.1-flash",
+          "status": "BLOCKED_POLICY",
+          "error_detail": "Agent already has an active task",
+          "started_at": "2026-10-15T07:49:05.814385+00:00",
+          "provider_call_executed": false,
+          "model_name_is_assignment_not_executed_model": true
+        },
+        {
+          "id": "a8df115f-2bab-4acb-9b7e-fff178f09c7c",
+          "task_type": "director_scene_brief",
+          "model_name": "deepseek-v4.1-flash",
+          "status": "BLOCKED_POLICY",
+          "error_detail": "Agent already has an active task",
+          "started_at": "2026-10-15T07:49:08.085770+00:00",
+          "provider_call_executed": false,
+          "model_name_is_assignment_not_executed_model": true
+        },
+        {
+          "id": "6ea4784d-1d3e-412e-8a07-55f33aab5b42",
+          "task_type": "director_scene_brief",
+          "model_name": "deepseek-v4.1-flash",
+          "status": "BLOCKED_POLICY",
+          "error_detail": "Agent already has an active task",
+          "started_at": "2026-10-15T07:49:08.354306+00:00",
+          "provider_call_executed": false,
+          "model_name_is_assignment_not_executed_model": true
+        },
+        {
+          "id": "e5d188b2-440a-4d91-8474-63b8b5f6078a",
+          "task_type": "director_scene_brief",
+          "model_name": "deepseek-v4.1-flash",
+          "status": "BLOCKED_POLICY",
+          "error_detail": "Agent already has an active task",
+          "started_at": "2026-10-15T07:49:08.644890+00:00",
+          "provider_call_executed": false,
+          "model_name_is_assignment_not_executed_model": true
+        },
+        {
+          "id": "5a2eb51c-93bb-49d1-b084-b3956b7f6e0e",
+          "task_type": "director_scene_brief",
+          "model_name": "deepseek-v4.1-flash",
+          "status": "BLOCKED_POLICY",
+          "error_detail": "Agent already has an active task",
+          "started_at": "2026-10-15T07:49:08.900293+00:00",
+          "provider_call_executed": false,
+          "model_name_is_assignment_not_executed_model": true
+        }
+      ],
+      "guard_source": "backend/app/agents/services.py:661",
+      "effect": "Director second looks and scene briefs are denied before provider calls while Director has a RUNNING task.",
+      "actual_remote_liveness_of_old_run_not_proven": true,
+      "new_rewrites_saved_or_verified": false
+    },
+    "scene6_prompt_qc_tension": {
+      "saved_prompt_allows_abstract_screen_glow": true,
+      "qc_rejects_nonblank_abstract_glow": true,
+      "also_cites_marked_paper_and_character_turn": true,
+      "director_visual_recheck_unavailable": true
     }
   },
   "deferred_findings_reported_after_restart": {
@@ -2147,5 +2736,50 @@
       "Scene7 rewrite review also ended EMPTY_OUTPUT on actual Deepseek-v4.1-flash; no unverified replacement was saved or regenerated. Day79bdbdb8 interrupted at media7/13 on service shutdown; GPU-off verified. No accepted video or finished film."
     ],
     "reported_at": "2026-10-15T06:37:03.749649+00:00"
+  },
+  "current_film_activity": {
+    "storyboard_id": "2d276038-2009-4a6a-a75f-32ba5ab4b1ff",
+    "title": "Twenty-Eight Rewrites Before Breakfast",
+    "first_clip_accepted_without_regeneration": true,
+    "motion_scene_numbers_submitted": [
+      2,
+      3,
+      4,
+      5,
+      6
+    ],
+    "qc_pending": true,
+    "scene7_still_missing": true,
+    "film_finished": false,
+    "qc_scene2": "back_to_still",
+    "qc_scene3": "regenerate_motion",
+    "qc_scene4": "PASSED",
+    "director_second_look_scene2_and3": "UNAVAILABLE: Agent already has an active task",
+    "regeneration_requests_after_qc_rejection": 0,
+    "accepted_clip_scene_numbers": [
+      1,
+      4
+    ],
+    "qc_scene5": "back_to_still",
+    "qc_scene6": "back_to_still",
+    "director_second_look_scene5": "UNAVAILABLE: Agent already has an active task",
+    "motion_batch_status": "COMPLETED",
+    "rejected_clip_scene_numbers": [
+      2,
+      3,
+      5,
+      6
+    ],
+    "scene_numbers_needing_still": [
+      2,
+      5,
+      6,
+      7
+    ],
+    "scene_numbers_needing_motion_rewrite": [
+      3
+    ],
+    "gpu_off_verified": true,
+    "director_rewrite_attempts_blocked": true
   }
 }

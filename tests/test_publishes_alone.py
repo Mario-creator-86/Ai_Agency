@@ -794,3 +794,62 @@ def test_every_production_purchase_of_a_refused_clip_passes_through_her_look():
     assert all(has_look for _name, has_look in callers), callers
     # The mechanical retry's words are composed in one place only, inside the helper.
     assert helper_users == [], helper_users
+
+
+# ------------------------------------------------------ 13. a run orphaned by a restart
+
+
+def test_a_run_that_started_before_this_process_does_not_block_its_agent(engine, monkeypatch):
+    """2026-10-15 07:16Z: the Director's run outlived a hard stop; for 45 minutes every call
+    of hers was refused «already has an active task». A RUNNING row older than this process
+    is closed as ABANDONED with the reason, and she is free at once; a run of this process is
+    still hers while it is young."""
+    from datetime import UTC, datetime, timedelta
+    from uuid import uuid4
+
+    from app.agents import services as agent_services
+    from app.agents.models import Agent, AgentRun
+    from app.agents.services import seed_initial_workforce
+
+    seed_initial_workforce(engine)
+    with Session(engine) as session, session.begin():
+        sarah = session.scalar(select(Agent).where(Agent.display_name.like("Sarah%")))
+        sarah_id = sarah.id
+        before = (datetime.now(UTC) - timedelta(minutes=12)).isoformat()
+        session.add(
+            AgentRun(
+                id=str(uuid4()),
+                agent_id=sarah_id,
+                task_type="prompt_lesson_reading",
+                objective="o",
+                prompt_template_version="v",
+                model_name="m",
+                provider_name="p",
+                correlation_id="c",
+                status="RUNNING",
+                started_at=before,
+            )
+        )
+    monkeypatch.setattr(agent_services, "PROCESS_STARTED_AT", datetime.now(UTC).isoformat())
+    with Session(engine) as session, session.begin():
+        assert agent_services._has_live_run(session, sarah_id) is False
+        (run,) = session.scalars(select(AgentRun).where(AgentRun.agent_id == sarah_id)).all()
+        assert run.status == "ABANDONED" and "procesul s-a oprit" in run.error_detail
+
+    with Session(engine) as session, session.begin():
+        session.add(
+            AgentRun(
+                id=str(uuid4()),
+                agent_id=sarah_id,
+                task_type="director_second_look",
+                objective="o",
+                prompt_template_version="v",
+                model_name="m",
+                provider_name="p",
+                correlation_id="c",
+                status="RUNNING",
+                started_at=datetime.now(UTC).isoformat(),
+            )
+        )
+    with Session(engine) as session:
+        assert agent_services._has_live_run(session, sarah_id) is True
