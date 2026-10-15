@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-15 — The film's Figure 1 goes only to a scene in its own room
+
+Episode 2's penthouse and research-room scenes were drawn in the render bay through five paid rounds, whatever the words said: the film's Figure 1 (scene 1's still, Kael in the render bay) went with every later scene «for its light», and the edit model copied its room.
+
+- `media/stills_stage.py`: a scene carries the room its beat names (`_Scene.location`); the film's Figure 1 goes only to a scene in its own room (`same_room`, `_references`); a scene in another room is drawn from its character's reference and its words alone, with no Figure sentence, and does not wait for scene 1's still; a factual scene (no room named) keeps the figure as before. The still's identity is unchanged.
+- Tests: `test_serial_references` (a scene in another room gets the character only), `test_stills_stage`, `test_runpod_reference_route`.
+
 ## 2026-10-15 — The blank-surfaces sentence names no screen
 
 - `media/prompt_agent.py`: `SERIAL_BLANK_SENTENCE` names no screen («The desk surfaces are plain and clear of plates, labels and signs, and any sheet of paper is blank»): at 11:22Z the Director locked episode 2's scenes 5 and 7 on «every screen is dark or a plain soft glow» — a screen named is a screen drawn, lit, in a room the plan gave none. Where a monitor exists, the look's room sentence says so and says it is dark. Test 17 of `test_publishes_alone` updated.

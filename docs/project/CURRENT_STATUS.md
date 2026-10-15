@@ -5,6 +5,27 @@ AGENT_SCENARIO_ACCEPTANCE later used actual Ollama Cloud calls, with normal seri
 acceptance and real GPU/media/upload still pending. Current local UI evidence is reported
 separately below and does not prove those external workflows.
 
+## Cycle 7d: the film's Figure 1 goes only to its own room — the real cause of the wrong room (2026-10-15)
+
+**Cauza reală a «camerei greșite», dovedită pe imagine (11:29Z).** Imaginile noi ale scenelor 2
+și 4, cumpărate pe cuvinte care numesc doar penthouse-ul (bloc fără obiecte, propoziția camerei
+cu birou de mahon și fereastra), au ieșit TOT în camera de randare — trei monitoare, turnul RGB,
+lămpile, fereastra spre stradă — și au fost refuzate de privirea ei (2 × 0,24 USD). Portretul de
+referință al lui Sarah e un cap pe fundal estompat, fără cameră. A doua imagine trimisă cu
+fiecare scenă e «Figura 1 a filmului»: imaginea aprobată a scenei 1 — Kael în camera de randare
+— «doar pentru lumină, paletă și granulație»; modelul de editare (Qwen-Image-Edit-2511) îi
+copiază camera, orice ar spune cuvintele. De aici toate scenele din penthouse și din cercetare
+desenate în camera de randare, de-a lungul a cinci runde plătite azi.
+
+**Ce este (`media/stills_stage.py`).** `_Scene.location` (camera din planul beat-ului);
+`same_room`; `_references(..., figure_location)`: Figura 1 a filmului merge doar la o scenă din
+aceeași cameră cu scena 1; o scenă din altă cameră e desenată din referința personajului și din
+cuvinte (fără propoziția despre Figură) și nu așteaptă imaginea scenei 1; o scenă fără cameră
+numită (film factual) o primește ca înainte. Identitatea imaginii nu se schimbă (Figura 1 nu era
+în hash). Teste: `test_serial_references` (scena din altă cameră primește doar portretul),
+`test_stills_stage`, `test_runpod_reference_route` (37) + suitele de refacere/foaie/ladder.
+Intră la repornire; scenele 2, 4, 5, 7 ale episodului 2 așteaptă exact această corectare.
+
 ## Cycle 7c: the blank-surfaces sentence names no screen; the new pass rule verified live (2026-10-15)
 
 **Verificat live după repornirea de la 11:11Z (pe 89f32af).** Regula nouă a pasului a mers:

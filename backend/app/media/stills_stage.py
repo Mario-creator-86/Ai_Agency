@@ -403,6 +403,9 @@ class _Scene:
     #: gate (`still_gate.StillPlan.expected_markings`): a thermometer's scale is not writing.
     expected_markings: tuple[str, ...] = ()
     prompt_issues: tuple[str, ...] = ()
+    #: The room the beat names (a serial scene's plan ``location``; empty for a factual
+    #: scene): the film's Figure 1 goes only to a scene in its own room (`_references`).
+    location: str = ""
 
 
 @dataclass
@@ -631,6 +634,7 @@ def _read_scenes(engine: Engine, storyboard_id: str) -> tuple[dict[str, Any], li
                 purpose=str(row.story_purpose or ""),
                 expected_markings=marked,
                 prompt_issues=tuple(incomplete_plan_fields(package, layers=("still",))),
+                location=" ".join(str(package.get("location") or "").split()),
             )
             if kind == LIVE_KIND:
                 # The picture's open items only: a finding treated in the motion's words is
@@ -884,8 +888,27 @@ def _prompt(
     return " ".join(part for part in parts if part)
 
 
+def same_room(scene_location: str, figure_location: str) -> bool:
+    """Whether a scene is in the room of the film's Figure 1. 2026-10-15 (episode 2,
+    2d276038): the film's first still, Kael in the render bay, went with every later scene
+    «for its light, palette and grain», and the edit model (Qwen-Image-Edit) drew its room
+    — three monitors, the RGB tower, the lamps and the street window — behind Sarah in the
+    penthouse and behind Dr. Aris in the research room, whatever the words said, through
+    five paid rounds. A scene whose room is named and is not the figure's room is drawn
+    from its character's reference and its words alone; a scene with no room named (a
+    factual film) keeps the figure as before."""
+    mine = " ".join(str(scene_location or "").casefold().split())
+    theirs = " ".join(str(figure_location or "").casefold().split())
+    return not mine or not theirs or mine == theirs
+
+
 def _references(
-    scene: _Scene, figure_one: bytes | None, adapter: Any, *, first: bool
+    scene: _Scene,
+    figure_one: bytes | None,
+    adapter: Any,
+    *,
+    first: bool,
+    figure_location: str = "",
 ) -> tuple[list[bytes], bool, bool]:
     """(the pictures sent with the scene's request, whether its character's reference is
     among them, whether the film's Figure 1 is). The character's reference goes first, for
@@ -901,7 +924,9 @@ def _references(
         if isinstance(data, bytes) and data:
             pictures.append(data)
             with_character = True
-    with_figure = figure_one is not None and not first
+    with_figure = (
+        figure_one is not None and not first and same_room(scene.location, figure_location)
+    )
     if with_figure and figure_one is not None:
         pictures.append(figure_one)
     most = getattr(adapter, "MAX_REFERENCES", None)
@@ -1566,6 +1591,8 @@ class _StillRounds:
     unverified: bool = False
     #: A one-scene still redo (`assembler._redo_still`): its hold event says so.
     redo: bool = False
+    #: The room of the film's Figure 1 (scene 1's): the figure goes only to its own room.
+    figure_location: str = ""
 
     # ------------------------------------------------------------------ requests
 
@@ -1575,6 +1602,7 @@ class _StillRounds:
             self.figure_one,
             self.adapter,
             first=state.scene.index == self.first_live,
+            figure_location=self.figure_location,
         )
         state.references = tuple(refs)
         state.with_character, state.with_figure = with_character, with_figure
@@ -1587,7 +1615,7 @@ class _StillRounds:
         """Whether this scene's request would carry the film's Figure 1 once scene 1 has its
         still (`_references` with this adapter's reference limits): only such a scene waits."""
         _pictures, _character, with_figure = _references(
-            scene, _ANY_FIGURE, self.adapter, first=False
+            scene, _ANY_FIGURE, self.adapter, first=False, figure_location=self.figure_location
         )
         return with_figure
 
@@ -2247,6 +2275,7 @@ def run_stills_stage(
     limit = max_paid_attempts_per_scene()
     figure_one: bytes | None = None
     first_live = live[0].index if live else None
+    figure_location = live[0].location if live else ""
     results: list[dict[str, Any]] = []
     stopped: str | None = None
     previous_kind: str | None = None
@@ -2314,7 +2343,11 @@ def run_stills_stage(
             # What each still of this scene is checked to have corrected (the register).
             entry["must_fix"] = [item["finding"] for item in scene.must_fix]
         references, with_character, with_figure = _references(
-            scene, figure_one, image_adapter, first=scene.index == first_live
+            scene,
+            figure_one,
+            image_adapter,
+            first=scene.index == first_live,
+            figure_location=figure_location,
         )
         entry["references_sent"] = references_sent(with_character, with_figure)
         instruction = ""
@@ -2605,6 +2638,7 @@ def run_stills_stage(
             model_id=model_id,
             first_live=first_live,
             figure_one=figure_one,
+            figure_location=figure_location,
             per_image=per_image,
             overhead=float(prices.round_overhead("image", model_id)),
             credit_usd=float(prices.credit_usd),
