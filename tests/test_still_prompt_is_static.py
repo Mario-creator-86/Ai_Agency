@@ -216,6 +216,8 @@ def test_the_room_is_kept_before_a_long_subject():
     assert "windowless measurement laboratory" in still, still
     assert "Her hands lift the bar clear of its glass case" in still, still
     assert still.startswith("Documentary") and "The scientist's hands and forearms" in still
-    assert len(still.split()) <= 120
+    from app.media.prompt_lint import STILL_WORDS
+
+    assert len(still.split()) <= STILL_WORDS[1]
     shorter = _shorter_subject("A, B; C: D")
     assert shorter == ["A, B, C.", "A, B.", "A."]

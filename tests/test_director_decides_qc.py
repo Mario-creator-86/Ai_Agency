@@ -840,7 +840,8 @@ def test_captions_misread_and_his_approved_takes_are_accepted_and_nothing_is_red
     nothing_bought(engine)
     # He is told, in a STATUS letter: not a question.
     (letter,) = letters(engine, LETTER_KIND)
-    assert letter.intent == "STATUS" and letter.body_json.get("to") == "Owner"
+    # 2026-10-15: her acceptance after QC is the Director's matter (letters rule), not his.
+    assert letter.intent == "STATUS" and letter.body_json.get("to") == "Director"
     assert "fals, controlul a citit greșit filmul" in letter.body_text
     assert "alegerea ta" in letter.body_text
     assert "publicare" in letter.body_text
