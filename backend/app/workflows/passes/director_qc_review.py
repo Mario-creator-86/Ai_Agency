@@ -49,6 +49,24 @@ LOOKBACK_DAYS = 7
 MAX_TRIES = 24
 #: The continuation's cause, per report: the walk records it on `runbook.film_continued`.
 CAUSE_PREFIX = "director_qc:"
+#: How long after her newest decision a walk's record still belongs to the walk that produced
+#: it: that walk heard her (`_heard_until`); a later one did not.
+HEARD_WINDOW = timedelta(minutes=5)
+
+
+def _heard_until(asked_at: str) -> str:
+    """The ISO moment until which a walk's record counts as the walk that produced her
+    newest decision (``asked_at`` + `HEARD_WINDOW`); ``asked_at`` itself when it is not a
+    moment (no decision yet: every walk is unheard)."""
+    try:
+        moment = datetime.fromisoformat(asked_at)
+    except (TypeError, ValueError):
+        return asked_at
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=UTC)
+    return (moment + HEARD_WINDOW).isoformat()
+
+
 #: A continuation of the film already queued or at work: it reads the report itself.
 PENDING_TASK_STATES = ("QUEUED", "RETRYING", "CLAIMED", "RUNNING")
 
@@ -172,7 +190,13 @@ def queue_director_reviews(context: WatchdogContext) -> dict[str, Any]:
             # and after walks that never reached her (safe mode, his mode, the film busy) twice
             # as long each time, so a refusal is neither a loop nor the end of the film.
             asked_at = str(state["last_at"] or "")
-            unheard = sum(1 for moment in runs if moment > asked_at)
+            # A walk that ended within HEARD_WINDOW of her newest decision is the walk that
+            # produced it (the decision is written first, the walk's record seconds later):
+            # heard, not unheard. 11:29:53Z, 2d276038: the walk's record came 19 ms after her
+            # decision and was counted as a walk that never reached her, so the lapsed repair
+            # waited the hour after the 11:42Z restart while nothing moved.
+            heard_until = _heard_until(asked_at)
+            unheard = sum(1 for moment in runs if moment > heard_until)
             moments = [moment for moment in (*runs, asked_at) if moment]
             # What her REPAIR waited for has come (``ready``: a take bought for her list is
             # approved; ``look``: candidates wait for her own look) and no walk has read it

@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-15 — The walk that produced her decision is not an unheard walk
+
+- `workflows/passes/director_qc_review.py`: a walk whose record comes within `HEARD_WINDOW` (5 min) of her newest decision is the walk that produced it, not a walk that never reached her (11:29:53Z: the record came 19 ms after the decision, was counted unheard, and the lapsed repair waited the hour after the 11:42Z restart while nothing moved). Test in `test_director_decides_qc`.
+
 ## 2026-10-15 — A lapsed repair is put before the Director at once
 
 - `workflows/passes/director_qc_review.py`: a repair that lapsed (what was bought for it came back refused, or his no) and that no walk has read since is queued at once, like a ready one; walked since, it waits the hour. Test in `test_director_decides_qc` (100 passed with redo-cap).

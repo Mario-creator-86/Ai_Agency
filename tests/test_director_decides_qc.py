@@ -4600,7 +4600,7 @@ def test_a_ready_repair_is_carried_on_the_moment_it_is_ready_not_an_hour_later(
     and that no walk has read since her decision is queued at once; once a walk ran for it,
     the hour's throttle applies as before (a walk that cannot move the film is not repeated
     every ten minutes)."""
-    from datetime import UTC, datetime
+    from datetime import timedelta
 
     from app.runbook import stages
     from app.services import append_event
@@ -4627,7 +4627,9 @@ def test_a_ready_repair_is_carried_on_the_moment_it_is_ready_not_an_hour_later(
     assert _pass(engine, settings) == {"queued": [film["board"]]}
     assert _pass(engine, settings) == {"queued": []}  # the one continuation stands queued
 
-    # A walk under this cause ran and the repair is still ready: the hour's throttle holds.
+    # The queued continuation ran and recorded itself seconds after her decision (11:29:53Z:
+    # 19 ms after it): that walk is the one that produced her decision, so it heard her, and
+    # a repair still ready (or lapsed) is carried on at once.
     with Session(engine) as session, session.begin():
         task = session.scalars(
             select(TaskQueueItem).where(TaskQueueItem.task_type == "FILM_CONTINUE")
@@ -4639,14 +4641,14 @@ def test_a_ready_repair_is_carried_on_the_moment_it_is_ready_not_an_hour_later(
             "storyboard",
             film["board"],
             1,
-            {
-                "status": "WAITING",
-                "cause": f"{director_qc_review.CAUSE_PREFIX}{film['report']}",
-                "at": datetime.now(UTC).isoformat(),
-            },
+            {"status": "WAITING", "cause": f"{director_qc_review.CAUSE_PREFIX}{film['report']}"},
             "c",
         )
     assert decision_state(engine, film["report"])["ready"] is True
+    assert _pass(engine, settings) == {"queued": [film["board"]]}
+    # The same record read as a walk that ran after her decision and never reached her (the
+    # window closed): the hour's throttle holds.
+    monkeypatch.setattr(director_qc_review, "HEARD_WINDOW", timedelta(0))
     assert _pass(engine, settings) == {"queued": []}
 
 
