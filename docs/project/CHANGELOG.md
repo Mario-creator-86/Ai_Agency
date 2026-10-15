@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-10-15 — Three renders a layer a scene, then the film ships as it stands
+
+The Owner, 12:20Z: three renders at most per image or motion per scene; past that the Director looks at what there is, chooses the closest to the plan, and the film is published as it stands — «publicăm ce avem».
+
+- `runbook/stages.py`: `RENDERS_PER_LAYER` (3, counted over every paid request of the scene's layer, `_renders_made`) and `REPAIR_ROUNDS_PER_REPORT` (2 bought repairs per failed report, `_report_repair_rounds`); a scene past either is not bought (`limited` carries `renders` and `report_rounds`); when nothing of her list could be bought the film ships: her ACCEPT under the cap (`director_qc.accepted_by_cap`, verdicts kept as the lesson), the PASSED report written, the film on to publication. The redo-cap card to the Owner is no longer proposed.
+- `config.py`: `film_max_paid_redos_per_scene` default 2.
+- `agents/identity.py`: the rule in the standing rules every agent reads.
+- Tests: `test_director_decides_qc` (two new), the cap and repair suites.
+
 ## 2026-10-15 — The walk that produced her decision is not an unheard walk
 
 - `workflows/passes/director_qc_review.py`: a walk whose record comes within `HEARD_WINDOW` (5 min) of her newest decision is the walk that produced it, not a walk that never reached her (11:29:53Z: the record came 19 ms after the decision, was counted unheard, and the lapsed repair waited the hour after the 11:42Z restart while nothing moved). Test in `test_director_decides_qc`.

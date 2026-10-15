@@ -5,6 +5,35 @@ AGENT_SCENARIO_ACCEPTANCE later used actual Ollama Cloud calls, with normal seri
 acceptance and real GPU/media/upload still pending. Current local UI evidence is reported
 separately below and does not prove those external workflows.
 
+## Cycle 7e: three renders a layer a scene, then the film ships as it stands (the Owner, 12:20Z) (2026-10-15)
+
+**Owner, 12:20Z (decizie):** «Avem nevoie de publicare! Nu mai regenera altceva. … Randările
+odată făcute, de maxim 3x pentru fiecare imagine sau mișcare. Dacă avem acest caz la toate
+scenele, publicăm cu ce Directoarea alege ca fiind cel mai apropiat! … orice iese, chiar dacă
+pică, Directorul se uită peste ce avem, și publică!» Context: episodul 2 a costat azi 6,97 USD pe
+RunPod în nouă runde (tabelul în răspunsul către el) și nu a trecut controlul filmului; după
+repornirea de la 12:14Z plimbarea i-a arătat preluările, decizia ei a picat forma de două ori,
+nimic cumpărat; serverul oprit la 12:24Z înainte să se mai cumpere ceva.
+
+**Ce este (`runbook/stages.py`).** `RENDERS_PER_LAYER = 3`: imaginea și mișcarea unei scene se
+fac de cel mult trei ori în total (prima cumpărare, re-rulările, refacerile plătite —
+`_renders_made`, pe `assembler._paid_attempts`); `REPAIR_ROUNDS_PER_REPORT = 2`: refacerea unui
+raport picat se cumpără de cel mult două ori (`_report_repair_rounds`: deciziile ei
+BOUGHT_WAITING). Peste oricare, scena nu se mai cumpără (`limited`, cu `renders`/`report_rounds`
+pe înregistrare) și, când nimic din lista ei nu s-a putut cumpăra, filmul se publică așa cum
+este: decizia ei devine ACCEPT sub plafon (`director_qc.accepted_by_cap`: verdictele rămân ce
+erau — lecția pentru următorul film — `accepted_under_cap` pe decizie), raportul PASSED pe care
+stă decizia e scris (`accept_film`), filmul trece la publicare. Cardul «ce se întâmplă cu filmul»
+(2026-10-12) nu se mai propune: Owner-ul a răspuns definitiv. `film_max_paid_redos_per_scene`
+implicit 2 (trei randări cu prima). Regula e și în `STANDING_RULES` pentru agenți.
+
+Pentru episodul 2: raportul a74ab01b are două decizii BOUGHT_WAITING (10:24Z, 11:29Z) → la
+următoarea citire lista ei nu se mai cumpără și filmul asamblat la 10:02Z (a5c0371b, cel mai bun
+disponibil: toate preluările lui trecuseră porțile și controlul clipului) se acceptă și se publică.
+
+Teste: `test_director_decides_qc` (scena la plafonul randărilor; raportul cu două refaceri
+cumpărate), suitele cardului/refacerii.
+
 ## Cycle 7d: the film's Figure 1 goes only to its own room — the real cause of the wrong room (2026-10-15)
 
 **Cauza reală a «camerei greșite», dovedită pe imagine (11:29Z).** Imaginile noi ale scenelor 2

@@ -313,7 +313,9 @@ class Settings(BaseSettings):
     #: same takes) are applied without a limit of their own, once per failed film. 0 turns the
     #: paid redos off. The Owner, 2026-10-11: a film is redone until QC passes and only money
     #: stops it, so the defaults are the most these allow; the money gates decide the rest.
-    film_max_paid_redos_per_scene: int = Field(default=5, ge=0, le=5)
+    #: The Owner, 2026-10-15: three renders a layer a scene in all (the first purchase and
+    #: two paid redos; `runbook.stages.RENDERS_PER_LAYER` counts them whatever the route).
+    film_max_paid_redos_per_scene: int = Field(default=2, ge=0, le=5)
     film_max_paid_redos: int = Field(default=20, ge=0, le=20)
 
     #: How long a short should be. The Owner's answer: about thirty seconds, and the story

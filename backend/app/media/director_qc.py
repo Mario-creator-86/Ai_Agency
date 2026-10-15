@@ -2272,6 +2272,32 @@ ACCEPTED_BY_LOOKS_RO = (
 )
 
 
+def accepted_by_cap(decided: Mapping[str, Any], ship: Mapping[str, Any]) -> dict[str, Any]:
+    """Her REPAIR made her ACCEPT by the Owner's cap (2026-10-15: «Randările odată făcute, de
+    maxim 3x pentru fiecare imagine sau mișcare … publicăm cu ce Directoarea alege ca fiind cel
+    mai apropiat»): nothing of her list could be bought under the cap (``ship``, from
+    `runbook.stages._apply_repairs`), so the film ships as it stands. Her verdicts are kept
+    as they are — a REAL finding stays REAL and is the lesson for the next film — and the
+    decision says it was accepted under the cap (``accepted_under_cap``)."""
+    limited = [
+        int(item["scene_index"])
+        for item in ship.get("limited") or []
+        if isinstance(item, Mapping) and isinstance(item.get("scene_index"), int)
+    ]
+    summary = " ".join(str(decided.get("summary") or "").split())
+    words = (
+        f"Acceptat sub plafonul Proprietarului (2026-10-15): {ship.get('reason_ro') or ''} "
+        f"Scenele oprite de plafon: {', '.join(str(s) for s in limited) or 'niciuna'}. "
+        "Filmul se publică așa cum este; ce a rămas sub standard este lecție pentru următorul."
+    )
+    return {
+        **dict(decided),
+        "decision": "ACCEPT",
+        "summary": f"{summary} {words}".strip(),
+        "accepted_under_cap": {"limited": limited, "reason_ro": ship.get("reason_ro")},
+    }
+
+
 def accepted_by_looks(
     decided: Mapping[str, Any], overturned: Iterable[Mapping[str, Any]]
 ) -> dict[str, Any] | None:

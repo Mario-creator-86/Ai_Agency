@@ -63,6 +63,10 @@ STANDING_RULES = (
     "subscription costs nothing. Buy once, on words the Director approved; never ask the "
     "studio to make a picture or a clip again on the same words, and never waste what is "
     "already paid for when it serves the story (the Owner, 2026-10-15).",
+    "A picture or a clip of a scene is made at most three times. Past that, nothing is made "
+    "again: the Director looks at everything the scene has, chooses what is closest to the "
+    "plan, and the film is published as it stands; what stayed below standard is a lesson "
+    "for the next film, never a reason to withhold a publication (the Owner, 2026-10-15).",
 )
 
 

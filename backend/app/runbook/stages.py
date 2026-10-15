@@ -4429,6 +4429,55 @@ def _film_of(engine: Engine, asset_id: str) -> dict[str, Any]:
         return {"storyboard_id": job.storyboard_id if job is not None else None}
 
 
+#: The Owner, 2026-10-15 12:20Z: «Randările odată făcute, de maxim 3x pentru fiecare imagine sau
+#: mișcare». A scene's stills, and its shots, are made at most this many times (the first
+#: purchase, the re-rolls and the paid redos all counted, `_renders_made`): past it nothing of
+#: that layer is bought for the scene again, and the best take there is stands.
+RENDERS_PER_LAYER = 3
+#: ...and a failed report's repair is bought at most this many times (`_report_repair_rounds`:
+#: her BOUGHT_WAITING decisions on it). Past either limit her list is not bought and the film
+#: ships as it stands: «Nu putem să ne învârtim la nesfârșit la același subiect, cheltuim toți
+#: banii și fără să publicăm!» — her ACCEPT under the cap (`director_qc.accepted_by_cap`),
+#: no card to him (the card «ce se întâmplă cu filmul» of 2026-10-12 is answered for good).
+REPAIR_ROUNDS_PER_REPORT = 2
+
+
+def _renders_made(session: Session, storyboard_id: str) -> dict[tuple[int, str], int]:
+    """How many times each scene's picture («still») and its shot («motion») were made, by
+    (scene, layer): every paid request among the scene's takes, whatever became of it
+    (`assembler._paid_attempts`: a stills request's candidates share its task id)."""
+    from app.media.assembler import SHOT_TAKE_KINDS, _paid_attempts  # noqa: PLC0415
+    from app.media.models import SceneTake  # noqa: PLC0415
+
+    by_scene: dict[tuple[int, str], list[SceneTake]] = {}
+    for row in session.scalars(select(SceneTake).where(SceneTake.storyboard_id == storyboard_id)):
+        if row.kind == "still":
+            layer = "still"
+        elif row.kind in SHOT_TAKE_KINDS:
+            layer = "motion"
+        else:
+            continue
+        by_scene.setdefault((int(row.scene_number), layer), []).append(row)
+    return {key: _paid_attempts(rows, key[1]) for key, rows in by_scene.items()}
+
+
+def _report_repair_rounds(session: Session, report_id: str) -> int:
+    """How many times her repair of this report bought something (her BOUGHT_WAITING
+    decisions on it)."""
+    from app.media import director_qc  # noqa: PLC0415 - media imports runbook
+
+    return sum(
+        1
+        for event in session.scalars(
+            select(DomainEvent).where(
+                DomainEvent.event_type == director_qc.DECISION_EVENT,
+                DomainEvent.aggregate_id == report_id,
+            )
+        )
+        if str((event.payload or {}).get("outcome") or "") == "BOUGHT_WAITING"
+    )
+
+
 def _redo_allowance(
     engine: Engine, settings: Settings | None, reading: dict[str, Any]
 ) -> tuple[dict[str, Any], bool]:
@@ -4809,6 +4858,13 @@ def _carry_out(
         if by_looks is not None:
             accepted = director_qc.accept_film(engine, reading, by_looks, correlation)
             step.update(decision=by_looks, outcome="ACCEPTED", repair=repair, **accepted)
+            done_lines = _repair_lines(repair)
+        elif repair.get("ship"):
+            # The Owner's cap (2026-10-15): nothing more is bought for this film; she
+            # accepts the best film there is and it goes on to publication now.
+            shipped = director_qc.accepted_by_cap(decided, repair["ship"])
+            accepted = director_qc.accept_film(engine, reading, shipped, correlation)
+            step.update(decision=shipped, outcome="ACCEPTED", repair=repair, **accepted)
             done_lines = _repair_lines(repair)
         else:
             bought_so_far = before + [
@@ -5916,10 +5972,7 @@ def _apply_repairs(
     # Every paid redo is prepared through `redo_scene` (may_act inside, his rule,
     # the budgets, the ceiling, the lease), and only within his limits — moved by what he
     # allowed this film on its card (`decisions.producers.redo_cap`, 2026-10-12).
-    from app.decisions.producers.redo_cap import (  # noqa: PLC0415 - decisions import media
-        propose_redo_cap_card,
-        redo_allowance,
-    )
+    from app.decisions.producers.redo_cap import redo_allowance  # noqa: PLC0415
     from app.economy import repurchase_gate  # noqa: PLC0415 - economy imports media
 
     with Session(engine) as session:
@@ -5947,17 +6000,38 @@ def _apply_repairs(
     bought_kinds: dict[int, list[str]] = {}
     next_words: dict[int, str] = {}
     prepared: dict[int, dict[str, Any]] = {}
+    with Session(engine) as session:
+        report_rounds = _report_repair_rounds(session, str(reading.get("report_id") or ""))
     for scene in sorted(paid):
         with Session(engine) as session:
             rounds = _paid_redo_rounds(session, storyboard_id)
             open_round = _open_still_rounds(session, storyboard_id).get(scene)
+            renders = _renders_made(session, storyboard_id)
         # Only her motion after the scene's new still continues the still's round.
         continues = open_round if paid[scene] == ["motion"] else None
+        # The Owner's cap of 2026-10-15: three renders a layer a scene, two bought repairs
+        # a report; past it the scene keeps the best take it has (`RENDERS_PER_LAYER`).
+        over_renders = {
+            redo: renders.get((scene, redo), 0)
+            for redo in paid[scene]
+            if renders.get((scene, redo), 0) >= RENDERS_PER_LAYER
+        }
         if continues is None and (
-            rounds.get(scene, 0) >= per_scene or sum(rounds.values()) >= per_film
+            rounds.get(scene, 0) >= per_scene
+            or sum(rounds.values()) >= per_film
+            or over_renders
+            or report_rounds >= REPAIR_ROUNDS_PER_REPORT
         ):
             result["limited"].append(
-                {"scene_index": scene, "per_scene": per_scene, "per_film": per_film}
+                {
+                    "scene_index": scene,
+                    "per_scene": per_scene,
+                    "per_film": per_film,
+                    "renders": over_renders,
+                    "renders_cap": RENDERS_PER_LAYER,
+                    "report_rounds": report_rounds,
+                    "report_rounds_cap": REPAIR_ROUNDS_PER_REPORT,
+                }
             )
             continue
         corrected = None
@@ -6319,22 +6393,21 @@ def _apply_repairs(
                 correlation,
             )
 
-    # His cap stopped what she decided and nothing else of her list could be done: the film
-    # is his question now (money), as a card — once per film, never a loop of her decisions
-    # (2026-10-12, 1c038a99: three REPAIRs in eleven seconds, each stopped by the cap).
+    # The cap stopped what she decided and nothing else of her list could be done. Until
+    # 2026-10-15 the film became his question, as a card («ce se întâmplă cu filmul»); the
+    # Owner answered it for good that day: «Publicăm ce avem! … orice iese, chiar dacă pică,
+    # Directorul se uită peste ce avem, și publică!» The film ships as it stands, her ACCEPT
+    # under the cap (`_carry_out`), and what stayed below standard is a lesson for the next.
     if result["limited"] and not (result["bought"] or result["asked"] or result["applied"]):
-        with Session(engine) as session:
-            spent_rounds = _paid_redo_rounds(session, storyboard_id)
-        card_id = propose_redo_cap_card(
-            engine,
-            storyboard_id=storyboard_id,
-            report_id=str(reading.get("report_id") or ""),
-            media_asset_id=asset_id,
-            limited=list(result["limited"]),
-            rounds=spent_rounds,
-        )
-        if card_id:
-            result["card_id"] = card_id
+        result["ship"] = {
+            "limited": list(result["limited"]),
+            "reason_ro": (
+                "plafonul Proprietarului (2026-10-15): cel mult "
+                f"{RENDERS_PER_LAYER} randări pe imagine sau mișcare pe scenă și "
+                f"{REPAIR_ROUNDS_PER_REPORT} refaceri cumpărate pe raport; se publică ce avem, "
+                "Directoarea alege ce este cel mai apropiat de plan."
+            ),
+        }
 
     # The film rejoined from its takes where her list says so (a new still of a scene he chose
     # to animate locally, a shot bought earlier and approved since): 0 credits, once, and only
