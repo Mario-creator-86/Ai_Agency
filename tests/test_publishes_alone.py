@@ -1123,7 +1123,10 @@ def test_the_serial_still_always_says_its_surfaces_are_blank_and_the_editor_is_t
     }
     still = compose_serial_prompt(package, look)
     assert SERIAL_BLANK_SENTENCE in still, still
-    assert "every screen is dark" in SERIAL_BLANK_SENTENCE
+    # 11:22Z the same day: «every screen is dark or a plain soft glow» was the sentence the
+    # Director locked scenes 5 and 7 on — a screen named is a screen drawn. No screen is named;
+    # the room's own sentence says where a monitor exists and that it is dark.
+    assert "screen" not in SERIAL_BLANK_SENTENCE and "blank" in SERIAL_BLANK_SENTENCE
     told = prompt_agent._SERIAL_SHOTS_INSTRUCTIONS
     assert "nameplate" in told and "leave such objects out" in told
 

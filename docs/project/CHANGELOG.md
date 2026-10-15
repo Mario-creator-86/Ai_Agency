@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-15 — The blank-surfaces sentence names no screen
+
+- `media/prompt_agent.py`: `SERIAL_BLANK_SENTENCE` names no screen («The desk surfaces are plain and clear of plates, labels and signs, and any sheet of paper is blank»): at 11:22Z the Director locked episode 2's scenes 5 and 7 on «every screen is dark or a plain soft glow» — a screen named is a screen drawn, lit, in a room the plan gave none. Where a monitor exists, the look's room sentence says so and says it is dark. Test 17 of `test_publishes_alone` updated.
+
 ## 2026-10-15 — A ready repair is walked at once
 
 - `workflows/passes/director_qc_review.py`: a repair of hers that is ready (a take bought for her list approved) or whose candidates wait for her look, and that no walk has read since her decision, is queued at once instead of an hour after her decision; once a walk ran for it the hour's throttle holds as before. Test in `test_director_decides_qc`.

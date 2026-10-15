@@ -5,6 +5,25 @@ AGENT_SCENARIO_ACCEPTANCE later used actual Ollama Cloud calls, with normal seri
 acceptance and real GPU/media/upload still pending. Current local UI evidence is reported
 separately below and does not prove those external workflows.
 
+## Cycle 7c: the blank-surfaces sentence names no screen; the new pass rule verified live (2026-10-15)
+
+**Verificat live după repornirea de la 11:11Z (pe 89f32af).** Regula nouă a pasului a mers:
+continuarea filmului 2 a pornit la primul pas al supraveghetorului (11:16Z), nu la 11:25Z.
+Cuvintele scenelor refuzate s-au spus din nou cu compozitorul corectat (`media.prompts_rewritten`
+cu vechiul bloc «glowing monitors» în `old_still_prompt`), Directoarea a fost întrebată din nou:
+scenele 2 și 4 — rescrierea lui Kael TRATEAZĂ, imagini noi cumpărate (0,31 USD fiecare, 11:23Z);
+scena 5 — refuzată; scena 7 — blocată pe compozitor, notă de defect, nimic cumpărat. Cuvintele
+blocate, citate de ea: «every screen is dark or a plain soft glow» — propoziția
+`SERIAL_BLANK_SENTENCE` adăugată în ciclul 6 («ecranele stinse în fiecare imagine»): un ecran
+numit e un ecran desenat, aprins, într-o cameră fără ecrane în plan.
+
+**Ce este.** `SERIAL_BLANK_SENTENCE` nu mai numește niciun ecran: «The desk surfaces are plain
+and clear of plates, labels and signs, and any sheet of paper is blank.» Unde există un monitor
+spune propoziția camerei din tabelul look-ului (camera de randare: stins). Teste: `test_publishes_alone`
+(17 actualizat), `test_serial_look`, `test_serial_ladder`, `test_scene_redo_prompt_rewrite`,
+`test_lessons_reach_prompts`, `test_serial_sheet_gate` (121 passed). Intră la următoarea margine
+fără GPU: scenele 5 și 7 ale episodului 2 așteaptă exact această corectare.
+
 ## Cycle 7b: a ready repair is carried on at once, not an hour after her decision (2026-10-15)
 
 **Ce s-a văzut după repornirea de la 10:27Z (pe 55b2bb2).** Nimic nu s-a mișcat 35 de minute:

@@ -1929,9 +1929,14 @@ SERIAL_FRAME_SENTENCE = (
 #: and the vision gate still read lettering and number grids on a ledger drawn for «pauses
 #: before the number» (2026-10-12, 08:03, scene 4 of f06808c9, twice). Said without the
 #: words the prompt check reads as a request for text («lettering», «digits»).
+#: 2026-10-15 11:22Z (episode 2, scenes 5 and 7): the sentence used to say «every screen is
+#: dark or a plain soft glow», and the Director locked her refusals on those very words — a
+#: screen named is a screen drawn, lit, in a room the plan gave none; the room's own sentence
+#: (`series_look.room_sentence`) says where a monitor exists and that it is dark. No screen is
+#: named here; the paper is named only as what it is when present.
 SERIAL_BLANK_SENTENCE = (
-    "Pages and papers are blank and plain, every screen is dark or a plain soft glow, and the "
-    "desks are clear of plates, labels and signs."
+    "The desk surfaces are plain and clear of plates, labels and signs, and any sheet of "
+    "paper is blank."
 )
 #: A function word left hanging at the end of a cut phrase ("wearing", "with", "in a").
 _DANGLING_TAIL = re.compile(
