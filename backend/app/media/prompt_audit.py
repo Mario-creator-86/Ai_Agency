@@ -67,6 +67,11 @@ APPROVED_UNDER_CAP = "APPROVED_UNDER_CAP"
 #: not asked about again while the words stand (`tool_defect_on`).
 TOOL_DEFECT = "TOOL_DEFECT"
 SAME_FINDING_ROUNDS = 3
+#: Refusals in a row of one scene's layer, however they are worded, before the scene is a
+#: tool defect anyway: 20:44-20:47Z, 7c26a7ce scene 2, seven refusals each worded a little
+#: differently («the subject sentence names the bar…» — it did not) slipped under the
+#: same-finding guard; the Owner: «se învârt în cerc».
+REFUSALS_IN_A_ROW = 6
 #: How much of the newest finding the one before must already say to be the same finding —
 #: compared on her brief's own words (diagnosis + change), not on the long reason: 20:35Z the
 #: first guard read «the action is written twice» as the same finding as «the action stops
@@ -113,6 +118,12 @@ _WHAT = {"still": "picture", "motion": "clip"}
 #: 'raise it a little' and never says she lowers her arm» (a still is one moment; the chain
 #: is the clip's) and for the missing room (a budget matter: the subject was too long).
 _STILL_NOTE = (
+    "A picture has no camera move and needs no «static frame» statement: the composer leaves "
+    "every camera word out of the picture's words by rule, and the plan's camera_move is the "
+    "clip's — never refuse a picture for lacking one. A duplication or a missing clause is "
+    "refused only when you can quote it from words_to_send itself: the plan's subject and "
+    "the shot_plan are the Editor's fields, not what is sent, and a clause that stands in "
+    "the plan but not in words_to_send is not said twice.\n"
     "The picture is ONE frozen moment, the first of the plan: the plan's later moments "
     "(«then…», «lowers», «points») belong to the clip's words and are never in a picture's — "
     "do not refuse a picture for lacking them. When the picture must show a LATER moment of "
@@ -230,12 +241,16 @@ def same_finding_streak(
     from app.media.prompt_agent import lesson_overlap  # noqa: PLC0415
 
     streak = 1
+    in_a_row = 1
     for audit in reversed(_audits(session, storyboard_id, scene, layer)):
         if audit.get("verdict") != REWRITE:
             break
+        in_a_row += 1
+        if in_a_row >= REFUSALS_IN_A_ROW:
+            return in_a_row  # however worded: this many in a row is the tool's, not his
         older = str(audit.get("finding") or audit.get("reason") or "")
         if lesson_overlap(str(finding or ""), older) < SAME_FINDING_OVERLAP:
-            break
+            continue  # a differently worded round does not end the count of refusals
         streak += 1
     return streak
 

@@ -1355,6 +1355,20 @@ def test_a_new_finding_after_two_of_the_same_is_not_a_tool_defect(engine, tmp_pa
     # Two of the same, then a new finding: three rewrites, no defect, the rounds go on.
     assert [o["rewritten"] for o in outcomes] == [[1], [1], [1]], outcomes
     assert all(o["held"] == [] for o in outcomes)
+    # …but not for ever: REFUSALS_IN_A_ROW refusals of one scene, however each is worded,
+    # are the tool's (20:44-20:47Z: seven, each a little different, slipped under the guard).
+    briefs.extend(
+        [(f"finding number {n}, worded on its own", [f"change {n}"]) for n in range(4, 12)]
+    )
+    later = [
+        prompt_audit.audit_before_purchase(
+            engine, object(), storyboard_id=board, step="stills", scenes=[1], correlation_id="c"
+        )
+        for _ in range(prompt_audit.REFUSALS_IN_A_ROW)
+    ]
+    defects = [o for o in later if o["held"] and o["held"][0].get("developer_defect")]
+    assert defects, later
+    assert len(defects[0]["held"]) == 1 and defects[0]["approved"] == []
 
 
 def test_the_walk_audits_before_it_pays_and_her_hold_is_not_the_owners():
