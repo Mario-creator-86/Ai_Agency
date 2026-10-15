@@ -370,6 +370,67 @@ def test_a_script_refused_by_its_form_is_asked_again_with_the_refusal(
     assert "1 respins:" in outcome["reason"]
 
 
+def test_a_writer_who_stops_over_a_charts_missing_figures_is_told_to_write_it_live(
+    engine, settings, monkeypatch
+):
+    """15:51Z, d7d80450: four claims verified, the story passed its check, and the writer
+    answered with a blocker — scene 3's DATA_CARD had no numeric claim — so the topic went
+    back to research with its 30 claims retired. A chart's missing figures are a form
+    matter: he is asked again to write the scene LIVE, and his claims stand; a stop over a
+    fact the story lacks still goes back to research."""
+    from pathlib import Path as _Path
+
+    from app.agents.identity import Blocker
+    from app.factual.agent_pipeline import ScriptBlocked
+    from app.factual.models import FactualClaim
+    from app.integrations.vault import CredentialVault
+    from app.runbook.stages import SCRIPT_FORM_RETRIES
+    from sqlalchemy import select
+
+    topic_id = _topic(engine, status="SELECTED")
+    _claim(engine, topic_id, status="SUPPORTED")
+    registry = ProviderRegistry()
+    registry.register("any", object())
+    asked: list[list[str] | None] = []
+
+    def stop(*args: Any, **kwargs: Any) -> None:
+        asked.append(kwargs.get("notes"))
+        raise ScriptBlocked(
+            Blocker(
+                reason="Scene 3 requires a DATA_CARD chart; the claims carry no numeric values.",
+                needs="A verified claim with a value and unit for the dimming.",
+            )
+        )
+
+    monkeypatch.setattr("app.runbook.stages.agent_write_script", stop)
+    vault = CredentialVault(_Path(str(engine.url.database)).with_suffix(".credentials.key"))
+    outcome = build_stage_runners(engine, settings, vault, registry)["script_and_storyboard"]()
+    assert outcome["status"] == "COMPLETED"
+    assert len(asked) == SCRIPT_FORM_RETRIES + 1
+    assert any("se scrie LIVE" in note for note in asked[1] or [])
+    with Session(engine) as session:
+        claims = session.scalars(select(FactualClaim).where(FactualClaim.topic_id == topic_id))
+        assert [c.status for c in claims] == ["SUPPORTED"]  # not retired by a form matter
+
+    # A stop over a missing fact is not a form matter: the topic goes back to research.
+    asked.clear()
+    with Session(engine) as session, session.begin():
+        session.get(TopicIdea, topic_id).status = "REJECTED"  # out of the room's way
+    topic_two = _topic(engine, status="SELECTED")
+    _claim(engine, topic_two, status="SUPPORTED")
+
+    def no_facts(*args: Any, **kwargs: Any) -> None:
+        asked.append(kwargs.get("notes"))
+        raise ScriptBlocked(Blocker(reason="No claim supports the hook.", needs="Sources."))
+
+    monkeypatch.setattr("app.runbook.stages.agent_write_script", no_facts)
+    build_stage_runners(engine, settings, vault, registry)["script_and_storyboard"]()
+    assert len(asked) == 1
+    with Session(engine) as session:
+        claims = session.scalars(select(FactualClaim).where(FactualClaim.topic_id == topic_two))
+        assert [c.status for c in claims] == ["UNCERTAIN"]
+
+
 def test_quality_control_selects_files_by_what_they_are_not_by_their_label(
     engine, settings, tmp_path
 ):

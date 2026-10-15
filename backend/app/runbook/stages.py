@@ -492,6 +492,16 @@ def _performance_intake(engine: Engine, vault: Any) -> dict[str, Any]:
 SCRIPT_BLOCKED_KEY = "script_blocked"
 
 
+_CHART_WORDS = ("data_card", "chart", "grafic", "bar", "numeric", "value and unit", "cifr")
+
+
+def _stop_is_about_a_chart(blocker: Any) -> bool:
+    """Whether the writer stopped over a chart's missing figures rather than a missing fact:
+    then the scene is LIVE and the claims stand (15:51Z, d7d80450)."""
+    said = " ".join(str(getattr(blocker, key, "") or "") for key in ("reason", "needs")).lower()
+    return any(word in said for word in _CHART_WORDS)
+
+
 def _topic_back_to_research(engine: Engine, topic_id: str, blocker: Any) -> None:
     """A SELECTED topic whose writer stopped is PROPOSED again, with his reason noted to the
     Director: `_gather_for_candidates` reads for it again (the note is newer than its
@@ -1165,6 +1175,31 @@ def _script_and_storyboard(
                 # goes back to research with his reason, through the Director, and the day
                 # goes on (2026-10-15, «The Supernova Surprise» on claims about «Discovery»).
                 logger.info("script_blocked", extra={"topic_id": topic_id, "reason": str(exc)})
+                if _stop_is_about_a_chart(exc.blocker):
+                    # 15:51Z, d7d80450: four claims verified, the story passed, and he stopped
+                    # because scene 3's chart had no figures — a form matter, not a fact the
+                    # story lacks. The scene is written LIVE; his claims are not retired.
+                    form_refusals += 1
+                    if form_refusals <= SCRIPT_FORM_RETRIES and attempt < MAX_SCRIPT_EXCHANGES:
+                        form_retries += 1
+                        notes = [
+                            *notes,
+                            "Nu te opri pentru lipsa unei cifre: "
+                            + " ".join(str(exc.blocker.reason or "").split())[:300]
+                            + " Scena fără cifre verificate se scrie LIVE (ce se vede), fără "
+                            "grafic; un grafic (DATA_CARD) există doar când fiecare bară are "
+                            "valoarea, unitatea și afirmația ei. Blocker-ul este numai pentru "
+                            "fapte pe care povestea nu le are deloc.",
+                        ]
+                        continue
+                    # His retries spent on the same chart: the topic is refused today with
+                    # his words, its claims untouched — the next run writes from them again.
+                    rejected.append(
+                        "scenaristul s-a oprit pentru un grafic fără cifre, deși scena se "
+                        "scria LIVE: "
+                        + " ".join(str(getattr(exc.blocker, "reason", "") or "").split())[:200]
+                    )
+                    break
                 # His own words, not «o eroare neașteptată în codul studioului» (14:03Z).
                 rejected.append(
                     "scenaristul s-a oprit cinstit, subiectul merge înapoi la cercetare: "

@@ -553,6 +553,9 @@ Scrie {scenes} scene. Fiecare scenă:
   niciodată ca ultimă scenă: un final negru îl face pe spectator să dea mai departe.
   Nu cere grafice, bare sau ecran negru într-o scenă LIVE: un generator de fotografii le
   desenează greșit, iar fiecare încercare costă bani.
+  Lipsa unei cifre nu e motiv de oprire: când afirmațiile nu dau valori și unități pentru un
+  grafic, scena se scrie LIVE (ce se vede: o stea îndepărtată mai palidă decât se aștepta),
+  nu DATA_CARD. Un "blocker" trimiți doar când povestea nu are deloc faptele ei.
 
 LUNGIMEA — ținta, nu o cămașă de forță:
 - naratorul spune {wps} cuvinte pe secundă, deci {duration} secunde ≈ {words} de cuvinte de
