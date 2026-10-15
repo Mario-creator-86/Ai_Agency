@@ -5,6 +5,37 @@ AGENT_SCENARIO_ACCEPTANCE later used actual Ollama Cloud calls, with normal seri
 acceptance and real GPU/media/upload still pending. Current local UI evidence is reported
 separately below and does not prove those external workflows.
 
+## CICLUL 5 — rularea orfană, tokenii în buget, verificările goale, fratele din rundă: patru cauze de pe registrul live, reparate (Claude) (2026-10-15)
+
+Patru cauze găsite pe registrul live după repornirile de dimineață, fiecare reparată cu testul ei
+și dovedită pe viu (commit-uri 287b3b1, cfe2e29, 212640c + corecția restore-ului, în arbore).
+
+1. **Rularea orfană bloca Directoarea** (`agents/services.py`): după o oprire bruscă, o rulare
+   RUNNING a ei rămânea «în curs» 45 de minute și nucleul refuza orice apel al ei («are deja o
+   sarcină activă») — clipurile scenelor 2, 5, 6 au mers înapoi la imagine fără privirea ei.
+   `PROCESS_STARTED_AT`: o rulare începută înaintea procesului curent e ABANDONED pe loc.
+2. **Bugetul zilnic număra tokenii abonamentului** (`economy/budget.py`): 14,22 USD de rulări LLM
+   (261, cele ale Directoarei cu 580k tokeni) erau «cheltuieli» → pasul de imagini al «Zero Script
+   Club» (3,90 USD) refuzat OVER_DAILY_BUDGET cu scrisoare la Owner. Regula lui: abonamentul nu costă.
+   Acum: cheltuiala perioadei = costurile furnizorilor; tokenii raportați alături. Pe viu: foaia
+   s-a reverificat RESOLVED la 08:27Z, scrisorile închise.
+3. **Verificările ei ieșeau goale și fără inbox** (`agents/structured.py`): deepseek-v4.1-flash,
+   întrebat fără nimic despre gândire, raționa până la limita de 393k tokeni (12 minute, zero
+   răspuns), de două ori după reparația inbox-ului. Prima încercare structurată cere JSON cu
+   gândirea oprită pentru orice model, mai puțin cele care narează fără ea (glm; sonda de dimineață);
+   a doua încercare gândește nativ, ca înainte. Pe viu: brief 5 s, rescriere 10 s, recenzie 4 s,
+   «TREATS», la scenele 2 și 5.
+4. **Restore-ul sărea scenele cu un frate respins în aceeași rundă** (`fix_check.restore_sent_back_scenes`):
+   candidatul-geamăn al porții era luat drept «imagine mai nouă» → scenele 2 și 5 n-au ajuns la
+   privirea ei la 07:59Z și se cumpără din nou (≈1,5 USD). «Mai nouă» = o imagine APPROVED/PAID de
+   după; corecția intră la următoarea repornire.
+
+Episodul 2 acum: scenele 1 și 6 păstrate de ea, 4 trecută, 2/3/5 cu imagini noi pe prompturi
+revizuite (brief → rescriere → recenzie), apoi clipuri; orice refuz nou trece întâi pe la privirea ei.
+Azi: 3,48 USD până la 08:39Z. Oprirea în timpul unui pas GPU a costat de două ori 0,14 USD.
+Zgomot de închis: scrisori către Owner după opriri bruște («rularea zilei s-a oprit», «contractul de
+cumpărare expirat») — ale studioului, nu ale lui.
+
 ## CICLUL 4 — lista Owner-ului: scrisul și mișcarea sunt ale Directoarei, scena trimisă înapoi ajunge la privirea ei, nicio regenerare fără revizuirea promptului (Claude) (2026-10-15)
 
 Owner, 06:45–06:55Z, cu serverul oprit la cererea lui, lista lui de lucru luată pe rând, fiecare

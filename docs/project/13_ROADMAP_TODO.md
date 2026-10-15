@@ -30,6 +30,11 @@
       `test_paid_path_write_lock` (2).
 - [ ] The hourly Cowork session presses «Începe ziua» and reassigns models; the Owner decides whether
       it may act or only watch.
+- [ ] Letters to the Owner after a hard stop («rularea zilei s-a oprit înainte să se termine», «foaia
+      așteaptă să se încheie cumpărarea în curs» on an expired lease) are the studio's matters, not his:
+      route them to the Director or drop them.
+- [ ] The Director's end-of-day review still quotes the old budget figure (16,20 USD) from the day's
+      reports written before the budget fix; the reports should read the period as the kernel does.
 - [ ] Inbox hygiene: the Director's read STATUS reports (105 open since 2026-10-03) and Marcus's 60
       open HANDOFFs are never resolved; the loop that reads them must close them, else every call
       carries them (bounded since cycle 3, not resolved).

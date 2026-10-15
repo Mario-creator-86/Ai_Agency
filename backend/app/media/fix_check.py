@@ -997,11 +997,14 @@ def restore_sent_back_scenes(
                     SceneTake.storyboard_id == storyboard_id,
                     SceneTake.scene_number == still.scene_number,
                     SceneTake.kind == "still",
+                    SceneTake.status.in_(("APPROVED", "PAID")),
                     SceneTake.created_at > still.created_at,
                 )
             )
             if newer is not None:
-                continue  # the scene moved on: a later still exists
+                continue  # the scene moved on: a later still is approved or paid
+            # (a sibling of the same round the gate refused is not «newer»: 2026-10-15
+            # 07:59Z, scenes 2 and 5 of episode 2 were skipped for one and bought again)
             clip = session.scalar(
                 select(SceneTake)
                 .where(

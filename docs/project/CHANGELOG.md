@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-10-15 — Cycle 5: the orphaned run, the tokens in the budget, the empty reviews, the sibling of the round
+
+Four causes read on the live record after the morning's restarts, each fixed with its test.
+
+- A run that started before this process started no longer blocks its employee (`agents/services.py`, `PROCESS_STARTED_AT`): the Director had been refused «already has an active task» for 45 minutes after a hard stop.
+- The daily budget counts media; the subscription's tokens are reported beside it, never charged (`economy/budget.py`): 14,22 USD of priced LLM runs had refused a 3,90 USD stills step with a letter to the Owner.
+- A structured first attempt asks for JSON with thinking off, except from a model that narrates without it (glm) (`agents/structured.py`): deepseek-v4.1-flash had reasoned to its 393k-token limit and answered nothing, twelve minutes per review.
+- Her restore of a scene sent back for its clip no longer takes a gate-refused sibling of the same round for a newer still (`fix_check.restore_sent_back_scenes`); scenes 2 and 5 of episode 2 had been skipped and bought again.
+- Her restore writes the clip's PASSED record and settles clips she already kept, so the hero gate reads her word (`fix_check`).
+
 ## 2026-10-15 — Cycle 4: writing and motion are the Director's, a sent-back scene reaches her look, no regeneration without her review
 
 The Owner's list, one by one, each with its test, the server stopped at his request.

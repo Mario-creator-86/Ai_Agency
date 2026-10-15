@@ -671,6 +671,33 @@ def test_a_scene_sent_back_for_its_clip_is_restored_by_her_look_and_buys_nothing
         )
         still_id = still.id
 
+    # A sibling candidate of the same round, refused by the gate with the same timestamp,
+    # is not «a newer still»: the scene is still offered (07:59Z, scenes 2 and 5 were skipped).
+    with Session(engine) as session, session.begin():
+        twin = session.get(SceneTake, still_id)
+        session.add(
+            SceneTake(
+                id="still-twin",
+                storyboard_id=board,
+                scene_number=1,
+                kind="still",
+                prompt_hash=twin.prompt_hash,
+                model_id=twin.model_id,
+                resolution=twin.resolution,
+                seconds=twin.seconds,
+                seed=twin.seed,
+                credits_quoted=twin.credits_quoted,
+                status="REJECTED",
+                failure_code="LOCAL.STILL_GATE",
+                failure_detail="Nu arată ce cere scena.",
+                path=twin.path,
+                sha256="t" * 64,
+                approved_by="still_gate",
+                created_at=twin.created_at,
+                updated_at=twin.updated_at,
+            )
+        )
+
     asked: list[dict] = []
     answer = {"verdict": "CONFIRMED", "severity": "serious", "redo": True, "reason_ro": "nu"}
 

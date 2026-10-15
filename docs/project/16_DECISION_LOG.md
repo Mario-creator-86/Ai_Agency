@@ -1,5 +1,13 @@
 # Architectural / Product Decision Log v5
 
+## The budget is for images and motion; a first attempt bounds the thinking; a restart ends its runs (2026-10-15)
+
+**The budget is for images and motion.** The books priced every LLM run and the period summed them into the day's spend; a 3,90 USD stills step was refused over 14,22 USD of tokens the Owner pays by subscription («LLM-ul este pe abonament! NU COSTĂ BANI»). Decision: the spend a budget counts is the vendors' cost records; the priced runs stay in the period's figures as information. Rejected: pricing subscription models at zero (the usage would vanish from the books) and a separate token budget against money (he has `STUDIO_AGENT_DAILY_TOKEN_BUDGET` for tokens).
+
+**A first attempt bounds the thinking.** This morning's rule left Cloud to think natively; a long review on deepseek-v4.1-flash then reasoned to its output limit and answered nothing, twice, twelve minutes each. Decision: a structured first attempt asks for JSON with thinking off, and only the models the probe showed narrating without thinking (glm) are asked nothing; the second attempt thinks natively for all. Rejected: a per-task output cap on Cloud (the cap ends the reasoning without an answer) and a smaller model for reviews (the Owner chooses her model).
+
+**A process restart ends its runs.** A RUNNING row older than the process is not in progress; it is closed as abandoned and the employee is free. Rejected: a shorter stale limit (a real long call must be allowed its time).
+
 ## Writing and motion are the Director's; a sent-back scene comes back to her; no regeneration without her review (2026-10-15)
 
 **Writing in the picture is hers.** Since 2026-10-12 «readable or garbled writing» was a hard limit of the bible: quality control's word «text» sent a still she had approved back to the gate, nobody looked at the clip, and the scene was about to buy a new still and a new clip — for ruled lines on papers in the background and a zoom. The Owner, who watched the clip: «este acceptabilă … scrisul, ea trebuie să hotărască; dacă e în spate pe o carte, rămâne; pe termometru, rămâne; pe o foaie pe care scria, e normal; important e să nu fie scris pe imagine ca subtitrare sau logo-uri». Decision: no words of a refusal bind her on writing; her brief names what is serious (text laid over the picture, a logo, a watermark, or writing that says what the story must not) and what is the scene's own; faces where the bible forbids them and panels stay hard. Rejected: a per-object allow-list (the thermometer rule of 2026-10-13 was the first of an endless series) and a detector for overlays (none measures it; she sees the frames).
