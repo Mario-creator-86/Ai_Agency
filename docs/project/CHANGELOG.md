@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-15 — The prompt audit buys under the cap after its rounds
+
+Episode 3's filming (14:50Z) was stopped by the prompt audit: all eight scenes refused twice, mostly for props that were in the character bible, not in the words, and the walk said «1 film așteaptă Proprietarul».
+
+- `media/prompt_audit.py`: after `AUDIT_ROUNDS` briefs the words are bought as they stand under the Owner's cap (`APPROVED_UNDER_CAP`, `under_cap` on the result) instead of holding the scene; the plan she reads carries no bible props (`_plan_without_props`); the brief says to judge only `words_to_send`, the text the model receives.
+- Tests: `test_publishes_alone` section 16 updated.
+
 ## 2026-10-15 — A script its form refused is asked for again with the refusal, twice at most
 
 - `runbook/stages.py`: a draft `ScriptRejected` by its form (a DATA_CARD without its figures, a citation not supplied) is asked for again with the refusal in the writer's notes, up to `SCRIPT_FORM_RETRIES` (2) per topic and day, instead of closing the room on the topic (14:43Z, d7d80450: the first script a writer with the right facts wrote was dropped whole for one chart scene). `form_retries` on the stage's artefacts; a topic with no supported claim still closes at once. Test in `test_daily_run_stages` (82 passed with `test_script_writing`).

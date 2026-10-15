@@ -1081,8 +1081,14 @@ def test_the_director_audits_a_scenes_words_before_the_first_purchase(
     third = prompt_audit.audit_before_purchase(
         engine, object(), storyboard_id=board, step="stills", scenes=[1, 2], correlation_id="c"
     )
-    assert third["approved"] == [1] and third["rewritten"] == [], third
-    assert [h["scene_index"] for h in third["held"]] == [2] and third["asked"] is False
+    # Her rounds spent: scene 2's words are bought as they stand, under the Owner's cap
+    # (2026-10-15 14:57Z: a film stood «așteaptă Proprietarul» on one held scene).
+    assert third["approved"] == [1, 2] and third["rewritten"] == [], third
+    assert third["held"] == [] and third["under_cap"] == [2] and third["asked"] is False
+    assert "Judge ONLY words_to_send" in prompt_audit._INSTRUCTIONS
+    assert prompt_audit._plan_without_props(
+        {"characters": [{"name": "Sarah", "props": "gold nameplate"}], "part": "hook"}
+    ) == {"characters": [{"name": "Sarah"}], "part": "hook"}
     with Session(engine) as session:
         scene_rows = session.scalars(
             select(StoryboardScene).where(StoryboardScene.storyboard_id == board)

@@ -5,6 +5,33 @@ AGENT_SCENARIO_ACCEPTANCE later used actual Ollama Cloud calls, with normal seri
 acceptance and real GPU/media/upload still pending. Current local UI evidence is reported
 separately below and does not prove those external workflows.
 
+## The prompt audit buys under the cap after its rounds; the Director judges only the words sent (2026-10-15)
+
+**Rularea a treia a Owner-ului (14:36–14:50Z, 5fa3565).** Cercetarea a adus paginile potrivite
+(«Dark energy», DES, DESI; 11 afirmații susținute, între ele faptul-cheie: «the dimming of
+Type Ia supernovae relative to their redshift indicates an accelerating expansion»). Marcus a
+scris, dar forma a refuzat ciorna pentru un grafic (DATA_CARD) fără cifre și camera s-a închis
+pe subiect → corectat (542fe65): ciorna refuzată de formă e cerută din nou cu motivul, de cel
+mult două ori. Episodul 3 («Zero Scripts, Stalled Queue», 8 scene) a fost expediat sub plafonul
+ciornelor la 14:43:58Z: aprobat, storyboard, filmare pusă la coadă; Kael a scris planurile de
+cadre pe briefurile noi (6 minute).
+
+**Filmarea (14:50–14:57Z).** Auditul prompturilor dinaintea banilor (1c1c90f) a lucrat: zero
+cumpărat. Dar Directoarea a refuzat toate cele 8 scene de două ori, mereu și pentru «plăcuța
+de aur, post-it-urile, registrul verde, calculatorul cu rolă» — recuzita din biblia
+personajelor, pe care i-o arătam în planul scenei deși compozitorul nu o spune în cuvinte —
+plus cuvinte reale (panoul de plută cu cartonașe, tableta «cu ecranul stins»); după 2 briefuri
+scenele au rămas «ținute» și plimbarea a spus «1 film așteaptă Proprietarul» (NEEDS_PROMPT_APPROVAL).
+
+**Ce este (`media/prompt_audit.py`).** După `AUDIT_ROUNDS` briefuri cuvintele se cumpără așa
+cum sunt, sub plafonul Proprietarului (`APPROVED_UNDER_CAP` pe `media.prompt_audited`,
+`under_cap` pe rezultat): plafonul randărilor mărginește banii, privirea ei judecă imaginea.
+Planul arătat ei nu mai poartă recuzita din biblie (`_plan_without_props`), iar briefului i se
+spune: «Judge ONLY words_to_send … an object named in the plan or the bible and absent from
+words_to_send is NOT sent». Teste: `test_publishes_alone` 16 (a treia trecere aprobă sub plafon),
+`test_autonomous_day_end_to_end`, `test_live_prompt_approval`. Repornire la o margine fără GPU;
+pasul filmelor serial nefilmate plimbă din nou a4ecf40a (refuzul ei nu e al Owner-ului).
+
 ## The serial ships its newest draft under the drafts cap; research reads the topic itself; the reader knows the thesis (2026-10-15)
 
 **Rularea a doua a Owner-ului (c0ec4fda, 14:15–14:19Z):** fără film. Scurtul: cercetarea a adus acum pagina bună (Type Ia supernova) și trei pagini-asemănătoare fără legătură (Type Iax, «Type Ia sensory fiber», Type O Negative) din căutarea-sugestie pentru «Type Ia»; adresele propuse de Cercetător au fost lăsate deoparte pentru că «există pagini reale»; din pagina bună s-au extras zece afirmații despre pitice albe și niciuna despre descoperirea din 1998 pe care stă filmul — Marcus s-a oprit cinstit din nou. Serialul: episodul zilei de 15.10, respins de trei ori de citirea Directoarei (nu de verificările calculate), a epuizat cele 3 ciorne și «serialul trece la altă zi». **Ce este:** `story.review.approve_under_drafts_cap` + `serial_stage`: o zi ale cărei ciorne le-a cheltuit citirea ei singură își expediază cea mai nouă ciornă, aprobată sub plafon cu observațiile ei ca lecție (`story.episode_approved_under_cap`, `cap_shipped` pe artefacte); o ciornă refuzată de verificările calculate nu se expediază niciodată; fără dreptul ei de aprobare, nimic nu se schimbă. `research.agent.relevant_pages`: paginile găsite fără niciun cuvânt de substanță al subiectului în titlu nu se citesc (`set_aside_irrelevant` în raport); adresele Cercetătorului se citesc când paginile relevante sunt mai puține decât limita; un titlu title-case întreabă și ultimele două cuvinte («Dark Energy»). `agent_pipeline.extraction_thesis_brief`: cititorul unei surse primește titlul și teza (fapt-cheie, cârlig, concluzie) ca date și extrage mai întâi afirmațiile care le susțin sau le contrazic; până la 14 afirmații. Teste: `test_publishes_alone` 20, `test_serial_tell_now` (ziua își expediază ciorna sub plafon), suitele serial/research/pipeline 212 passed. Repornire, apoi o nouă rulare manuală a zilei (Owner: un short și un serial azi).

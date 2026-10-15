@@ -46,6 +46,10 @@ AUDIT_ROUNDS = 2
 NEEDS_PROMPT_APPROVAL = "NEEDS_PROMPT_APPROVAL"
 LAYER_OF_STEP: dict[str, str] = {"stills": "still", "test_shot": "motion", "motion": "motion"}
 APPROVED, REWRITE = "APPROVED", "REWRITE"
+#: Her approval by the Owner's cap: the words as they stand after `AUDIT_ROUNDS` briefs are
+#: bought (2026-10-15 14:57Z, a4ecf40a: eight scenes held «nici după 2 briefuri» and the
+#: film stood «așteaptă Proprietarul»; his rule: «publicăm ce avem», three renders a layer).
+APPROVED_UNDER_CAP = "APPROVED_UNDER_CAP"
 
 _INSTRUCTIONS = (
     "You are the Director. The studio is about to PAY the generation model for the {what} of "
@@ -62,7 +66,10 @@ _INSTRUCTIONS = (
     "describes them, facing the viewer where the look says so; the camera as the plan says (a "
     "static frame named static); one continuous picture; nothing that invites the model to add "
     "a name, a label or a screen full of content (a «blank nameplate» invites a name: leave the "
-    "object out). A doubt is not an approval. When you do not approve, give the brief the "
+    "object out). Judge ONLY words_to_send: that is the whole text the model receives. The "
+    "plan, the bible and the look are context — an object named there and absent from "
+    "words_to_send is NOT sent and is no reason to refuse. A doubt is not an approval. When "
+    "you do not approve, give the brief the "
     "Video Editor rewrites from: diagnosis (what in these words would make the defect), the "
     "layer, avoid (the words or objects to take out), keep (what must stay), change (what to "
     "say instead), summary_ro (one sentence in Romanian for the register). Return only JSON: "
@@ -145,7 +152,7 @@ def approved_words(
 ) -> bool:
     """Whether she approved exactly these words for this scene's layer."""
     return any(
-        a.get("verdict") == APPROVED and a.get("digest") == digest
+        a.get("verdict") in (APPROVED, APPROVED_UNDER_CAP) and a.get("digest") == digest
         for a in _audits(session, storyboard_id, scene, layer)
     )
 
@@ -192,6 +199,21 @@ def _record(
         )
 
 
+def _plan_without_props(plan: dict[str, Any]) -> dict[str, Any]:
+    """The beat as she reads it, each character without its bible ``props``: what the
+    model receives is ``words_to_send``, and the composer says no props."""
+    shown = dict(plan)
+    people = shown.get("characters")
+    if isinstance(people, list):
+        shown["characters"] = [
+            {k: v for k, v in person.items() if k != "props"}
+            if isinstance(person, dict)
+            else person
+            for person in people
+        ]
+    return shown
+
+
 def _ask(
     engine: Any,
     registry: Any,
@@ -211,7 +233,10 @@ def _ask(
         "scenes": [
             {
                 "scene_index": index,
-                "plan": context.get("scene") or {},
+                # The beat without its people's bible props: a prop is not in the words
+                # unless the plan put it there, and she refused eight scenes for a nameplate
+                # and post-its that were in the bible only (2026-10-15 14:57Z).
+                "plan": _plan_without_props(context.get("scene") or {}),
                 "shot_plan": {
                     key: context["package"].get(key)
                     for key in PLAN_FIELDS
@@ -313,16 +338,30 @@ def audit_before_purchase(
                 result["approved"].append(scene)
                 continue
             if briefs_given(session, storyboard_id, scene, layer) >= AUDIT_ROUNDS:
-                result["held"].append(
-                    {
-                        "scene_index": scene,
-                        "reason": (
-                            f"Scena {scene}: Directoarea nu a aprobat cuvintele nici după "
-                            f"{AUDIT_ROUNDS} briefuri; nu se cumpără."
-                        ),
-                    }
-                )
-                continue
+                # Her rounds are spent: the words as they stand, with her briefs worked in,
+                # are bought under the Owner's cap (2026-10-15: «publicăm ce avem»); the
+                # renders cap bounds the money, her look judges the picture.
+                capped = True
+            else:
+                capped = False
+        if capped:
+            _record(
+                engine,
+                storyboard_id=storyboard_id,
+                scene=scene,
+                layer=layer,
+                digest=digest,
+                verdict=APPROVED_UNDER_CAP,
+                reason=(
+                    f"Scena {scene}: după {AUDIT_ROUNDS} briefuri ale Directoarei cuvintele se "
+                    "cumpără așa cum sunt, sub plafonul Proprietarului (2026-10-15)."
+                ),
+                run_id=None,
+                correlation_id=correlation_id,
+            )
+            result["approved"].append(scene)
+            result.setdefault("under_cap", []).append(scene)
+            continue
         to_ask[scene] = context
         digests[scene] = digest
     if not to_ask:
