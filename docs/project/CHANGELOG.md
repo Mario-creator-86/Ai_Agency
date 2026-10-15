@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-15 — Cycle 3: a work task carries the inbox's asks, not the whole inbox
+
+- A work task carries only the inbox's asks (handoff, request, challenge), the newest 20, each whole with its thread; the inbox tasks (`answer_mail`, `director_review`, `director_loop`) and an unnamed task carry every open message (`agents/identity.py`). The Director's 152 open messages (105 status reports since 2026-10-03) had put 1.6 million characters into every call of hers and her rewrite reviews came back empty — the model spent its whole output allowance reasoning. Marcus carried 60 open handoffs (611k characters) into every script.
+
 ## 2026-10-15 — Cycle 2: the Owner's model stays, a blocked writer goes back to research, a first capital is not a name
 
 The Owner stopped the day's server himself and set the cycle: stop, fix, restart.

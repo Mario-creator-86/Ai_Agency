@@ -493,3 +493,56 @@ def test_a_model_the_owner_chose_is_never_switched_by_the_repair(engine, setting
     result = agent_health.switch_model(context, {"agent_id": agent_id})
     assert result["status"] == DECLINED and result["changed"]["provider_down"] is True
     assert assigned == [] and cards == []
+
+
+# ------------------------------------------------------------------ 9. the inbox in a work task
+
+
+def test_a_work_task_carries_the_asks_of_the_inbox_bounded_and_the_inbox_tasks_carry_all(
+    engine,
+):
+    """2026-10-15: the Director's every call carried her 152 open messages (105 status reports
+    since 2026-10-03), 1.6 million characters, and her rewrite reviews came back empty. A work
+    task carries the newest asks (handoff, request, challenge), at most OPEN_MESSAGES_IN_WORK,
+    each whole with its thread; the inbox tasks and an unnamed task carry everything."""
+    from app.agents.identity import INBOX_TASKS, OPEN_MESSAGES_IN_WORK, compose_identity
+    from app.agents.messages import post_message
+    from app.agents.models import Agent
+    from app.agents.services import seed_initial_workforce
+
+    seed_initial_workforce(engine)
+    with Session(engine) as session, session.begin():
+        sarah = session.scalar(select(Agent).where(Agent.display_name.like("Sarah%")))
+        nadia = session.scalar(select(Agent).where(Agent.display_name.like("Nadia%")))
+        for i in range(30):
+            post_message(
+                session,
+                intent="STATUS",
+                subject=f"Remediere foaie: RESOLVED {i}",
+                body={"i": i},
+                from_agent_id=nadia.id,
+                to_agent_id=sarah.id,
+                body_text=f"Report {i}.",
+            )
+        for i in range(25):
+            post_message(
+                session,
+                intent="REQUEST_REVIEW" if i % 2 else "HANDOFF",
+                subject=f"Ask {i}",
+                body={},
+                from_agent_id=nadia.id,
+                to_agent_id=sarah.id,
+                body_text=f"ASK TEXT {i} whole.",
+            )
+        sarah_id = sarah.id
+
+    with Session(engine) as session:
+        agent = session.get(Agent, sarah_id)
+        work = compose_identity(session, agent, task_type="director_rewrite_review")
+        assert len(work.context["open_message_ids"]) == OPEN_MESSAGES_IN_WORK
+        assert "Remediere foaie" not in work.system
+        assert "ASK TEXT 24 whole." in work.system and "ASK TEXT 4 whole." not in work.system
+        for task in sorted(INBOX_TASKS):
+            full = compose_identity(session, agent, task_type=task)
+            assert len(full.context["open_message_ids"]) == 55, task
+            assert "Remediere foaie: RESOLVED 0" in full.system

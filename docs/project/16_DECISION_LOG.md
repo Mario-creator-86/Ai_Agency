@@ -1,5 +1,9 @@
 # Architectural / Product Decision Log v5
 
+## Complete is not everything: a work task carries the asks, the inbox tasks carry the inbox (2026-10-15)
+
+**Complete is not everything.** The night's «complete messages» (2026-10-14) put every open message addressed to an employee, with its whole thread, into every call: the Director's 152 (105 status reports nobody resolves) made 1.6 million characters, and the model answered nothing after reasoning to its output limit. Decision: what rides in a call rides whole, but a work task chooses what rides — the asks of it (handoff, request, challenge), the newest twenty; reports and the full inbox belong to the tasks whose work is the inbox. Rejected: shortening messages (his rule), a character budget that drops the oldest mid-thread (a cut thread says half), and a model with a bigger window (the reasoning, not the window, was the limit). Open: the inbox must be resolved by the loop that reads it, so that it stays an inbox and not an archive.
+
 ## The Owner's model stays; a blocked writer goes back to research; a sentence's first word; motion weighed by meaning (2026-10-15)
 
 **His model stays.** The Director's model-switch repair had moved Marcus twice without the Owner (the night's outage, then the hourly session's hand); he said «modelele de LLM, dacă au fost alese de mine, rămân; nu se schimbă singur». Decision: the model he set (`owner_home_model`, assignment_origin OWNER) is never switched by a repair; when it fails while another model answers, the card is his; when every probe fails, it is the provider's outage and nobody's decision. Rejected: switching with a letter afterwards (he would read it after the fact) and a per-agent lock flag (the assignment's origin already says whose choice it is). Kimi-K3 is denied by his words («prea scump»): `STUDIO_MODEL_DENY_LIST`, the existing place for his refusals.

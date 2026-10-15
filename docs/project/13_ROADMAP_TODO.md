@@ -28,6 +28,9 @@
       `test_paid_path_write_lock` (2).
 - [ ] The hourly Cowork session presses «Începe ziua» and reassigns models; the Owner decides whether
       it may act or only watch.
+- [ ] Inbox hygiene: the Director's read STATUS reports (105 open since 2026-10-03) and Marcus's 60
+      open HANDOFFs are never resolved; the loop that reads them must close them, else every call
+      carries them (bounded since cycle 3, not resolved).
 - [ ] A ladder scene the studio cannot rewrite (no shot plan, closed film, a card) repeats
       «Directoarea nu a putut încă rescrie … studioul reia singur rescrierea» every day with no
       note: write one `developer_defect` note and stop repeating (seen in the three-days test).

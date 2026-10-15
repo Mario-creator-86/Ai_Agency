@@ -229,18 +229,36 @@ def _persona_section(bible: CharacterBible | None) -> list[str]:
     return out
 
 
-def _open_messages(session: Session, agent: Agent) -> list[tuple[AgentMessage, str]]:
+#: The tasks whose work is the inbox itself: every open message rides, whatever its intent
+#: (and an unnamed task, so nothing is hidden from a caller that did not say).
+INBOX_TASKS = frozenset({"", "answer_mail", "director_review", "director_loop"})
+#: In any other task the asks ride — a handoff, a request, a challenge — newest first, at most
+#: this many, each whole with its thread; reports (STATUS) wait for the inbox tasks. 2026-10-15:
+#: 152 open messages, 105 of them status reports since 2026-10-03, put 1.6 million characters
+#: into every call of the Director's, and her rewrite reviews came back empty — the model
+#: spent its whole output allowance reasoning over an inbox the task never needed.
+ASKS = frozenset({"HANDOFF", "REQUEST_INFO", "REQUEST_REVIEW", "CHALLENGE"})
+OPEN_MESSAGES_IN_WORK = 20
+
+
+def _open_messages(
+    session: Session, agent: Agent, task_type: str = ""
+) -> list[tuple[AgentMessage, str]]:
     """The messages addressed to this employee that nobody has resolved yet.
 
     This is the channel the Director's production indications travel through: a HANDOFF filed
     to the sound or video department enters that employee's every run until the work is done
-    or the message is resolved. Every open message and its thread travel in full.
+    or the message is resolved. Every message that rides travels in full with its thread; in
+    a work task only the asks ride, the newest `OPEN_MESSAGES_IN_WORK` of them (`INBOX_TASKS`
+    carry everything).
     """
     rows = session.scalars(
         select(AgentMessage)
         .where(AgentMessage.to_agent_id == agent.id, AgentMessage.status == "OPEN")
         .order_by(AgentMessage.created_at.desc())
     ).all()
+    if task_type not in INBOX_TASKS:
+        rows = [m for m in rows if m.intent in ASKS][:OPEN_MESSAGES_IN_WORK]
     senders = {
         a.id: a.display_name
         for a in session.scalars(
@@ -314,7 +332,7 @@ def compose_identity(session: Session, agent: Agent, *, task_type: str = "") -> 
         lines.extend(f"- [{m.memory_class} {m.id[:8]}] {m.content}" for m in memory)
     else:
         lines.append("WHAT YOU REMEMBER: nothing yet. This is your first recorded work.")
-    asked = _open_messages(session, agent)
+    asked = _open_messages(session, agent, task_type)
     if asked:
         lines.append(
             f"WHAT IS ASKED OF YOU RIGHT NOW ({len(asked)} open messages addressed to you; "

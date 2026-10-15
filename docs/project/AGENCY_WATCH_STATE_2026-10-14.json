@@ -1,6 +1,6 @@
 {
-  "observed_at": "2026-10-15T06:30:15.714981+00:00",
-  "event_cursor": 24325,
+  "observed_at": "2026-10-15T06:37:03.749649+00:00",
+  "event_cursor": 24347,
   "claimed_tasks": [],
   "recent_runs": [
     {
@@ -393,28 +393,29 @@
       "source_changes_in_this_diagnosis": false
     }
   },
-  "last_reported_event_cursor": 24274,
-  "last_reported_summary": "Sunt acceptate 6/7 imagini. Prima probă video LTX-2.5 este în coadă, cu primul cadru verificat din imaginea acceptată. Scena 7 este blocată de textul de pe plăcuță; nu există încă prompt corectat și verificat de Sarah. Filmul nu este finalizat.",
+  "last_reported_event_cursor": 24347,
+  "last_reported_summary": "Studioul a reluat ziua. Primul clip a fost respins pentru hârtii cu linii/text, monitoare și zoom; imaginea inițială a fost retrasă. Rescrierile scenelor1 și7 nu au trecut de verificarea Sarah/Deepseek (EMPTY_OUTPUT). Proba LTX-2.5 pentru scena2 folosește corect propria imagine aprobată, dar și acest prim cadru conține hârtii cu linii, contrar verdictului QC; risc concret de repetare a defectului. Niciun film finalizat.",
   "monitoring_status": "NEW_STILL_ACCEPTED_VISUAL_MISMATCH_AND_OLD_IMAGE_CAP_BLOCKS_VIDEO",
   "studio_status": {
     "autonomy_stopped": false,
     "autonomy_mode": "AUTONOMOUS_CEO",
-    "api_unreachable": true,
-    "daily_run_stored_status": "INTERRUPTED",
-    "daily_run_id": "79bdbdb8-572a-4982-bf54-fb51d592bb28",
+    "api_unreachable": false,
+    "daily_run_stored_status": "RUNNING",
+    "daily_run_id": "80c89659-94c2-410c-a35b-9952c98a7c1e",
     "daily_stages_completed": 7,
-    "daily_stages_total": 13,
+    "daily_stages_total": 8,
     "running_db_rows_do_not_prove_active_execution": true,
     "daily_stopped_at_stage": "media",
     "daily_finished_at": "2026-10-15T06:13:04.969503+00:00",
-    "gpu_off_verified_at": "2026-10-15T06:13:09.670736+00:00"
+    "gpu_off_verified_at": "2026-10-15T06:13:09.670736+00:00",
+    "resumed_from_daily_run": "79bdbdb8-572a-4982-bf54-fb51d592bb28"
   },
   "policy_changed_after_last_report": false,
   "service_check": {
-    "at": "2026-10-15T06:30:15.714981+00:00",
-    "live": "UNREACHABLE",
-    "ready": "UNREACHABLE",
-    "shutdown_previously_confirmed": true,
+    "at": "2026-10-15T06:37:03.749649+00:00",
+    "live": 200,
+    "ready": 200,
+    "worker": "BUSY",
     "service_started_by_monitor": false
   },
   "last_run_inspected": {
@@ -426,10 +427,10 @@
     "finished_at": "2026-10-15T06:13:04.950501+00:00"
   },
   "last_event_inspected": {
-    "sequence": 24325,
-    "event_id": "7e087b81-b3cc-4289-a8a9-cbcbe4f209c2",
-    "event_type": "runpod.gpu_off_verified",
-    "timestamp": "2026-10-15T06:13:09.670736+00:00"
+    "sequence": 24347,
+    "event_id": "2e2c9d65-1291-4253-aea3-6ee4f55d2072",
+    "event_type": "media.scene_take_recorded",
+    "timestamp": "2026-10-15T06:33:23.836008+00:00"
   },
   "local_reference_and_response_repairs": {
     "reference_doc": "REFERENCE_ROUTE_WARDROBE_AND_STUDIO_WAIT_2026-10-15.md",
@@ -650,10 +651,10 @@
     "queue_task_id": "96d61072-6b90-4148-a505-9f92b5c34804",
     "manual": true,
     "requested_at_utc": "2026-10-15T04:56:15.831186+00:00",
-    "status": "INTERRUPTED",
+    "status": "RUNNING",
     "stage": "media",
     "stages_completed": 7,
-    "stages_total": 13,
+    "stages_total": 8,
     "episode_run_id": "22fd19eb-9a07-4dbb-aa79-7ac57abe4e03",
     "actual_episode_model": "kimi-k3",
     "episode_day": "2026-10-14",
@@ -661,9 +662,11 @@
     "episode_saved": true,
     "script_rejected_stage_event": 24125,
     "no_new_cloud_generation": false,
-    "id": "79bdbdb8-572a-4982-bf54-fb51d592bb28",
+    "id": "80c89659-94c2-410c-a35b-9952c98a7c1e",
     "stopped_at_stage": "media",
-    "finished_at": "2026-10-15T06:13:04.969503+00:00"
+    "finished_at": "2026-10-15T06:13:04.969503+00:00",
+    "resumed_from": "79bdbdb8-572a-4982-bf54-fb51d592bb28",
+    "prior_stages_reused_without_new_llm_calls": true
   },
   "latest_script_format_rejection": {
     "run_id": "7c2e6b00-da6f-48b1-8685-ee32b40d8de3",
@@ -676,15 +679,15 @@
     "notification_sent_once": true
   },
   "last_check": {
-    "at": "2026-10-15T05:36:43.522188+00:00",
+    "at": "2026-10-15T06:37:03.749649+00:00",
     "decision": "NOTIFY",
+    "events_inspected_from": 24326,
+    "events_inspected_through": 24347,
     "service_live": 200,
     "service_ready": 200,
-    "autonomy_stopped": false,
-    "events_inspected_from": 24255,
-    "events_inspected_through": 24274,
-    "production_parameters_changed_by_monitor": false,
-    "models_called_by_monitor": false
+    "new_accepted_video_or_finished_film": false,
+    "models_called_by_monitor": false,
+    "source_or_policy_changed_by_monitor": false
   },
   "latest_episode_format_rejection": {
     "run_ids": [
@@ -2008,12 +2011,46 @@
       "image_request_count": 14,
       "image_prompt_char_min": 1730,
       "image_prompt_char_max": 1930,
-      "video_request_count": 1,
+      "video_request_count": 2,
       "new_requests_after_rewrite": 0,
-      "all_match_saved_at_0614_check": true
+      "all_match_saved_at_0614_check": true,
+      "all_match_saved_at_0634_check": true,
+      "new_image_regeneration_after_rewrite": false
+    },
+    "second_video_request_verified": {
+      "job_id": "6d6739c7-1cc8-42c1-b397-d0c1f9962a9d",
+      "actual_model": "LTX-2.5",
+      "status": "QUEUED",
+      "kind": "test_shot",
+      "scene_number": 2,
+      "motion_prompt_chars": 542,
+      "actual_motion_equals_saved": true,
+      "saved_series_look_version": 3,
+      "source_take_id": "f308b171-12cf-447a-aae1-304f7831a9c4",
+      "source_take_status": "APPROVED",
+      "source_jpeg_path": "E:\\AI Acency\\Autonomous_AI_Studio_Documentation_v5_ECONOMY_TREASURY_VENDORSHOP\\backend\\storage\\media\\2d276038-2009-4a6a-a75f-32ba5ab4b1ff\\stills\\first_scene_02_4c2f9c6a_c1.jpg",
+      "source_jpeg_sha256": "5f4396f6cd6553ac563601c7fc53e881ce887abfa26749ebcac718108ffff709",
+      "source_jpeg_matches_journal": true,
+      "accepted_png_sha_verified": true,
+      "same_as_rejected_scene1_source": false,
+      "no_completed_clip_or_qc_result_yet": true
+    },
+    "scene2_accepted_first_frame_visual_discrepancy": {
+      "scene_number": 2,
+      "source_take_id": "f308b171-12cf-447a-aae1-304f7831a9c4",
+      "video_job_id": "6d6739c7-1cc8-42c1-b397-d0c1f9962a9d",
+      "manually_viewed_at": "2026-10-15T06:37:03.749649+00:00",
+      "finding": "Foreground papers visibly contain ruled lines; background left monitor has interface rows/content.",
+      "specific_contradiction": "Saved still prompt explicitly requires every paper and screen blank, unruled and unmarked, with no lines. Still QC reported the lines gone and pages smooth blank white.",
+      "qc_run_id": "12d06618-1ae8-48af-a84f-11786d0360a1",
+      "qc_actual_model": "mistral-large-4",
+      "qc_verdict": "buy_motion",
+      "first_frame_same_defect_category_as_rejected_scene1": true,
+      "manual_verdict_written_to_production": false,
+      "risk_not_new_clip_qc_verdict": true
     }
   },
-  "pending_notification_when_running": {
+  "deferred_findings_reported_after_restart": {
     "since_event": 24279,
     "through_event": 24325,
     "reason_not_notified": "Local API and TCP port 8000 are unreachable; heartbeat instruction says stay quiet while studio is stopped.",
@@ -2023,6 +2060,7 @@
       "Scene7 still rewrite also produced by Mistral; Sarah review row remains RUNNING while local service is unreachable.",
       "No same rejected input was bought again; no finished film.",
       "Scene7 rewrite review also ended EMPTY_OUTPUT on actual Deepseek-v4.1-flash; no unverified replacement was saved or regenerated. Day79bdbdb8 interrupted at media7/13 on service shutdown; GPU-off verified. No accepted video or finished film."
-    ]
+    ],
+    "reported_at": "2026-10-15T06:37:03.749649+00:00"
   }
 }

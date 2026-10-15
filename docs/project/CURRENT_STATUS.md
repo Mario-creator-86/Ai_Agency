@@ -5,6 +5,34 @@ AGENT_SCENARIO_ACCEPTANCE later used actual Ollama Cloud calls, with normal seri
 acceptance and real GPU/media/upload still pending. Current local UI evidence is reported
 separately below and does not prove those external workflows.
 
+## CICLUL 3 — verificările Directoarei ieșeau goale: inbox-ul întreg în fiecare apel; o sarcină de lucru poartă doar cererile (Claude) (2026-10-15)
+
+După repornirea pe 03ceae4 (06:32Z): ziua întreruptă s-a reluat singură (etapele încheiate
+recunoscute, nimic refăcut), etapa media a cumpărat cadrul de probă al scenei 2 (scena 1 nu mai
+are imagine aprobată; clipul refuzat 766362c7 e păstrat pe disc, nu recumpărat).
+
+**Cauză găsită din registru: verificările de rescriere ale Directoarei ies goale.** Două rulări
+`director_rewrite_review` EMPTY_OUTPUT (05:45Z, 06:00Z): 584 000 de tokeni de prompt, 393 216
+de tokeni de ieșire consumați pe raționament, niciun răspuns. Promptul sarcinii are 22 000 de
+caractere; contextul de identitate «identity-v3-complete» (din noapte) pune 1,68 milioane de
+caractere: 120 amintiri (55 000) și **152 de mesaje deschise cu firele lor (1,62 milioane)** —
+105 rapoarte STATUS («Remediere foaie: …») din 3 octombrie, 42 de cereri de revizuire,
+niciodată rezolvate. Marcus la fel: 60 de HANDOFF-uri deschise, 611 000 de caractere la fiecare
+scenariu (de aici și «kimi-k3 prea scump»). Fără verificarea ei, nu se cumpără imaginea nouă a
+scenei 1 și episodul stă.
+
+**Corectat (`agents/identity.py`).** O sarcină de lucru poartă din inbox doar cererile
+(HANDOFF, REQUEST_INFO, REQUEST_REVIEW, CHALLENGE), cele mai noi 20, fiecare întreagă cu firul
+ei; rapoartele STATUS și tot inbox-ul rămân pentru sarcinile al căror lucru e inbox-ul
+(`answer_mail`, `director_review`, `director_loop`) și pentru o sarcină nenumită. Regula
+«mesaje complete, fără tăiere» rămâne: ce intră, intră întreg; se alege ce intră. Test:
+`test_publishes_alone.py` (9); `test_agent_identity`, `test_complete_llm_messages`,
+`test_writer_brief` verzi (48).
+
+**Rămâne (roadmap).** Igiena inbox-ului: rapoartele STATUS citite de Directoare trebuie
+rezolvate de bucla ei, nu să stea deschise 12 zile; HANDOFF-urile lui Marcus la fel după ce
+scenariul e scris.
+
 ## CICLUL 2 — oprire, corectări, repornire: modelul Owner-ului rămâne, blocker-ul scriitorului merge la cercetare, kimi-k3 interzis; suita completă citită (Claude) (2026-10-15)
 
 Owner, în timpul zilei pornite de el (04:56Z): «oprește serverul, rulează corectările și
