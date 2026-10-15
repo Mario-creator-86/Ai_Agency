@@ -101,6 +101,13 @@ test('a film put up after the run says so, not where the run left it', async () 
   // Not up yet: where the run left it.
   const waiting = filmOfTheDay({ ...run, films_now: { [FILM]: { status: 'APPROVED', publication: null } } });
   assert.equal(waiting.value, 'așteaptă decizia ta pe foaia de filmare');
+  // 2026-10-15 19:40Z: a film in the Director's own rounds on the words is hers, not his.
+  const hers = filmOfTheDay({
+    ...runOf({ media: { films: [{ storyboard_id: FILM, status: 'WAITING', step: 'stills', refusal: 'NEEDS_PROMPT_APPROVAL' }] } }),
+    films_now: { [FILM]: { status: 'APPROVED', publication: null } },
+  });
+  assert.equal(hers.value, 'Directoarea și Kael lucrează la foaia de filmare');
+  assert.equal(hers.tone, 'ok');
 });
 
 test('a day with no film says so, and nothing read is a dash', async () => {

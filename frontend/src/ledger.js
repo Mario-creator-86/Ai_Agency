@@ -1237,7 +1237,7 @@ export class Ledger {
       actSince = true;
       if (rows.length >= 150) break;
     }
-    replaceActivityHtml(this.list, rows.length
+    const html = rows.length
       ? rows
           .map((row) => {
             if (row.day !== undefined) return `<li class="ledger-day">${this.escape(row.day)}</li>`;
@@ -1263,7 +1263,14 @@ export class Ledger {
             );
           })
           .join('')
-      : '<li class="ledger-empty">Nimic înregistrat pentru acest filtru.</li>');
+      : '<li class="ledger-empty">Nimic înregistrat pentru acest filtru.</li>';
+    // The register stands still when nothing changed (the Owner, 2026-10-15 19:40Z: «trebuie
+    // să stea nemișcat, nu să flicare dacă nu apare ceva nou»): every state poll re-read the
+    // names and the portraits and drew the same rows again, and the list jumped. The same
+    // words are not drawn twice; a row that just arrived is always drawn, for its highlight.
+    if (html === this.lastHtml && !this.arrived.size) return;
+    this.lastHtml = html;
+    replaceActivityHtml(this.list, html);
     // The highlight plays once. A later render — a filter change, the office
     // layout arriving with its names — must not replay it on the same rows.
     this.arrived.clear();
