@@ -5,6 +5,16 @@ AGENT_SCENARIO_ACCEPTANCE later used actual Ollama Cloud calls, with normal seri
 acceptance and real GPU/media/upload still pending. Current local UI evidence is reported
 separately below and does not prove those external workflows.
 
+## Serial endings join like the factual ones (87c05891's eight lint blocks) (2026-10-15)
+
+**Claim:** the serial's new board 87c05891 («Zero Scripts, Blocked Log», approved 23:36Z) stopped at its first walk with 8 lint blocks — «ending_frame nu ajunge integral în promptul video» on every scene (23:47Z) — and the Director handed Kael a sheet repair he could not satisfy.
+
+**Cause (mine, 291a00a):** `_ending_sentence` began saying an ending written as a sentence as «The shot ends as …», and `composition_issues` checks the motion words through it; the serial composer (`serial_motion`, `SERIAL_ENDING_SENTENCE`) kept «The shot ends on …», so every serial ending with a finite verb («Sarah's right hand rests on the closed storyboard folder…») failed the check.
+
+**Fix:** one join for both composers (`_ending_join`: the ending's own preposition, «as» for a sentence with a finite verb, else «on»); the verb list drops words as often nouns («faces», «looks», «turns», «falls») after «both faces turned to the viewer» read as a sentence.
+
+**Tested:** the serial ending test extended (an ending written as a sentence is said «as» and passes `composition_issues`); test_motion_v2 / test_fix_is_verified / test_shooting_sheet / test_prompt_contract_followup: 141 passed, the 4 known motion_v2 fixture failures unchanged; ruff, mypy clean. Live from the next restart: the serial board's sheet compiles without the block and its walk goes on.
+
 ## A locked frame in the plan is static; the composer's sentences are not the plan's (2026-10-15)
 
 **Claim:** after the 23:18Z fresh start the Director approved scene 1's motion words at once and the test shot was bought (0,38 USD; its clip QC then found the window in the approved still — the loop briefed Kael for the picture). Scene 2's motion was refused twice (23:34–23:35Z) for words the composer, not the Editor, put there: the plan's camera said «A single still frame, the camera locked and motionless» and the compiler gave the medium size's tilt down; Kael's rewrite had pasted the sent prompt back into the motion field, so «Shadows drift and the light shifts…» came back as the plan's own word; his second rewrite could not remove it («a dat aceleași cuvinte») and the Director took over.

@@ -445,6 +445,28 @@ def test_the_serial_motion_carries_the_ending_frame_and_the_rewrites_feeling():
         {**BEAT, "ending_frame": "with her eyes on the pen"}, {}
     )
     assert "The shot ends with her eyes on the pen." in with_preposition
+    # An ending written as a sentence is said «The shot ends as …» here too, the same join
+    # the sheet's check expects (23:47Z, 87c05891: eight scenes blocked «ending_frame nu
+    # ajunge integral în promptul video» because the serial said «on» and the check «as»).
+    from app.media.prompt_agent import composition_issues
+
+    resting = {
+        **BEAT,
+        "ending_frame": (
+            "Sarah's right hand rests on the closed storyboard folder, her left hand flat on "
+            "the desk, her eyes on the viewer."
+        ),
+        "in_frame": [{"name": "Sarah Director"}],
+    }
+    as_sentence = compose_serial_motion(resting, {})
+    assert "The shot ends as Sarah's right hand rests on the closed storyboard folder" in (
+        as_sentence
+    ), as_sentence
+    assert not [
+        issue
+        for issue in composition_issues(resting, "", as_sentence, layers=("motion",))
+        if "ending_frame" in issue
+    ]
     # 2026-10-12, f06808c9 scene 4: the rewrite wrote the lead-in itself and the clip was asked
     # «The shot ends on the shot ends on …». The writer's lead-in goes, once or twice written.
     for lead in (

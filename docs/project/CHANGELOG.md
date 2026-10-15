@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-15 — Serial endings join like the factual ones
+
+- `media/prompt_agent.py`: the serial composer joins the ending as the factual one does (`_ending_join`: own preposition, «as» for a sentence, else «on»), so the sheet's check and the sent words agree (87c05891: eight scenes blocked «ending_frame nu ajunge integral» at 23:47Z); nouns-as-verbs left out of the finite-verb list.
+
 ## 2026-10-15 — Locked frame is static; composer sentences are not the plan's
 
 - `media/prompt_agent.py`: a plan whose camera text locks the frame compiles to «static»; the composer's own sentences pasted back into a plan's field are not read as the plan's; a static camera gets no drift default (7c26a7ce scene 2, refused twice at 23:34Z).

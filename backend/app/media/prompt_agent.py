@@ -2267,10 +2267,12 @@ _ENDING_PREPOSITION = re.compile(r"^(?:on|with|at|in|as)\b", re.IGNORECASE)
 #: silvery bar rests inside its glass display case, …») — is said «The shot ends as …», not
 #: «The shot ends on the silvery bar rests …» (2026-10-15 22:19Z, 7c26a7ce scene 1: the
 #: Director refused the fragment twice and the guard called it a tool defect).
+#: Words as often nouns («both faces turned to the viewer», «her looks», «turns») are not
+#: here: a wrong «as» reads worse than a wrong «on».
 _FINITE_VERB = re.compile(
     r"\b(?:rests?|stays?|remains?|holds?|sits?|lies?|stands?|hangs?|keeps?|is|are|has|have"
-    r"|does|looks?|faces?|glows?|settles?|comes?|goes?|falls?|rises?|turns?|moves?|waits?"
-    r"|burns?|shines?|hovers?|floats?|drifts?|spins?|pulses?)\b",
+    r"|does|glows?|settles?|comes?|goes?|rises?|moves?|waits?|burns?|shines?|hovers?"
+    r"|floats?|drifts?|spins?|pulses?)\b",
     re.IGNORECASE,
 )
 #: An ending the writer already began with the composer's own words («The shot ends on …»,
@@ -2409,10 +2411,14 @@ def serial_motion(package: dict[str, Any], look: dict[str, Any]) -> tuple[str, b
         first = _POSSESSIVE.sub("", ending.split()[0].strip(",;:.'’"))
         if first not in names and not first.isupper():
             ending = ending[:1].lower() + ending[1:]
+        # The same join as the factual composer's (`_ending_join`): the sheet's check reads
+        # the ending through `_ending_sentence`, and a serial ending written as a sentence
+        # («Sarah's right hand rests on the folder…») said «ends on» blocked eight scenes of
+        # 87c05891 at once (23:47Z: «ending_frame nu ajunge integral în promptul video»).
         ending_sentence = _sentence(
-            SERIAL_ENDING_SENTENCE.replace("on {ending}", "{ending}").format(ending=ending)
-            if _ENDING_PREPOSITION.match(ending)
-            else SERIAL_ENDING_SENTENCE.format(ending=ending)
+            SERIAL_ENDING_SENTENCE.replace("on {ending}", "{join}{ending}").format(
+                join=_ending_join(ending), ending=ending
+            )
         )
     move = str(package.get("camera_move") or "static")
     two_beats = move != "static" and _seconds_of(package) >= TWO_BEAT_SECONDS
@@ -3515,12 +3521,17 @@ def _ending_sentence(value: Any) -> str:
         return ""
     if ending.split()[0].casefold() in ("the", "a", "an"):
         ending = ending[:1].lower() + ending[1:]
+    return _sentence(f"The shot ends {_ending_join(ending)}{ending}")
+
+
+def _ending_join(ending: str) -> str:
+    """How the ending follows «The shot ends»: nothing when it carries its own preposition
+    («with her eyes on the pen»), «as » when its first clause is a sentence with a finite verb
+    («Sarah's right hand rests on the folder, …»), else «on »."""
     if _ENDING_PREPOSITION.match(ending):
-        return _sentence(f"The shot ends {ending}")
+        return ""
     first_clause = re.split(r"\s*(?:[,;:]|—|–|\s-\s)\s*", ending, maxsplit=1)[0]
-    if _FINITE_VERB.search(first_clause):
-        return _sentence(f"The shot ends as {ending}")
-    return _sentence(f"The shot ends on {ending}")
+    return "as " if _FINITE_VERB.search(first_clause) else "on "
 
 
 def incomplete_plan_fields(
