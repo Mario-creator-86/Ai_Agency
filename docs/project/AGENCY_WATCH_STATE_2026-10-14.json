@@ -1,26 +1,7 @@
 {
-  "observed_at": "2026-10-15T08:43:52.823410+00:00",
-  "event_cursor": 24664,
-  "claimed_tasks": [
-    {
-      "id": "5c8af867-693f-41e0-9f9b-e8f1a3486623",
-      "task_type": "FILM_CONTINUE",
-      "status": "CLAIMED",
-      "attempts": 1,
-      "next_attempt_at": "2026-10-15T08:37:35.815430+00:00",
-      "lease_expires_at": "2026-10-15T09:38:05.683883+00:00",
-      "updated_at": "2026-10-15T08:38:05.683883+00:00"
-    },
-    {
-      "id": "f95a1fd1-e7ee-4810-8035-ccc0722c1c0a",
-      "task_type": "FILM_CONTINUE",
-      "status": "CLAIMED",
-      "attempts": 1,
-      "next_attempt_at": "2026-10-15T07:59:36.117230+00:00",
-      "lease_expires_at": "2026-10-15T08:59:36.124640+00:00",
-      "updated_at": "2026-10-15T07:59:36.124640+00:00"
-    }
-  ],
+  "observed_at": "2026-10-15T09:08:20.801995+00:00",
+  "event_cursor": 24726,
+  "claimed_tasks": [],
   "recent_runs": [
     {
       "id": "22995c46-971c-49db-aacd-a76bd688caa9",
@@ -412,7 +393,7 @@
       "source_changes_in_this_diagnosis": false
     }
   },
-  "last_reported_event_cursor": 24664,
+  "last_reported_event_cursor": 24717,
   "last_reported_summary": "Sarah/Deepseek a verificat efectiv clipul scenei6, a recunoscut că planul permite lumină abstractă pe ecrane și a acceptat micile abateri (cap, linii pe hârtie) fără regenerare. Imaginea și clipul sunt restaurate, accepted=1, QC efectiv PASSED. Acum3 clipuri acceptate(1,4,6); scenele2,3,5,7 rămân de rezolvat. Brieful următoarei corecturi a pornit; încă nicio generare nouă și niciun film finalizat.",
   "monitoring_status": "NEW_STILL_ACCEPTED_VISUAL_MISMATCH_AND_OLD_IMAGE_CAP_BLOCKS_VIDEO",
   "studio_status": {
@@ -440,21 +421,21 @@
     "no_new_shutdown_event_yet": true
   },
   "last_run_inspected": {
-    "id": "bdebfdec-35a8-4f26-8395-c03b9efcb63d",
+    "id": "4187f00f-cd32-45fc-8b7d-22786cb40d03",
     "task_type": "director_rewrite_review",
     "model_name": "deepseek-v4.1-flash",
     "status": "SUCCEEDED",
-    "started_at": "2026-10-15T08:39:06.499055+00:00",
-    "finished_at": "2026-10-15T08:39:11.554083+00:00",
-    "task_summary": "Verific dacă rescrierea scenei 7 din «Storyboard: Twenty-Eight Rewrites Before Breakfast» tratează constatările înainte să cumpărăm ceva pe ea.",
+    "started_at": "2026-10-15T08:44:50.468331+00:00",
+    "finished_at": "2026-10-15T08:44:56.272287+00:00",
+    "task_summary": "Verific dacă rescrierea scenei 3 din «Storyboard: Twenty-Eight Rewrites Before Breakfast» tratează constatările înainte să cumpărăm ceva pe ea.",
     "isolated_codex_probe": false,
-    "model_evidence": "agent_run.model_name; no independent returned-model metadata in public result"
+    "model_evidence": "logged agent_run.model_name; independent response model not present in structured public result"
   },
   "last_event_inspected": {
-    "sequence": 24664,
-    "event_id": "e1ced1f6-4a60-4340-9b1c-56f74e91268b",
-    "event_type": "media.scene_take_recorded",
-    "timestamp": "2026-10-15T08:39:19.000605+00:00"
+    "sequence": 24726,
+    "event_id": "1f5eee2e-4dac-4744-954d-35515b866d25",
+    "event_type": "workflow.job_fired",
+    "timestamp": "2026-10-15T09:06:00.704238+00:00"
   },
   "local_reference_and_response_repairs": {
     "reference_doc": "REFERENCE_ROUTE_WARDROBE_AND_STUDIO_WAIT_2026-10-15.md",
@@ -514,31 +495,103 @@
     "stopped_at_stage": "serial_queue"
   },
   "last_quiet_check": {
-    "decision": "NOTIFY",
-    "reason": "validated_rewrites_reached_paid_media_queue_with_unresolved_positive_prompt_conflict",
-    "inspected_from_event": 24615,
-    "inspected_through_event": 24664,
+    "decision": "DONT_NOTIFY",
+    "reason": "healthy_service_only_scheduler_event_no_new_runs_mail_or_media",
+    "inspected_from_event": 24726,
+    "inspected_through_event": 24726,
+    "routine_event": {
+      "job_name": "director_loop",
+      "workflow_type": "DIRECTOR_LOOP",
+      "task_id": "04fc84b3-5833-4096-94d0-0f199f5e92fd",
+      "due_at": "2026-10-15T09:05:54.003218+00:00"
+    },
     "health": {
       "live": 200,
       "ready": 200
     },
-    "new_image_requests": 6,
     "request_count": 28,
-    "all_submitted_prompt_revisions_preserved": true,
+    "new_cloud_requests": 0,
+    "new_agent_runs": 0,
+    "saved_prompt_snapshot": [
+      {
+        "scene_index": 1,
+        "series_look_version": 3,
+        "still_chars": 1559,
+        "motion_chars": 549,
+        "still_sha256": "a2733f37491b0ba92cc2559749077eff18a0171ecfd5852f56078aa488a4fd60",
+        "motion_sha256": "c4de41e66dc2f8a70d9f969669b265dc7a1de671b68268b6aad42528ccf1a79a"
+      },
+      {
+        "scene_index": 2,
+        "series_look_version": 3,
+        "still_chars": 1531,
+        "motion_chars": 552,
+        "still_sha256": "0557d37182c6ca9814c30c0dc5a759b3436565b3606df9504b52c49d45632a56",
+        "motion_sha256": "5cbea667f964fbc1e580ccfa7b307a77499521e4e1c4dd49ee99dced197886f8"
+      },
+      {
+        "scene_index": 3,
+        "series_look_version": 3,
+        "still_chars": 1526,
+        "motion_chars": 515,
+        "still_sha256": "39dc6be11f3c317910666ba8a0b6eeb082e5093e23b307b32ceb5bedf33d091a",
+        "motion_sha256": "70cdd1726c7b289cf4ab3b0a99937a1990c108d4b4715be42621676e053d2fac"
+      },
+      {
+        "scene_index": 4,
+        "series_look_version": 3,
+        "still_chars": 1658,
+        "motion_chars": 525,
+        "still_sha256": "15bd654c11f6c3480bb13284932c113c905f7a5bd5a9e80ffca7291930e7e577",
+        "motion_sha256": "02f1925bc05a536bb9439484cfb944326f623cce0f00e7ea72e178dd836692e0"
+      },
+      {
+        "scene_index": 5,
+        "series_look_version": 3,
+        "still_chars": 1620,
+        "motion_chars": 529,
+        "still_sha256": "df9c174e8a2eb079c345bd179a4d5573a83de1f5e75c8f4d62c58e9195ff4734",
+        "motion_sha256": "efcf34925675543dd4ca868e17a85e71047f9b915ceb8af7396ff7b244fa8c28"
+      },
+      {
+        "scene_index": 6,
+        "series_look_version": 3,
+        "still_chars": 1567,
+        "motion_chars": 517,
+        "still_sha256": "a4107e713ca3ba231d5fa0ff06481a8f69240fb54908863e45a99f4e48fb7650",
+        "motion_sha256": "651c793d7e932f8d573d9e2054ce58fe87a3ff895afc34b862193fc690c38011"
+      },
+      {
+        "scene_index": 7,
+        "series_look_version": 3,
+        "still_chars": 1543,
+        "motion_chars": 520,
+        "still_sha256": "1ee5d1c476aeb409252c45ffc5306c35427772cce39af76d1244a00c1855ed4f",
+        "motion_sha256": "c9a5f2bc7f17212a33ce68072f49ca1b6e28fe101d590776aae7ac1bbf9adcd2"
+      }
+    ],
+    "saved_prompts_unchanged": true,
+    "all_saved_contracts_v3": true,
     "accepted_clip_scene_numbers": [
       1,
       4,
       6
     ],
-    "model_effective_confirmation_pending": true,
-    "new_image_quality_proven": false,
+    "scene3_editorial_block_unchanged": true,
+    "scene2_visual_qc_discrepancy_unchanged": true,
+    "no_new_actual_model_or_first_frame_to_verify": true,
+    "owner_policy": {
+      "autonomy_stopped": 0,
+      "autonomy_mode": "AUTONOMOUS_CEO",
+      "updated_at": "2026-10-14T13:24:25.640201+00:00"
+    },
     "models_called_by_monitor": false,
     "source_or_policy_changed_by_monitor": false,
     "documents_read": [
       {
         "name": "CURRENT_STATUS",
-        "modified": "2026-10-15T07:02:03.073668+00:00",
-        "characters": 794288
+        "modified": "2026-10-15T08:42:45.080126+00:00",
+        "characters": 796772
       },
       {
         "name": "SERIAL_PROMPT_MODEL_LIMIT_2026-10-14",
@@ -3569,7 +3622,10 @@
         "verdict": "TREATS",
         "saved": true,
         "queued_for_generation": true,
-        "new_image_accepted": false
+        "new_image_accepted": false,
+        "new_image_generated": true,
+        "image_approved_by_still_gate": true,
+        "visual_quality_independently_fully_confirmed": false
       }
     },
     "scene5_rewrite_draft_pending_review": {
@@ -3656,7 +3712,10 @@
         "verdict": "TREATS",
         "saved": true,
         "queued_for_generation": true,
-        "new_image_accepted": false
+        "new_image_accepted": false,
+        "new_image_generated": true,
+        "image_approved_by_still_gate": true,
+        "visual_quality_independently_fully_confirmed": false
       }
     },
     "scene2_rewrite_review_failure_reported": {
@@ -3674,11 +3733,14 @@
       "interruption_event": 24582,
       "resume_task_id": "4b1927d7-97e8-41aa-a081-8ff40defd1c4",
       "resume_task_status": "COMPLETED",
-      "film_continue_event": 24595,
-      "film_continue_status": "SKIPPED",
+      "film_continue_event": 24716,
+      "film_continue_status": "COMPLETED",
       "reason": "Existing film purchase lease reported in progress; no duplicate purchase",
       "next_film_continue_at": "2026-10-15T08:37:35.815430+00:00",
-      "film_finished": false
+      "film_finished": false,
+      "workflow_completed_is_not_film_completed": true,
+      "remaining_block_scene": 3,
+      "no_new_motion_after_still_batch": true
     },
     "stale_scene1_rejection_in_new_director_review": {
       "observed_at": "2026-10-15T08:38:05.808367+00:00",
@@ -4088,7 +4150,7 @@
           "scene_id": "2",
           "model": "Qwen-Image-Edit-2511",
           "status": "COMPLETED",
-          "accepted": null,
+          "accepted": 1,
           "created_at": "2026-10-15T08:39:15.483099+00:00",
           "started_at": "2026-10-15T08:42:16.955195+00:00",
           "finished_at": "2026-10-15T08:42:42.818216+00:00",
@@ -4114,7 +4176,7 @@
           "scene_id": "2",
           "model": "Qwen-Image-Edit-2511",
           "status": "COMPLETED",
-          "accepted": null,
+          "accepted": 1,
           "created_at": "2026-10-15T08:39:15.491434+00:00",
           "started_at": "2026-10-15T08:42:17.079168+00:00",
           "finished_at": "2026-10-15T08:42:57.808495+00:00",
@@ -4140,7 +4202,7 @@
           "scene_id": "5",
           "model": "Qwen-Image-Edit-2511",
           "status": "COMPLETED",
-          "accepted": null,
+          "accepted": 1,
           "created_at": "2026-10-15T08:39:15.499249+00:00",
           "started_at": "2026-10-15T08:42:17.208631+00:00",
           "finished_at": "2026-10-15T08:43:13.430331+00:00",
@@ -4166,7 +4228,7 @@
           "scene_id": "5",
           "model": "Qwen-Image-Edit-2511",
           "status": "COMPLETED",
-          "accepted": null,
+          "accepted": 1,
           "created_at": "2026-10-15T08:39:15.506416+00:00",
           "started_at": "2026-10-15T08:42:17.313669+00:00",
           "finished_at": "2026-10-15T08:43:28.553423+00:00",
@@ -4192,7 +4254,7 @@
           "scene_id": "7",
           "model": "Qwen-Image-Edit-2511",
           "status": "COMPLETED",
-          "accepted": null,
+          "accepted": 1,
           "created_at": "2026-10-15T08:39:15.513305+00:00",
           "started_at": "2026-10-15T08:42:17.443058+00:00",
           "finished_at": "2026-10-15T08:43:43.065853+00:00",
@@ -4217,17 +4279,17 @@
           "operation": "image",
           "scene_id": "7",
           "model": "Qwen-Image-Edit-2511",
-          "status": "RUNNING",
-          "accepted": null,
+          "status": "COMPLETED",
+          "accepted": 1,
           "created_at": "2026-10-15T08:39:15.520274+00:00",
           "started_at": "2026-10-15T08:42:17.555868+00:00",
-          "finished_at": null,
+          "finished_at": "2026-10-15T08:43:55.632128+00:00",
           "error_code": null,
           "scene_index": 7,
           "prompt_revision": "current_saved",
           "request_model": "Qwen-Image-Edit-2511",
-          "returned_model": null,
-          "model_effective_confirmed": false,
+          "returned_model": "Qwen-Image-Edit-2511",
+          "model_effective_confirmed": true,
           "series_look_version": 3,
           "sent_chars": 1802,
           "saved_chars": 1543,
@@ -4245,10 +4307,18 @@
         1887
       ],
       "verified_request_ceiling_chars": 20000,
-      "new_model_effective_confirmation_pending": true,
+      "new_model_effective_confirmation_pending": false,
       "new_image_quality_proven": false,
       "new_accepted_first_frame_proven": false,
-      "no_scene1_regeneration_request": true
+      "no_scene1_regeneration_request": true,
+      "delivery_completed": true,
+      "all_returned_models": "Qwen-Image-Edit-2511",
+      "approved_source_take_ids": [
+        "8801544e-5f7d-4e60-9e79-3d8438f44d3d",
+        "99b19a7b-a073-4a3c-86c6-59cf8c8613f7",
+        "5fac7912-169d-43f6-853c-d38492d59dc4"
+      ],
+      "visual_qc_contradiction_observed": true
     },
     "composer_monitor_conflict_after_rewrite": {
       "event_sequences": [
@@ -4267,14 +4337,20 @@
       "actual_request_retains_both_positive_phrases": true,
       "negative_prompt_excludes_text_but_does_not_exclude_monitors": true,
       "monitor_inference": "Risk of screens returning from unchanged positive prelude despite removing them from scene-specific background; no new rendered image yet proves or disproves this.",
-      "no_monitor_changes_by_this_watcher": true
+      "no_monitor_changes_by_this_watcher": true,
+      "all_new_images_visually_inspected": true,
+      "screens_are_present_in_new_scene2_and5_images": true,
+      "cause_not_independently_isolated": "Fixed positive prelude and image references both remain possible contributors; no isolated model test performed.",
+      "new_rendered_images_disprove_reviewer_claim_of_screen_removal": true
     },
     "scene7_editorial_hold_latest": {
       "old_nameplate_editorial_issue_rewritten": true,
       "review_verdict": "TREATS",
       "event_sequence": 24655,
-      "new_image_queued": true,
-      "new_image_accepted": false
+      "new_image_queued": false,
+      "new_image_accepted": true,
+      "new_image_generated": true,
+      "approved_take_id": "5fac7912-169d-43f6-853c-d38492d59dc4"
     },
     "runpod_pause_0839": {
       "event_sequence": 24658,
@@ -4284,6 +4360,647 @@
       "paused_answers": 1,
       "budget_seconds": 180.0,
       "classification": "queued jobs; no provider delivery, not an image QC failure"
+    },
+    "new_image_batch_0839_delivered": {
+      "observed_at": "2026-10-15T08:47:00.795008+00:00",
+      "delivered_jobs": [
+        {
+          "id": "363b842d-60de-45e9-baf0-9a940a7bb087",
+          "scene_id": "2",
+          "model": "Qwen-Image-Edit-2511",
+          "status": "COMPLETED",
+          "accepted": 1,
+          "asset_path": "E:\\AI Acency\\Autonomous_AI_Studio_Documentation_v5_ECONOMY_TREASURY_VENDORSHOP\\backend\\storage\\media\\runpod\\363b842d-60de-45e9-baf0-9a940a7bb087.png",
+          "asset_sha256": "d07d6f390df75fed3a5b9ecb5b44653e599b7595f3c7f270bb3fce7bff63e4cb",
+          "finished_at": "2026-10-15T08:42:42.818216+00:00",
+          "cost_value": "0.02796555555555555555555555556",
+          "returned_model": "Qwen-Image-Edit-2511",
+          "local_file_sha256": "d07d6f390df75fed3a5b9ecb5b44653e599b7595f3c7f270bb3fce7bff63e4cb",
+          "sha256_verified": true
+        },
+        {
+          "id": "96938695-b0c3-40a3-b4cc-e60a710c1111",
+          "scene_id": "2",
+          "model": "Qwen-Image-Edit-2511",
+          "status": "COMPLETED",
+          "accepted": 1,
+          "asset_path": "E:\\AI Acency\\Autonomous_AI_Studio_Documentation_v5_ECONOMY_TREASURY_VENDORSHOP\\backend\\storage\\media\\runpod\\96938695-b0c3-40a3-b4cc-e60a710c1111.png",
+          "asset_sha256": "36a4872d5f4de59d1ccd9ba6cdccff8d85ecb6cb30cbd464e508c50f806f1b84",
+          "finished_at": "2026-10-15T08:42:57.808495+00:00",
+          "cost_value": "0.01406888888888888888888888889",
+          "returned_model": "Qwen-Image-Edit-2511",
+          "local_file_sha256": "36a4872d5f4de59d1ccd9ba6cdccff8d85ecb6cb30cbd464e508c50f806f1b84",
+          "sha256_verified": true
+        },
+        {
+          "id": "a64ccee0-3a53-486b-bab2-25a611af9095",
+          "scene_id": "5",
+          "model": "Qwen-Image-Edit-2511",
+          "status": "COMPLETED",
+          "accepted": 1,
+          "asset_path": "E:\\AI Acency\\Autonomous_AI_Studio_Documentation_v5_ECONOMY_TREASURY_VENDORSHOP\\backend\\storage\\media\\runpod\\a64ccee0-3a53-486b-bab2-25a611af9095.png",
+          "asset_sha256": "89225efa09e36f0bd4a59606fcc8ef88b5cc3077e5ca3b29318ba417efe1ede7",
+          "finished_at": "2026-10-15T08:43:13.430331+00:00",
+          "cost_value": "0.01511",
+          "returned_model": "Qwen-Image-Edit-2511",
+          "local_file_sha256": "89225efa09e36f0bd4a59606fcc8ef88b5cc3077e5ca3b29318ba417efe1ede7",
+          "sha256_verified": true
+        },
+        {
+          "id": "4d515016-bc12-49c2-b54d-26d59a51a2e7",
+          "scene_id": "5",
+          "model": "Qwen-Image-Edit-2511",
+          "status": "COMPLETED",
+          "accepted": 1,
+          "asset_path": "E:\\AI Acency\\Autonomous_AI_Studio_Documentation_v5_ECONOMY_TREASURY_VENDORSHOP\\backend\\storage\\media\\runpod\\4d515016-bc12-49c2-b54d-26d59a51a2e7.png",
+          "asset_sha256": "333f7f96796686227cd720a2339026518c5c9106988846f68220b7a8fd338c08",
+          "finished_at": "2026-10-15T08:43:28.553423+00:00",
+          "cost_value": "0.01324888888888888888888888889",
+          "returned_model": "Qwen-Image-Edit-2511",
+          "local_file_sha256": "333f7f96796686227cd720a2339026518c5c9106988846f68220b7a8fd338c08",
+          "sha256_verified": true
+        },
+        {
+          "id": "f2baf6f4-0469-42a7-9c83-2a530ab9d601",
+          "scene_id": "7",
+          "model": "Qwen-Image-Edit-2511",
+          "status": "COMPLETED",
+          "accepted": 1,
+          "asset_path": "E:\\AI Acency\\Autonomous_AI_Studio_Documentation_v5_ECONOMY_TREASURY_VENDORSHOP\\backend\\storage\\media\\runpod\\f2baf6f4-0469-42a7-9c83-2a530ab9d601.png",
+          "asset_sha256": "d26d1f5fbe175e0f69f87a3e0e0230c2fd3852d032a36c7a0a94312d6e111beb",
+          "finished_at": "2026-10-15T08:43:43.065853+00:00",
+          "cost_value": "0.01429888888888888888888888889",
+          "returned_model": "Qwen-Image-Edit-2511",
+          "local_file_sha256": "d26d1f5fbe175e0f69f87a3e0e0230c2fd3852d032a36c7a0a94312d6e111beb",
+          "sha256_verified": true
+        },
+        {
+          "id": "0e469b9b-4317-40bd-8e50-728fd32f8df7",
+          "scene_id": "7",
+          "model": "Qwen-Image-Edit-2511",
+          "status": "COMPLETED",
+          "accepted": 1,
+          "asset_path": "E:\\AI Acency\\Autonomous_AI_Studio_Documentation_v5_ECONOMY_TREASURY_VENDORSHOP\\backend\\storage\\media\\runpod\\0e469b9b-4317-40bd-8e50-728fd32f8df7.png",
+          "asset_sha256": "56ab54daba7c0e1117f81561d6e8a489118ff7c9df4982bd11fb6eaeae0a026d",
+          "finished_at": "2026-10-15T08:43:55.632128+00:00",
+          "cost_value": "0.01323555555555555555555555556",
+          "returned_model": "Qwen-Image-Edit-2511",
+          "local_file_sha256": "56ab54daba7c0e1117f81561d6e8a489118ff7c9df4982bd11fb6eaeae0a026d",
+          "sha256_verified": true
+        }
+      ],
+      "all_local_sha256_verified": true,
+      "all_actual_returned_models": "Qwen-Image-Edit-2511",
+      "approved_source_takes": [
+        {
+          "id": "8801544e-5f7d-4e60-9e79-3d8438f44d3d",
+          "scene_number": 2,
+          "status": "APPROVED",
+          "approved_by": "still_gate",
+          "path": "E:\\AI Acency\\Autonomous_AI_Studio_Documentation_v5_ECONOMY_TREASURY_VENDORSHOP\\backend\\storage\\media\\2d276038-2009-4a6a-a75f-32ba5ab4b1ff\\stills\\scene_02_9a5c27a5_c2.png",
+          "sha256": "36a4872d5f4de59d1ccd9ba6cdccff8d85ecb6cb30cbd464e508c50f806f1b84",
+          "local_file_sha256": "36a4872d5f4de59d1ccd9ba6cdccff8d85ecb6cb30cbd464e508c50f806f1b84",
+          "sha256_verified": true,
+          "cloud_job_id": "96938695-b0c3-40a3-b4cc-e60a710c1111"
+        },
+        {
+          "id": "99b19a7b-a073-4a3c-86c6-59cf8c8613f7",
+          "scene_number": 5,
+          "status": "APPROVED",
+          "approved_by": "still_gate",
+          "path": "E:\\AI Acency\\Autonomous_AI_Studio_Documentation_v5_ECONOMY_TREASURY_VENDORSHOP\\backend\\storage\\media\\2d276038-2009-4a6a-a75f-32ba5ab4b1ff\\stills\\scene_05_976bd4e0_c2.png",
+          "sha256": "333f7f96796686227cd720a2339026518c5c9106988846f68220b7a8fd338c08",
+          "local_file_sha256": "333f7f96796686227cd720a2339026518c5c9106988846f68220b7a8fd338c08",
+          "sha256_verified": true,
+          "cloud_job_id": "4d515016-bc12-49c2-b54d-26d59a51a2e7"
+        },
+        {
+          "id": "5fac7912-169d-43f6-853c-d38492d59dc4",
+          "scene_number": 7,
+          "status": "APPROVED",
+          "approved_by": "still_gate",
+          "path": "E:\\AI Acency\\Autonomous_AI_Studio_Documentation_v5_ECONOMY_TREASURY_VENDORSHOP\\backend\\storage\\media\\2d276038-2009-4a6a-a75f-32ba5ab4b1ff\\stills\\scene_07_a5a9a278_c1.png",
+          "sha256": "d26d1f5fbe175e0f69f87a3e0e0230c2fd3852d032a36c7a0a94312d6e111beb",
+          "local_file_sha256": "d26d1f5fbe175e0f69f87a3e0e0230c2fd3852d032a36c7a0a94312d6e111beb",
+          "sha256_verified": true,
+          "cloud_job_id": "f2baf6f4-0469-42a7-9c83-2a530ab9d601"
+        }
+      ],
+      "qc_runs": [
+        {
+          "id": "ec63309a-9593-4e53-aafa-837b2677a57e",
+          "task_type": "still_qc",
+          "model_name": "mistral-large-4",
+          "status": "SUCCEEDED",
+          "started_at": "2026-10-15T08:42:45.221190+00:00",
+          "finished_at": "2026-10-15T08:42:52.567465+00:00",
+          "task_summary": "Mă uit la imaginea scenei 2 înainte să se cumpere mișcarea și verific dacă au dispărut greșelile pentru care scena a fost rescrisă (2).",
+          "public_still_verdicts": [
+            {
+              "scene": 2,
+              "faces_visible": true,
+              "readable_text": false,
+              "one_picture": true,
+              "matches_plan": true,
+              "shows_scene": true,
+              "look_ok": true,
+              "technical_ok": true,
+              "bible_violations": "none",
+              "verdict": "buy_motion",
+              "reason": "Medium close-up on Sarah facing the viewer in the penthouse, upright and centered, warm hand-drawn office look with brass lamps, plants and city window behind her.",
+              "fixes": [
+                {
+                  "item": 1,
+                  "finding": "Scena 2: privit la 1080 px: nu arată ce cere planul",
+                  "status": "gone",
+                  "seen": "Sarah sits very upright, shoulders square, facing the viewer, head facing the viewer; folded hands rest on the desk below the frame edge, out of shot."
+                },
+                {
+                  "item": 2,
+                  "finding": "are deformări sau artefacte («The left monitor displays colorful square content instead of a completely blank screen as the plan requires, and the middle frame shows distorted morphing hands.»)",
+                  "status": "gone",
+                  "seen": "Monitors behind her show abstract glow only, no square content or text; hands are folded cleanly on the desk with no morphing or warping visible."
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "e5fec3b0-c688-4fa0-a116-6e4497d946c7",
+          "task_type": "still_qc",
+          "model_name": "mistral-large-4",
+          "status": "SUCCEEDED",
+          "started_at": "2026-10-15T08:43:00.049614+00:00",
+          "finished_at": "2026-10-15T08:43:10.475614+00:00",
+          "task_summary": "Mă uit la imaginea scenei 2 înainte să se cumpere mișcarea și verific dacă au dispărut greșelile pentru care scena a fost rescrisă (2).",
+          "public_still_verdicts": [
+            {
+              "scene": 2,
+              "faces_visible": true,
+              "readable_text": false,
+              "one_picture": true,
+              "matches_plan": true,
+              "shows_scene": true,
+              "look_ok": true,
+              "technical_ok": true,
+              "bible_violations": "none",
+              "verdict": "buy_motion",
+              "reason": "Medium close-up on Sarah facing the viewer in the penthouse, upright with hands folded below frame edge, warm hand-drawn office look with brass lamps, monitors and city window behind her.",
+              "fixes": [
+                {
+                  "item": 1,
+                  "finding": "Scena 2: privit la 1080 px: nu arată ce cere planul",
+                  "status": "gone",
+                  "seen": "Sarah sits very upright, shoulders square, facing the viewer, head facing the viewer; folded hands rest on the desk below the frame edge, out of shot."
+                },
+                {
+                  "item": 2,
+                  "finding": "are deformări sau artefacte («The left monitor displays colorful square content instead of a completely blank screen as the plan requires, and the middle frame shows distorted morphing hands.»)",
+                  "status": "gone",
+                  "seen": "Monitors behind her show abstract glow only, no square content or readable shapes; hands are folded cleanly below frame edge with no distortion visible."
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "03d357b4-b4f3-4797-acad-7e7cc5b6b4a7",
+          "task_type": "still_qc",
+          "model_name": "mistral-large-4",
+          "status": "SUCCEEDED",
+          "started_at": "2026-10-15T08:43:15.525272+00:00",
+          "finished_at": "2026-10-15T08:43:26.045497+00:00",
+          "task_summary": "Mă uit la imaginea scenei 5 înainte să se cumpere mișcarea și verific dacă au dispărut greșelile pentru care scena a fost rescrisă (4).",
+          "public_still_verdicts": [
+            {
+              "scene": 5,
+              "faces_visible": true,
+              "readable_text": false,
+              "one_picture": true,
+              "matches_plan": true,
+              "shows_scene": true,
+              "look_ok": true,
+              "technical_ok": true,
+              "bible_violations": "none",
+              "verdict": "buy_motion",
+              "reason": "Dr. Aris leans forward with palms flat on the desk, small apologetic smile, in the warm hand-drawn studio office with blank glowing monitors, no text or markings anywhere.",
+              "fixes": [
+                {
+                  "item": 1,
+                  "finding": "Scena 5: privit la 1080 px: apare text sau un logo",
+                  "status": "gone",
+                  "seen": "No text, letters, numbers, signs, captions or logos visible anywhere in the frame; monitors show only abstract glow, desk surfaces are plain."
+                },
+                {
+                  "item": 2,
+                  "finding": "nu arată ce cere planul",
+                  "status": "gone",
+                  "seen": "Dr. Aris faces the viewer at eye level, leaning forward with both palms flat on the desk, small apologetic smile, centered in a medium close-up."
+                },
+                {
+                  "item": 3,
+                  "finding": "încalcă biblia vizuală: text/code visible on left monitor screen and ruled lines on desk paper",
+                  "status": "gone",
+                  "seen": "Left monitor shows abstract cyan glow with no code or text; desk papers are blank white with no ruled lines; all screens are abstract glow only."
+                },
+                {
+                  "item": 4,
+                  "finding": "plan requires all screens and notebooks to be completely blank, unruled and unmarked with no lines, writing or letters",
+                  "status": "gone",
+                  "seen": "All three monitors show abstract colorful glow with no text or code; the desk paper is blank; the pen tray and wooden box are closed and unmarked; no notebooks visible with lines or writing."
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "fcd35def-fcb8-4813-b702-b46e3b4c15d6",
+          "task_type": "still_qc",
+          "model_name": "mistral-large-4",
+          "status": "SUCCEEDED",
+          "started_at": "2026-10-15T08:43:30.620236+00:00",
+          "finished_at": "2026-10-15T08:43:40.299871+00:00",
+          "task_summary": "Mă uit la imaginea scenei 5 înainte să se cumpere mișcarea și verific dacă au dispărut greșelile pentru care scena a fost rescrisă (4).",
+          "public_still_verdicts": [
+            {
+              "scene": 5,
+              "faces_visible": true,
+              "readable_text": false,
+              "one_picture": true,
+              "matches_plan": true,
+              "shows_scene": true,
+              "look_ok": true,
+              "technical_ok": true,
+              "bible_violations": "none",
+              "verdict": "buy_motion",
+              "reason": "Dr. Aris leans forward with palms flat on the desk, small apologetic smile, in the warm hand-drawn studio office; monitors glow abstractly with no text, desk surfaces are blank, one continuous picture.",
+              "fixes": [
+                {
+                  "item": 1,
+                  "finding": "Scena 5: privit la 1080 px: apare text sau un logo",
+                  "status": "gone",
+                  "seen": "No text or logo anywhere; monitors show abstract blue-purple glow patterns only, desk papers are blank white."
+                },
+                {
+                  "item": 2,
+                  "finding": "nu arată ce cere planul",
+                  "status": "gone",
+                  "seen": "Dr. Aris faces the viewer, leaning forward with both palms flat on the desk, small apologetic smile, exactly as the plan asks."
+                },
+                {
+                  "item": 3,
+                  "finding": "încalcă biblia vizuală: text/code visible on left monitor screen and ruled lines on desk paper",
+                  "status": "gone",
+                  "seen": "Left monitor shows abstract radial glow with no code or text; desk paper is plain blank white with no ruled lines."
+                },
+                {
+                  "item": 4,
+                  "finding": "plan requires all screens and notebooks to be completely blank, unruled and unmarked with no lines, writing or letters",
+                  "status": "gone",
+                  "seen": "All three monitors show abstract glow graphics only; the desk paper, pen tray and wooden box carry no writing, lines or markings."
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "4d9b8dda-ec3f-4556-9886-557f21f39492",
+          "task_type": "still_qc",
+          "model_name": "mistral-large-4",
+          "status": "SUCCEEDED",
+          "started_at": "2026-10-15T08:43:44.931664+00:00",
+          "finished_at": "2026-10-15T08:43:53.036717+00:00",
+          "task_summary": "Mă uit la imaginea scenei 7 înainte să se cumpere mișcarea și verific dacă au dispărut greșelile pentru care scena a fost rescrisă (3).",
+          "public_still_verdicts": [
+            {
+              "scene": 7,
+              "faces_visible": true,
+              "readable_text": false,
+              "one_picture": true,
+              "matches_plan": true,
+              "shows_scene": true,
+              "look_ok": true,
+              "technical_ok": true,
+              "bible_violations": "none",
+              "verdict": "buy_motion",
+              "reason": "Sarah in navy blazer, white shirt, sky-blue tie stands behind her mahogany desk with one hand on a closed ledger, warm penthouse office with brass lamps, monitors, plants and big window behind her — matches the scene's first moment exactly.",
+              "fixes": [
+                {
+                  "item": 1,
+                  "finding": "Nu arată ce cere scena după rescriere: runda nu se mai cumpără pe aceleași cuvinte, Directoarea le rescrie",
+                  "status": "gone",
+                  "seen": "Sarah stands behind her desk, one hand resting on a closed ledger, facing the viewer in the penthouse — the rewritten scene picture is present."
+                },
+                {
+                  "item": 2,
+                  "finding": "Modelul de vedere a văzut text lizibil în imagine — gold nameplate with engraved lettering in the lower right",
+                  "status": "gone",
+                  "seen": "No nameplate, no lettering, no text anywhere in frame; the brass paperweight on the desk is plain and unmarked."
+                },
+                {
+                  "item": 3,
+                  "finding": "Imaginea nu arată ce cere planul scenei — Sarah stands behind her mahogany desk with one hand on a closed ledger",
+                  "status": "gone",
+                  "seen": "Sarah stands behind her mahogany desk, left hand flat on a closed dark ledger, right hand on a steaming espresso cup — the plan's action is fully visible."
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "077d09ef-16f7-4a2b-b719-ef0f24b7182d",
+          "task_type": "still_qc",
+          "model_name": "mistral-large-4",
+          "status": "SUCCEEDED",
+          "started_at": "2026-10-15T08:43:57.253447+00:00",
+          "finished_at": "2026-10-15T08:44:11.862530+00:00",
+          "task_summary": "Mă uit la imaginea scenei 7 înainte să se cumpere mișcarea și verific dacă au dispărut greșelile pentru care scena a fost rescrisă (3).",
+          "public_still_verdicts": [
+            {
+              "scene": 7,
+              "faces_visible": true,
+              "readable_text": false,
+              "one_picture": true,
+              "matches_plan": true,
+              "shows_scene": true,
+              "look_ok": true,
+              "technical_ok": true,
+              "bible_violations": "none",
+              "verdict": "buy_motion",
+              "reason": "Sarah in navy blazer and blue tie stands behind her desk with one hand on a closed ledger, warm penthouse office behind her, no text anywhere.",
+              "fixes": [
+                {
+                  "item": 1,
+                  "finding": "Nu arată ce cere scena după rescriere: runda nu se mai cumpără pe aceleași cuvinte, Directoarea le rescrie",
+                  "status": "gone",
+                  "seen": "Sarah stands behind her desk, one hand resting on a closed ledger, facing the viewer in the penthouse."
+                },
+                {
+                  "item": 2,
+                  "finding": "Modelul de vedere a văzut text lizibil în imagine «Sarah stands behind her mahogany desk with one hand on a closed blank ledger in the warm penthouse office, but the gold nameplate in the lower right carries engraved lettering, violating the plan's no-text rule and blank-nameplate requirement.»",
+                  "status": "gone",
+                  "seen": "The brass paperweight on the desk is plain and unmarked; no nameplate, no engraved lettering, no text anywhere in frame."
+                },
+                {
+                  "item": 3,
+                  "finding": "Imaginea nu arată ce cere planul scenei «Sarah stands behind her mahogany desk with one hand on",
+                  "status": "gone",
+                  "seen": "Sarah stands behind her mahogany desk with one hand on a closed ledger, exactly as the plan asks."
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "stills_finished_event": 24690,
+      "bought_images": 6,
+      "scene_statuses": [
+        {
+          "scene_index": 1,
+          "status": "APPROVED",
+          "reused": true,
+          "take_id": "ac49f415-574e-414e-9661-8df5ca21126a"
+        },
+        {
+          "scene_index": 2,
+          "status": "APPROVED",
+          "take_id": "8801544e-5f7d-4e60-9e79-3d8438f44d3d",
+          "score": 0.6274,
+          "rerolls": 0
+        },
+        {
+          "scene_index": 3,
+          "status": "APPROVED",
+          "reused": true,
+          "take_id": "f215456e-ad51-4aaf-aaea-d038be431e4a"
+        },
+        {
+          "scene_index": 4,
+          "status": "APPROVED",
+          "reused": true,
+          "take_id": "51f8a01e-214d-4b2e-b4b9-25b094370dd4"
+        },
+        {
+          "scene_index": 5,
+          "status": "APPROVED",
+          "take_id": "99b19a7b-a073-4a3c-86c6-59cf8c8613f7",
+          "score": 0.6964,
+          "rerolls": 0
+        },
+        {
+          "scene_index": 6,
+          "status": "APPROVED",
+          "reused": true,
+          "take_id": "554a086f-291a-452d-b2f0-07602f0fa589"
+        },
+        {
+          "scene_index": 7,
+          "status": "APPROVED",
+          "take_id": "5fac7912-169d-43f6-853c-d38492d59dc4",
+          "score": 0.6511,
+          "rerolls": 0
+        }
+      ],
+      "reference_unverified": true,
+      "gpu_off_verified_event": 24689,
+      "billed_production_requests_not_codex_tests": true,
+      "film_finished": false,
+      "manual_visual_observation": {
+        "all_six_images_viewed": true,
+        "scene2_both_candidates": "Sarah has correct navy blazer, white collared shirt and blue tie; both folded hands are fully visible on the foreground desk, and two bright graphical monitors remain behind her. Hands are not below frame as rewritten prompt and QC claim. No moving clip has yet been visually inspected from these new frames.",
+        "scene5_both_candidates": "Dr Aris, palms on desk, lab coat and teal shirt present. Three bright monitors with interface-like lines/marks remain despite rewrite excluding screens; desk foreground paper removed. Whether tiny screen marks are readable text is not established by this inspection.",
+        "scene7_candidate1_approved": "Sarah standing, hand on a closed ledger, no engraved nameplate visible; multiple monitors remain.",
+        "scene7_candidate2_not_selected": "Ledger is visibly open, contrary to QC claim it is closed; selected candidate1 has the closed ledger."
+      }
+    },
+    "scene2_new_approved_image_qc_contradiction": {
+      "scene_index": 2,
+      "approved_take_id": "8801544e-5f7d-4e60-9e79-3d8438f44d3d",
+      "cloud_job_id": "96938695-b0c3-40a3-b4cc-e60a710c1111",
+      "sha256": "36a4872d5f4de59d1ccd9ba6cdccff8d85ecb6cb30cbd464e508c50f806f1b84",
+      "qc_run_id": "e5fec3b0-c688-4fa0-a116-6e4497d946c7",
+      "qc_logged_model": "mistral-large-4",
+      "qc_verdict": "buy_motion",
+      "qc_claim": "folded hands rest on the desk below the frame edge, out of shot",
+      "manual_visual_observation": "Both hands are fully visible on foreground desk, with bright monitors behind Sarah.",
+      "saved_prompt_requests_hands_out_of_shot": true,
+      "actual_request_contains_entire_saved_prompt": true,
+      "prior_failed_clip_had_morphing_hands": true,
+      "motion_artifact_recurrence_not_yet_proven": true,
+      "no_manual_qc_or_verdict_changes": true
+    },
+    "scene3_rewrite_block_wrong_layer_and_missing_motion_clause": {
+      "observed_at": "2026-10-15T08:50:52.677527+00:00",
+      "event_sequence": 24715,
+      "scene_index": 3,
+      "asked_layer": "still",
+      "assigned_layer": "still",
+      "rewritten": false,
+      "review_verdict": "MISSES",
+      "review_run_id": "4187f00f-cd32-45fc-8b7d-22786cb40d03",
+      "rewrite_run_id": "8871220b-904d-4eb5-87d0-4d8716c219eb",
+      "unresolved_findings": [
+        {
+          "id": 3,
+          "qc_text": "încalcă biblia vizuală: Burned-in caption text in middle frame violates no-written-words rule («Middle frame contains garbled on-screen text 'nove tr guee.' which the plan forbids»)",
+          "finding": "burned-in caption text in middle frame breaks the no-written-words rule",
+          "treated": false,
+          "by": "",
+          "why_not": "The motion prompt still carries the fixed sentence 'Continuous, seamless shot. No subtitles, no on-screen text.' — a negation the model ignores — and nothing in the motion prompt names the middle of the frame as clear of captions; the words that invited the burned-in text are kept word for word and this layer cannot change them.",
+          "severity": "serious",
+          "layer": "motion",
+          "accepted": false,
+          "field": "",
+          "locked": true,
+          "lock": "composer",
+          "source": "motion"
+        }
+      ],
+      "reviewer_causation_is_hypothesis_not_new_render_proof": true,
+      "two_rewrite_attempts_refused": true,
+      "current_approved_still": {
+        "id": "f215456e-ad51-4aaf-aaea-d038be431e4a",
+        "scene_number": 3,
+        "status": "APPROVED",
+        "approved_by": "director_look",
+        "sha256": "b0cdcd0387fe4c160622da44b4f4daf418fc13565aeb4137b8c6e9c4e3feadc1"
+      },
+      "runs": [
+        {
+          "id": "82c4ef36-23d7-4067-b6b3-3340a194ed50",
+          "task_type": "director_scene_brief",
+          "model_name": "deepseek-v4.1-flash",
+          "status": "SUCCEEDED",
+          "started_at": "2026-10-15T08:44:15.850819+00:00",
+          "finished_at": "2026-10-15T08:44:21.327124+00:00",
+          "task_summary": "Citesc promptul scenei 3 din «Storyboard: Twenty-Eight Rewrites Before Breakfast» și motivele controlului; îi scriu lui Kael ce să evite.",
+          "isolated_codex_probe": false,
+          "model_evidence": "logged agent_run.model_name; independent response model not present in structured public result"
+        },
+        {
+          "id": "1c634b8d-b5e2-43f7-94b3-59aa582d5303",
+          "task_type": "scene_prompt_rewrite",
+          "model_name": "mistral-large-4",
+          "status": "SUCCEEDED",
+          "started_at": "2026-10-15T08:44:21.339678+00:00",
+          "finished_at": "2026-10-15T08:44:31.092920+00:00",
+          "task_summary": "Rescriu scena 3 din «Storyboard: Twenty-Eight Rewrites Before Breakfast» după brief-ul Directoarei.",
+          "isolated_codex_probe": false,
+          "model_evidence": "logged agent_run.model_name; independent response model not present in structured public result"
+        },
+        {
+          "id": "207f8eef-98e4-426b-a208-ec4bc3b322da",
+          "task_type": "director_rewrite_review",
+          "model_name": "deepseek-v4.1-flash",
+          "status": "SUCCEEDED",
+          "started_at": "2026-10-15T08:44:31.110712+00:00",
+          "finished_at": "2026-10-15T08:44:36.673610+00:00",
+          "task_summary": "Verific dacă rescrierea scenei 3 din «Storyboard: Twenty-Eight Rewrites Before Breakfast» tratează constatările înainte să cumpărăm ceva pe ea.",
+          "isolated_codex_probe": false,
+          "model_evidence": "logged agent_run.model_name; independent response model not present in structured public result"
+        },
+        {
+          "id": "5c2347da-b4de-4faf-8d57-b6b9b9cc495e",
+          "task_type": "director_rewrite_review",
+          "model_name": "deepseek-v4.1-flash",
+          "status": "SUCCEEDED",
+          "started_at": "2026-10-15T08:44:36.680592+00:00",
+          "finished_at": "2026-10-15T08:44:43.376086+00:00",
+          "task_summary": "Verific dacă rescrierea scenei 3 din «Storyboard: Twenty-Eight Rewrites Before Breakfast» tratează constatările înainte să cumpărăm ceva pe ea. (a doua încercare, cu motivele refuzului)",
+          "isolated_codex_probe": false,
+          "model_evidence": "logged agent_run.model_name; independent response model not present in structured public result"
+        },
+        {
+          "id": "8871220b-904d-4eb5-87d0-4d8716c219eb",
+          "task_type": "scene_prompt_rewrite",
+          "model_name": "mistral-large-4",
+          "status": "SUCCEEDED",
+          "started_at": "2026-10-15T08:44:43.385011+00:00",
+          "finished_at": "2026-10-15T08:44:50.449743+00:00",
+          "task_summary": "Rescriu scena 3 din «Storyboard: Twenty-Eight Rewrites Before Breakfast» după brief-ul Directoarei.",
+          "isolated_codex_probe": false,
+          "model_evidence": "logged agent_run.model_name; independent response model not present in structured public result"
+        },
+        {
+          "id": "4187f00f-cd32-45fc-8b7d-22786cb40d03",
+          "task_type": "director_rewrite_review",
+          "model_name": "deepseek-v4.1-flash",
+          "status": "SUCCEEDED",
+          "started_at": "2026-10-15T08:44:50.468331+00:00",
+          "finished_at": "2026-10-15T08:44:56.272287+00:00",
+          "task_summary": "Verific dacă rescrierea scenei 3 din «Storyboard: Twenty-Eight Rewrites Before Breakfast» tratează constatările înainte să cumpărăm ceva pe ea.",
+          "isolated_codex_probe": false,
+          "model_evidence": "logged agent_run.model_name; independent response model not present in structured public result"
+        }
+      ],
+      "draft_motion_field": "Static camera on a fixed tripod, steady, the life of the scene moving inside the fixed frame. Kael leans back in his chair, arms crossed over his chest, headset pushed up off one ear, head facing the viewer throughout; he exhales dry disbelief, then a wry half-smile as he narrates his own queue. The middle of the frame stays clear of captions at every second of the shot. The shot ends on Kael still leaning back with his arms crossed and his headset pushed up off one ear, a wry half-smile on his face, facing the viewer; the monitors still show only soft abstract glow. Continuous, seamless shot. No subtitles, no on-screen text.",
+      "draft_ending_frame": "Kael still leaning back with his arms crossed and his headset pushed up off one ear, a wry half-smile on his face, facing the viewer; the monitors still show only soft abstract glow, and the middle of the frame is clear of captions.",
+      "composed_motion_reviewed": "Static camera on a fixed tripod, steady, the life of the scene moving inside the fixed frame. Kael leans back in his chair, arms crossed over his chest, headset pushed up off one ear, head facing the viewer throughout; he exhales dry disbelief. The shot ends on Kael still leaning back with his arms crossed and his headset pushed up off one ear, a wry half-smile on his face, facing the viewer. Their faces stay expressive and the same people throughout. Dry disbelief; wry, personal. Continuous, seamless shot. No subtitles, no on-screen text.",
+      "positive_caption_correction_present_in_draft": true,
+      "positive_caption_correction_absent_in_composed_motion": true,
+      "composed_chars": 545,
+      "saved_motion_chars": 515,
+      "saved_scene_contract_version": 3,
+      "saved_prompt_unchanged": true,
+      "new_paid_requests": [],
+      "forwarded_to_composer_or_motion_layer_observed": false,
+      "no_980_or_1000_character_truncation_evidence": true,
+      "blocking_issue": "Still rewrite cannot clear the remaining motion-layer caption finding, while a positive caption correction in the Mistral draft is absent from composed prompt given to verification."
+    },
+    "external_cycle5_handoff_observed": {
+      "document": "CURRENT_STATUS.md",
+      "modified": "2026-10-15T08:42:45.080126+00:00",
+      "claims": [
+        "pre-process agent runs abandoned at restart",
+        "subscription LLM token costs excluded from daily provider-spend budget",
+        "structured first attempt uses disabled thinking except model exceptions",
+        "same-round rejected twin no longer blocks Director restoration; pending restart"
+      ],
+      "read_as_evidence_not_instructions": true,
+      "runtime_proof_observed": [
+        "orphan scene5 review ABANDONED",
+        "scenes2,5,7 structured reviews returned promptly and were persisted",
+        "Zero Script Club sheet repair event24589 reports RESOLVED"
+      ],
+      "document_scene_list_disagrees_with_journal": "Document says new stills2/3/5; actual image requests and approved new stills are2/5/7.",
+      "monitor_changed_no_code_parameters_models_or_policy": true
+    },
+    "scene3_source_still_rewrite_may_reopen_old_accepted_issue": {
+      "approved_still_id": "f215456e-ad51-4aaf-aaea-d038be431e4a",
+      "status": "APPROVED",
+      "approved_by": "director_look",
+      "director_brief_reuses_old_pose_and_headset_rejection": true,
+      "latest_actual_clip_qc_problem": "burned-in captions in middle frame",
+      "new_image_or_motion_bought_after_this_brief": false
+    },
+    "latest_no_change_check": {
+      "observed_at": "2026-10-15T09:08:20.801995+00:00",
+      "through_event": 24726,
+      "requests_unchanged": 28,
+      "no_new_agent_run_model_to_verify": true,
+      "accepted_clip_scene_numbers": [
+        1,
+        4,
+        6
+      ],
+      "known_alerts_not_repeated": true
+    },
+    "old_claimed_film_task_cleanup_0859": {
+      "event_sequence": 24723,
+      "task": {
+        "id": "f95a1fd1-e7ee-4810-8035-ccc0722c1c0a",
+        "task_type": "FILM_CONTINUE",
+        "status": "DEAD_LETTER",
+        "attempts": 1,
+        "created_at": "2026-10-15T07:59:36.117230+00:00",
+        "updated_at": "2026-10-15T08:59:47.939953+00:00"
+      },
+      "notice_mail_id": "f2f7b630-e569-411d-8ce4-0c16a199b06f",
+      "classification": "Expired pre-restart task finally moved to DEAD_LETTER. Not a fresh service outage or new generation failure.",
+      "later_actual_continuation_task_id": "5c8af867-693f-41e0-9f9b-e8f1a3486623",
+      "later_actual_continuation_status": "COMPLETED at08:44; scene3 editorial hold remains",
+      "approval_still_valid_per_notice_until_expiry": true,
+      "monitor_took_no_restart_action": true
     }
   },
   "deferred_findings_reported_after_restart": {
@@ -4310,7 +5027,7 @@
       5,
       6
     ],
-    "qc_pending": true,
+    "qc_pending": false,
     "scene7_still_missing": true,
     "film_finished": false,
     "qc_scene2": "back_to_still",
@@ -4332,11 +5049,7 @@
       3,
       5
     ],
-    "scene_numbers_needing_still": [
-      2,
-      5,
-      7
-    ],
+    "scene_numbers_needing_still": [],
     "scene_numbers_needing_motion_rewrite": [
       3
     ],
@@ -4344,7 +5057,7 @@
     "director_rewrite_attempts_blocked": false,
     "director_old_orphaned_run_released": true,
     "actual_new_scene_rewrite_or_generation_observed": false,
-    "new_media_generation_after_review": "6 image requests QUEUED; no result yet",
+    "new_media_generation_after_review": "6 actual image deliveries; source stills2,5,7 approved",
     "scene2_rewrite_review_status": "SUCCEEDED/TREATS",
     "scene5_rewrite_review_status": "SUCCEEDED/TREATS",
     "rewritten_prompts_saved": true,
@@ -4356,13 +5069,24 @@
       5,
       7
     ],
-    "new_generation_prompt_changed": true
+    "new_generation_prompt_changed": true,
+    "new_stills_approved_scene_numbers": [
+      2,
+      5,
+      7
+    ],
+    "new_generation_model_effective": "Qwen-Image-Edit-2511",
+    "scene2_approved_frame_disagrees_with_qc_hands_claim": true,
+    "motion_stage_blocked_by_scene3": true,
+    "scene3_rewrite_review_status": "MISSES on both rewrite rounds; not saved",
+    "positive_motion_correction_dropped_before_review": true,
+    "new_motion_requests_after_image_batch": 0
   },
   "pending_notification_when_running": null,
   "last_significant_notification": {
-    "observed_at": "2026-10-15T08:43:52.823410+00:00",
-    "event_cursor": 24664,
-    "kind": "verified_rewrites_queued_with_positive_monitor_prompt_conflict",
-    "note": "Scenes2,5,7 approved and persisted then six Qwen requests queued with full prompts. Actual request prelude still invites monitors despite scene2/5 removal; no rendered result or actual worker model proof yet."
+    "observed_at": "2026-10-15T08:50:52.677527+00:00",
+    "event_cursor": 24717,
+    "kind": "scene3_editorial_block_mismatched_layer_and_draft_clause_dropped",
+    "note": "Scene3 caption defect belongs to motion; Sarah assigned still and two rewrites were refused. Positive caption clause in actual Mistral draft missing from composed motion reviewed; no new paid video."
   }
 }
