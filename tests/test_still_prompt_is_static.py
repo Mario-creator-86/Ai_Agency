@@ -173,6 +173,8 @@ def test_a_detail_shot_of_a_person_keeps_the_face_rule_at_its_own_scale():
     detail = compile_prompts(base, bible)["still_prompt"]
     assert CLOSE_PEOPLE_SENTENCE in detail and PEOPLE_SENTENCE not in detail, detail
     assert NO_FACE_STATED.search(CLOSE_PEOPLE_SENTENCE)
+    medium = compile_prompts({**base, "camera": "Medium shot, 50mm lens"}, bible)["still_prompt"]
+    assert CLOSE_PEOPLE_SENTENCE in medium and PEOPLE_SENTENCE not in medium, medium
     wide = compile_prompts({**base, "camera": "Wide establishing shot, 24mm lens"}, bible)[
         "still_prompt"
     ]

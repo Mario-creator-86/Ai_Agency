@@ -2732,8 +2732,10 @@ STILL_EXCLUSIONS = "No text, no logo."
 PEOPLE_SENTENCE = (
     "Any people appear only as small distant figures seen from behind, faces turned away."
 )
-#: The same rule for a close or detail frame of a person — hands, a back, a shoulder —
-#: where «small distant figures» contradicts the shot's own scale. 2026-10-15 18:45Z,
+#: The same rule for any frame that is not wide — a medium shot, a close-up, a detail of hands,
+#: a back, a shoulder — where «small distant figures» contradicts the shot's own scale (19:47Z,
+#: the same scene rewritten as a medium shot: refused four more rounds for the wide clause).
+#: 2026-10-15 18:45Z,
 #: 7c26a7ce scene 2 (the scientist's hands lifting the bar, a detail shot): the Director
 #: refused the wide-frame clause six rounds running, and the Editor's rewrite could not
 #: remove a sentence the composer always says — a tool defect, not his.
@@ -3656,7 +3658,7 @@ def compile_prompts(
             0,
             6,
             (
-                (CLOSE_PEOPLE_SENTENCE if size in ("close", "detail") else PEOPLE_SENTENCE)
+                (PEOPLE_SENTENCE if size in ("wide", "aerial") else CLOSE_PEOPLE_SENTENCE)
                 if people
                 else NO_PEOPLE_SENTENCE
             )
