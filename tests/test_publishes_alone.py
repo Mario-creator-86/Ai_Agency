@@ -1363,6 +1363,42 @@ def test_a_found_page_with_no_word_of_the_topic_is_not_read_and_a_title_asks_its
     assert "Dark Energy" in queries and "Type Ia" in queries and "Discovery" not in queries
 
 
+def test_a_fetched_page_that_is_not_about_the_subject_is_not_stored():
+    """2026-10-15 18:11Z, 89101f50 «Glass Rain on a Distant Hot Jupiter»: the searches for
+    «Glass Rain» and «Distant Hot» found Glass Animals (a band) and Distant Origin (a Star
+    Trek episode); both were stored and «verified» into 24 claims the writer refused, and
+    the day's run was spent. A page's own text decides: the subject's designation (HD
+    189733b) when it has one, else several of the subject's words; the designation is also
+    the first search query."""
+    from app.research.agent import designations, page_is_about, search_queries
+
+    title = "Glass Rain on a Distant Hot Jupiter"
+    topic = "HD 189733b experiences glass rain caused by silicate-laden winds on its day side."
+    fact = "HD\u202f189733b, a hot-Jupiter exoplanet, has winds that loft silicate particles."
+    assert designations(title, topic, fact) == ["HD 189733b"]
+    assert search_queries(title, topic)[0] == "HD 189733b"
+    band = "Glass Animals are an English indie rock band formed in Oxford in 2010. Heat Waves…"
+    planet = (
+        "HD 189733 b is an exoplanet approximately 64 light-years away. Observations suggest "
+        "winds of 8,700 km/h and silicate particles that may fall as rain of molten glass."
+    )
+    assert "HD 189733b" in str(page_is_about(band, title, topic, fact))
+    assert page_is_about(planet, title, topic, fact) is None
+    # Without a designation, the subject's own words decide, several of them.
+    sn_topic = (
+        "Discovery that the universe's expansion is accelerating thanks to Type Ia supernovae"
+    )
+    sn_fact = "In 1998 two teams found distant Type Ia supernovae dimmer than expected."
+    channel = "Discovery Channel is an American cable television channel owned by Warner."
+    paper = (
+        "In 1998 two independent teams observed distant Type Ia supernovae and found them "
+        "dimmer than expected, indicating that the expansion of the universe is accelerating."
+    )
+    assert page_is_about(channel, "The Supernova Surprise", sn_topic, sn_fact) is not None
+    assert page_is_about(paper, "The Supernova Surprise", sn_topic, sn_fact) is None
+    assert page_is_about("", title, topic, fact) == "pagina nu are text"
+
+
 def test_the_reader_of_a_source_is_told_the_films_thesis_first():
     """Ten claims on white dwarfs and none on the 1998 discovery the film rests on
     (2026-10-15): the reader is told the title and the thesis, as data, and asked for the

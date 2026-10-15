@@ -689,7 +689,7 @@ def search_queries(title: str, topic: str = "") -> list[str]:
                 queries.append(" ".join(group[-2:]))
             if group[0].isupper() and len(group[0]) >= 3:
                 queries.append(group[0])  # an acronym is a name on its own: UNESCO, CERN, LHC
-    ordered: list[str] = []
+    ordered: list[str] = list(designations(title, topic))  # the subject's own name first
     for query in sorted(queries, key=lambda q: -len(q)):
         if query and query not in ordered and len(query) >= 3:
             ordered.append(query)
@@ -760,6 +760,61 @@ _PAGE_STOPWORDS = frozenset(
         "without",
     }
 )
+
+
+#: A catalogue designation — HD 189733b, NGC 4993, PSR 1913, Kepler 452b — is the one word
+#: of a topic no other page shares: a page about the subject carries it, a page about a
+#: band called Glass Animals does not.
+_DESIGNATION = re.compile(r"\b([A-Z]{1,6})[\s\u202f\u2011\-]?(\d{2,}[A-Za-z]?)\b")
+
+
+def designations(*texts: str) -> list[str]:
+    """The catalogue designations in the texts, as written («HD 189733b»), each once."""
+    found: list[str] = []
+    for text in texts:
+        for letters, digits in _DESIGNATION.findall(str(text or "")):
+            said = f"{letters} {digits}"
+            if said not in found:
+                found.append(said)
+    return found
+
+
+def _squeeze(text: str) -> str:
+    return re.sub(r"[\s\u202f\u2011\-]+", "", str(text or "")).casefold()
+
+
+def page_is_about(text: str, title: str, topic: str = "", core_fact: str = "") -> str | None:
+    """Why a fetched page is NOT about the topic (Romanian, for the record), or None when it
+    is. 2026-10-15, 89101f50 «Glass Rain on a Distant Hot Jupiter»: the suggestion search for
+    «Glass Rain» and «Distant Hot» found Glass Animals (a band) and Distant Origin (a Star
+    Trek episode), both read and «verified» into 24 claims the writer rightly refused; the
+    same day Supernova's «Discovery» found the channel. A title shares a word with anything;
+    the page's own text does not: a page about the subject carries its designation (HD
+    189733b) when the subject has one, and otherwise several of the subject's own words."""
+    body = _squeeze(text)
+    if not body:
+        return "pagina nu are text"
+    names = designations(title, topic, core_fact)
+    if names:
+        if any(_squeeze(name) in body for name in names):
+            return None
+        return f"pagina nu numește subiectul ({', '.join(names[:3])})"
+    wanted = _topic_words(topic, core_fact)
+    if len(wanted) < 4:
+        wanted |= _topic_words(title)  # a thin subject line: the title's words count too
+    if not wanted:
+        return None
+    low = str(text or "").casefold()
+    present = {word for word in wanted if word in low}
+    # A rich subject (a thesis sentence) is matched on several of its words; a thin one
+    # («internet», «Example domains») on any one of them.
+    needed = 4 if len(wanted) >= 8 else (3 if len(wanted) >= 4 else 1)
+    if len(present) >= needed:
+        return None
+    return (
+        f"pagina spune doar {len(present)} din cuvintele subiectului "
+        f"({', '.join(sorted(wanted)[:6])}…)"
+    )
 
 
 def _topic_words(*texts: str) -> set[str]:
@@ -895,7 +950,16 @@ def gather_sources(
 
     def read(url: str) -> None:
         try:
-            stored = retrieve_and_ingest(engine, settings, url, str(uuid4()), topic_id=topic_id)
+            stored = retrieve_and_ingest(
+                engine,
+                settings,
+                url,
+                str(uuid4()),
+                topic_id=topic_id,
+                # A page that is not about the subject is not a source: not stored, not
+                # read into claims (`page_is_about`).
+                accept=lambda source: page_is_about(source.text, title, subject_line, core_fact),
+            )
             fetched.append(
                 {
                     "url": stored["source"]["url"],
