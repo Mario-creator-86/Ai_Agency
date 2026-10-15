@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-15 — The publish queue keeps a film accepted under the cap; its walk is retried with a doubling wait
+
+- `runbook/stages.py`: `_viewing_rejected` leaves out a film accepted under the Owner's cap (13:31Z: the queue said «niciun material aprobat de QC în așteptarea publicării» on the refused viewing of 2d276038). `workflows/passes/director_qc_review.py`: a walk that could not publish such a film is followed by the next after `PUBLISH_RETRY_MINUTES` (10, doubling), one key per walk. Test extended.
+
 ## 2026-10-15 — A film accepted under the cap that a viewing refused is not a closed film
 
 - `workflows/passes/director_qc_review.py`: a storyboard on REJECTED is skipped only when the film was not accepted under the Owner's cap (13:10Z: the pass skipped 2d276038 on the status its refused viewing left, and nothing moved). Test updated.

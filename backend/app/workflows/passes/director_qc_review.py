@@ -89,6 +89,37 @@ def _his_card_open(session: Any, storyboard_id: str) -> bool:
     )
 
 
+#: How long after a walk that could not publish a film accepted under the cap the next one
+#: waits (doubling after each).
+PUBLISH_RETRY_MINUTES = 10
+
+
+def _walks_since(session: Any, storyboard_id: str, cause: str, viewing_id: str) -> list[datetime]:
+    """When the film's walks under ``cause`` ended since the refused viewing ``viewing_id``
+    was written, oldest first."""
+    from sqlalchemy import select  # noqa: PLC0415
+
+    from app.media.models import EditorialReview  # noqa: PLC0415
+    from app.models import DomainEvent  # noqa: PLC0415
+
+    review = session.get(EditorialReview, viewing_id)
+    since = str(review.created_at) if review is not None else ""
+    moments: list[datetime] = []
+    for event in session.scalars(
+        select(DomainEvent).where(
+            DomainEvent.event_type == "runbook.film_continued",
+            DomainEvent.aggregate_id == storyboard_id,
+        )
+    ):
+        if (event.payload or {}).get("cause") != cause or str(event.timestamp) <= since:
+            continue
+        moment = datetime.fromisoformat(str(event.timestamp))
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=UTC)
+        moments.append(moment)
+    return sorted(moments)
+
+
 def _refused_viewing_to_publish(session: Any, asset_id: str) -> str | None:
     """The id of the newest viewing that refused a film accepted under the Owner's cap and
     not out on a channel, else None: its walk is queued once per such viewing (the key names
@@ -208,15 +239,23 @@ def queue_director_reviews(context: WatchdogContext) -> dict[str, Any]:
                 viewing = _refused_viewing_to_publish(session, asset_id)
                 shipped = accepted_under_cap(session, asset_id) if viewing else None
                 if viewing and shipped and shipped.get("report_id"):
-                    key = f"film-continue-{storyboard_id}-publish-again-{viewing}"
+                    failed_report = str(shipped["report_id"])
+                    cause = f"{CAUSE_PREFIX}{failed_report}"
+                    # The walks under this cause since the refused viewing: the next waits
+                    # twice as long after each (13:31Z: the first walk found «niciun material
+                    # aprobat de QC» on the queue's own reading of that refusal), so a
+                    # publication that cannot go out is neither a loop nor forgotten.
+                    walks = _walks_since(session, storyboard_id, cause, viewing)
+                    wait = min(
+                        PUBLISH_RETRY_MINUTES * 2 ** max(len(walks) - 1, 0), MAX_WAIT_MINUTES
+                    )
+                    key = f"film-continue-{storyboard_id}-publish-again-{viewing}-{len(walks)}"
                     standing = session.scalar(
                         select(TaskQueueItem.id).where(TaskQueueItem.idempotency_key == key)
                     )
-                    if standing is None:
-                        failed_report = str(shipped["report_id"])
-                        owed.append(
-                            (storyboard_id, key, f"{CAUSE_PREFIX}{failed_report}", failed_report)
-                        )
+                    recent = walks and now - walks[-1] < timedelta(minutes=wait)
+                    if standing is None and not recent:
+                        owed.append((storyboard_id, key, cause, failed_report))
                 continue
             if report is None or report.status != "FAILED" or str(report.verified_at) < since:
                 continue

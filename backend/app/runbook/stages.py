@@ -6912,7 +6912,14 @@ def _viewing_rejected(session: Session) -> set[str]:
     newest: dict[str, str] = {}
     for review in session.scalars(select(EditorialReview).order_by(EditorialReview.created_at)):
         newest[str(review.media_asset_id)] = str(review.verdict)
-    return {asset for asset, verdict in newest.items() if verdict == "REJECT"}
+    # A film accepted under the Owner's cap is published as it stands: its refused viewing
+    # is notes, and `_publish_one` has her view it again (13:31Z, 2d276038: the queue said
+    # «niciun material aprobat de QC în așteptarea publicării» on that refusal).
+    return {
+        asset
+        for asset, verdict in newest.items()
+        if verdict == "REJECT" and accepted_under_cap(session, asset) is None
+    }
 
 
 def _publish_one(

@@ -4907,6 +4907,9 @@ def test_a_film_accepted_under_the_cap_and_refused_by_her_viewing_is_walked_agai
                 session.get(Storyboard, film["board"]).status = "REJECTED"
 
     viewed("REJECT")
+    with Session(engine) as session:
+        # The publish queue keeps the film: its refused viewing is notes under the cap.
+        assert film["asset"] not in stages._viewing_rejected(session)
     assert _pass(engine, settings) == {"queued": [film["board"]]}
     assert _pass(engine, settings) == {"queued": []}  # once per refused viewing
     with Session(engine) as session, session.begin():
@@ -4915,6 +4918,23 @@ def test_a_film_accepted_under_the_cap_and_refused_by_her_viewing_is_walked_agai
         ).all()[-1]
         assert task.payload["cause"] == f"director_qc:{film['report']}"
         task.status = "COMPLETED"
-    assert _pass(engine, settings) == {"queued": []}  # that viewing's walk ran
+    assert _pass(engine, settings) == {"queued": []}  # that viewing's walk stands
+    # The walk ran and could not publish (13:31Z: the queue's own reading of the refusal):
+    # the next waits PUBLISH_RETRY_MINUTES, doubling, then is queued under a new key.
+    from app.workflows.passes import director_qc_review
+
+    with Session(engine) as session, session.begin():
+        append_event(
+            session,
+            "runbook.film_continued",
+            "storyboard",
+            film["board"],
+            1,
+            {"status": "COMPLETED", "cause": f"director_qc:{film['report']}"},
+            "c",
+        )
+    assert _pass(engine, settings) == {"queued": []}  # within the wait
+    monkeypatch.setattr(director_qc_review, "PUBLISH_RETRY_MINUTES", 0)
+    assert _pass(engine, settings) == {"queued": [film["board"]]}
     viewed("APPROVE")
     assert _pass(engine, settings) == {"queued": []}
