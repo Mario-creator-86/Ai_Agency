@@ -1126,3 +1126,84 @@ def test_the_serial_still_always_says_its_surfaces_are_blank_and_the_editor_is_t
     assert "every screen is dark" in SERIAL_BLANK_SENTENCE
     told = prompt_agent._SERIAL_SHOTS_INSTRUCTIONS
     assert "nameplate" in told and "leave such objects out" in told
+
+
+# ------------------------------------------------------ 18. the room is the beat's, not the block's
+
+
+def test_a_serial_shot_is_drawn_in_the_room_the_beat_names_and_the_block_puts_no_screen_in_it():
+    """Episode 2 (2d276038, 2026-10-15): the look's block said «wooden desks with glowing
+    monitors … Screens show abstract glow» at the head of every shot, Sarah's penthouse was
+    drawn as the render bay with lit monitors, and the Director refused every rewrite on the
+    block's own words — six scenes held, nothing bought, no film. The block is the rendering,
+    the camera and the frame; the room's furniture comes from the look's rooms table, matched
+    on the beat's location, the house's own sentence for a room the table does not name."""
+    from app.media.prompt_agent import compose_serial_prompt
+    from app.media.series_look import load_series_look, room_sentence
+
+    look = load_series_look()
+    assert look["in_use"] and look["version"] == 3
+    block = look["block"].lower()
+    assert "monitor" not in block and "screen" not in block and "glow" not in block
+    assert room_sentence(look, "Executive Penthouse (Director / CEO), floor 4").startswith(
+        "The Executive Penthouse"
+    )
+    # Named by its own objects only: a negation («no screen») is read as a screen by an image
+    # model (the Director's brief on scene 6, 2026-10-15).
+    penthouse = room_sentence(look, "Executive Penthouse, floor 4").lower()
+    assert "mahogany desk" in penthouse and "monitor" not in penthouse and "screen" not in penthouse
+    assert room_sentence(look, "Content, floor 2") == look["rooms"]["house"]
+    assert room_sentence(look, "") == look["rooms"]["house"]
+    assert room_sentence({"rooms": {}}, "Research, floor 3") == ""
+
+    sarah = {
+        "id": "s",
+        "name": "Sarah Executive",
+        "face_hair": "brunette professional bob with warm highlights",
+        "outfit": "navy two-piece executive blazer, white collared shirt and sky-blue tie",
+    }
+    package = {
+        "location": "Executive Penthouse (Director / CEO), floor 4",
+        "shot_size": "single",
+        "in_frame": [sarah],
+        "characters": [sarah],
+        "action": "Sarah sits very upright, shoulders square, facing the viewer.",
+        "background": "the mahogany desk edge low behind her and the big window onto the city",
+    }
+    prompt = compose_serial_prompt(package, look)
+    assert prompt.startswith(look["block"])
+    assert "Location: Executive Penthouse (Director / CEO), floor 4." in prompt
+    at_room = prompt.index("The Executive Penthouse at the top of the studio house")
+    assert prompt.index("Location:") < at_room < prompt.index("Medium close-up single")
+    assert "glowing monitors" not in prompt and "abstract glow" not in prompt
+    # Kael's beat in the render bay is drawn in the render bay, its monitors dark.
+    kael = {"id": "k", "name": "Kael Video Editor", "face_hair": "sandy hair", "outfit": "shirt"}
+    bay = compose_serial_prompt(
+        {
+            **package,
+            "location": "Video & Render Bay, floor 1",
+            "in_frame": [kael],
+            "characters": [kael],
+            "background": "",
+        },
+        look,
+    )
+    assert "The render bay of the studio house" in bay and "switched off and dark" in bay
+    assert "Executive Penthouse" not in bay
+
+
+def test_the_rooms_sentence_is_the_composers_own_so_a_lock_on_it_is_the_developers():
+    """The Director's review quotes words a rewrite cannot change (`lock_texts` constants):
+    the room's sentence is the composer's, like the block and the frame, so a finding it
+    invites is a tool's defect for the developer, never a brief the Editor fails twice."""
+    from app.media.scene_rewrite import _still_sentences
+    from app.media.series_look import load_series_look, room_sentence
+
+    look = load_series_look()
+    location = "Executive Penthouse (Director / CEO), floor 4"
+    room = room_sentence(look, location)
+    still = f"{look['block']} Location: {location}. {room} Medium close-up single at eye level."
+    package = {"location": location, "shot_size": "single", "in_frame": []}
+    context = {"serial": True, "look": look, "package": package}
+    fixed, _chosen = _still_sentences(context, package, still)
+    assert room in fixed and look["block"] in fixed

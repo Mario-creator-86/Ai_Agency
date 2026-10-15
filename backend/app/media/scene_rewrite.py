@@ -1448,6 +1448,7 @@ def _still_sentences(
     exclusions — and, under the field whose choice says it, the people rule: ``subject``, since
     who the picture shows decides between `PEOPLE_SENTENCE` and `NO_PEOPLE_SENTENCE`)."""
     from app.media import prompt_agent as words  # noqa: PLC0415 - it imports us
+    from app.media.series_look import room_sentence  # noqa: PLC0415
 
     if context.get("serial"):
         look = context.get("look") or {}
@@ -1455,6 +1456,8 @@ def _still_sentences(
         candidates = [
             str(look.get("block") or ""),
             f"Location: {package.get('location')}." if package.get("location") else "",
+            # The room's sentence from the look's table: the composer's, not his.
+            room_sentence(look, package.get("location")),
             str(framing),
             words.SERIAL_FRAME_SENTENCE,
             words.SERIAL_BLANK_SENTENCE,

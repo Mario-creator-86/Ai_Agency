@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-10-15 — The series look names each room; the style block names no object
+
+Episode 2's film QC failed and six scenes were refused on words no rewrite could change: the look's style block put «glowing monitors … Screens show abstract glow» at the head of every shot, Sarah's penthouse included.
+
+- `config/serial_series_look.json`: `style_block` is the rendering, the camera and the frame only; the room's furniture moved to a `rooms` table (the Executive Penthouse by its own objects, the render bay with its monitors dark, the house for every other room). No version bump — a bump redescribes every open episode's shots and buys its approved pictures again (`rooms_note`).
+- `media/series_look.py`: `rooms` read from the file; `room_sentence(look, location)` picks the entry whose key is in the beat's location name, else the house's.
+- `media/prompt_agent.py`: `compose_serial_prompt` says the room's sentence after «Location:», never the block's.
+- `media/scene_rewrite.py`: the room's sentence is one of the composer's sentences, so a finding it invites is a tool's defect for the developer, not a brief the Editor fails twice.
+- Tests: `test_publishes_alone` section 18, `test_serial_look` updated.
+
 ## 2026-10-15 — Cycle 6: every prompt passes the Director before the first purchase; the first prompt right from the start
 
 The Owner, three times: every prompt is checked before anything is bought, no exception, and the first prompt must be right from the start.

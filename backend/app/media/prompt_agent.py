@@ -65,6 +65,7 @@ from app.media.series_look import (
     load_factual_look,
     load_series_look,
     look_block,
+    room_sentence,
     serial_shot_size,
     series_bible,
 )
@@ -2114,6 +2115,10 @@ def compose_serial_prompt(package: dict[str, Any], look: dict[str, Any]) -> str:
     head = [
         str(look.get("block") or "").strip(),
         f"Location: {package['location']}." if package.get("location") else "",
+        # The room's own furniture, from the look's table (`series_look.room_sentence`),
+        # never the block's: on 2026-10-15 the block put glowing monitors in Sarah's
+        # penthouse and no rewrite could take them out (episode 2, 2d276038).
+        room_sentence(look, package.get("location")),
         _sentence(framing) if framing else "",
         SERIAL_FRAME_SENTENCE,
         # Always (the Owner, 2026-10-15: «indicațiile primului prompt să fie bune, chiar

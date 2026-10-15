@@ -169,7 +169,11 @@ def test_the_shipped_look_is_one_versioned_block_that_asks_for_no_writing():
     assert look["series_key"] == "office_serial"
     block = look["block"]
     assert block.startswith("Warm hand-drawn 2D animation")
-    assert "9:16" in block and "studio house" in block
+    assert "9:16" in block
+    # The room's furniture is the rooms table's, per room, never the block's (2026-10-15).
+    assert "monitor" not in block.lower() and "screen" not in block.lower()
+    assert "studio house" in look["rooms"]["house"]
+    assert "Executive Penthouse" in look["rooms"]
     assert "No written words, letters or logos anywhere" in block
     # The retry of a degenerate still strips every clause that asks for writing: the look
     # must survive that strip whole, or the retry would be drawn in the model's own style.

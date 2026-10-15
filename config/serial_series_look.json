@@ -7,7 +7,7 @@
   "series": "Inside The Nexus",
   "use_until_the_owner_changes_it": true,
   "note": "A proposal the Owner may change or switch off; it is not in his database. Version 1 (2026-09-24) was written from the headquarters reference picture as a stylised 3D film. Version 2 (2026-10-11) follows the Owner's own picture of the office — the living studio: a cosy wooden house of three floors at the edge of town, each employee at their own desk, hanging brass lamps and desk lamps glowing amber, bookshelves, framed pictures, potted plants and climbing vines, big windows and a balcony, lanterns on the street — in a warm hand-drawn style. style_block opens every shot prompt of every episode, word for word, so the serial is one look from shot to shot and from episode to episode; a character's face and clothes come from their bible and their reference portrait, never from this file; faces are seen and must stay the same person in every shot. The time of day is not fixed here: the Owner's rule is that the office follows the real conditions outside, never an eternal dusk. Change the words and bump the version: shots described under an older version are described again. With use_until_the_owner_changes_it false, serial shots carry no series look and the image model draws in its own default style.",
-  "style_block": "Warm hand-drawn 2D animation like the studio's own office picture: clean lines, painterly shading, adults at natural proportions with expressive faces. Inside the studio house: wooden desks with glowing monitors, hanging brass lamps in warm amber, bookshelves, potted plants and climbing vines, big windows on the lantern-lit street. Eye-level camera. Vertical 9:16 frame. No written words, letters or logos anywhere. Screens show abstract glow.",
+  "style_block": "Warm hand-drawn 2D animation like the studio's own office picture: clean lines, painterly shading, adults at natural proportions with expressive faces. Eye-level camera. Vertical 9:16 frame. No written words, letters or logos anywhere.",
   "rendering": "Warm hand-drawn 2D animation like the studio's own office picture: clean lines, painterly shading, adults at natural proportions with expressive faces.",
   "palette": "Warm amber lamp light and honey wood against the cool blue-violet of the windows, plant greens and terracotta pots; each department keeps its own accent colour (Executive green, Research blue, Fact Check terracotta, Content wood, Distribution teal, Production violet).",
   "continuity_rules": [
@@ -30,5 +30,11 @@
     "single": "Medium close-up single at eye level on {name}, facing the viewer",
     "close": "Close-up at eye level on {name}'s reaction, facing the viewer"
   },
-  "max_prompt_chars": 20000
+  "max_prompt_chars": 20000,
+  "rooms": {
+    "house": "Inside the studio house: wooden desks, hanging brass lamps in warm amber, bookshelves, potted plants and climbing vines, big windows on the lantern-lit street.",
+    "Executive Penthouse": "The Executive Penthouse at the top of the studio house: one wide mahogany desk, a big window onto the city behind it, a brass lamp in warm amber, bookshelves and potted plants; the desk carries only the lamp.",
+    "Video & Render Bay": "The render bay of the studio house: wooden desks, hanging brass lamps in warm amber, bookshelves, potted plants and climbing vines, big windows on the lantern-lit street; any monitor in the room is switched off and dark."
+  },
+  "rooms_note": "2026-10-15, without a version bump (a bump has every open episode's shots described again, and its approved pictures bought again): the room's furniture left style_block for this table. style_block is the rendering, the camera and the frame only, said first in every shot; then the composer says the room the beat names, from this table — the entry whose key is in the beat's location name, else «house». Episode 2 (2d276038): the block's «wooden desks with glowing monitors … Screens show abstract glow» drew Sarah's penthouse as the render bay and filled every screen with patterns; the Director's rewrites could not touch the block, so six scenes were refused on the composer's own words and nothing moved. A screen is never asked for here: a beat that needs one names it, dark, in its own plan."
 }

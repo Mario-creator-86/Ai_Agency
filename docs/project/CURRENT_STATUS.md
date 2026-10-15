@@ -5,6 +5,47 @@ AGENT_SCENARIO_ACCEPTANCE later used actual Ollama Cloud calls, with normal seri
 acceptance and real GPU/media/upload still pending. Current local UI evidence is reported
 separately below and does not prove those external workflows.
 
+## Cycle 7: the look names each room by its own furniture; the block puts no monitor in the penthouse (2026-10-15)
+
+**Ce s-a văzut (episodul 2, 2d276038, 10:04–10:16Z).** Controlul filmului a picat (scor 0: Sarah
+în camera de randare, nu în penthouse; monitoare cu conținut; hârtie liniată; posturi). Privirea
+a doua a Directoarei: scena 1 RĂSTURNATĂ (păstrată, fără refacere — regula Owner-ului), scenele
+2–7 CONFIRMATE grave. Scara ei pe scenele 2, 4, 5, 7: Kael a rescris de două ori, recenzia ei a
+refuzat de fiecare dată cu același motiv — «propoziția fixă a compozitorului ține monitoarele în
+cadru»; scena 5 a primit nota ei de defect de unealtă pentru dezvoltator. Scenele 3 și 6 au trecut
+recenzia, s-au cumpărat imagini noi (0,24 USD fiecare); imaginea nouă a scenei 3 a fost refuzată
+iar pe exact aceleași cuvinte ale blocului («promptul păstrează monitoarele în listă»); scena 6 a
+trecut și i se cumpără mișcarea (0,41 USD).
+
+**Cauza (dovedită pe cuvintele trimise).** `style_block` din `config/serial_series_look.json`
+deschide FIECARE prompt de cadru, cuvânt cu cuvânt, și spunea «Inside the studio house: wooden
+desks with glowing monitors … Screens show abstract glow» — și în penthouse, și în cercetare. Scara
+rescrie doar câmpurile planului (`compose_serial_prompt` pune blocul primul); blocul nu e al
+niciunui strat, deci fiecare rescriere a fost refuzată corect pe cuvinte pe care nimeni nu le
+putea schimba. Nicio scenă nu putea fi reparată; filmul nu se putea reasambla; publicare zero.
+
+**Ce este.** Blocul e doar stilul (randare, cameră la nivelul ochilor, cadru 9:16, fără scris).
+Mobila camerei vine dintr-un tabel nou `rooms` din același fișier: intrarea a cărei cheie e în
+numele locului beat-ului (penthouse-ul: birou de mahon, fereastra mare spre oraș, lampă, rafturi,
+plante — fără negații; camera de randare: birourile de lemn, monitoarele stinse), altfel «house»
+(casa studioului, fără monitoare). `series_look.room_sentence` o alege; compozitorul o spune după
+«Location:» (`prompt_agent.compose_serial_prompt`); scara o ține între propozițiile compozitorului
+(`scene_rewrite._still_sentences`), ca o constatare pe ea să fie a dezvoltatorului, nu un brief
+pe care Kael îl ratează de două ori. Versiunea look-ului NU e ridicată (o ridicare redescrie toate
+cadrele episoadelor deschise și recumpără imaginile aprobate); motivul e în `rooms_note`.
+
+**Cum se repară episodul 2 singur.** La următoarea trecere a scării, cuvintele scenelor refuzate
+sunt spuse din nou cu compozitorul de azi (`recompose_serial_scene`), evenimentul de rescriere
+ridică așteptarea (`scene_waits`), Directoarea e întrebată din nou pe cuvintele noi, rescrierea
+lui Kael poate acum trata constatările, se cumpără o imagine pe scenă pe cuvinte aprobate. Scena 1
+(păstrată) nu e atinsă: identitatea imaginii e pe cuvintele stocate, nerespuse.
+
+Teste: `test_publishes_alone` (25: camera beat-ului în prompt, fără ecran în bloc, propoziția
+camerei e a compozitorului), `test_serial_look`, `test_serial_ladder`,
+`test_scene_redo_prompt_rewrite`, `test_serial_prompt_model_limit`,
+`test_visible_cast_and_reference_choice` (87 passed). Intră la repornirea de la următoarea
+margine fără GPU (acum se cumpără mișcarea scenei 6), împreună cu auditul (1c1c90f).
+
 ## CICLUL 6 — fiecare prompt trece pe la Directoare înainte de prima cumpărare; primul prompt corect de la început (Claude) (2026-10-15)
 
 Owner, 09:15–09:25Z, de trei ori: «Dacă o imagine nu este bună, promptul este greșit! … Mereu

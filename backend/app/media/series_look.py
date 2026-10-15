@@ -117,6 +117,7 @@ def load_series_look(path: Path | None = None) -> dict[str, Any]:
             "continuity_rules": [],
             "avoid": [],
             "shot_sizes": dict(DEFAULT_SHOT_SIZES),
+            "rooms": {},
             "max_prompt_chars": DEFAULT_MAX_PROMPT_CHARS,
             "file": str(source),
         }
@@ -132,6 +133,13 @@ def load_series_look(path: Path | None = None) -> dict[str, Any]:
         cap = int(data.get("max_prompt_chars") or DEFAULT_MAX_PROMPT_CHARS)
     except (TypeError, ValueError):
         cap = DEFAULT_MAX_PROMPT_CHARS
+    rooms: dict[str, str] = {}
+    given_rooms = data.get("rooms")
+    if isinstance(given_rooms, dict):
+        for key, value in given_rooms.items():
+            sentence = strip_on_screen_text(_clean(value))
+            if _clean(key) and sentence:
+                rooms[_clean(key)] = sentence
     rendering = strip_on_screen_text(_clean(data.get("rendering")))
     if not rendering and proposed:
         rendering = proposed.split(". ")[0].rstrip(".") + "."
@@ -148,9 +156,32 @@ def load_series_look(path: Path | None = None) -> dict[str, Any]:
         "continuity_rules": _strings(data.get("continuity_rules")) if in_use else [],
         "avoid": _strings(data.get("avoid")) if in_use else [],
         "shot_sizes": sizes,
+        "rooms": rooms if in_use else {},
         "max_prompt_chars": cap if 0 < cap <= MAX_PROMPT else MAX_PROMPT,
         "file": str(source),
     }
+
+
+#: The key of the look's room sentence for a room the table does not name by itself.
+HOUSE_ROOM = "house"
+
+
+def room_sentence(look: dict[str, Any], location: Any) -> str:
+    """The look's sentence for the room a beat names: the entry of ``rooms`` whose key is
+    in the location's name (the longest such key), else the house's own; empty without a
+    look or a table. 2026-10-15 (episode 2, 2d276038): the style block itself said «wooden
+    desks with glowing monitors … Screens show abstract glow» in every room, Sarah's
+    penthouse was drawn as the render bay with lit monitors, and no rewrite could change the
+    block's words — six scenes were refused on them. The room's furniture is said here, per
+    room, so a beat in the penthouse is drawn in the penthouse."""
+    rooms = look.get("rooms") if isinstance(look.get("rooms"), dict) else {}
+    if not rooms:
+        return ""
+    where = " ".join(str(location or "").casefold().split())
+    named = [key for key in rooms if key != HOUSE_ROOM and where and key.casefold() in where]
+    if named:
+        return str(rooms[max(named, key=len)])
+    return str(rooms.get(HOUSE_ROOM) or "")
 
 
 def series_bible(look: dict[str, Any], aspect_ratio: str = "9:16") -> dict[str, Any]:
