@@ -469,7 +469,11 @@ _SERIAL_SHOTS_INSTRUCTIONS = (
     "close-up for a turn or a reaction); the background life, which must not compete with "
     "the speakers; and what must match the previous shot. What people say is heard, never "
     "drawn. Never ask for writing in the picture: no text, sign, label, title, screen words or "
-    "written number, because a generator draws letters as gibberish. Do not add events, "
+    "written number, because a generator draws letters as gibberish. Name no object that "
+    "carries writing in real life — a nameplate, a sign, a poster, a badge, a label, a book "
+    "spine, a printed page, a screen with content: leave such objects out, or say the screen "
+    "is dark and the paper blank and plain (the Owner, 2026-10-15: the first prompt must be "
+    "right from the start; a «blank nameplate» invites a name). Do not add events, "
     "objects or people the beat does not have. Choose one camera_move from: "
     + ", ".join(lint.CAMERA_MOVES)
     + ". Use static when the shot's framing must hold; vary other shots deliberately. "
@@ -1924,12 +1928,9 @@ SERIAL_FRAME_SENTENCE = (
 #: and the vision gate still read lettering and number grids on a ledger drawn for «pauses
 #: before the number» (2026-10-12, 08:03, scene 4 of f06808c9, twice). Said without the
 #: words the prompt check reads as a request for text («lettering», «digits»).
-SERIAL_BLANK_SENTENCE = "Pages and screens are blank."
-_WRITING_SURFACES = re.compile(
-    r"\b(?:ledger|page|pages|paper|papers|note|notes|notebook|notepad|book|books|screen"
-    r"|screens|monitor|monitors|laptop|phone|tablet|whiteboard|board|sign|poster|label"
-    r"|document|documents|form|forms|invoice|invoices|report|reports|letter|letters)\b",
-    re.IGNORECASE,
+SERIAL_BLANK_SENTENCE = (
+    "Pages and papers are blank and plain, every screen is dark or a plain soft glow, and the "
+    "desks are clear of plates, labels and signs."
 )
 #: A function word left hanging at the end of a cut phrase ("wearing", "with", "in a").
 _DANGLING_TAIL = re.compile(
@@ -2110,17 +2111,17 @@ def compose_serial_prompt(package: dict[str, Any], look: dict[str, Any]) -> str:
     # refused them (TEMPLATE_LABEL) on every rewrite, and the Director and the Video Editor
     # went round in circles while the storyboard waited.
     action = _still_moment(str(package.get("action") or ""))
-    surfaces = " ".join(
-        str(package.get(key) or "") for key in ("action", "location", "background", "subject")
-    )
     head = [
         str(look.get("block") or "").strip(),
         f"Location: {package['location']}." if package.get("location") else "",
         _sentence(framing) if framing else "",
         SERIAL_FRAME_SENTENCE,
-        # Only where there is paper or glass to write on: the sentence costs the people
-        # their description under the cap, and a room without a page needs no blank one.
-        SERIAL_BLANK_SENTENCE if _WRITING_SURFACES.search(surfaces) else "",
+        # Always (the Owner, 2026-10-15: «indicațiile primului prompt să fie bune, chiar
+        # perfecte»): the room of the office serial always has desks, screens and paper, and
+        # episode 2's scenes 2, 5 and 6 paid for monitors with content and ruled paper where
+        # the plan named none. The cap no longer cuts the people (2026-10-14), so the sentence
+        # costs nothing.
+        SERIAL_BLANK_SENTENCE,
     ]
     if action and not action.endswith("."):
         action += "."

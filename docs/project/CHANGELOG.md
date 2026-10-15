@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-15 — Cycle 6: every prompt passes the Director before the first purchase; the first prompt right from the start
+
+The Owner, three times: every prompt is checked before anything is bought, no exception, and the first prompt must be right from the start.
+
+- `media/prompt_audit.py`: before a step buys a scene for the first time (still, test shot, motion) the Director audits the exact words that would be sent, against the plan, the bible, the series look, the allowed markings and the prompt lessons; her yes is kept on those words (`media.prompt_audited`), her no is a brief the Editor rewrites from through her ladder, and the sheet is rebuilt on the new words; after two briefs without approval the scene waits for her (NEEDS_PROMPT_APPROVAL), never for the Owner, never bought. Hooked in `_walk_staircase` after the lint and before the money. Text only.
+- `prompt_agent.py`: the Editor's serial instructions name the objects that carry writing in real life and ask him to leave them out or say the screen dark and the paper blank; the serial composer says the surfaces are blank in every still, not only when a page is named.
+
 ## 2026-10-15 — Cycle 5: the orphaned run, the tokens in the budget, the empty reviews, the sibling of the round
 
 Four causes read on the live record after the morning's restarts, each fixed with its test.

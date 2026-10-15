@@ -1,7 +1,17 @@
 {
-  "observed_at": "2026-10-15T09:08:20.801995+00:00",
-  "event_cursor": 24726,
-  "claimed_tasks": [],
+  "observed_at": "2026-10-15T09:49:21.830193+00:00",
+  "event_cursor": 24784,
+  "claimed_tasks": [
+    {
+      "id": "c152ee63-f810-41b0-9f62-7b39af09712c",
+      "task_type": "FILM_CONTINUE",
+      "status": "CLAIMED",
+      "attempts": 1,
+      "next_attempt_at": "2026-10-15T09:18:38.645326+00:00",
+      "lease_expires_at": "2026-10-15T10:48:38.680684+00:00",
+      "updated_at": "2026-10-15T09:48:38.680684+00:00"
+    }
+  ],
   "recent_runs": [
     {
       "id": "22995c46-971c-49db-aacd-a76bd688caa9",
@@ -393,7 +403,7 @@
       "source_changes_in_this_diagnosis": false
     }
   },
-  "last_reported_event_cursor": 24717,
+  "last_reported_event_cursor": 24784,
   "last_reported_summary": "Sarah/Deepseek a verificat efectiv clipul scenei6, a recunoscut că planul permite lumină abstractă pe ecrane și a acceptat micile abateri (cap, linii pe hârtie) fără regenerare. Imaginea și clipul sunt restaurate, accepted=1, QC efectiv PASSED. Acum3 clipuri acceptate(1,4,6); scenele2,3,5,7 rămân de rezolvat. Brieful următoarei corecturi a pornit; încă nicio generare nouă și niciun film finalizat.",
   "monitoring_status": "NEW_STILL_ACCEPTED_VISUAL_MISMATCH_AND_OLD_IMAGE_CAP_BLOCKS_VIDEO",
   "studio_status": {
@@ -421,21 +431,19 @@
     "no_new_shutdown_event_yet": true
   },
   "last_run_inspected": {
-    "id": "4187f00f-cd32-45fc-8b7d-22786cb40d03",
-    "task_type": "director_rewrite_review",
-    "model_name": "deepseek-v4.1-flash",
+    "id": "3e8c9a5c-d6bd-4af0-9672-d980ec1d0450",
+    "task_type": "still_qc",
+    "model_name": "mistral-large-4",
     "status": "SUCCEEDED",
-    "started_at": "2026-10-15T08:44:50.468331+00:00",
-    "finished_at": "2026-10-15T08:44:56.272287+00:00",
-    "task_summary": "Verific dacă rescrierea scenei 3 din «Storyboard: Twenty-Eight Rewrites Before Breakfast» tratează constatările înainte să cumpărăm ceva pe ea.",
-    "isolated_codex_probe": false,
-    "model_evidence": "logged agent_run.model_name; independent response model not present in structured public result"
+    "started_at": "2026-10-15T09:26:27.054053+00:00",
+    "finished_at": "2026-10-15T09:26:33.898194+00:00",
+    "task_summary": "Mă uit la imaginea scenei 3 înainte să se cumpere mișcarea."
   },
   "last_event_inspected": {
-    "sequence": 24726,
-    "event_id": "1f5eee2e-4dac-4744-954d-35515b866d25",
-    "event_type": "workflow.job_fired",
-    "timestamp": "2026-10-15T09:06:00.704238+00:00"
+    "sequence": 24784,
+    "event_id": "d3403b88-9295-4aa7-967a-7b09448d4a7b",
+    "event_type": "media.scene_take_recorded",
+    "timestamp": "2026-10-15T09:26:43.810488+00:00"
   },
   "local_reference_and_response_repairs": {
     "reference_doc": "REFERENCE_ROUTE_WARDROBE_AND_STUDIO_WAIT_2026-10-15.md",
@@ -496,102 +504,39 @@
   },
   "last_quiet_check": {
     "decision": "DONT_NOTIFY",
-    "reason": "healthy_service_only_scheduler_event_no_new_runs_mail_or_media",
-    "inspected_from_event": 24726,
-    "inspected_through_event": 24726,
-    "routine_event": {
-      "job_name": "director_loop",
-      "workflow_type": "DIRECTOR_LOOP",
-      "task_id": "04fc84b3-5833-4096-94d0-0f199f5e92fd",
-      "due_at": "2026-10-15T09:05:54.003218+00:00"
-    },
+    "reason": "video_batch_in_progress_no_delivery_or_qc_result",
+    "event_cursor_unchanged": 24784,
+    "new_event_count": 0,
     "health": {
       "live": 200,
       "ready": 200
     },
-    "request_count": 28,
+    "request_count": 34,
     "new_cloud_requests": 0,
     "new_agent_runs": 0,
-    "saved_prompt_snapshot": [
-      {
-        "scene_index": 1,
-        "series_look_version": 3,
-        "still_chars": 1559,
-        "motion_chars": 549,
-        "still_sha256": "a2733f37491b0ba92cc2559749077eff18a0171ecfd5852f56078aa488a4fd60",
-        "motion_sha256": "c4de41e66dc2f8a70d9f969669b265dc7a1de671b68268b6aad42528ccf1a79a"
-      },
-      {
-        "scene_index": 2,
-        "series_look_version": 3,
-        "still_chars": 1531,
-        "motion_chars": 552,
-        "still_sha256": "0557d37182c6ca9814c30c0dc5a759b3436565b3606df9504b52c49d45632a56",
-        "motion_sha256": "5cbea667f964fbc1e580ccfa7b307a77499521e4e1c4dd49ee99dced197886f8"
-      },
-      {
-        "scene_index": 3,
-        "series_look_version": 3,
-        "still_chars": 1526,
-        "motion_chars": 515,
-        "still_sha256": "39dc6be11f3c317910666ba8a0b6eeb082e5093e23b307b32ceb5bedf33d091a",
-        "motion_sha256": "70cdd1726c7b289cf4ab3b0a99937a1990c108d4b4715be42621676e053d2fac"
-      },
-      {
-        "scene_index": 4,
-        "series_look_version": 3,
-        "still_chars": 1658,
-        "motion_chars": 525,
-        "still_sha256": "15bd654c11f6c3480bb13284932c113c905f7a5bd5a9e80ffca7291930e7e577",
-        "motion_sha256": "02f1925bc05a536bb9439484cfb944326f623cce0f00e7ea72e178dd836692e0"
-      },
-      {
-        "scene_index": 5,
-        "series_look_version": 3,
-        "still_chars": 1620,
-        "motion_chars": 529,
-        "still_sha256": "df9c174e8a2eb079c345bd179a4d5573a83de1f5e75c8f4d62c58e9195ff4734",
-        "motion_sha256": "efcf34925675543dd4ca868e17a85e71047f9b915ceb8af7396ff7b244fa8c28"
-      },
-      {
-        "scene_index": 6,
-        "series_look_version": 3,
-        "still_chars": 1567,
-        "motion_chars": 517,
-        "still_sha256": "a4107e713ca3ba231d5fa0ff06481a8f69240fb54908863e45a99f4e48fb7650",
-        "motion_sha256": "651c793d7e932f8d573d9e2054ce58fe87a3ff895afc34b862193fc690c38011"
-      },
-      {
-        "scene_index": 7,
-        "series_look_version": 3,
-        "still_chars": 1543,
-        "motion_chars": 520,
-        "still_sha256": "1ee5d1c476aeb409252c45ffc5306c35427772cce39af76d1244a00c1855ed4f",
-        "motion_sha256": "c9a5f2bc7f17212a33ce68072f49ca1b6e28fe101d590776aae7ac1bbf9adcd2"
-      }
+    "running_motion_scene_numbers": [
+      2,
+      3
     ],
-    "saved_prompts_unchanged": true,
-    "all_saved_contracts_v3": true,
+    "queued_motion_scene_numbers": [
+      5,
+      7
+    ],
+    "first_frame_hashes_and_saved_v3_motion_unchanged": true,
     "accepted_clip_scene_numbers": [
       1,
       4,
       6
     ],
-    "scene3_editorial_block_unchanged": true,
-    "scene2_visual_qc_discrepancy_unchanged": true,
-    "no_new_actual_model_or_first_frame_to_verify": true,
-    "owner_policy": {
-      "autonomy_stopped": 0,
-      "autonomy_mode": "AUTONOMOUS_CEO",
-      "updated_at": "2026-10-14T13:24:25.640201+00:00"
-    },
+    "worker_model_confirmation_pending": true,
+    "known_qc_alert_not_repeated": true,
     "models_called_by_monitor": false,
     "source_or_policy_changed_by_monitor": false,
     "documents_read": [
       {
         "name": "CURRENT_STATUS",
-        "modified": "2026-10-15T08:42:45.080126+00:00",
-        "characters": 796772
+        "modified": "2026-10-15T09:25:46.077654+00:00",
+        "characters": 799509
       },
       {
         "name": "SERIAL_PROMPT_MODEL_LIMIT_2026-10-14",
@@ -2101,672 +2046,282 @@
     ],
     "rewritten_prompts_saved_or_bought": false,
     "latest_request_comparison": {
-      "observed_at": "2026-10-15T08:43:52.823410+00:00",
-      "request_count": 28,
+      "observed_at": "2026-10-15T09:31:08.351877+00:00",
+      "request_count": 34,
       "comparison_uses_prompt_revision_at_submission": true,
       "all_submitted_prompt_revisions_preserved": true,
       "checks": [
         {
           "id": "f795d3de-00ad-4b9b-99b6-6c03b03e8d99",
-          "operation": "image",
-          "scene_id": "1",
-          "model": "Qwen-Image-Edit-2511",
-          "status": "COMPLETED",
-          "accepted": 0,
-          "created_at": "2026-10-15T05:07:29.068917+00:00",
-          "started_at": "2026-10-15T05:08:21.761788+00:00",
-          "finished_at": "2026-10-15T05:08:48.147448+00:00",
-          "error_code": null,
           "scene_index": 1,
-          "prompt_revision": "current_saved",
-          "request_model": "Qwen-Image-Edit-2511",
-          "returned_model": "Qwen-Image-Edit-2511",
-          "model_effective_confirmed": true,
-          "series_look_version": 3,
+          "operation": "image",
           "sent_chars": 1730,
-          "saved_chars": 1559,
           "saved_revision_preserved": true,
-          "prompt_sha256": "a208d474d4f105321a566f6bb56f215bf97a4a28f6ad320294a68a343c828230",
-          "reference_count": 1
+          "series_look_version": 3
         },
         {
           "id": "1496a2e4-7a2d-4e76-ae71-333555c9b4ba",
-          "operation": "image",
-          "scene_id": "1",
-          "model": "Qwen-Image-Edit-2511",
-          "status": "COMPLETED",
-          "accepted": 1,
-          "created_at": "2026-10-15T05:07:29.072699+00:00",
-          "started_at": "2026-10-15T05:08:21.871603+00:00",
-          "finished_at": "2026-10-15T05:10:10.386703+00:00",
-          "error_code": null,
           "scene_index": 1,
-          "prompt_revision": "current_saved",
-          "request_model": "Qwen-Image-Edit-2511",
-          "returned_model": "Qwen-Image-Edit-2511",
-          "model_effective_confirmed": true,
-          "series_look_version": 3,
+          "operation": "image",
           "sent_chars": 1730,
-          "saved_chars": 1559,
           "saved_revision_preserved": true,
-          "prompt_sha256": "a208d474d4f105321a566f6bb56f215bf97a4a28f6ad320294a68a343c828230",
-          "reference_count": 1
+          "series_look_version": 3
         },
         {
           "id": "85c2e969-3afd-4592-a1f1-2c3e665fa4c0",
-          "operation": "image",
-          "scene_id": "2",
-          "model": "Qwen-Image-Edit-2511",
-          "status": "COMPLETED",
-          "accepted": 0,
-          "created_at": "2026-10-15T05:11:56.418835+00:00",
-          "started_at": "2026-10-15T05:12:02.106533+00:00",
-          "finished_at": "2026-10-15T05:12:17.352403+00:00",
-          "error_code": null,
           "scene_index": 2,
-          "prompt_revision": "before_approved_rewrite",
-          "request_model": "Qwen-Image-Edit-2511",
-          "returned_model": "Qwen-Image-Edit-2511",
-          "model_effective_confirmed": true,
-          "series_look_version": 3,
+          "operation": "image",
           "sent_chars": 1836,
-          "saved_chars": 1577,
           "saved_revision_preserved": true,
-          "prompt_sha256": "9b9ff68bd4eb753275701cb81fa90ab2126959c5b366274c454e470350d13024",
-          "reference_count": 2
+          "series_look_version": 3
         },
         {
           "id": "f30f16ec-55dd-4a91-856b-ba27c8c0908d",
-          "operation": "image",
-          "scene_id": "2",
-          "model": "Qwen-Image-Edit-2511",
-          "status": "COMPLETED",
-          "accepted": 0,
-          "created_at": "2026-10-15T05:11:56.424273+00:00",
-          "started_at": "2026-10-15T05:12:02.244300+00:00",
-          "finished_at": "2026-10-15T05:13:44.616215+00:00",
-          "error_code": null,
           "scene_index": 2,
-          "prompt_revision": "before_approved_rewrite",
-          "request_model": "Qwen-Image-Edit-2511",
-          "returned_model": "Qwen-Image-Edit-2511",
-          "model_effective_confirmed": true,
-          "series_look_version": 3,
+          "operation": "image",
           "sent_chars": 1836,
-          "saved_chars": 1577,
           "saved_revision_preserved": true,
-          "prompt_sha256": "9b9ff68bd4eb753275701cb81fa90ab2126959c5b366274c454e470350d13024",
-          "reference_count": 2
+          "series_look_version": 3
         },
         {
           "id": "a74a91e7-b80e-4364-8e63-818bd53f0ee5",
-          "operation": "image",
-          "scene_id": "3",
-          "model": "Qwen-Image-Edit-2511",
-          "status": "COMPLETED",
-          "accepted": 1,
-          "created_at": "2026-10-15T05:11:56.430002+00:00",
-          "started_at": "2026-10-15T05:12:02.361208+00:00",
-          "finished_at": "2026-10-15T05:13:45.287008+00:00",
-          "error_code": null,
           "scene_index": 3,
-          "prompt_revision": "current_saved",
-          "request_model": "Qwen-Image-Edit-2511",
-          "returned_model": "Qwen-Image-Edit-2511",
-          "model_effective_confirmed": true,
-          "series_look_version": 3,
+          "operation": "image",
           "sent_chars": 1789,
-          "saved_chars": 1526,
           "saved_revision_preserved": true,
-          "prompt_sha256": "0a1ed826c6f18ee2ed2868b58359a16b555645d396ec997c8548d6997d0f97ff",
-          "reference_count": 2
+          "series_look_version": 3
         },
         {
           "id": "9658b887-6ad9-479f-9112-216128ac60c9",
-          "operation": "image",
-          "scene_id": "3",
-          "model": "Qwen-Image-Edit-2511",
-          "status": "COMPLETED",
-          "accepted": 0,
-          "created_at": "2026-10-15T05:11:56.436336+00:00",
-          "started_at": "2026-10-15T05:12:02.491553+00:00",
-          "finished_at": "2026-10-15T05:13:45.946159+00:00",
-          "error_code": null,
           "scene_index": 3,
-          "prompt_revision": "current_saved",
-          "request_model": "Qwen-Image-Edit-2511",
-          "returned_model": "Qwen-Image-Edit-2511",
-          "model_effective_confirmed": true,
-          "series_look_version": 3,
+          "operation": "image",
           "sent_chars": 1789,
-          "saved_chars": 1526,
           "saved_revision_preserved": true,
-          "prompt_sha256": "0a1ed826c6f18ee2ed2868b58359a16b555645d396ec997c8548d6997d0f97ff",
-          "reference_count": 2
+          "series_look_version": 3
         },
         {
           "id": "d4ef16e1-9774-4068-a273-86fc1c38024e",
-          "operation": "image",
-          "scene_id": "4",
-          "model": "Qwen-Image-Edit-2511",
-          "status": "COMPLETED",
-          "accepted": 0,
-          "created_at": "2026-10-15T05:11:56.442193+00:00",
-          "started_at": "2026-10-15T05:12:02.616442+00:00",
-          "finished_at": "2026-10-15T05:13:46.485060+00:00",
-          "error_code": null,
           "scene_index": 4,
-          "prompt_revision": "current_saved",
-          "request_model": "Qwen-Image-Edit-2511",
-          "returned_model": "Qwen-Image-Edit-2511",
-          "model_effective_confirmed": true,
-          "series_look_version": 3,
+          "operation": "image",
           "sent_chars": 1917,
-          "saved_chars": 1658,
           "saved_revision_preserved": true,
-          "prompt_sha256": "691b97bb96934ef6d8def682ad889c61370812cb47b267e34ad5b8d4bc7db974",
-          "reference_count": 2
+          "series_look_version": 3
         },
         {
           "id": "f22c4dda-2385-4901-a31b-735dbcaa317c",
-          "operation": "image",
-          "scene_id": "4",
-          "model": "Qwen-Image-Edit-2511",
-          "status": "COMPLETED",
-          "accepted": 1,
-          "created_at": "2026-10-15T05:11:56.447895+00:00",
-          "started_at": "2026-10-15T05:12:02.761031+00:00",
-          "finished_at": "2026-10-15T05:13:47.264920+00:00",
-          "error_code": null,
           "scene_index": 4,
-          "prompt_revision": "current_saved",
-          "request_model": "Qwen-Image-Edit-2511",
-          "returned_model": "Qwen-Image-Edit-2511",
-          "model_effective_confirmed": true,
-          "series_look_version": 3,
+          "operation": "image",
           "sent_chars": 1917,
-          "saved_chars": 1658,
           "saved_revision_preserved": true,
-          "prompt_sha256": "691b97bb96934ef6d8def682ad889c61370812cb47b267e34ad5b8d4bc7db974",
-          "reference_count": 2
+          "series_look_version": 3
         },
         {
           "id": "8e646982-561e-4ee2-be6f-85304cd72c20",
-          "operation": "image",
-          "scene_id": "5",
-          "model": "Qwen-Image-Edit-2511",
-          "status": "COMPLETED",
-          "accepted": 0,
-          "created_at": "2026-10-15T05:11:56.453230+00:00",
-          "started_at": "2026-10-15T05:12:02.899376+00:00",
-          "finished_at": "2026-10-15T05:13:47.831901+00:00",
-          "error_code": null,
           "scene_index": 5,
-          "prompt_revision": "before_approved_rewrite",
-          "request_model": "Qwen-Image-Edit-2511",
-          "returned_model": "Qwen-Image-Edit-2511",
-          "model_effective_confirmed": true,
-          "series_look_version": 3,
+          "operation": "image",
           "sent_chars": 1911,
-          "saved_chars": 1644,
           "saved_revision_preserved": true,
-          "prompt_sha256": "5c27e69e42c66417c06576b8b73e90dcd4a197bb982a8870f7c1e50fe855e2cf",
-          "reference_count": 2
+          "series_look_version": 3
         },
         {
           "id": "430ea62d-8df6-48df-b4d7-4b5c773642c3",
-          "operation": "image",
-          "scene_id": "5",
-          "model": "Qwen-Image-Edit-2511",
-          "status": "COMPLETED",
-          "accepted": 0,
-          "created_at": "2026-10-15T05:11:56.458450+00:00",
-          "started_at": "2026-10-15T05:12:03.050646+00:00",
-          "finished_at": "2026-10-15T05:13:48.300898+00:00",
-          "error_code": null,
           "scene_index": 5,
-          "prompt_revision": "before_approved_rewrite",
-          "request_model": "Qwen-Image-Edit-2511",
-          "returned_model": "Qwen-Image-Edit-2511",
-          "model_effective_confirmed": true,
-          "series_look_version": 3,
+          "operation": "image",
           "sent_chars": 1911,
-          "saved_chars": 1644,
           "saved_revision_preserved": true,
-          "prompt_sha256": "5c27e69e42c66417c06576b8b73e90dcd4a197bb982a8870f7c1e50fe855e2cf",
-          "reference_count": 2
+          "series_look_version": 3
         },
         {
           "id": "14784d1a-f624-4ef8-b7e5-7c1486800bd7",
-          "operation": "image",
-          "scene_id": "6",
-          "model": "Qwen-Image-Edit-2511",
-          "status": "COMPLETED",
-          "accepted": 0,
-          "created_at": "2026-10-15T05:11:56.463736+00:00",
-          "started_at": "2026-10-15T05:12:03.201912+00:00",
-          "finished_at": "2026-10-15T05:25:16.951754+00:00",
-          "error_code": null,
           "scene_index": 6,
-          "prompt_revision": "current_saved",
-          "request_model": "Qwen-Image-Edit-2511",
-          "returned_model": "Qwen-Image-Edit-2511",
-          "model_effective_confirmed": true,
-          "series_look_version": 3,
+          "operation": "image",
           "sent_chars": 1834,
-          "saved_chars": 1567,
           "saved_revision_preserved": true,
-          "prompt_sha256": "0a4ff609df813d581b4b77594c1808e256d6724d2c5ea347566e1b6be292f111",
-          "reference_count": 2
+          "series_look_version": 3
         },
         {
           "id": "55c882da-faec-497d-bed2-aea3d07620ae",
-          "operation": "image",
-          "scene_id": "6",
-          "model": "Qwen-Image-Edit-2511",
-          "status": "COMPLETED",
-          "accepted": 1,
-          "created_at": "2026-10-15T05:11:56.469363+00:00",
-          "started_at": "2026-10-15T05:12:03.334597+00:00",
-          "finished_at": "2026-10-15T05:25:17.695745+00:00",
-          "error_code": null,
           "scene_index": 6,
-          "prompt_revision": "current_saved",
-          "request_model": "Qwen-Image-Edit-2511",
-          "returned_model": "Qwen-Image-Edit-2511",
-          "model_effective_confirmed": true,
-          "series_look_version": 3,
+          "operation": "image",
           "sent_chars": 1834,
-          "saved_chars": 1567,
           "saved_revision_preserved": true,
-          "prompt_sha256": "0a4ff609df813d581b4b77594c1808e256d6724d2c5ea347566e1b6be292f111",
-          "reference_count": 2
+          "series_look_version": 3
         },
         {
           "id": "e73e93fb-e151-4304-8c5e-1a268a993070",
-          "operation": "image",
-          "scene_id": "7",
-          "model": "Qwen-Image-Edit-2511",
-          "status": "COMPLETED",
-          "accepted": 0,
-          "created_at": "2026-10-15T05:11:56.475991+00:00",
-          "started_at": "2026-10-15T05:12:03.483879+00:00",
-          "finished_at": "2026-10-15T05:25:18.287437+00:00",
-          "error_code": null,
           "scene_index": 7,
-          "prompt_revision": "before_approved_rewrite",
-          "request_model": "Qwen-Image-Edit-2511",
-          "returned_model": "Qwen-Image-Edit-2511",
-          "model_effective_confirmed": true,
-          "series_look_version": 3,
+          "operation": "image",
           "sent_chars": 1930,
-          "saved_chars": 1671,
           "saved_revision_preserved": true,
-          "prompt_sha256": "b8e849a86e5547ed8fa038529333f1d8922e198d01876f876fad2e4f937612e7",
-          "reference_count": 2
+          "series_look_version": 3
         },
         {
           "id": "133850db-f3c4-498a-a820-1ec9ecb0c3e3",
-          "operation": "image",
-          "scene_id": "7",
-          "model": "Qwen-Image-Edit-2511",
-          "status": "COMPLETED",
-          "accepted": 0,
-          "created_at": "2026-10-15T05:11:56.481950+00:00",
-          "started_at": "2026-10-15T05:12:03.646372+00:00",
-          "finished_at": "2026-10-15T05:25:18.906846+00:00",
-          "error_code": null,
           "scene_index": 7,
-          "prompt_revision": "before_approved_rewrite",
-          "request_model": "Qwen-Image-Edit-2511",
-          "returned_model": "Qwen-Image-Edit-2511",
-          "model_effective_confirmed": true,
-          "series_look_version": 3,
+          "operation": "image",
           "sent_chars": 1930,
-          "saved_chars": 1671,
           "saved_revision_preserved": true,
-          "prompt_sha256": "b8e849a86e5547ed8fa038529333f1d8922e198d01876f876fad2e4f937612e7",
-          "reference_count": 2
+          "series_look_version": 3
         },
         {
           "id": "696cea18-e9ed-4759-b5f8-ac0cd3aa6839",
-          "operation": "video",
-          "scene_id": "1",
-          "model": "LTX-2.5",
-          "status": "COMPLETED",
-          "accepted": 1,
-          "created_at": "2026-10-15T05:33:02.304659+00:00",
-          "started_at": "2026-10-15T05:37:59.478886+00:00",
-          "finished_at": "2026-10-15T05:41:01.359716+00:00",
-          "error_code": null,
           "scene_index": 1,
-          "prompt_revision": "current_saved",
-          "request_model": "LTX-2.5",
-          "returned_model": "LTX-2.5",
-          "model_effective_confirmed": true,
-          "series_look_version": 3,
+          "operation": "video",
           "sent_chars": 549,
-          "saved_chars": 549,
           "saved_revision_preserved": true,
-          "prompt_sha256": "c4de41e66dc2f8a70d9f969669b265dc7a1de671b68268b6aad42528ccf1a79a",
-          "reference_count": 0
+          "series_look_version": 3
         },
         {
           "id": "6d6739c7-1cc8-42c1-b397-d0c1f9962a9d",
-          "operation": "video",
-          "scene_id": "2",
-          "model": "LTX-2.5",
-          "status": "CANCELLED",
-          "accepted": null,
-          "created_at": "2026-10-15T06:32:51.470658+00:00",
-          "started_at": null,
-          "finished_at": "2026-10-15T06:39:23.399753+00:00",
-          "error_code": "CANCELLED",
           "scene_index": 2,
-          "prompt_revision": "before_approved_rewrite",
-          "request_model": "LTX-2.5",
-          "returned_model": null,
-          "model_effective_confirmed": false,
-          "series_look_version": 3,
+          "operation": "video",
           "sent_chars": 542,
-          "saved_chars": 542,
           "saved_revision_preserved": true,
-          "prompt_sha256": "6fef1460421bb33e5b904ce65e4e115169c27a0a8a15260c5f230ea3e2459312",
-          "reference_count": 0
+          "series_look_version": 3
         },
         {
           "id": "87d27740-6c39-42a6-a923-1a745a6ce023",
-          "operation": "video",
-          "scene_id": "2",
-          "model": "LTX-2.5",
-          "status": "CANCELLED",
-          "accepted": null,
-          "created_at": "2026-10-15T06:40:35.434542+00:00",
-          "started_at": null,
-          "finished_at": "2026-10-15T06:44:58.793183+00:00",
-          "error_code": "CANCELLED",
           "scene_index": 2,
-          "prompt_revision": "before_approved_rewrite",
-          "request_model": "LTX-2.5",
-          "returned_model": null,
-          "model_effective_confirmed": false,
-          "series_look_version": 3,
+          "operation": "video",
           "sent_chars": 542,
-          "saved_chars": 542,
           "saved_revision_preserved": true,
-          "prompt_sha256": "6fef1460421bb33e5b904ce65e4e115169c27a0a8a15260c5f230ea3e2459312",
-          "reference_count": 0
+          "series_look_version": 3
         },
         {
           "id": "c0db1e79-9656-4999-a0a7-df01a0ee3f33",
-          "operation": "video",
-          "scene_id": "2",
-          "model": "LTX-2.5",
-          "status": "COMPLETED",
-          "accepted": 0,
-          "created_at": "2026-10-15T07:28:56.130720+00:00",
-          "started_at": "2026-10-15T07:30:16.471890+00:00",
-          "finished_at": "2026-10-15T07:33:44.638890+00:00",
-          "error_code": null,
           "scene_index": 2,
-          "prompt_revision": "before_approved_rewrite",
-          "request_model": "LTX-2.5",
-          "returned_model": "LTX-2.5",
-          "model_effective_confirmed": true,
-          "series_look_version": 3,
+          "operation": "video",
           "sent_chars": 542,
-          "saved_chars": 542,
           "saved_revision_preserved": true,
-          "prompt_sha256": "6fef1460421bb33e5b904ce65e4e115169c27a0a8a15260c5f230ea3e2459312",
-          "reference_count": 0
+          "series_look_version": 3
         },
         {
           "id": "44762138-9e18-4fd6-8ab0-3b9c09a560cb",
-          "operation": "video",
-          "scene_id": "3",
-          "model": "LTX-2.5",
-          "status": "COMPLETED",
-          "accepted": 0,
-          "created_at": "2026-10-15T07:28:56.134613+00:00",
-          "started_at": "2026-10-15T07:30:16.627490+00:00",
-          "finished_at": "2026-10-15T07:36:46.446410+00:00",
-          "error_code": null,
           "scene_index": 3,
-          "prompt_revision": "current_saved",
-          "request_model": "LTX-2.5",
-          "returned_model": "LTX-2.5",
-          "model_effective_confirmed": true,
-          "series_look_version": 3,
+          "operation": "video",
           "sent_chars": 515,
-          "saved_chars": 515,
           "saved_revision_preserved": true,
-          "prompt_sha256": "70cdd1726c7b289cf4ab3b0a99937a1990c108d4b4715be42621676e053d2fac",
-          "reference_count": 0
+          "series_look_version": 3
         },
         {
           "id": "b030a7cc-772e-4055-af68-b31a05a46f80",
-          "operation": "video",
-          "scene_id": "4",
-          "model": "LTX-2.5",
-          "status": "COMPLETED",
-          "accepted": 1,
-          "created_at": "2026-10-15T07:28:56.136822+00:00",
-          "started_at": "2026-10-15T07:36:46.636767+00:00",
-          "finished_at": "2026-10-15T07:39:51.618659+00:00",
-          "error_code": null,
           "scene_index": 4,
-          "prompt_revision": "current_saved",
-          "request_model": "LTX-2.5",
-          "returned_model": "LTX-2.5",
-          "model_effective_confirmed": true,
-          "series_look_version": 3,
+          "operation": "video",
           "sent_chars": 525,
-          "saved_chars": 525,
           "saved_revision_preserved": true,
-          "prompt_sha256": "02f1925bc05a536bb9439484cfb944326f623cce0f00e7ea72e178dd836692e0",
-          "reference_count": 0
+          "series_look_version": 3
         },
         {
           "id": "f130fc27-e4e5-4a79-bb7c-4bf62e2cba2b",
-          "operation": "video",
-          "scene_id": "5",
-          "model": "LTX-2.5",
-          "status": "COMPLETED",
-          "accepted": 0,
-          "created_at": "2026-10-15T07:28:56.138963+00:00",
-          "started_at": "2026-10-15T07:36:46.744378+00:00",
-          "finished_at": "2026-10-15T07:43:15.899906+00:00",
-          "error_code": null,
           "scene_index": 5,
-          "prompt_revision": "before_approved_rewrite",
-          "request_model": "LTX-2.5",
-          "returned_model": "LTX-2.5",
-          "model_effective_confirmed": true,
-          "series_look_version": 3,
+          "operation": "video",
           "sent_chars": 530,
-          "saved_chars": 530,
           "saved_revision_preserved": true,
-          "prompt_sha256": "e1bbeb2279e2ecedbc3667fb92d5881b9854860c332ad6ac4c67aa66b8127bdc",
-          "reference_count": 0
+          "series_look_version": 3
         },
         {
           "id": "ba5abad8-ea36-492a-a030-9c6a09558d30",
-          "operation": "video",
-          "scene_id": "6",
-          "model": "LTX-2.5",
-          "status": "COMPLETED",
-          "accepted": 1,
-          "created_at": "2026-10-15T07:28:56.141135+00:00",
-          "started_at": "2026-10-15T07:43:16.130058+00:00",
-          "finished_at": "2026-10-15T07:46:47.559843+00:00",
-          "error_code": null,
           "scene_index": 6,
-          "prompt_revision": "current_saved",
-          "request_model": "LTX-2.5",
-          "returned_model": "LTX-2.5",
-          "model_effective_confirmed": true,
-          "series_look_version": 3,
+          "operation": "video",
           "sent_chars": 517,
-          "saved_chars": 517,
           "saved_revision_preserved": true,
-          "prompt_sha256": "651c793d7e932f8d573d9e2054ce58fe87a3ff895afc34b862193fc690c38011",
-          "reference_count": 0
+          "series_look_version": 3
         },
         {
           "id": "363b842d-60de-45e9-baf0-9a940a7bb087",
-          "operation": "image",
-          "scene_id": "2",
-          "model": "Qwen-Image-Edit-2511",
-          "status": "COMPLETED",
-          "accepted": null,
-          "created_at": "2026-10-15T08:39:15.483099+00:00",
-          "started_at": "2026-10-15T08:42:16.955195+00:00",
-          "finished_at": "2026-10-15T08:42:42.818216+00:00",
-          "error_code": null,
           "scene_index": 2,
-          "prompt_revision": "current_saved",
-          "request_model": "Qwen-Image-Edit-2511",
-          "returned_model": "Qwen-Image-Edit-2511",
-          "model_effective_confirmed": true,
-          "series_look_version": 3,
+          "operation": "image",
           "sent_chars": 1790,
-          "saved_chars": 1531,
           "saved_revision_preserved": true,
-          "prompt_sha256": "6b840426d469143c5ed8eccdc65e1a38459201020355ec977443c5d90770d788",
-          "reference_count": 2,
-          "positive_prefix_still_invites_monitors": true,
-          "scene_correction_claims_screens_removed": true,
-          "style_reference_does_not_copy_composition": true
+          "series_look_version": 3
         },
         {
           "id": "96938695-b0c3-40a3-b4cc-e60a710c1111",
-          "operation": "image",
-          "scene_id": "2",
-          "model": "Qwen-Image-Edit-2511",
-          "status": "COMPLETED",
-          "accepted": null,
-          "created_at": "2026-10-15T08:39:15.491434+00:00",
-          "started_at": "2026-10-15T08:42:17.079168+00:00",
-          "finished_at": "2026-10-15T08:42:57.808495+00:00",
-          "error_code": null,
           "scene_index": 2,
-          "prompt_revision": "current_saved",
-          "request_model": "Qwen-Image-Edit-2511",
-          "returned_model": "Qwen-Image-Edit-2511",
-          "model_effective_confirmed": true,
-          "series_look_version": 3,
+          "operation": "image",
           "sent_chars": 1790,
-          "saved_chars": 1531,
           "saved_revision_preserved": true,
-          "prompt_sha256": "6b840426d469143c5ed8eccdc65e1a38459201020355ec977443c5d90770d788",
-          "reference_count": 2,
-          "positive_prefix_still_invites_monitors": true,
-          "scene_correction_claims_screens_removed": true,
-          "style_reference_does_not_copy_composition": true
+          "series_look_version": 3
         },
         {
           "id": "a64ccee0-3a53-486b-bab2-25a611af9095",
-          "operation": "image",
-          "scene_id": "5",
-          "model": "Qwen-Image-Edit-2511",
-          "status": "COMPLETED",
-          "accepted": null,
-          "created_at": "2026-10-15T08:39:15.499249+00:00",
-          "started_at": "2026-10-15T08:42:17.208631+00:00",
-          "finished_at": "2026-10-15T08:43:13.430331+00:00",
-          "error_code": null,
           "scene_index": 5,
-          "prompt_revision": "current_saved",
-          "request_model": "Qwen-Image-Edit-2511",
-          "returned_model": "Qwen-Image-Edit-2511",
-          "model_effective_confirmed": true,
-          "series_look_version": 3,
+          "operation": "image",
           "sent_chars": 1887,
-          "saved_chars": 1620,
           "saved_revision_preserved": true,
-          "prompt_sha256": "ac255d46316e6dcca9a639cde70d19833c66d527ebd5b7294e231ef597ad3116",
-          "reference_count": 2,
-          "positive_prefix_still_invites_monitors": true,
-          "scene_correction_claims_screens_removed": true,
-          "style_reference_does_not_copy_composition": true
+          "series_look_version": 3
         },
         {
           "id": "4d515016-bc12-49c2-b54d-26d59a51a2e7",
-          "operation": "image",
-          "scene_id": "5",
-          "model": "Qwen-Image-Edit-2511",
-          "status": "COMPLETED",
-          "accepted": null,
-          "created_at": "2026-10-15T08:39:15.506416+00:00",
-          "started_at": "2026-10-15T08:42:17.313669+00:00",
-          "finished_at": "2026-10-15T08:43:28.553423+00:00",
-          "error_code": null,
           "scene_index": 5,
-          "prompt_revision": "current_saved",
-          "request_model": "Qwen-Image-Edit-2511",
-          "returned_model": "Qwen-Image-Edit-2511",
-          "model_effective_confirmed": true,
-          "series_look_version": 3,
+          "operation": "image",
           "sent_chars": 1887,
-          "saved_chars": 1620,
           "saved_revision_preserved": true,
-          "prompt_sha256": "ac255d46316e6dcca9a639cde70d19833c66d527ebd5b7294e231ef597ad3116",
-          "reference_count": 2,
-          "positive_prefix_still_invites_monitors": true,
-          "scene_correction_claims_screens_removed": true,
-          "style_reference_does_not_copy_composition": true
+          "series_look_version": 3
         },
         {
           "id": "f2baf6f4-0469-42a7-9c83-2a530ab9d601",
-          "operation": "image",
-          "scene_id": "7",
-          "model": "Qwen-Image-Edit-2511",
-          "status": "COMPLETED",
-          "accepted": null,
-          "created_at": "2026-10-15T08:39:15.513305+00:00",
-          "started_at": "2026-10-15T08:42:17.443058+00:00",
-          "finished_at": "2026-10-15T08:43:43.065853+00:00",
-          "error_code": null,
           "scene_index": 7,
-          "prompt_revision": "current_saved",
-          "request_model": "Qwen-Image-Edit-2511",
-          "returned_model": "Qwen-Image-Edit-2511",
-          "model_effective_confirmed": true,
-          "series_look_version": 3,
+          "operation": "image",
           "sent_chars": 1802,
-          "saved_chars": 1543,
           "saved_revision_preserved": true,
-          "prompt_sha256": "73f912f2baa5361a7df8b1ba1f4ab4540487de40f64053b1b05cc8ee56863717",
-          "reference_count": 2,
-          "positive_prefix_still_invites_monitors": true,
-          "scene_correction_claims_screens_removed": false,
-          "style_reference_does_not_copy_composition": true
+          "series_look_version": 3
         },
         {
           "id": "0e469b9b-4317-40bd-8e50-728fd32f8df7",
-          "operation": "image",
-          "scene_id": "7",
-          "model": "Qwen-Image-Edit-2511",
-          "status": "RUNNING",
-          "accepted": null,
-          "created_at": "2026-10-15T08:39:15.520274+00:00",
-          "started_at": "2026-10-15T08:42:17.555868+00:00",
-          "finished_at": null,
-          "error_code": null,
           "scene_index": 7,
-          "prompt_revision": "current_saved",
-          "request_model": "Qwen-Image-Edit-2511",
-          "returned_model": null,
-          "model_effective_confirmed": false,
-          "series_look_version": 3,
+          "operation": "image",
           "sent_chars": 1802,
-          "saved_chars": 1543,
           "saved_revision_preserved": true,
-          "prompt_sha256": "73f912f2baa5361a7df8b1ba1f4ab4540487de40f64053b1b05cc8ee56863717",
-          "reference_count": 2,
-          "positive_prefix_still_invites_monitors": true,
-          "scene_correction_claims_screens_removed": false,
-          "style_reference_does_not_copy_composition": true
+          "series_look_version": 3
+        },
+        {
+          "id": "f94977d4-df92-4632-9dee-e30a85ccda53",
+          "scene_index": 3,
+          "operation": "image",
+          "sent_chars": 1897,
+          "saved_revision_preserved": true,
+          "series_look_version": 3
+        },
+        {
+          "id": "210c7a5c-bcef-4e3d-a873-e79b48691705",
+          "scene_index": 3,
+          "operation": "image",
+          "sent_chars": 1897,
+          "saved_revision_preserved": true,
+          "series_look_version": 3
+        },
+        {
+          "id": "9af44e73-ddb6-4693-9fb6-871107e70e6a",
+          "scene_index": 2,
+          "operation": "video",
+          "sent_chars": 552,
+          "saved_revision_preserved": true,
+          "series_look_version": 3
+        },
+        {
+          "id": "f960cfa3-2c07-4f0e-9448-9f9aaf455501",
+          "scene_index": 3,
+          "operation": "video",
+          "sent_chars": 542,
+          "saved_revision_preserved": true,
+          "series_look_version": 3
+        },
+        {
+          "id": "a88d3102-4348-4e26-9a3f-c3aca45abf94",
+          "scene_index": 5,
+          "operation": "video",
+          "sent_chars": 529,
+          "saved_revision_preserved": true,
+          "series_look_version": 3
+        },
+        {
+          "id": "42669877-3add-4396-9859-367b936a4e60",
+          "scene_index": 7,
+          "operation": "video",
+          "sent_chars": 520,
+          "saved_revision_preserved": true,
+          "series_look_version": 3
         }
       ]
     },
@@ -4827,7 +4382,16 @@
       "actual_request_contains_entire_saved_prompt": true,
       "prior_failed_clip_had_morphing_hands": true,
       "motion_artifact_recurrence_not_yet_proven": true,
-      "no_manual_qc_or_verdict_changes": true
+      "no_manual_qc_or_verdict_changes": true,
+      "now_submitted_as_actual_video_first_frame": {
+        "job_id": "9af44e73-ddb6-4693-9fb6-871107e70e6a",
+        "request_created_at": "2026-10-15T09:26:39.862236+00:00",
+        "local_first_frame_sha256": "590e6b3370e75bb584daf3d4de149b3087f5a5a2a04f97a3738fc5432ba64c6b",
+        "digest_match_verified": true,
+        "manual_first_frame_viewed": true,
+        "hands_visible_despite_motion_prompt_out_of_shot": true,
+        "recurrence_of_motion_deformation_not_yet_proven": true
+      }
     },
     "scene3_rewrite_block_wrong_layer_and_missing_motion_clause": {
       "observed_at": "2026-10-15T08:50:52.677527+00:00",
@@ -4945,7 +4509,15 @@
       "new_paid_requests": [],
       "forwarded_to_composer_or_motion_layer_observed": false,
       "no_980_or_1000_character_truncation_evidence": true,
-      "blocking_issue": "Still rewrite cannot clear the remaining motion-layer caption finding, while a positive caption correction in the Mistral draft is absent from composed prompt given to verification."
+      "blocking_issue": "Still rewrite cannot clear the remaining motion-layer caption finding, while a positive caption correction in the Mistral draft is absent from composed prompt given to verification.",
+      "latest_retry_resolution": {
+        "event_sequence": 24760,
+        "review_verdict": "TREATS",
+        "positive_composed_motion_clause_now_present": true,
+        "layer_still": "still",
+        "two_new_images_requested_before_motion": true,
+        "visual_result_pending_at_inspection": true
+      }
     },
     "external_cycle5_handoff_observed": {
       "document": "CURRENT_STATUS.md",
@@ -4974,8 +4546,8 @@
       "new_image_or_motion_bought_after_this_brief": false
     },
     "latest_no_change_check": {
-      "observed_at": "2026-10-15T09:08:20.801995+00:00",
-      "through_event": 24726,
+      "observed_at": "2026-10-15T09:18:11.725307+00:00",
+      "through_event": 24737,
       "requests_unchanged": 28,
       "no_new_agent_run_model_to_verify": true,
       "accepted_clip_scene_numbers": [
@@ -5001,6 +4573,601 @@
       "later_actual_continuation_status": "COMPLETED at08:44; scene3 editorial hold remains",
       "approval_still_valid_per_notice_until_expiry": true,
       "monitor_took_no_restart_action": true
+    },
+    "gpu_shutdown_without_active_work_0908": {
+      "observed_at": "2026-10-15T09:13:49.141187+00:00",
+      "events": [
+        {
+          "sequence": 24728,
+          "event_type": "runpod.gpu_forced_off",
+          "timestamp": "2026-10-15T09:08:50.920588+00:00",
+          "public_state": {
+            "off": true,
+            "workers_max": 0,
+            "running": 0,
+            "in_progress": 0,
+            "in_queue": 0,
+            "idle": 0,
+            "read_at": "2026-10-15T09:08:50.919476+00:00",
+            "reason": "SHUTDOWN"
+          }
+        },
+        {
+          "sequence": 24729,
+          "event_type": "runpod.gpu_off_verified",
+          "timestamp": "2026-10-15T09:08:50.922546+00:00",
+          "public_state": {
+            "off": true,
+            "workers_max": 0,
+            "running": 0,
+            "in_progress": 0,
+            "in_queue": 0,
+            "idle": 0,
+            "read_at": "2026-10-15T09:08:50.919476+00:00"
+          }
+        },
+        {
+          "sequence": 24730,
+          "event_type": "runpod.gpu_forced_off",
+          "timestamp": "2026-10-15T09:08:50.923702+00:00",
+          "public_state": {
+            "off": true,
+            "workers_max": 0,
+            "running": 0,
+            "in_progress": 0,
+            "in_queue": 0,
+            "idle": 0,
+            "read_at": "2026-10-15T09:08:50.905479+00:00",
+            "reason": "SHUTDOWN"
+          }
+        },
+        {
+          "sequence": 24731,
+          "event_type": "runpod.gpu_off_verified",
+          "timestamp": "2026-10-15T09:08:50.924800+00:00",
+          "public_state": {
+            "off": true,
+            "workers_max": 0,
+            "running": 0,
+            "in_progress": 0,
+            "in_queue": 0,
+            "idle": 0,
+            "read_at": "2026-10-15T09:08:50.905479+00:00"
+          }
+        },
+        {
+          "sequence": 24732,
+          "event_type": "runpod.gpu_forced_off",
+          "timestamp": "2026-10-15T09:08:53.697193+00:00",
+          "public_state": {
+            "off": true,
+            "workers_max": 0,
+            "running": 0,
+            "in_progress": 0,
+            "in_queue": 0,
+            "idle": 0,
+            "read_at": "2026-10-15T09:08:53.672275+00:00",
+            "reason": "LAUNCHER_STOP"
+          }
+        },
+        {
+          "sequence": 24733,
+          "event_type": "runpod.gpu_off_verified",
+          "timestamp": "2026-10-15T09:08:53.700229+00:00",
+          "public_state": {
+            "off": true,
+            "workers_max": 0,
+            "running": 0,
+            "in_progress": 0,
+            "in_queue": 0,
+            "idle": 0,
+            "read_at": "2026-10-15T09:08:53.672275+00:00"
+          }
+        },
+        {
+          "sequence": 24734,
+          "event_type": "runpod.gpu_forced_off",
+          "timestamp": "2026-10-15T09:08:53.701025+00:00",
+          "public_state": {
+            "off": true,
+            "workers_max": 0,
+            "running": 0,
+            "in_progress": 0,
+            "in_queue": 0,
+            "idle": 0,
+            "read_at": "2026-10-15T09:08:53.686371+00:00",
+            "reason": "LAUNCHER_STOP"
+          }
+        },
+        {
+          "sequence": 24735,
+          "event_type": "runpod.gpu_off_verified",
+          "timestamp": "2026-10-15T09:08:53.701740+00:00",
+          "public_state": {
+            "off": true,
+            "workers_max": 0,
+            "running": 0,
+            "in_progress": 0,
+            "in_queue": 0,
+            "idle": 0,
+            "read_at": "2026-10-15T09:08:53.686371+00:00"
+          }
+        }
+      ],
+      "classification": "Shutdown and launcher stop from outside this monitor, with zero running or queued jobs; no new production loss observed.",
+      "active_media_jobs_at_inspection": 0,
+      "service_health_afterwards": {
+        "live": 200,
+        "ready": 200
+      },
+      "watcher_operated_no_service_or_gpu": true
+    },
+    "scene3_validated_retry_0919": {
+      "observed_at": "2026-10-15T09:25:27.942162+00:00",
+      "rewrite_event_sequence": 24755,
+      "review_event_sequence": 24760,
+      "layer": "still",
+      "asked_layer": "still",
+      "verdict": "TREATS",
+      "rewritten": true,
+      "public_review_reason": "Toate cele trei blocaje de la controlul calității sunt tratate: textul și logo-ul din cadru sunt înlocuite cu „the middle of the frame clear and open, every monitor showing only soft abstract glow”, iar planul este respectat prin clauza de postură „Kael leans back in his chair, arms crossed over his chest, headset pushed up off one ear, head facing the viewer throughout”; nicio lecție confirmată nu este încălcată, deci reluarea poate fi acceptată fără achiziție nouă.",
+      "review_findings": [
+        {
+          "id": 1,
+          "qc_text": "Scena 3: privit la 1080 px: apare text sau un logo",
+          "finding": "text or logo visible in the clip at 1080 px",
+          "treated": true,
+          "by": "the middle of the frame clear and open, every monitor showing only soft abstract glow",
+          "why_not": "",
+          "severity": "serious",
+          "layer": "motion",
+          "accepted": false,
+          "field": "",
+          "locked": false,
+          "lock": "",
+          "source": "motion"
+        },
+        {
+          "id": 2,
+          "qc_text": "nu arată ce cere planul",
+          "finding": "the clip does not show what the plan asks",
+          "treated": true,
+          "by": "Kael leans back in his chair, arms crossed over his chest, headset pushed up off one ear, head facing the viewer throughout; he exhales dry disbelief",
+          "why_not": "",
+          "severity": "serious",
+          "layer": "motion",
+          "accepted": false,
+          "field": "",
+          "locked": false,
+          "lock": "",
+          "source": "motion"
+        },
+        {
+          "id": 3,
+          "qc_text": "încalcă biblia vizuală: Burned-in caption text in middle frame violates no-written-words rule («Middle frame contains garbled on-screen text 'nove tr guee.' which the plan forbids»)",
+          "finding": "burned-in caption text in middle frame breaks the no-written-words rule",
+          "treated": true,
+          "by": "the middle of the frame clear and open, every monitor showing only soft abstract glow",
+          "why_not": "",
+          "severity": "serious",
+          "layer": "motion",
+          "accepted": false,
+          "field": "",
+          "locked": false,
+          "lock": "",
+          "source": "motion"
+        }
+      ],
+      "observations": [
+        "The still rewrite moves Kael's pose and gaze into one short standalone clause before the desk and room detail, states the framing once as a single with the subject facing the viewer, describes the headset plainly with no brand, and replaces the writing-bearing desk objects with objects whose purpose needs no writing — the picture-side causes of the same defect are addressed even though the findings are logged on the motion layer.",
+        "The motion prompt still keeps the fixed sentence 'No subtitles, no on-screen text.', which names the forbidden thing; the added clause 'the middle of the frame clear and open' gives the model something positive to fill that space with, which is the treatment available on this layer.",
+        "The ending frame in the motion prompt names no camera move and stays a visible description, so it survives the composer's ending rule."
+      ],
+      "runs": [
+        {
+          "id": "6248bf0d-dcd7-4c2b-af69-a6262b7b1293",
+          "task_type": "director_scene_brief",
+          "model_name": "deepseek-v4.1-flash",
+          "status": "SUCCEEDED",
+          "started_at": "2026-10-15T09:18:41.203768+00:00",
+          "finished_at": "2026-10-15T09:18:51.719849+00:00",
+          "task_summary": "Citesc promptul scenei 3 din «Storyboard: Twenty-Eight Rewrites Before Breakfast» și motivele controlului; îi scriu lui Kael ce să evite.",
+          "isolated_codex_probe": false,
+          "model_evidence": "logged agent_run.model_name; no independent returned-model metadata in public structured result"
+        },
+        {
+          "id": "f82021c1-a760-4581-9bee-8d269ac6ccfa",
+          "task_type": "scene_prompt_rewrite",
+          "model_name": "mistral-large-4",
+          "status": "SUCCEEDED",
+          "started_at": "2026-10-15T09:18:51.733904+00:00",
+          "finished_at": "2026-10-15T09:19:03.446522+00:00",
+          "task_summary": "Rescriu scena 3 din «Storyboard: Twenty-Eight Rewrites Before Breakfast» după brief-ul Directoarei.",
+          "isolated_codex_probe": false,
+          "model_evidence": "logged agent_run.model_name; no independent returned-model metadata in public structured result"
+        },
+        {
+          "id": "db0ffe05-557e-4e98-8b51-d41c9000da55",
+          "task_type": "scene_prompt_rewrite",
+          "model_name": "mistral-large-4",
+          "status": "SUCCEEDED",
+          "started_at": "2026-10-15T09:19:03.461221+00:00",
+          "finished_at": "2026-10-15T09:19:12.652130+00:00",
+          "task_summary": "Rescriu scena 3 din «Storyboard: Twenty-Eight Rewrites Before Breakfast» după brief-ul Directoarei.",
+          "isolated_codex_probe": false,
+          "model_evidence": "logged agent_run.model_name; no independent returned-model metadata in public structured result"
+        },
+        {
+          "id": "102d3bd4-d551-4915-947f-e0d934be9885",
+          "task_type": "director_rewrite_review",
+          "model_name": "deepseek-v4.1-flash",
+          "status": "SUCCEEDED",
+          "started_at": "2026-10-15T09:19:12.672068+00:00",
+          "finished_at": "2026-10-15T09:19:15.609923+00:00",
+          "task_summary": "Verific dacă rescrierea scenei 3 din «Storyboard: Twenty-Eight Rewrites Before Breakfast» tratează constatările înainte să cumpărăm ceva pe ea.",
+          "isolated_codex_probe": false,
+          "model_evidence": "logged agent_run.model_name; no independent returned-model metadata in public structured result"
+        },
+        {
+          "id": "a758df8a-93ca-4693-8878-6f6095165fb7",
+          "task_type": "director_rewrite_review",
+          "model_name": "deepseek-v4.1-flash",
+          "status": "SUCCEEDED",
+          "started_at": "2026-10-15T09:19:15.616843+00:00",
+          "finished_at": "2026-10-15T09:19:19.841920+00:00",
+          "task_summary": "Verific dacă rescrierea scenei 3 din «Storyboard: Twenty-Eight Rewrites Before Breakfast» tratează constatările înainte să cumpărăm ceva pe ea. (a doua încercare, cu motivele refuzului)",
+          "isolated_codex_probe": false,
+          "model_evidence": "logged agent_run.model_name; no independent returned-model metadata in public structured result"
+        }
+      ],
+      "raw_draft_motion": "Static camera on a fixed tripod, steady, the life of the scene moving inside the fixed frame. Kael leans back in his chair, arms crossed over his chest, headset pushed up off one ear, head facing the viewer throughout; he exhales dry disbelief, then a wry half-smile spreads as he narrates his own queue. The shot ends on Kael still leaning back with his arms crossed and his headset pushed up off one ear, a wry half-smile on his face, facing the viewer; the middle of the frame is clear, open picture with nothing drawn across it. Continuous, seamless shot. No subtitles, no on-screen text.",
+      "raw_draft_ending_frame": "Kael still leaning back with his arms crossed and his headset pushed up off one ear, a wry half-smile on his face, facing the viewer; the middle of the frame clear and open, every monitor showing only soft abstract glow.",
+      "saved_composed_motion": "Static camera on a fixed tripod, steady, the life of the scene moving inside the fixed frame. Kael leans back in his chair, arms crossed over his chest, headset pushed up off one ear, head facing the viewer throughout; he exhales dry disbelief. The shot ends on Kael still leaning back with his arms crossed and his headset pushed up off one ear, a wry half-smile on his face, facing the viewer; the middle of the frame clear and open, every monitor showing only soft abstract glow. Continuous, seamless shot. No subtitles, no on-screen text.",
+      "positive_middle_frame_correction_preserved": true,
+      "request_count": 2,
+      "new_requests": [
+        {
+          "id": "f94977d4-df92-4632-9dee-e30a85ccda53",
+          "operation": "image",
+          "scene_id": "3",
+          "model": "Qwen-Image-Edit-2511",
+          "created_at": "2026-10-15T09:19:23.994430+00:00",
+          "scene_index": 3,
+          "request_model": "Qwen-Image-Edit-2511",
+          "series_look_version": 3,
+          "sent_chars": 1897,
+          "saved_chars": 1634,
+          "prompt_revision": "current_saved",
+          "saved_revision_preserved": true,
+          "sent_prompt_sha256": "ee2ce668a183c422d89d7cba3ae203f5f789eb4d82d748443e98f563c0a817ff",
+          "reference_count": 2
+        },
+        {
+          "id": "210c7a5c-bcef-4e3d-a873-e79b48691705",
+          "operation": "image",
+          "scene_id": "3",
+          "model": "Qwen-Image-Edit-2511",
+          "created_at": "2026-10-15T09:19:24.003096+00:00",
+          "scene_index": 3,
+          "request_model": "Qwen-Image-Edit-2511",
+          "series_look_version": 3,
+          "sent_chars": 1897,
+          "saved_chars": 1634,
+          "prompt_revision": "current_saved",
+          "saved_revision_preserved": true,
+          "sent_prompt_sha256": "ee2ce668a183c422d89d7cba3ae203f5f789eb4d82d748443e98f563c0a817ff",
+          "reference_count": 2
+        }
+      ],
+      "request_status_at_initial_inspection": "QUEUED",
+      "returned_model_confirmation_pending_at_initial_inspection": true,
+      "new_image_visual_quality_not_yet_inspected": true,
+      "old_source_still_remains_approved": "f215456e-ad51-4aaf-aaea-d038be431e4a",
+      "no_new_video_request_observed": true,
+      "no_generation_started_by_monitor": true,
+      "image_delivery_completed": true,
+      "actual_returned_model": "Qwen-Image-Edit-2511",
+      "approved_candidate": 1,
+      "rejected_candidate": 2,
+      "video_requested_from_approved_candidate": true
+    },
+    "scene3_delivered_and_motion_batch_0926": {
+      "observed_at": "2026-10-15T09:31:08.351877+00:00",
+      "image_jobs": [
+        {
+          "id": "f94977d4-df92-4632-9dee-e30a85ccda53",
+          "model": "Qwen-Image-Edit-2511",
+          "status": "COMPLETED",
+          "accepted": 1,
+          "asset_path": "E:\\AI Acency\\Autonomous_AI_Studio_Documentation_v5_ECONOMY_TREASURY_VENDORSHOP\\backend\\storage\\media\\runpod\\f94977d4-df92-4632-9dee-e30a85ccda53.png",
+          "asset_sha256": "9fb6a17e76f7a254facd7b23c7dd3320dc0c8f07fa2aa55283531cae69768372",
+          "finished_at": "2026-10-15T09:26:06.715964+00:00",
+          "returned_model": "Qwen-Image-Edit-2511",
+          "weights_revision": "87ceeafdbbe48b898a4b2d6a773b6efbc61e4b3c",
+          "local_sha256_verified": true
+        },
+        {
+          "id": "210c7a5c-bcef-4e3d-a873-e79b48691705",
+          "model": "Qwen-Image-Edit-2511",
+          "status": "COMPLETED",
+          "accepted": 0,
+          "asset_path": "E:\\AI Acency\\Autonomous_AI_Studio_Documentation_v5_ECONOMY_TREASURY_VENDORSHOP\\backend\\storage\\media\\runpod\\210c7a5c-bcef-4e3d-a873-e79b48691705.png",
+          "asset_sha256": "6d82079e0b4352186899f457256b1d7f278694d725c435a06c09a3054f49c95c",
+          "finished_at": "2026-10-15T09:26:25.367133+00:00",
+          "returned_model": "Qwen-Image-Edit-2511",
+          "weights_revision": "87ceeafdbbe48b898a4b2d6a773b6efbc61e4b3c",
+          "local_sha256_verified": true
+        }
+      ],
+      "actual_image_worker_model": "Qwen-Image-Edit-2511",
+      "qc_runs": [
+        {
+          "id": "16ce2704-707a-4bad-a285-2c8d5c7c1479",
+          "task_type": "still_qc",
+          "model_name": "mistral-large-4",
+          "status": "SUCCEEDED",
+          "started_at": "2026-10-15T09:26:08.729384+00:00",
+          "finished_at": "2026-10-15T09:26:22.754313+00:00",
+          "task_summary": "Mă uit la imaginea scenei 3 înainte să se cumpere mișcarea.",
+          "public_still_qc": [
+            {
+              "scene": 3,
+              "faces_visible": true,
+              "readable_text": false,
+              "one_picture": true,
+              "matches_plan": true,
+              "shows_scene": true,
+              "look_ok": true,
+              "technical_ok": true,
+              "bible_violations": "none",
+              "verdict": "buy_motion",
+              "reason": "Kael at his desk in the render bay, arms crossed, headset off one ear, facing camera with dry disbelief — matches the plan and scene exactly, warm hand-drawn office look, no text, one continuous picture."
+            }
+          ]
+        },
+        {
+          "id": "3e8c9a5c-d6bd-4af0-9672-d980ec1d0450",
+          "task_type": "still_qc",
+          "model_name": "mistral-large-4",
+          "status": "SUCCEEDED",
+          "started_at": "2026-10-15T09:26:27.054053+00:00",
+          "finished_at": "2026-10-15T09:26:33.898194+00:00",
+          "task_summary": "Mă uit la imaginea scenei 3 înainte să se cumpere mișcarea.",
+          "public_still_qc": [
+            {
+              "scene": 3,
+              "faces_visible": true,
+              "readable_text": false,
+              "one_picture": true,
+              "matches_plan": false,
+              "shows_scene": false,
+              "look_ok": true,
+              "technical_ok": true,
+              "bible_violations": "a character's face, hair, clothing and props are exactly as their character bible and reference portrait say, in every shot and every episode: the same person, recognisable at a glance",
+              "verdict": "regenerate_still",
+              "reason": "The still shows Kael with arms uncrossed and hands on the desk, not leaning back with arms crossed over his chest as the scene picture requires; also the headset is worn over both ears, not pushed up off one ear, and the pose reads as active work rather than the dry disbelief exhale the narration calls for."
+            }
+          ]
+        }
+      ],
+      "approved_source_take_id": "ed9ae46e-0a9e-416b-9ae3-51523ed3d5f5",
+      "rejected_twin_take_id": "db0961d5-87ee-41e5-80ad-90c15de73727",
+      "rejected_twin_not_used_as_video_input": true,
+      "manual_visual_observations": {
+        "scene3_approved_first_frame": "Kael has crossed arms and amber rolled sleeve shirt; head faces viewer. A bright angular mark remains on headset ear cup, and monitors remain; no overlay caption observed in still. Headset detail is not independently classified as serious defect.",
+        "scene3_rejected_twin": "Arms uncrossed, hands at desk, interface-filled monitors; matches QC pose rejection.",
+        "scene2_actual_first_frame": "Both hands fully visible on foreground desk and bright monitors behind Sarah, contradicting motion prompt and prior QC claim hands outside frame."
+      },
+      "first_frame_proofs": [
+        {
+          "scene_index": 2,
+          "approved_source_take": {
+            "id": "8801544e-5f7d-4e60-9e79-3d8438f44d3d",
+            "status": "APPROVED",
+            "approved_by": "still_gate",
+            "path": "E:\\AI Acency\\Autonomous_AI_Studio_Documentation_v5_ECONOMY_TREASURY_VENDORSHOP\\backend\\storage\\media\\2d276038-2009-4a6a-a75f-32ba5ab4b1ff\\stills\\scene_02_9a5c27a5_c2.png",
+            "sha256": "36a4872d5f4de59d1ccd9ba6cdccff8d85ecb6cb30cbd464e508c50f806f1b84"
+          },
+          "source_png_sha256_verified": true,
+          "local_first_frame_path": "E:\\AI Acency\\Autonomous_AI_Studio_Documentation_v5_ECONOMY_TREASURY_VENDORSHOP\\backend\\storage\\media\\2d276038-2009-4a6a-a75f-32ba5ab4b1ff\\stills\\first_scene_02_9a5c27a5_c2.jpg",
+          "local_first_frame_sha256": "590e6b3370e75bb584daf3d4de149b3087f5a5a2a04f97a3738fc5432ba64c6b",
+          "request_first_frame_sha256": "590e6b3370e75bb584daf3d4de149b3087f5a5a2a04f97a3738fc5432ba64c6b",
+          "actual_source_matches_approved_first_frame": true,
+          "job": {
+            "id": "9af44e73-ddb6-4693-9fb6-871107e70e6a",
+            "model": "LTX-2.5",
+            "status": "QUEUED",
+            "created_at": "2026-10-15T09:26:39.862236+00:00"
+          },
+          "request_model": "LTX-2.5",
+          "returned_model": null,
+          "effective_worker_model_pending": true,
+          "motion_chars": 552,
+          "motion_exactly_matches_saved": true,
+          "series_look_version": 3,
+          "new_input_differs_from_previously_rejected_source": true
+        },
+        {
+          "scene_index": 3,
+          "approved_source_take": {
+            "id": "ed9ae46e-0a9e-416b-9ae3-51523ed3d5f5",
+            "status": "APPROVED",
+            "approved_by": "still_gate",
+            "path": "E:\\AI Acency\\Autonomous_AI_Studio_Documentation_v5_ECONOMY_TREASURY_VENDORSHOP\\backend\\storage\\media\\2d276038-2009-4a6a-a75f-32ba5ab4b1ff\\stills\\scene_03_a4ef4f71_c1.png",
+            "sha256": "9fb6a17e76f7a254facd7b23c7dd3320dc0c8f07fa2aa55283531cae69768372"
+          },
+          "source_png_sha256_verified": true,
+          "local_first_frame_path": "E:\\AI Acency\\Autonomous_AI_Studio_Documentation_v5_ECONOMY_TREASURY_VENDORSHOP\\backend\\storage\\media\\2d276038-2009-4a6a-a75f-32ba5ab4b1ff\\stills\\first_scene_03_a4ef4f71_c1.jpg",
+          "local_first_frame_sha256": "9bc26ef1da78f453f054fb1ef3b016883dcbb21f004b299ed19a422e8da5e8fc",
+          "request_first_frame_sha256": "9bc26ef1da78f453f054fb1ef3b016883dcbb21f004b299ed19a422e8da5e8fc",
+          "actual_source_matches_approved_first_frame": true,
+          "job": {
+            "id": "f960cfa3-2c07-4f0e-9448-9f9aaf455501",
+            "model": "LTX-2.5",
+            "status": "QUEUED",
+            "created_at": "2026-10-15T09:26:39.877246+00:00"
+          },
+          "request_model": "LTX-2.5",
+          "returned_model": null,
+          "effective_worker_model_pending": true,
+          "motion_chars": 542,
+          "motion_exactly_matches_saved": true,
+          "series_look_version": 3,
+          "new_input_differs_from_previously_rejected_source": true
+        },
+        {
+          "scene_index": 5,
+          "approved_source_take": {
+            "id": "99b19a7b-a073-4a3c-86c6-59cf8c8613f7",
+            "status": "APPROVED",
+            "approved_by": "still_gate",
+            "path": "E:\\AI Acency\\Autonomous_AI_Studio_Documentation_v5_ECONOMY_TREASURY_VENDORSHOP\\backend\\storage\\media\\2d276038-2009-4a6a-a75f-32ba5ab4b1ff\\stills\\scene_05_976bd4e0_c2.png",
+            "sha256": "333f7f96796686227cd720a2339026518c5c9106988846f68220b7a8fd338c08"
+          },
+          "source_png_sha256_verified": true,
+          "local_first_frame_path": "E:\\AI Acency\\Autonomous_AI_Studio_Documentation_v5_ECONOMY_TREASURY_VENDORSHOP\\backend\\storage\\media\\2d276038-2009-4a6a-a75f-32ba5ab4b1ff\\stills\\first_scene_05_976bd4e0_c2.jpg",
+          "local_first_frame_sha256": "08d554bdba21c94c78003398e6d063e5a12eb072745d8243005bf7324801666f",
+          "request_first_frame_sha256": "08d554bdba21c94c78003398e6d063e5a12eb072745d8243005bf7324801666f",
+          "actual_source_matches_approved_first_frame": true,
+          "job": {
+            "id": "a88d3102-4348-4e26-9a3f-c3aca45abf94",
+            "model": "LTX-2.5",
+            "status": "QUEUED",
+            "created_at": "2026-10-15T09:26:39.890977+00:00"
+          },
+          "request_model": "LTX-2.5",
+          "returned_model": null,
+          "effective_worker_model_pending": true,
+          "motion_chars": 529,
+          "motion_exactly_matches_saved": true,
+          "series_look_version": 3,
+          "new_input_differs_from_previously_rejected_source": true
+        },
+        {
+          "scene_index": 7,
+          "approved_source_take": {
+            "id": "5fac7912-169d-43f6-853c-d38492d59dc4",
+            "status": "APPROVED",
+            "approved_by": "still_gate",
+            "path": "E:\\AI Acency\\Autonomous_AI_Studio_Documentation_v5_ECONOMY_TREASURY_VENDORSHOP\\backend\\storage\\media\\2d276038-2009-4a6a-a75f-32ba5ab4b1ff\\stills\\scene_07_a5a9a278_c1.png",
+            "sha256": "d26d1f5fbe175e0f69f87a3e0e0230c2fd3852d032a36c7a0a94312d6e111beb"
+          },
+          "source_png_sha256_verified": true,
+          "local_first_frame_path": "E:\\AI Acency\\Autonomous_AI_Studio_Documentation_v5_ECONOMY_TREASURY_VENDORSHOP\\backend\\storage\\media\\2d276038-2009-4a6a-a75f-32ba5ab4b1ff\\stills\\first_scene_07_a5a9a278_c1.jpg",
+          "local_first_frame_sha256": "80e192ebf88efd3b7af417aa114d78abd90657dbe90b57c0b9629a7105974324",
+          "request_first_frame_sha256": "80e192ebf88efd3b7af417aa114d78abd90657dbe90b57c0b9629a7105974324",
+          "actual_source_matches_approved_first_frame": true,
+          "job": {
+            "id": "42669877-3add-4396-9859-367b936a4e60",
+            "model": "LTX-2.5",
+            "status": "QUEUED",
+            "created_at": "2026-10-15T09:26:39.893185+00:00"
+          },
+          "request_model": "LTX-2.5",
+          "returned_model": null,
+          "effective_worker_model_pending": true,
+          "motion_chars": 520,
+          "motion_exactly_matches_saved": true,
+          "series_look_version": 3,
+          "new_input_differs_from_previously_rejected_source": true
+        }
+      ],
+      "actual_video_model_pending": true,
+      "new_completed_clip_qc_not_yet_observed": true,
+      "film_finished": false
+    },
+    "external_cycle6_handoff_observed": {
+      "document": "CURRENT_STATUS.md",
+      "modified": "2026-10-15T09:25:46.077654+00:00",
+      "claims": [
+        "Director audits exact prompt digest before every first paid image/test-shot/motion step",
+        "unapproved prompt after two audit rounds waits with NEEDS_PROMPT_APPROVAL",
+        "serial composer adds universal blank-paper/dark-screen and no-signage sentence"
+      ],
+      "deployment_status_in_document": "Next restart at idle GPU boundary; not claimed active for this already running batch.",
+      "runtime_audit_event_not_yet_observed": true,
+      "read_as_evidence_not_permission_to_change_or_restart": true,
+      "local_tests_not_new_visual_quality_proof": true
+    },
+    "latest_waiting_video_batch": {
+      "observed_at": "2026-10-15T09:49:21.830193+00:00",
+      "jobs": [
+        {
+          "id": "9af44e73-ddb6-4693-9fb6-871107e70e6a",
+          "scene_id": "2",
+          "model": "LTX-2.5",
+          "status": "RUNNING",
+          "accepted": null,
+          "started_at": "2026-10-15T09:48:07.818282+00:00",
+          "finished_at": null,
+          "error_code": null,
+          "poll_count": 1,
+          "request_model": "LTX-2.5",
+          "returned_model": null,
+          "motion_exactly_matches_saved": true,
+          "series_look_version": 3,
+          "first_frame_digest_unchanged": true
+        },
+        {
+          "id": "f960cfa3-2c07-4f0e-9448-9f9aaf455501",
+          "scene_id": "3",
+          "model": "LTX-2.5",
+          "status": "RUNNING",
+          "accepted": null,
+          "started_at": "2026-10-15T09:48:07.959799+00:00",
+          "finished_at": null,
+          "error_code": null,
+          "poll_count": 1,
+          "request_model": "LTX-2.5",
+          "returned_model": null,
+          "motion_exactly_matches_saved": true,
+          "series_look_version": 3,
+          "first_frame_digest_unchanged": true
+        },
+        {
+          "id": "a88d3102-4348-4e26-9a3f-c3aca45abf94",
+          "scene_id": "5",
+          "model": "LTX-2.5",
+          "status": "QUEUED",
+          "accepted": null,
+          "started_at": null,
+          "finished_at": null,
+          "error_code": null,
+          "poll_count": 0,
+          "request_model": "LTX-2.5",
+          "returned_model": null,
+          "motion_exactly_matches_saved": true,
+          "series_look_version": 3,
+          "first_frame_digest_unchanged": true
+        },
+        {
+          "id": "42669877-3add-4396-9859-367b936a4e60",
+          "scene_id": "7",
+          "model": "LTX-2.5",
+          "status": "QUEUED",
+          "accepted": null,
+          "started_at": null,
+          "finished_at": null,
+          "error_code": null,
+          "poll_count": 0,
+          "request_model": "LTX-2.5",
+          "returned_model": null,
+          "motion_exactly_matches_saved": true,
+          "series_look_version": 3,
+          "first_frame_digest_unchanged": true
+        }
+      ],
+      "no_new_agent_run_or_qc": true,
+      "no_new_delivery_observed": true,
+      "worker_model_not_yet_proven": true,
+      "running_scene_numbers": [
+        2,
+        3
+      ],
+      "queued_scene_numbers": [
+        5,
+        7
+      ]
     }
   },
   "deferred_findings_reported_after_restart": {
@@ -5023,11 +5190,10 @@
     "motion_scene_numbers_submitted": [
       2,
       3,
-      4,
       5,
-      6
+      7
     ],
-    "qc_pending": false,
+    "qc_pending": true,
     "scene7_still_missing": true,
     "film_finished": false,
     "qc_scene2": "back_to_still",
@@ -5043,16 +5209,14 @@
     "qc_scene5": "back_to_still",
     "qc_scene6": "PASSED via director_look",
     "director_second_look_scene5": "UNAVAILABLE: Agent already has an active task",
-    "motion_batch_status": "COMPLETED",
+    "motion_batch_status": "RUNNING scenes2,3; QUEUED scenes5,7",
     "rejected_clip_scene_numbers": [
       2,
       3,
       5
     ],
     "scene_numbers_needing_still": [],
-    "scene_numbers_needing_motion_rewrite": [
-      3
-    ],
+    "scene_numbers_needing_motion_rewrite": [],
     "gpu_off_verified": true,
     "director_rewrite_attempts_blocked": false,
     "director_old_orphaned_run_released": true,
@@ -5065,9 +5229,7 @@
     "director_review_uses_stale_scene1_verdict": true,
     "scene7_rewrite_review_status": "SUCCEEDED/TREATS",
     "new_requested_image_scene_numbers": [
-      2,
-      5,
-      7
+      3
     ],
     "new_generation_prompt_changed": true,
     "new_stills_approved_scene_numbers": [
@@ -5077,16 +5239,19 @@
     ],
     "new_generation_model_effective": "Qwen-Image-Edit-2511",
     "scene2_approved_frame_disagrees_with_qc_hands_claim": true,
-    "motion_stage_blocked_by_scene3": true,
-    "scene3_rewrite_review_status": "MISSES on both rewrite rounds; not saved",
-    "positive_motion_correction_dropped_before_review": true,
-    "new_motion_requests_after_image_batch": 0
+    "motion_stage_blocked_by_scene3": false,
+    "scene3_rewrite_review_status": "SUCCEEDED/TREATS; saved",
+    "positive_motion_correction_dropped_before_review": false,
+    "new_motion_requests_after_image_batch": 4,
+    "positive_motion_correction_now_preserved": true,
+    "new_still_requests_pending_scene_numbers": [],
+    "new_video_deliveries_observed": 0
   },
   "pending_notification_when_running": null,
   "last_significant_notification": {
-    "observed_at": "2026-10-15T08:50:52.677527+00:00",
-    "event_cursor": 24717,
-    "kind": "scene3_editorial_block_mismatched_layer_and_draft_clause_dropped",
-    "note": "Scene3 caption defect belongs to motion; Sarah assigned still and two rewrites were refused. Positive caption clause in actual Mistral draft missing from composed motion reviewed; no new paid video."
+    "observed_at": "2026-10-15T09:31:08.351877+00:00",
+    "event_cursor": 24784,
+    "kind": "four_motion_requests_from_approved_sources_scene2_first_frame_discrepancy_propagated",
+    "note": "New scene3 still accepted, rejected twin excluded; actual requests for videos2/3/5/7 use approved new sources. Scene2 first frame has visible hands despite requested removal. Actual video model/QC pending."
   }
 }

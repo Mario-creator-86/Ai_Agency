@@ -5,6 +5,42 @@ AGENT_SCENARIO_ACCEPTANCE later used actual Ollama Cloud calls, with normal seri
 acceptance and real GPU/media/upload still pending. Current local UI evidence is reported
 separately below and does not prove those external workflows.
 
+## CICLUL 6 — fiecare prompt trece pe la Directoare înainte de prima cumpărare; primul prompt corect de la început (Claude) (2026-10-15)
+
+Owner, 09:15–09:25Z, de trei ori: «Dacă o imagine nu este bună, promptul este greșit! … Mereu
+verificăm prompturile, fără excepție!», «indicațiile primului prompt să fie bune, chiar perfecte!
+Și chiar și așa să treacă pe la Directoare!», «Cine face prompturile trebuie să le facă corect de
+la început! … După ajunge la Director obligatoriu, toate trec pe la Director!»
+
+**Ce era.** Scara Directoarei (brief → rescrierea lui Kael → recenzia ei) verifica cuvintele unei
+scene doar DUPĂ ce controlul refuzase o imagine sau un clip deja plătit. Primele cuvinte ale unei
+scene plecau la GPU doar pe cuvântul lint-ului. Episodul 2, scenele 2, 5, 6: monitoare cu conținut,
+hârtie liniată, «plăcuță cu nume goală» — omisiuni ale primului prompt, plătite înainte să le vadă
+cineva.
+
+**Ce este (`media/prompt_audit.py`, cârlig în `_walk_staircase` după lint și înaintea banilor).**
+Înainte ca un pas să cumpere o scenă prima dată (imagine, cadru de probă, mișcare), Directoarea
+auditează cuvintele exacte care ar pleca (`audit_before_purchase`): planul scenei, cuvintele
+stratului, celălalt strat, biblia, look-ul serialului, obiectele cu marcaje permise, lecțiile.
+Da-ul ei se ține pe acele cuvinte (`media.prompt_audited`, pe digest; nu se întreabă de două ori
+același text). Nu-ul ei e un brief în forma scării (`SceneBrief`) → aceeași rescriere
+(`rewrite_scene`: Kael, recenzia ei, cuvintele noi pe scenă) → foaia se reconstruiește și cuvintele
+noi se auditează. După `AUDIT_ROUNDS` (2) briefuri fără aprobare scena așteaptă pe ea
+(NEEDS_PROMPT_APPROVAL), niciodată pe Owner, nicio scrisoare, nicio cumpărare. Fără Directoare
+activă nu se cumpără nimic neauditat. Numai text.
+
+**Primul prompt corect de la început (`prompt_agent.py`).** Instrucțiunile lui Kael pentru planul
+serialului numesc obiectele care poartă scris în realitate (plăcuță, semn, afiș, ecuson, etichetă,
+cotor de carte, pagină tipărită, ecran cu conținut) și cer să le lase afară sau să spună ecranul
+stins și hârtia goală; compozitorul serialului spune în FIECARE imagine «Pages and papers are
+blank and plain, every screen is dark or a plain soft glow, and the desks are clear of plates,
+labels and signs», nu doar când e numită o pagină. Lecțiile ei intră în continuare în prompturi.
+
+Teste: `test_publishes_alone` (23: auditul, cârligul înaintea banilor, propoziția mereu
+prezentă), `test_serial_look`, `test_serial_ladder`, `test_lessons_reach_prompts`,
+`test_events_feed`, `test_serial_sheet_gate` (107). Intră la următoarea repornire, la o margine
+fără GPU (acum se cumpără imaginea nouă a scenei 3 pe promptul aprobat de ea).
+
 ## CICLUL 5 — rularea orfană, tokenii în buget, verificările goale, fratele din rundă: patru cauze de pe registrul live, reparate (Claude) (2026-10-15)
 
 Patru cauze găsite pe registrul live după repornirile de dimineață, fiecare reparată cu testul ei

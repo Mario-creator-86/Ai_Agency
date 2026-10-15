@@ -123,6 +123,10 @@ def _never_read(relative: Path) -> bool:
         return True
     if name.endswith(".credentials.key"):
         return True
+    if name.startswith("AGENCY_WATCH_STATE_") and name.endswith(".json"):
+        # The hourly watch session's state: content hashes of what it read, rewritten every
+        # hour (2026-10-15: four baseline refreshes in one morning for the same kind of hex).
+        return True
     return any(part in EXCLUDED for part in relative.parts[:-1])
 
 

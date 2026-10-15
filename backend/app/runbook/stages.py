@@ -1813,6 +1813,11 @@ def _walk_staircase(
 ) -> dict[str, Any]:
     """`_film_staircase` inside the film's purchase lease."""
     from app.media.factory import reference_image_adapter  # noqa: PLC0415
+    from app.media.prompt_audit import (  # noqa: PLC0415 - media imports runbook
+        LAYER_OF_STEP,
+        NEEDS_PROMPT_APPROVAL,
+        audit_before_purchase,
+    )
     from app.media.shooting_sheet import (  # noqa: PLC0415 - media imports runbook
         SHEET_STEPS,
         SheetNotFound,
@@ -1958,6 +1963,47 @@ def _walk_staircase(
                 refusal="NEEDS_OWNER",
                 scenes=[int(scene) for scene in scenes],
             )
+        # The Owner, 2026-10-15: «Mereu verificăm prompturile, fără excepție!» Before a step
+        # pays for a scene for the first time, the Director audits the words that would be
+        # sent (`prompt_audit.audit_before_purchase`): her yes is kept on those words, her no
+        # is a brief the Editor rewrites from, and the sheet is rebuilt on the new words; a
+        # scene she cannot approve waits for her, never bought. Text only.
+        if registry is not None and step in LAYER_OF_STEP:
+            try:
+                audit = audit_before_purchase(
+                    engine,
+                    registry,
+                    storyboard_id=storyboard_id,
+                    step=step,
+                    scenes=[int(scene) for scene in sheet["steps"][step]["to_buy"]],
+                    correlation_id=correlation,
+                )
+            except Exception:  # noqa: BLE001 - an audit that fell buys nothing
+                logger.exception("prompt_audit_failed", extra={"storyboard_id": storyboard_id})
+                audit = {"approved": [], "rewritten": [], "held": [], "skipped": [], "asked": False}
+                return stop(
+                    "WAITING",
+                    step,
+                    "Verificarea cuvintelor de către Directoare a căzut; nu se cumpără nimic "
+                    "pe cuvinte neverificate.",
+                    refusal=NEEDS_PROMPT_APPROVAL,
+                    audit=audit,
+                )
+            if audit["rewritten"]:
+                logger.info(
+                    "prompt_audit_rewrote",
+                    extra={"storyboard_id": storyboard_id, "scenes": audit["rewritten"]},
+                )
+                continue  # the sheet is rebuilt on her words; the new words are audited
+            if audit["held"]:
+                return stop(
+                    "WAITING",
+                    step,
+                    " ".join(item["reason"] for item in audit["held"]),
+                    refusal=NEEDS_PROMPT_APPROVAL,
+                    scenes=[int(item["scene_index"]) for item in audit["held"]],
+                    audit=audit,
+                )
         try:
             result = run_sheet_step(
                 engine,
@@ -2547,6 +2593,10 @@ def _sheet_letter(
         # A prompt/shot-plan refusal is the studio's job, never an Owner questionnaire.
         report = submit_sheet_issues(engine, sheet)
         return report.get("message_id")
+    if status == "NEEDS_PROMPT_APPROVAL":
+        # Her audit of the words before a purchase (2026-10-15): the scene waits for her brief
+        # and the Editor's rewrite, never for the Owner; no letter.
+        return None
     if status == "OWNER_HOLD":
         # His own «Oprește GPU acum» stopped the step (2026-10-12): his card in «Decizii» says
         # it once for every film; a letter per film would repeat his own press back to him.

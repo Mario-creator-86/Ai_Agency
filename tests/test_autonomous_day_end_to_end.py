@@ -126,6 +126,23 @@ class StudioModel:
         # Asked in the old order, this stand-in answered the shot plan with a script, and the
         # film went on from template prompts in silence - which is now a lost plan, waiting as
         # NEEDS_SHOT_PLAN (SHOT_PLAN_PARSE, 2026-09-27).
+        if "about to PAY the generation model" in prompt:
+            # The Director's audit of the words before the first purchase (2026-10-15): this
+            # world's prompts are right from the start, so she approves every scene shown.
+            import re as _re
+
+            data_at = prompt.find("<untrusted_source_evidence")
+            indices = sorted(
+                {int(n) for n in _re.findall(r'"scene_index": (\d+)', prompt[data_at:])}
+            )
+            return json.dumps(
+                {
+                    "scenes": [
+                        {"scene_index": index, "approved": True, "reason": "says everything"}
+                        for index in indices
+                    ]
+                }
+            )
         if '"shots": [' in prompt:
             return self._shots(prompt)
         if '"punchline": {' in prompt:

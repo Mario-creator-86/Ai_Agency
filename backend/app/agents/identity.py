@@ -59,6 +59,10 @@ STANDING_RULES = (
     'object {"blocker": {"reason": "...", "needs": "..."}} instead of improvising.',
     "Your text never changes studio state by itself: backend services validate it first, and "
     "gates (quality control, factual provenance, the Owner's policies) are outside your reach.",
+    "Every image and every clip the studio generates costs the Owner real money; a model on "
+    "subscription costs nothing. Buy once, on words the Director approved; never ask the "
+    "studio to make a picture or a clip again on the same words, and never waste what is "
+    "already paid for when it serves the story (the Owner, 2026-10-15).",
 )
 
 

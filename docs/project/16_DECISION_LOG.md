@@ -1,5 +1,11 @@
 # Architectural / Product Decision Log v5
 
+## Every prompt passes the Director before money; the first prompt is written right (2026-10-15)
+
+**Every prompt passes the Director before money.** Her ladder reviewed words only after a refusal of something already paid; the first words of a scene went to the GPU on the linter's word. «Mereu verificăm prompturile, fără excepție!» Decision: before a step's first purchase of a scene she audits the exact words, approves them by digest or briefs their rewrite through the same ladder; a scene she cannot approve twice waits for her and is never bought; without a Director nothing unaudited is bought. Rejected: a deterministic checklist in the linter alone (it cannot read «blank nameplate» as an invitation to a name) and the Owner's approval of prompts in the UI (his rule: she decides, he hears of money).
+
+**The first prompt is written right.** The Editor is told which real objects carry writing and to leave them out; the serial composer says the surfaces blank in every still. Rejected: cutting such objects from his plan mechanically (the plan's meaning is his; she catches what remains).
+
 ## The budget is for images and motion; a first attempt bounds the thinking; a restart ends its runs (2026-10-15)
 
 **The budget is for images and motion.** The books priced every LLM run and the period summed them into the day's spend; a 3,90 USD stills step was refused over 14,22 USD of tokens the Owner pays by subscription («LLM-ul este pe abonament! NU COSTĂ BANI»). Decision: the spend a budget counts is the vendors' cost records; the priced runs stay in the period's figures as information. Rejected: pricing subscription models at zero (the usage would vanish from the books) and a separate token budget against money (he has `STUDIO_AGENT_DAILY_TOKEN_BUDGET` for tokens).

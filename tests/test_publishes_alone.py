@@ -995,3 +995,134 @@ def test_a_structured_first_attempt_bounds_the_thinking_except_for_a_narrating_m
     )
     assert parsed is not None and parsed.ok is True
     assert calls == [{"format": "json", "think": False}, {"think": True}]
+
+
+# ------------------------------------------------------ 16. her audit before the first purchase
+
+
+def test_the_director_audits_a_scenes_words_before_the_first_purchase(
+    engine, tmp_path, monkeypatch
+):
+    """The Owner, 2026-10-15: «Mereu verificăm prompturile, fără excepție!» Before the stills
+    step buys scene 1 and scene 2, she audits their words: scene 1 approved (kept on those
+    exact words, not asked again); scene 2 not — her brief goes to the Editor's rewrite, and
+    the scene is reported rewritten, so the sheet is rebuilt and audited again; after
+    AUDIT_ROUNDS briefs without approval the scene waits for her and is never bought."""
+    from app.media import prompt_audit
+    from app.media.models import StoryboardScene
+    from test_film_costing import a_film
+
+    board = a_film(engine, tmp_path, scenes=2)
+    with Session(engine) as session, session.begin():
+        for row in session.scalars(
+            select(StoryboardScene).where(StoryboardScene.storyboard_id == board)
+        ):
+            row.prompt_json = {
+                **dict(row.prompt_json or {}),
+                "subject": f"the desk of scene {row.scene_index}",
+                "action": "a hand rests on the desk",
+            }
+    from app.agents.services import seed_initial_workforce
+
+    seed_initial_workforce(engine)  # her audit needs a Director; without one nothing is bought
+    asked: list[dict] = []
+    rewrites: list[dict] = []
+
+    def fake_structured_run(engine_, registry, agent_id, task_type, prompt, *a, **kw):
+        asked.append({"task": task_type, "prompt": prompt})
+        answer = prompt_audit.PromptAudit(
+            scenes=[
+                prompt_audit.AuditedScene(scene_index=1, approved=True, reason="says everything"),
+                prompt_audit.AuditedScene(
+                    scene_index=2,
+                    approved=False,
+                    reason="the papers are not said blank",
+                    brief=prompt_audit.AuditBrief(
+                        diagnosis="the words leave the papers to the model",
+                        layer="still",
+                        avoid=["ruled paper"],
+                        keep=["the desk"],
+                        change=["say the papers are blank and unmarked"],
+                        summary_ro="Hârtiile trebuie spuse goale.",
+                    ),
+                ),
+            ]
+        )
+        return answer, {"id": "run-1", "status": "SUCCEEDED"}, None
+
+    monkeypatch.setattr("app.agents.structured.structured_run", fake_structured_run)
+
+    def fake_rewrite(engine_, registry, context, brief, correlation_id):
+        rewrites.append({"scene": context["scene_index"], "brief": brief})
+        return {"rewritten": True, "layer": brief["layer"]}
+
+    monkeypatch.setattr("app.media.scene_rewrite.rewrite_scene", fake_rewrite)
+
+    first = prompt_audit.audit_before_purchase(
+        engine, object(), storyboard_id=board, step="stills", scenes=[1, 2], correlation_id="c"
+    )
+    assert first["approved"] == [1] and first["rewritten"] == [2] and first["held"] == [], first
+    assert asked[0]["task"] == prompt_audit.AUDIT_TASK and "PAY" in asked[0]["prompt"]
+    assert rewrites[0]["scene"] == 2 and rewrites[0]["brief"]["avoid"] == ["ruled paper"]
+
+    # The same words of scene 1 are not asked about again; scene 2's unchanged words (the
+    # fake rewrite stored nothing) get her second brief, then she holds the scene.
+    second = prompt_audit.audit_before_purchase(
+        engine, object(), storyboard_id=board, step="stills", scenes=[1, 2], correlation_id="c"
+    )
+    assert second["approved"] == [1] and second["rewritten"] == [2], second
+    assert (
+        "the desk of scene 1" in asked[0]["prompt"] and "the desk of scene 2" in asked[0]["prompt"]
+    )
+    assert (
+        "the desk of scene 1" not in asked[1]["prompt"]
+        and "the desk of scene 2" in asked[1]["prompt"]
+    )
+    third = prompt_audit.audit_before_purchase(
+        engine, object(), storyboard_id=board, step="stills", scenes=[1, 2], correlation_id="c"
+    )
+    assert third["approved"] == [1] and third["rewritten"] == [], third
+    assert [h["scene_index"] for h in third["held"]] == [2] and third["asked"] is False
+    with Session(engine) as session:
+        scene_rows = session.scalars(
+            select(StoryboardScene).where(StoryboardScene.storyboard_id == board)
+        ).all()
+        assert len(scene_rows) == 2
+        assert prompt_audit.briefs_given(session, board, 2, "still") == prompt_audit.AUDIT_ROUNDS
+
+
+def test_the_walk_audits_before_it_pays_and_her_hold_is_not_the_owners():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1] / "backend" / "app" / "runbook" / "stages.py"
+    text = root.read_text(encoding="utf-8")
+    audit_at = text.index("audit_before_purchase(\n")
+    buy_at = text.index("result = run_sheet_step(\n")
+    assert audit_at < buy_at, "her audit comes before the money"
+    assert 'if status == "NEEDS_PROMPT_APPROVAL":\n        # Her audit' in text
+
+
+# ------------------------------------------------------ 17. the first prompt right from the start
+
+
+def test_the_serial_still_always_says_its_surfaces_are_blank_and_the_editor_is_told_why():
+    """The Owner, 2026-10-15: «Cine face prompturile trebuie să le facă corect de la început!»
+    Episode 2's scenes 2, 5 and 6 paid for monitors with content, ruled paper and a nameplate
+    inviting a name: the first prompt named none of it blank. The serial composer now says the
+    surfaces are blank in every still, not only when a page is named, and the Video Editor's
+    instructions name the objects that carry writing in real life and ask him to leave them out."""
+    from app.media import prompt_agent
+    from app.media.prompt_agent import SERIAL_BLANK_SENTENCE, compose_serial_prompt
+
+    look = {"block": "Hand-drawn studio house.", "shot_sizes": {}, "max_prompt_chars": 20000}
+    package = {
+        "location": "the penthouse office",
+        "shot_size": "single",
+        "in_frame": [{"name": "Sarah", "face_hair": "dark bob", "outfit": "navy blazer"}],
+        "action": "Sarah leans back, arms crossed, facing the viewer.",
+    }
+    still = compose_serial_prompt(package, look)
+    assert SERIAL_BLANK_SENTENCE in still, still
+    assert "every screen is dark" in SERIAL_BLANK_SENTENCE
+    told = prompt_agent._SERIAL_SHOTS_INSTRUCTIONS
+    assert "nameplate" in told and "leave such objects out" in told
