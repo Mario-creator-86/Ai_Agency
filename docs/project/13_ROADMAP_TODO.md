@@ -2126,4 +2126,12 @@ No provider was called, no run was queued, no credit was spent, and
   and the new one stayed worker-less (`/health/ready` worker ELSEWHERE) until a second restart
   at 19:54Z. The second instance should retry the lock every 30 s and start its worker once the
   holder is gone; the page should say «lucrătorul rulează în alt proces» meanwhile.
+- 2026-10-15 21:55Z — next: `scene_rewrite.review_findings` falls back to the scene's newest
+  failure whatever take it was (`failures[:1]`), so a quality-control brief on a scene whose
+  refused still candidate stands beside an approved one is still reviewed against the refused
+  candidate's findings (the audit's brief is now answered by its diagnosis, 28b4a65). Read the
+  findings of the take under treatment only. Also: `test_director_rewrites_failed_scene::
+  test_the_days_staircase_has_her_rewrite_the_refused_scene_and_walks_on` fails since the
+  no-cap audit rounds («Scena 1: auditul nu a spus nimic de ea» — the test's Director fake
+  answers the brief, not the audit's rounds): teach the fake the audit's answer.
 
