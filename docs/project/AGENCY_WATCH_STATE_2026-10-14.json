@@ -1,6 +1,6 @@
 {
-  "observed_at": "2026-10-15T07:52:16.542640+00:00",
-  "event_cursor": 24533,
+  "observed_at": "2026-10-15T08:01:36.959557+00:00",
+  "event_cursor": 24563,
   "claimed_tasks": [],
   "recent_runs": [
     {
@@ -393,8 +393,8 @@
       "source_changes_in_this_diagnosis": false
     }
   },
-  "last_reported_event_cursor": 24533,
-  "last_reported_summary": "Lotul video este încheiat: clipuri acceptate pentru scenele1 și4; scenele2,3,5,6 respinse, scena7 încă fără imagine acceptată/clip. Workerul confirmă LTX-2.5 și aceeași revizie de greutăți pentru toate5 clipuri. Sarah nu poate verifica/reface: taskprompt_lesson_reading a82c69f6 RUNNING din07:16UTC(10:16local), toate noile briefs/second looks blocate înainte de apelul modelului. GPU oprit verificat, nicio regenerare nouă, film nefinalizat. ZeroScriptClub rămâne OVER_DAILY_BUDGET.",
+  "last_reported_event_cursor": 24563,
+  "last_reported_summary": "Sarah/Deepseek a verificat efectiv clipul scenei6, a recunoscut că planul permite lumină abstractă pe ecrane și a acceptat micile abateri (cap, linii pe hârtie) fără regenerare. Imaginea și clipul sunt restaurate, accepted=1, QC efectiv PASSED. Acum3 clipuri acceptate(1,4,6); scenele2,3,5,7 rămân de rezolvat. Brieful următoarei corecturi a pornit; încă nicio generare nouă și niciun film finalizat.",
   "monitoring_status": "NEW_STILL_ACCEPTED_VISUAL_MISMATCH_AND_OLD_IMAGE_CAP_BLOCKS_VIDEO",
   "studio_status": {
     "autonomy_stopped": false,
@@ -414,26 +414,25 @@
   },
   "policy_changed_after_last_report": false,
   "service_check": {
-    "at": "2026-10-15T07:52:16.542640+00:00",
+    "at": "2026-10-15T08:01:36.959557+00:00",
     "live": 200,
     "ready": 200,
     "worker": "OK",
     "service_started_by_monitor": false
   },
   "last_run_inspected": {
-    "id": "5a2eb51c-93bb-49d1-b084-b3956b7f6e0e",
-    "task_type": "director_scene_brief",
-    "model_name": "deepseek-v4.1-flash",
-    "status": "BLOCKED_POLICY",
-    "started_at": "2026-10-15T07:49:08.900293+00:00",
-    "finished_at": "2026-10-15T07:49:09.082493+00:00",
-    "provider_model_call_executed": false
+    "id": "9a5b0779-3a84-462b-a5fa-9650dae0b4f4",
+    "task_type": "scene_prompt_rewrite",
+    "model_name": "mistral-large-4",
+    "status": "RUNNING",
+    "started_at": "2026-10-15T08:00:35.610495+00:00",
+    "finished_at": null
   },
   "last_event_inspected": {
-    "sequence": 24533,
-    "event_id": "617076a1-46ca-46a9-9171-ef9278d015f3",
-    "event_type": "runbook.film_continued",
-    "timestamp": "2026-10-15T07:49:09.093014+00:00"
+    "sequence": 24563,
+    "event_id": "afcdf691-7a14-47fc-a2c8-12e15b22c7db",
+    "event_type": "agent.state_changed",
+    "timestamp": "2026-10-15T08:00:35.780235+00:00"
   },
   "local_reference_and_response_repairs": {
     "reference_doc": "REFERENCE_ROUTE_WARDROBE_AND_STUDIO_WAIT_2026-10-15.md",
@@ -666,10 +665,10 @@
     "notification_sent_once": true
   },
   "last_check": {
-    "at": "2026-10-15T07:52:16.542640+00:00",
+    "at": "2026-10-15T08:01:36.959557+00:00",
     "decision": "NOTIFY",
-    "events_inspected_from": 24502,
-    "events_inspected_through": 24533,
+    "events_inspected_from": 24551,
+    "events_inspected_through": 24563,
     "all_saved_v3_prompts_preserved": true,
     "request_count": 22,
     "models_called_by_monitor": false,
@@ -2303,15 +2302,23 @@
       "repair_event_sequence": 24452,
       "repair_status": "UNRESOLVED",
       "tool_error": "ValueError",
-      "assignment_run_id": "2d50f99a-1838-46e0-81cc-68bb6cf7b09b",
-      "assignment_status": "BLOCKED_POLICY",
+      "assignment_run_id": "b6caa8af-69d7-4853-ba45-ec78e5a73123",
+      "assignment_status": "SUCCEEDED",
       "assignment_error": "Agent already has an active task",
       "requested_model_name": "deepseek-v4.1-flash",
       "model_call_not_executed": true,
-      "latest_request_review_mail_id": "cb00d182-9043-4544-abed-c25b583ca73e",
-      "latest_repair_event_sequence": 24526,
-      "status": "UNRESOLVED",
-      "still_over_daily_budget": true
+      "latest_request_review_mail_id": "649a89e4-a8a6-4570-9626-f6bc2c1ac160",
+      "latest_repair_event_sequence": 24550,
+      "status": "WAITING_OWNER",
+      "still_over_daily_budget": true,
+      "actual_model": "deepseek-v4.1-flash",
+      "model_call_executed": true,
+      "director_public_decision": {
+        "note": "Sheet 'Storyboard: The Zero Script Club' (storyboard f06808c9) carries no PROMPT or NEEDS_SHOT_PLAN blockers in the authoritative issue list — the only open issue is OWNER/OVER_DAILY_BUDGET (the stills step ceiling exceeds the day's available budget), which is financial and is escalated to the Owner by the backend, not by us. So there is nothing for VideoEditor to rewrite on this sheet right now, and no media may be purchased. Kael (VideoEditor), hold the sheet as-is: do not re-run the repair tool, do not buy stills, and do not touch scenes that carry no defect. If a prompt blocker is raised on this sheet, correct it scene by scene in concrete natural language: state the camera framing explicitly (wide establishing vs medium close-up, one framing per scene), state the gaze target and the exact hand position, write each character's pose and worn-prop position as one short standalone clause before any desk, tool or screen detail, write each character's full wardrobe from the bible as one complete clause ending with the last garment, name the exact frame edge and visible parts of anyone only partly in frame, and for a static shot state that the camera does not move, zoom or reframe and repeat who stays visible at which edge from first frame to last. Keep every character and every first-frame condition the plan names, and keep background details stable throughout. Report back with the corrected prompts scene by scene so I can verify each one before the sheet leaves your desk.",
+        "repair_prompts": false,
+        "assign_to_role": "VideoEditor"
+      },
+      "new_media_bought": false
     },
     "latest_completed_scene2_delivery": {
       "job_id": "c0db1e79-9656-4999-a0a7-df01a0ee3f33",
@@ -2715,13 +2722,81 @@
       "guard_source": "backend/app/agents/services.py:661",
       "effect": "Director second looks and scene briefs are denied before provider calls while Director has a RUNNING task.",
       "actual_remote_liveness_of_old_run_not_proven": true,
-      "new_rewrites_saved_or_verified": false
+      "new_rewrites_saved_or_verified": false,
+      "resolved": true,
+      "resolved_at_event": 24544,
+      "old_running_lesson_status": "ABANDONED",
+      "old_lesson_finished_at": "2026-10-15T07:54:21.789599+00:00",
+      "reason": "Process stopped during model call; stale THINKING with no live run was cleared.",
+      "new_executed_director_run_id": "b6caa8af-69d7-4853-ba45-ec78e5a73123",
+      "new_executed_director_model": "deepseek-v4.1-flash",
+      "new_director_task_status": "SUCCEEDED",
+      "production_scene_rewrites_after_release_not_yet_observed": true,
+      "production_director_clip_second_look_after_release": "60009c29-f708-4279-9559-eb37cf581b82"
     },
     "scene6_prompt_qc_tension": {
       "saved_prompt_allows_abstract_screen_glow": true,
       "qc_rejects_nonblank_abstract_glow": true,
       "also_cites_marked_paper_and_character_turn": true,
       "director_visual_recheck_unavailable": true
+    },
+    "scene6_actual_second_look_and_restoration": {
+      "run_id": "60009c29-f708-4279-9559-eb37cf581b82",
+      "actual_model": "deepseek-v4.1-flash",
+      "status": "SUCCEEDED",
+      "verdict": "OVERTURNED",
+      "severity": "minor",
+      "redo": false,
+      "review_source": "CLIP",
+      "accepted_abstract_glow_as_required_by_plan": true,
+      "accepted_small_head_turn_and_paper_lines_as_minor": true,
+      "still_take_id": "554a086f-291a-452d-b2f0-07602f0fa589",
+      "clip_take_id": "ed5dce62-6e38-412a-aba8-1edd141189b6",
+      "restoration_event_sequence": 24559,
+      "new_effective_clip_qc_event": 24558,
+      "new_effective_verdict": "PASSED",
+      "still_journal_accepted": true,
+      "video_journal_accepted": true,
+      "restored_without_new_generation": true
+    },
+    "latest_director_scene_brief_after_release": {
+      "run_id": "71771ba6-6b22-4155-a729-79034065a0bb",
+      "actual_model": "deepseek-v4.1-flash",
+      "status": "SUCCEEDED",
+      "public": {
+        "action": "rewrite",
+        "layer": "still",
+        "summary_ro": "Refac imaginea scenei 2: scot din cadru plăcuța aurie cu litere gravate, șirul de post-it-uri și orice monitor, cobor mâinile sub marginea cadrului și țin camera statică, ca să nu mai apară litere, conținut pe ecran sau mâini deformate.",
+        "diagnosis": "The still prompt names a 'blank gold nameplate' among the desk objects. A nameplate exists to carry a name, so the image model engraved lettering on it, and 'blank' is a negation the model ignores — that is the still gate's refusal, twice. The same prompt names a 'blank post-it note array' (post-its exist to carry writing) and keeps a monitor in frame while asking for 'abstract glow', so the model drew colourful square content on the left monitor; and it puts Sarah's folded hands inside a chest-up frame, where the clip morphed them. The picture itself invites all three defects, so the still is described again and the clip is made from the new picture.",
+        "avoid": [
+          "any nameplate, plaque, sign, label, badge or tag — any object whose purpose is to carry a name or a message",
+          "a pad or array of sticky notes, notebooks, folders, ledgers or any paper that carries lines, writing or print",
+          "engraved, printed or painted lettering on any object",
+          "a monitor, screen or display inside the frame",
+          "readable words, letters, numbers, logos or watermarks anywhere in the shot",
+          "Sarah's hands inside the frame"
+        ],
+        "keep": [
+          "the framing: one medium close-up single at eye level on Sarah, facing the viewer, centred in the vertical 9:16 frame, chest-up",
+          "Sarah alone in frame, in the Executive Penthouse (Director / CEO), floor 4, in the series' look and warm interior light",
+          "her pose: very upright, shoulders square and still, head facing the viewer throughout",
+          "her hair and wardrobe exactly as the character bible gives them — the composer inserts them; do not repeat them in the action",
+          "the static camera: the camera does not move, zoom or reframe at any point, and Sarah stays centred from the first frame to the last",
+          "the big window onto the city behind her and the warm brass lamps",
+          "the two lines and their delivery: measured, decision first; then calm, final",
+          "the ending: the same medium close-up on Sarah, still very upright and facing the viewer",
+          "camera_move stays static, in its fixed sentence"
+        ],
+        "change": [
+          "Write Sarah's pose and gaze as one short standalone clause before any desk or room detail: 'Sarah sits very upright, shoulders square, facing the viewer, her head facing the viewer throughout.'",
+          "Take the gold nameplate out of the frame entirely — do not describe it at all, blank or otherwise.",
+          "Take the post-it note array out of the frame; no sticky notes, papers, folders or ledgers in the shot.",
+          "Keep every monitor and screen out of the frame: describe the space behind her positively — the desk edge low behind her and the big window onto the city filling the space behind her head — so no screen fits in the picture.",
+          "Put her folded hands below the bottom edge of the frame, out of shot: 'her folded hands rest one over the other on the desk, below the frame edge, out of shot' — the frame is chest-up, so no hands are in the picture.",
+          "Write the action as one semicolon-separated first moment, no 'then': 'Sarah sits very upright, shoulders square, facing the viewer; her folded hands rest one over the other on the desk, below the frame edge, out of shot.'",
+          "Rewrite the ending_frame as the final visible picture only, with no camera instructions: 'the same medium close-up on Sarah, still very upright and facing the viewer, the desk edge and the window behind her, no hands and no desk objects in frame.'"
+        ]
+      }
     }
   },
   "deferred_findings_reported_after_restart": {
@@ -2758,28 +2833,30 @@
     "regeneration_requests_after_qc_rejection": 0,
     "accepted_clip_scene_numbers": [
       1,
-      4
+      4,
+      6
     ],
     "qc_scene5": "back_to_still",
-    "qc_scene6": "back_to_still",
+    "qc_scene6": "PASSED via director_look",
     "director_second_look_scene5": "UNAVAILABLE: Agent already has an active task",
     "motion_batch_status": "COMPLETED",
     "rejected_clip_scene_numbers": [
       2,
       3,
-      5,
-      6
+      5
     ],
     "scene_numbers_needing_still": [
       2,
       5,
-      6,
       7
     ],
     "scene_numbers_needing_motion_rewrite": [
       3
     ],
     "gpu_off_verified": true,
-    "director_rewrite_attempts_blocked": true
+    "director_rewrite_attempts_blocked": false,
+    "director_old_orphaned_run_released": true,
+    "actual_new_scene_rewrite_or_generation_observed": false,
+    "new_media_generation_after_review": false
   }
 }

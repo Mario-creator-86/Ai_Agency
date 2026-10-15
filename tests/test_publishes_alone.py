@@ -853,3 +853,60 @@ def test_a_run_that_started_before_this_process_does_not_block_its_agent(engine,
         )
     with Session(engine) as session:
         assert agent_services._has_live_run(session, sarah_id) is True
+
+
+# ------------------------------------------------------ 14. the budget counts media, not tokens
+
+
+def test_the_daily_budget_counts_media_and_reports_the_subscriptions_tokens_apart(engine):
+    """2026-10-15: 14,22 USD of priced tokens (the Director's 580k-token calls) were counted
+    as the day's spend against the 20 USD budget, and a 3,90 USD stills step was refused
+    OVER_DAILY_BUDGET with a letter to the Owner. His rule: the subscription costs nothing;
+    images and motion do. The period's spent is the vendors' costs; the tokens are reported
+    beside it."""
+    from datetime import UTC, datetime
+    from uuid import uuid4
+
+    from app.agents.models import Agent, AgentRun
+    from app.agents.services import seed_initial_workforce
+    from app.economy.budget import spend_since
+    from app.economy.models import ProviderCostRecord
+
+    seed_initial_workforce(engine)
+    now = datetime.now(UTC).isoformat()
+    with Session(engine) as session, session.begin():
+        sarah = session.scalar(select(Agent).where(Agent.display_name.like("Sarah%")))
+        session.add(
+            AgentRun(
+                id=str(uuid4()),
+                agent_id=sarah.id,
+                task_type="director_review",
+                objective="o",
+                prompt_template_version="v",
+                model_name="deepseek-v4.1-flash",
+                provider_name="settings:cloud",
+                correlation_id="c",
+                status="SUCCEEDED",
+                cost_vr=0.49,
+                prompt_tokens=583898,
+                completion_tokens=2000,
+                started_at=now,
+                finished_at=now,
+            )
+        )
+        session.add(
+            ProviderCostRecord(
+                id=str(uuid4()),
+                provider="runpod",
+                external_reference="foaie:x:stills",
+                status="ESTIMATED",
+                amount_micros=1_470_000,
+                currency="USD",
+                usd_micros=1_470_000,
+                recorded_at=now,
+            )
+        )
+    with Session(engine) as session:
+        spend = spend_since(session, "2026-10-14T21:00:00+00:00")
+    assert spend["spent_usd_micros"] == 1_470_000
+    assert spend["agent_usd_micros"] > 0 and spend["agent_runs"] == 1

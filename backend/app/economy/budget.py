@@ -304,8 +304,12 @@ def reserved_since(session: Session, since_iso: str) -> int:
 
 
 def spend_since(session: Session, since_iso: str) -> dict[str, Any]:
-    """What the books say was spent since a moment: priced costs, priced agent runs, the
-    usage nobody priced, and the sums still held by films in progress."""
+    """What the books say was spent since a moment: the vendors' priced costs (what the
+    budgets count), the priced agent runs reported apart (the Owner, 2026-10-12 and
+    2026-10-15: «LLM-ul este pe abonament! NU COSTĂ BANI» — on 2026-10-15 14,22 USD of
+    priced tokens, most of them the Director's 580k-token calls, were counted as the day's
+    spend and a 3,90 USD stills step was refused OVER_DAILY_BUDGET with a letter to him),
+    the usage nobody priced, and the sums still held by films in progress."""
     rows = session.execute(
         select(
             ProviderCostRecord.provider,
@@ -358,14 +362,15 @@ def spend_since(session: Session, since_iso: str) -> dict[str, Any]:
         )
     )
     agent_micros = _agent_spend_micros(session, since_iso)
-    total += agent_micros
+    # Not added to ``total``: the subscription's tokens are shown, never charged to a
+    # budget that exists for images and motion.
     reserved = reserved_since(session, since_iso)
     return {
         "since": since_iso,
         "spent_usd_micros": total,
         "spent_usd": format_micros(total),
         "by_provider": sorted(by_provider.values(), key=lambda e: e["provider"]),
-        # The priced agent runs, inside the total; shown apart so the Owner can see the tokens.
+        # The priced agent runs, beside the total (never inside it): the Owner sees the tokens.
         "agent_usd_micros": agent_micros,
         "agent_usd": format_micros(agent_micros),
         # The cost of renders that failed midway, inside the total: paid for, never delivered.
