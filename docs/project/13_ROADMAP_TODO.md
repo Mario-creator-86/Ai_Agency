@@ -2106,4 +2106,9 @@ No provider was called, no run was queued, no credit was spent, and
   is `for_owner` — both are the studio's own matter under the letters rule: the next pass
   re-walks (it does, `serial_unfilmed_after_start`) and the Director is told, not him. Also:
   `day_goal` counts a run the developer's restart cut (17:08Z) as one of its six.
+- 2026-10-15 evening — next: the verifier is handed a source window that does not carry the
+  claim's words («The source excerpt does not mention 1998 observations…» on the Type Ia page
+  whose article says it), so the thesis claims of «The Supernova Surprise» stayed UNCERTAIN
+  through three research passes; give the verifier the passage found by the claim's own words
+  (`evidence_text` quote search over the whole snapshot) before judging.
 

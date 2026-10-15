@@ -429,6 +429,24 @@ def test_a_writer_who_stops_over_a_charts_missing_figures_is_told_to_write_it_li
     with Session(engine) as session:
         claims = session.scalars(select(FactualClaim).where(FactualClaim.topic_id == topic_two))
         assert [c.status for c in claims] == ["UNCERTAIN"]
+        assert session.get(TopicIdea, topic_two).status == "PROPOSED"  # read for once more
+
+    # The second stop on the same topic's facts today leaves the topic: the day's next run
+    # selects another candidate (d7d80450, three stops in one day, seven candidates waiting).
+    with Session(engine) as session, session.begin():
+        session.get(TopicIdea, topic_two).status = "SELECTED"
+    _claim(engine, topic_two, status="SUPPORTED")
+    build_stage_runners(engine, settings, vault, registry)["script_and_storyboard"]()
+    with Session(engine) as session:
+        topic = session.get(TopicIdea, topic_two)
+        assert topic.status == "REJECTED" and "2 ori" in str(topic.decision_notes)
+        from app.agents.models import AgentMessage
+
+        subjects = [
+            m.subject
+            for m in session.scalars(select(AgentMessage).where(AgentMessage.intent == "STATUS"))
+        ]
+        assert any("se lasă, se alege altul" in s for s in subjects), subjects
 
 
 def test_quality_control_selects_files_by_what_they_are_not_by_their_label(

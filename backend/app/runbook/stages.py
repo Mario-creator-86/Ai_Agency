@@ -502,17 +502,55 @@ def _stop_is_about_a_chart(blocker: Any) -> bool:
     return any(word in said for word in _CHART_WORDS)
 
 
+#: How many times in one day research is sent back for a topic whose writer stopped on its
+#: facts before the topic is left for another (`_topic_back_to_research`). 2026-10-15,
+#: d7d80450 «The Supernova Surprise»: three stops (14:17Z, 15:51Z, 17:41Z) — the pages read
+#: never carried the thesis in words the verifier could hold — and every run of the day went
+#: to the same topic while seven candidates waited.
+TOPIC_RESEARCH_RETURNS = 1
+
+
+def _stops_today(session: Session, topic_id: str) -> int:
+    """How many times today the writer stopped on this topic's facts (the Director's notes)."""
+    today = utc_now()[:10]
+    count = 0
+    for message in session.scalars(
+        select(AgentMessage).where(
+            AgentMessage.intent == "STATUS", AgentMessage.created_at >= today
+        )
+    ):
+        body = message.body_json if isinstance(message.body_json, dict) else {}
+        if body.get(SCRIPT_BLOCKED_KEY) and str(body.get("topic_id") or "") == topic_id:
+            count += 1
+    return count
+
+
 def _topic_back_to_research(engine: Engine, topic_id: str, blocker: Any) -> None:
     """A SELECTED topic whose writer stopped is PROPOSED again, with his reason noted to the
     Director: `_gather_for_candidates` reads for it again (the note is newer than its
-    sources), verification and selection follow, and the writer sees new claims."""
+    sources), verification and selection follow, and the writer sees new claims. After
+    `TOPIC_RESEARCH_RETURNS` such returns in a day the topic is left (REJECTED, with why):
+    the day's next run selects another candidate instead of reading for this one again."""
     from app.agents.messages import post_message  # noqa: PLC0415
 
     with Session(engine) as session, session.begin():
         topic = session.get(TopicIdea, topic_id)
         if topic is None:
             return
-        if topic.status == "SELECTED":
+        stops_before = _stops_today(session, topic_id)
+        left = stops_before >= TOPIC_RESEARCH_RETURNS
+        if left:
+            topic.status = "REJECTED"
+            topic.decided_by = "scenaristul, după cercetare"
+            topic.decision_notes = (
+                f"Lăsat {utc_now()[:10]}: scenaristul s-a oprit de {stops_before + 1} ori pe "
+                f"faptele lui ({' '.join(str(getattr(blocker, 'reason', '') or '').split())[:300]})"
+            )[:2000]
+            topic.rejection_reasons_json = [
+                *list(topic.rejection_reasons_json or []),
+                f"{stops_before + 1} opriri ale scenaristului pe fapte",
+            ]
+        elif topic.status == "SELECTED":
             topic.status = "PROPOSED"
         # The claims he could not write from are retired with him: a SUPPORTED claim stays
         # what the writer is handed (`script_agent.write_script`), and the Supernova topic's
@@ -537,8 +575,12 @@ def _topic_back_to_research(engine: Engine, topic_id: str, blocker: Any) -> None
             session,
             intent="STATUS",
             subject=(
-                f"Scenaristul s-a oprit la «{topic.title[:80]}»: subiectul merge înapoi la "
-                "cercetare"
+                f"Scenaristul s-a oprit la «{topic.title[:80]}»: "
+                + (
+                    "subiectul se lasă, se alege altul"
+                    if left
+                    else "subiectul merge înapoi la cercetare"
+                )
             ),
             body={
                 "topic_id": topic_id,
@@ -549,9 +591,15 @@ def _topic_back_to_research(engine: Engine, topic_id: str, blocker: Any) -> None
                 f"Scenaristul nu a putut scrie «{topic.title}» cinstit: "
                 f"{getattr(blocker, 'reason', '')}\n"
                 + (f"Are nevoie de: {blocker.needs}\n" if getattr(blocker, "needs", "") else "")
-                + f"Subiectul e din nou PROPUS, {retired} afirmații de dinainte sunt retrase; "
-                "cercetarea citește alte pagini pentru el la următoarea trecere, apoi "
-                "verificarea și alegerea subiectului."
+                + (
+                    f"Subiectul se lasă: de {stops_before + 1} ori azi cercetarea nu i-a adus "
+                    f"faptele; {retired} afirmații sunt retrase, iar alegerea subiectului "
+                    "trece la alt candidat la următoarea rulare."
+                    if left
+                    else f"Subiectul e din nou PROPUS, {retired} afirmații de dinainte sunt "
+                    "retrase; cercetarea citește alte pagini pentru el la următoarea trecere, "
+                    "apoi verificarea și alegerea subiectului."
+                )
             ),
             to_agent_id=director.id if director else None,
         )
