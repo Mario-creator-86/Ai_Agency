@@ -499,6 +499,24 @@ def _topic_back_to_research(engine: Engine, topic_id: str, blocker: Any) -> None
             return
         if topic.status == "SELECTED":
             topic.status = "PROPOSED"
+        # The claims he could not write from are retired with him: a SUPPORTED claim stays
+        # what the writer is handed (`script_agent.write_script`), and the Supernova topic's
+        # 37 «SUPPORTED» claims were about Discovery Channel, a Daft Punk album and a ship
+        # (2026-10-15 14:03Z: pages fetched for the word «Discovery»). The new pages bring
+        # new claims; these are UNCERTAIN, with why.
+        retired = 0
+        for claim in session.scalars(
+            select(FactualClaim).where(
+                FactualClaim.topic_id == topic_id, FactualClaim.status == "SUPPORTED"
+            )
+        ):
+            claim.status = "UNCERTAIN"
+            claim.verifier_notes = (
+                "retrasă: scenaristul nu a putut scrie din aceste afirmații ("
+                + " ".join(str(getattr(blocker, "reason", "") or "").split())[:160]
+                + ")"
+            )[:500]
+            retired += 1
         director = agent_for_role(session, "Director")
         post_message(
             session,
@@ -516,8 +534,9 @@ def _topic_back_to_research(engine: Engine, topic_id: str, blocker: Any) -> None
                 f"Scenaristul nu a putut scrie «{topic.title}» cinstit: "
                 f"{getattr(blocker, 'reason', '')}\n"
                 + (f"Are nevoie de: {blocker.needs}\n" if getattr(blocker, "needs", "") else "")
-                + "Subiectul e din nou PROPUS; cercetarea citește alte pagini pentru el la "
-                "următoarea trecere, apoi verificarea și alegerea subiectului."
+                + f"Subiectul e din nou PROPUS, {retired} afirmații de dinainte sunt retrase; "
+                "cercetarea citește alte pagini pentru el la următoarea trecere, apoi "
+                "verificarea și alegerea subiectului."
             ),
             to_agent_id=director.id if director else None,
         )
@@ -1139,7 +1158,11 @@ def _script_and_storyboard(
                 # goes back to research with his reason, through the Director, and the day
                 # goes on (2026-10-15, «The Supernova Surprise» on claims about «Discovery»).
                 logger.info("script_blocked", extra={"topic_id": topic_id, "reason": str(exc)})
-                rejected.append(error_words(exc))
+                # His own words, not «o eroare neașteptată în codul studioului» (14:03Z).
+                rejected.append(
+                    "scenaristul s-a oprit cinstit, subiectul merge înapoi la cercetare: "
+                    + " ".join(str(getattr(exc.blocker, "reason", "") or str(exc)).split())[:200]
+                )
                 _topic_back_to_research(engine, topic_id, exc.blocker)
                 break
             except (ScriptRejected, NoVerifiedClaims) as exc:

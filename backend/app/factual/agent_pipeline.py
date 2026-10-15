@@ -13,7 +13,7 @@ import logging
 import re
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, field_validator
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
@@ -548,7 +548,9 @@ FOLLOW|SERIES|COMMENT", "scenes": [{{"narration": "...", "visual": "...", "purpo
 - "hook": prima propoziție rostită. Se desenează pe coperta filmului, peste primul cadru
   filmat, deci cel mult vreo {hook_words} cuvinte și nicio cifră pe care afirmațiile de mai jos
   nu o poartă.
-- "narration": textul rostit în scenă, 10-800 de caractere.
+- "narration": textul rostit în scenă, 10-800 de caractere, cu semne de punctuație ca în
+  vorbire: punct, semnul întrebării sau al exclamării la sfârșitul fiecărei propoziții, virgule
+  unde respiră vocea; vocea își ia ritmul din punctuație, iar subtitrările o urmează.
 
 {measured}AFIRMAȚII VERIFICATE (singura sursă de fapte permisă):
 """
@@ -612,6 +614,15 @@ class _Scene(BaseModel):
     narration: str = Field(min_length=10, max_length=800)
     visual: str = Field(default="", max_length=500)
     claim_ids: list[str] = Field(min_length=1, max_length=20)
+
+    @field_validator("narration", mode="after")
+    @classmethod
+    def _punctuated(cls, value: str) -> str:
+        # The Owner, 2026-10-15: the voice reads the punctuation (`wording.punctuated`).
+        from app.wording import punctuated  # noqa: PLC0415
+
+        return punctuated(value) or value
+
     #: Why this shot is in the film. A scene that plays no part in the story is decoration,
     #: and decoration is what the Owner paid eight generated shots for.
     purpose: str = Field(default="", max_length=20)

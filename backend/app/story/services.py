@@ -206,6 +206,16 @@ class _Line(BaseModel):
     text: str = Field(min_length=1, max_length=600)
     direction: str = Field(default="", max_length=200)
     _clip_text = field_validator("text", mode="before")(clipped(600))
+
+    @field_validator("text", mode="after")
+    @classmethod
+    def _punctuated(cls, value: str) -> str:
+        # The Owner, 2026-10-15: the voice reads the punctuation; a line without its full
+        # stop runs on (`wording.punctuated`).
+        from app.wording import punctuated  # noqa: PLC0415
+
+        return punctuated(value) or value
+
     _clip_direction = field_validator("direction", mode="before")(
         lambda value: clipped(200)(_text_or_empty(value))
     )
@@ -915,7 +925,9 @@ in an event you cite, is "background" in a room or is mentioned in a line, and s
 3. Lines. Dialogue is a list of lines, each {{"speaker": a name from ALLOWED_NAMES, "text": \
 the words said aloud and nothing else, "direction": an optional acting note}}. A voice \
 reads "text" exactly as written, so it never holds a name, a colon, a bracket or a stage \
-direction.
+direction. Punctuate every line as speech: a full stop, a question mark or an exclamation \
+mark at its end, commas where the speaker breathes, a dash or an ellipsis where the thought \
+breaks; the voice paces itself on the punctuation and the captions follow it.
 4. Length. Aim for {min_words} to {max_words} spoken words in each beat (a scene holds at \
 most 9 seconds): a recommendation the Director weighs, not a rule that refuses the episode. \
 The whole episode is {min_episode_words} to {max_episode_words} spoken words, 45 to 70 \

@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-15 — The writers punctuate; a topic sent back retires its claims
+
+- `wording.py`: `punctuated(text)`, the words as a voice reads them: a full stop after a line that ends on a letter, a digit or a dangling comma/dash, existing marks kept. Applied on read to the serial's `_Line.text` and the factual `_Scene.narration`; both writers' briefs ask for punctuation as speech (the Owner, 2026-10-15 14:03Z).
+- `runbook/stages.py`: a topic sent back to research retires its SUPPORTED claims (UNCERTAIN, with the writer's reason) so the new pages bring new claims; the writer's honest stop is reported in his words, not as «o eroare neașteptată în codul studioului».
+- Test 19 of `test_publishes_alone`; the writer/episode/serial suites 329 passed.
+
 ## 2026-10-15 — The publish queue keeps a film accepted under the cap; its walk is retried with a doubling wait
 
 - `runbook/stages.py`: `_viewing_rejected` leaves out a film accepted under the Owner's cap (13:31Z: the queue said «niciun material aprobat de QC în așteptarea publicării» on the refused viewing of 2d276038). `workflows/passes/director_qc_review.py`: a walk that could not publish such a film is followed by the next after `PUBLISH_RETRY_MINUTES` (10, doubling), one key per walk. Test extended.

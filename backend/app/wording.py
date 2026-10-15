@@ -788,3 +788,27 @@ def owner_text_problems(text: str | None, *, max_lines: int = 8, max_chars: int 
     Text inside «…» (a film's own title) is not judged, but for its «Storyboard:» prefix.
     """
     return list(owner_text_findings(text, max_lines=max_lines, max_chars=max_chars))
+
+
+#: What ends a spoken sentence; a line that ends on anything else gets a full stop.
+_SENTENCE_END = frozenset(".!?…:;\"'»”’)")
+
+
+def punctuated(text: str) -> str:
+    """The words as a voice reads them: whitespace folded, and a full stop after a line that
+    ends on a letter, a digit or a dash. The Owner, 2026-10-15: «Marcus, scenaristul trebuie
+    să folosească semne de punctuație» — a voice paces itself on the punctuation, and a
+    caption without it runs on. An empty text stays empty."""
+    said = " ".join(str(text or "").split())
+    if not said:
+        return said
+    last = said[-1]
+    if last in _SENTENCE_END:
+        return said
+    if last in "-–—,":
+        said = said.rstrip("-–—, ")
+        if not said:
+            return ""
+        if said[-1] in _SENTENCE_END:
+            return said
+    return said + "."

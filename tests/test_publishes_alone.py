@@ -1210,3 +1210,38 @@ def test_the_rooms_sentence_is_the_composers_own_so_a_lock_on_it_is_the_develope
     context = {"serial": True, "look": look, "package": package}
     fixed, _chosen = _still_sentences(context, package, still)
     assert room in fixed and look["block"] in fixed
+
+
+# ------------------------------------------------------ 19. the writers punctuate, as speech
+
+
+def test_a_line_or_a_narration_without_its_full_stop_gets_one_and_the_writers_are_told():
+    """The Owner, 2026-10-15 14:03Z: «Marcus, scenaristul trebuie să folosească semne de
+    punctuație.» Both briefs say it; and what he writes is punctuated as speech when it is
+    read: a line or a narration that ends on a letter or a digit gets its full stop, one that
+    ends on a question mark, an ellipsis or a closing quote is left as it is, a trailing comma
+    or dash is replaced by the full stop."""
+    from app.factual import agent_pipeline
+    from app.story import services as story
+    from app.wording import punctuated
+
+    assert punctuated("The editor rewrites scene two") == "The editor rewrites scene two."
+    assert punctuated("Thirteen rewrite demands") == "Thirteen rewrite demands."
+    assert punctuated("Zero rejected. The close is within limit") == (
+        "Zero rejected. The close is within limit."
+    )
+    assert punctuated("Is it within limit?") == "Is it within limit?"
+    assert punctuated("Then nothing…") == "Then nothing…"
+    assert punctuated("She said «no»") == "She said «no»"
+    assert punctuated("Four pages, four sources,") == "Four pages, four sources."
+    assert punctuated("the number is 24") == "the number is 24."
+    assert punctuated("  ") == ""
+
+    line = story._Line.model_validate({"speaker": "Marcus", "text": "Thirteen rewrite demands"})
+    assert line.text == "Thirteen rewrite demands."
+    scene = agent_pipeline._Scene.model_validate(
+        {"narration": "Four pages, four sources, twenty-four claims verified", "claim_ids": ["c1"]}
+    )
+    assert scene.narration.endswith("verified.")
+    assert "Punctuate every line as speech" in story._INSTRUCTIONS
+    assert "semne de punctuație" in agent_pipeline._WRITE_INSTRUCTIONS
