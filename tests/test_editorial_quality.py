@@ -1841,7 +1841,9 @@ def test_a_shot_plan_is_not_thrown_away_for_one_long_field():
     pack = _parse_shot_pack(answer)
     assert pack is not None
     assert [shot.scene_index for shot in pack.shots] == [1, 2]
-    assert len(pack.shots[1].audio_intent) <= 200
+    # 2026-10-14 (the Owner: complete messages, no silent shortening): the long field is
+    # kept whole, not cut to the schema's old 200.
+    assert len(pack.shots[1].audio_intent) == len(long_audio.strip())
     assert pack.shots[0].lighting == "Soft amber from the front, no harsh shadows."
 
     bible = _parse_bible(

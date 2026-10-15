@@ -1,5 +1,17 @@
 # Architectural / Product Decision Log v5
 
+## The Owner's model stays; a blocked writer goes back to research; a sentence's first word; motion weighed by meaning (2026-10-15)
+
+**His model stays.** The Director's model-switch repair had moved Marcus twice without the Owner (the night's outage, then the hourly session's hand); he said «modelele de LLM, dacă au fost alese de mine, rămân; nu se schimbă singur». Decision: the model he set (`owner_home_model`, assignment_origin OWNER) is never switched by a repair; when it fails while another model answers, the card is his; when every probe fails, it is the provider's outage and nobody's decision. Rejected: switching with a letter afterwards (he would read it after the fact) and a per-agent lock flag (the assignment's origin already says whose choice it is). Kimi-K3 is denied by his words («prea scump»): `STUDIO_MODEL_DENY_LIST`, the existing place for his refusals.
+
+**A blocked writer is not a format fault.** The identity contract tells every employee to answer `{"blocker": {...}}` when the work cannot be done honestly; the script parser read that as «the format is wrong» and the day moved on, the topic SELECTED forever on claims about the wrong subject. Decision: a blocker is its own refusal, in the writer's words; the topic goes back to PROPOSED with a note to the Director, and research reads for it again, counting only the pages fetched after the note. Rejected: deleting the off-subject claims (the record stays; the writer cites only what fits) and a letter to the Owner (quality and sourcing are the Director's).
+
+**The first word of a sentence.** `search_queries` took any capitalised word for a proper name; a topic line that begins «Discovery that…» found the album and the channel, and the rule «a found page beats a guess» read them. Decision: a sentence-initial word is a name only when it is capitalised inside a sentence too, is an acronym, or opens a run of names. The found-beats-guess rule stays (its measurement holds: guessed addresses 404).
+
+**A motion fault is weighed by meaning.** «Generarea costă bani. Dacă a fost generat un video greșit, promptul nu e bun. Schimbă sensul poveștii? Dacă nu, trece!» Decision: in the Director's QC brief a camera move or pace other than the plan's, while the scene still tells the same thing, is minor and bought again for nothing; a content fault (writing where the bible forbids it, the wrong subject) is a prompt fault, fixed in the prompt before one re-buy. Her judgement stays hers.
+
+## 2026-10-15 — Final Cloud correction (Codex): the output sentinel is dropped
+
 2026-10-15 final Cloud correction: -1 sentinel rejected live, removed; omitted num_predict returns OK in a short paid probe (0.00001 VR). Actual DeepSeek-v4.1-flash max output393216, so480000 invalid. Technical probes not film progress. Backend15596 ready; Owner objects to further parameter changes, no more probes. See corrected SARAH_MARCUS_CLOUD_RESPONSE report.
 
 ## 2026-10-15 — Native Cloud output and incremental response

@@ -50,7 +50,7 @@ from pydantic import (
 from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session
 
-from app.agents.identity import clipped, complete_schema, joined
+from app.agents.identity import blocker_of, clipped, complete_schema, joined
 from app.agents.language import audience_language_line
 from app.agents.memory import agent_for_role, remember
 from app.agents.models import Agent, Role
@@ -1153,6 +1153,12 @@ def _parse_episode(raw: str) -> _Episode:
     data = episode_object(raw)
     if data is None:
         raise DraftRefused("Showrunner-ul nu a răspuns cu un obiect JSON.", raw)
+    blocker = blocker_of(raw) if isinstance(data, dict) and "blocker" in data else None
+    if blocker is not None:
+        # His contract's honest stop, said in his words in the day's register — not «the
+        # format was wrong» (2026-10-15, the writers' blockers were read as format faults).
+        needs = f" Are nevoie de: {blocker.needs}" if blocker.needs else ""
+        raise DraftRefused(f"Showrunner-ul s-a oprit: {blocker.reason}{needs}", raw)
     try:
         return _EPISODE.validate_python(data)
     except ValidationError as exc:
@@ -1705,32 +1711,6 @@ def write_episode(
             temperature=0.7,
             emit_message=False,
         )
-        if (
-            result["status"] == "SUCCEEDED"
-            and episode_object(result.get("output_text") or "") is None
-        ):
-            # A showrunner who narrated instead of answering (the 2026-10-15 refusals: four
-            # answers in a row with no object) is asked once more in JSON mode with his own
-            # thinking on, like a script writer (`agent_pipeline.answered_with_object`).
-            again = run_agent_task(
-                engine,
-                registry,
-                showrunner_id,
-                "write_episode",
-                prompt,
-                EPISODE_TEMPLATE_VERSION + "+json",
-                correlation,
-                summary=(
-                    f"Scriu episodul {episode_number} pentru ziua {date_iso} "
-                    "(a doua încercare: JSON, cu gândire proprie)."
-                ),
-                max_tokens=7200,
-                temperature=0.7,
-                emit_message=False,
-                extra={"think": True, "format": "json"},
-            )
-            if again["status"] == "SUCCEEDED" and episode_object(again.get("output_text") or ""):
-                result = again
         if result["status"] != "SUCCEEDED" or not (result.get("output_text") or "").strip():
             detail = result.get("error_detail") or "fără text vizibil"
             raise StoryError(f"Showrunner-ul nu a produs un episod ({result['status']}: {detail})")

@@ -23,6 +23,7 @@ from app.agents.editorial_judgement import (
     criteria_lines,
     editorial_rounds_setting,
 )
+from app.agents.identity import Blocker, blocker_of
 from app.agents.language import audience_language_line
 from app.agents.memory import remember
 from app.agents.models import Agent, Role
@@ -577,6 +578,18 @@ THESIS_FIELDS = (
 IDEA_WEAK_UNDER = 0.7
 #: How many of the measured shorts the writer is shown at each end.
 MEASURED_EACH = 3
+
+
+class ScriptBlocked(ValueError):
+    """The writer answered with his contract's blocker instead of a script: what he was
+    given cannot be written honestly (2026-10-15: forty verified claims about the word
+    «Discovery» for a film about supernovae). Not a format fault: the reason and what he
+    needs go back to research through the Director, and the day goes on."""
+
+    def __init__(self, blocker: Blocker) -> None:
+        self.blocker = blocker
+        needs = f" Are nevoie de: {blocker.needs}" if blocker.needs else ""
+        super().__init__(f"Scenaristul s-a oprit: {blocker.reason}{needs}")
 
 
 class ScriptRejected(ValueError):
@@ -1413,6 +1426,9 @@ def _parse_script(raw: str, *, drop_uncited: bool = False) -> _Script:
     data = _script_object(raw)
     if data is None:
         raise ScriptRejected("Scenaristul nu a răspuns cu un obiect JSON.")
+    blocker = blocker_of(raw) if isinstance(data, dict) and "blocker" in data else None
+    if blocker is not None:
+        raise ScriptBlocked(blocker)
     if drop_uncited and isinstance(data, dict) and isinstance(data.get("scenes"), list):
         data = {
             **data,

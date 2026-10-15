@@ -1,5 +1,71 @@
 # CURRENT STATUS — State on 2026-10-15
 
+Current proof: the 2026-10-01/02 paid film readiness audit was proven on fakes only;
+AGENT_SCENARIO_ACCEPTANCE later used actual Ollama Cloud calls, with normal serial
+acceptance and real GPU/media/upload still pending. Current local UI evidence is reported
+separately below and does not prove those external workflows.
+
+## CICLUL 2 — oprire, corectări, repornire: modelul Owner-ului rămâne, blocker-ul scriitorului merge la cercetare, kimi-k3 interzis; suita completă citită (Claude) (2026-10-15)
+
+Owner, în timpul zilei pornite de el (04:56Z): «oprește serverul, rulează corectările și
+după îl repornești; asta trebuie să faci mereu», «modelele de LLM, dacă au fost alese de mine,
+rămân; nu se schimbă singur», «Kimi-K3 este prea scump», «o greșeală de mișcare: schimbă sensul
+poveștii? dacă nu, trece», «verifică tot înainte de GPU; toate imaginile din toate episoadele
+într-o sesiune, apoi mișcările». Serverul oprit grațios la 06:13Z (ziua INTERRUPTED la media,
+GPU verificat oprit); reluarea pornește singură după restart.
+
+**Ce a făcut ziua lui pe commit-ul 52bc6e3 (dovada fix-urilor de dimineață).** Marcus a răspuns
+cu JSON din prima: scenariul factual — un `blocker` cinstit (cele 40 de afirmații verificate pe
+14.10 pentru «The Supernova Surprise» sunt despre cuvântul «Discovery»: albumul, canalul,
+naveta); episodul 2 al serialului scris, rescris pe brieful editorial (38 față de 26), aprobat
+de Directoare, storyboard de 7 scene, imaginile cumpărate pe Qwen-Image-Edit-2511 (1,47 USD),
+cadrul de probă cumpărat (0,33 USD) și refuzat de QC (hârtii cu text, zoom în loc de static);
+Directoarea a dat brieful, Kael a rescris; total 1,80 USD. Nicio scrisoare de calitate către
+Owner; nicio schimbare de model din reparații (cele trei din 05:04Z sunt ale lui: Marcus →
+gpt-oss:120b).
+
+**Cauze găsite și corectate în acest ciclu.**
+1. `search_queries` lua majuscula de început de propoziție drept nume («Discovery that the
+   universe's expansion…») → căutarea pe Wikipedia a găsit paginile «Discovery», iar regula
+   «pagina găsită bate ghicitul» a lăsat deoparte paginile corecte numite de Dr. Aris
+   (Type Ia supernovae, Dark energy). Primul cuvânt e nume doar dacă apare cu majusculă și
+   în interiorul unei propoziții, e acronim sau deschide un șir de nume.
+2. `blocker`-ul scriitorului (contractul de identitate) era citit ca «format greșit».
+   `ScriptBlocked`: motivul lui în registru, subiectul înapoi PROPUS cu notă către Directoare
+   (`_topic_back_to_research`), cercetarea îl citește din nou (`_gather_for_candidates`:
+   sursele de dinaintea notei sunt consumate). Showrunner-ul la fel (`DraftRefused` cu
+   cuvintele lui).
+3. Modelul ales de Owner rămâne: `switch_model` nu mai mută un agent al cărui model e al
+   lui (`owner_home_model`); dacă eșuează și alt model răspunde, cardul lui; dacă totul
+   pică, cădere de furnizor, fără card. `.env`: `STUDIO_MODEL_DENY_LIST=kimi-k3*`.
+4. Brieful Directoarei la QC: o mișcare sau un ritm altfel decât planul, cât timp scena
+   spune același lucru, e minor (se acceptă, nimic nu se recumpără); sensul poveștii decide.
+5. A doua întrebare în JSON a showrunner-ului (ciclul 1) scoasă: etapa serialului are deja
+   reîntrebarea ei cu motivul (două prompturi, nu trei — `test_serial_self_recovery`,
+   `test_serial_tell_now`).
+6. Lumile de test aliniate: ruta de producție declarată în `test_serial_sheet_gate`; textul
+   întreg în `test_editorial_quality`; lecția-raport peste `LESSON_MAX_CHARS` (4000, nu 400);
+   Cloud fără `think` în `test_mail`; `.env.example` cu cele trei setări ale nopții; capul
+   din CURRENT_STATUS și 16_DECISION_LOG reparate cu `docs_note.py`; baseline-ul de secrete
+   revizuit (hash-uri din AGENCY_WATCH_STATE).
+
+**Suita completă (detașat, 1 h 05): 5748 trecute, 37 picate, 46 erori.** Erorile = `caplog`
+lipsă (rulată cu `-p no:logging`, vina rulării). Din cele 37: 17 picau și pe 3dad2ff
+(dinaintea zilei): `test_bad_film_never_bought` (2), `test_film_close`,
+`test_mode_lowered_mid_step`, `test_motion_v2` (5), `test_next_round_balance` (4),
+`test_owner_takes_never_retired`, `test_paid_path_write_lock` (2), `test_env_example`;
+rămân deschise ale nopții: `test_no_paid_path_escapes` (3: `reference_image_adapter` pe
+scară fără ușă falsă; `run_rounds` fără ușă de rezervare/gate pe calea refacerii pregătite),
+`test_runpod_money_adversary` (3), `test_readiness` (bugetul sub un film), `test_rewrite_learns`.
+Toate în roadmap, cu proprietarul lor (sesiunile de noapte).
+
+**Rămâne (regula GPU).** Între filme/episoade fiecare scară își deschide sesiunea ei; în
+film e deja un lot. Proiect separat: toate storyboard-urile duse la pragul GPU, un lot de
+imagini, apoi un lot de mișcări (`RoundWork`/`run_prepared` există pentru refaceri).
+
+**Urmează.** Repornire; reluarea zilei întrerupte; Kael rescrie scena 1 a episodului 2 →
+imagine nouă → clip → QC; cercetarea recitește pentru «The Supernova Surprise»; f06808c9.
+
 ## VERIFICARE ORARĂ 06:40–07:00 — Marcus pus înapoi pe kimi-k3 (din pagină), rulare manuală pornită 06:55; ATENȚIE: lucru în paralel (2026-10-15 07:00, Claude/Cowork verificare orară programată)
 
 Sesiunea programată a Owner-ului (verificare din oră în oră, fără shell: doar MCP Filesystem + browserul
@@ -421,11 +487,6 @@ existing workflow suite 91, ladder/serial/purchase-bound suites 33 passed. Ruff,
 diff and document hashes pass. Scoped mypy has five unchanged pre-existing errors, proven
 against HEAD in a disposable snapshot; not declared green. Details and rollback:
 DIRECTOR_DELIVERY_ROUTING_2026-10-13.md. No active claim remains for this task.
-
-Current proof: the 2026-10-01/02 paid film readiness audit was proven on fakes only;
-AGENT_SCENARIO_ACCEPTANCE later used actual Ollama Cloud calls, with normal serial
-acceptance and real GPU/media/upload still pending. Current local UI evidence is reported
-separately below and does not prove those external workflows.
 
 ## Active claim — REPAIR_LOOP_ROUND4 (2026-10-12, session «Hartă funcții și LLM backend»)
 

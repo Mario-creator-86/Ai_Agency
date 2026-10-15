@@ -95,6 +95,7 @@ from app.economy.budget import (
 from app.economy.services import EconomyError
 from app.factual.agent_pipeline import (
     NoVerifiedClaims,
+    ScriptBlocked,
     ScriptRejected,
     agent_extract_claims,
     agent_verify_claim,
@@ -476,6 +477,58 @@ def _performance_intake(engine: Engine, vault: Any) -> dict[str, Any]:
 # ------------------------------------------------------- research and verification --
 
 
+#: The body key of the Director's note that a topic's script was blocked on what research
+#: gave it; sources fetched before the note are spent, the topic is read for again.
+SCRIPT_BLOCKED_KEY = "script_blocked"
+
+
+def _topic_back_to_research(engine: Engine, topic_id: str, blocker: Any) -> None:
+    """A SELECTED topic whose writer stopped is PROPOSED again, with his reason noted to the
+    Director: `_gather_for_candidates` reads for it again (the note is newer than its
+    sources), verification and selection follow, and the writer sees new claims."""
+    from app.agents.messages import post_message  # noqa: PLC0415
+
+    with Session(engine) as session, session.begin():
+        topic = session.get(TopicIdea, topic_id)
+        if topic is None:
+            return
+        if topic.status == "SELECTED":
+            topic.status = "PROPOSED"
+        director = agent_for_role(session, "Director")
+        post_message(
+            session,
+            intent="STATUS",
+            subject=(
+                f"Scenaristul s-a oprit la «{topic.title[:80]}»: subiectul merge înapoi la "
+                "cercetare"
+            ),
+            body={
+                "topic_id": topic_id,
+                SCRIPT_BLOCKED_KEY: str(getattr(blocker, "reason", "") or "")[:1000],
+                "needs": str(getattr(blocker, "needs", "") or "")[:1000],
+            },
+            body_text=(
+                f"Scenaristul nu a putut scrie «{topic.title}» cinstit: "
+                f"{getattr(blocker, 'reason', '')}\n"
+                + (f"Are nevoie de: {blocker.needs}\n" if getattr(blocker, "needs", "") else "")
+                + "Subiectul e din nou PROPUS; cercetarea citește alte pagini pentru el la "
+                "următoarea trecere, apoi verificarea și alegerea subiectului."
+            ),
+            to_agent_id=director.id if director else None,
+        )
+
+
+def _sent_back_after(session: Session) -> dict[str, str]:
+    """topic_id → when its script was last blocked (the Director's note), if ever."""
+    sent_back: dict[str, str] = {}
+    for message in session.scalars(select(AgentMessage).where(AgentMessage.intent == "STATUS")):
+        body = message.body_json if isinstance(message.body_json, dict) else {}
+        if body.get(SCRIPT_BLOCKED_KEY) and body.get("topic_id"):
+            topic_id = str(body["topic_id"])
+            sent_back[topic_id] = max(sent_back.get(topic_id, ""), str(message.created_at))
+    return sent_back
+
+
 def _gather_for_candidates(
     engine: Engine, registry: ProviderRegistry, settings: Settings
 ) -> list[dict[str, Any]]:
@@ -489,8 +542,14 @@ def _gather_for_candidates(
     """
     candidates_per_day, pages_per_topic = research_budget(settings)
     with Session(engine) as session:
+        # A topic whose writer stopped on what its sources gave him is read for again:
+        # the pages fetched before the Director's note are spent (`_topic_back_to_research`).
+        sent_back = _sent_back_after(session)
         with_sources = {
-            row for row in session.scalars(select(SourceSnapshot.topic_id)) if row is not None
+            row.topic_id
+            for row in session.scalars(select(SourceSnapshot))
+            if row.topic_id is not None
+            and str(row.fetched_at) >= sent_back.get(str(row.topic_id), "")
         }
         # A topic whose pages could not be found today is not tried again today: the
         # Researcher's escalation says so, and the same guesses would 404 the same way.
@@ -1072,6 +1131,14 @@ def _script_and_storyboard(
                 if review["verdict"] == "REJECT":
                     break  # the budget is spent or the story is unsupportable; let it go
                 notes = list(review["notes"])
+            except ScriptBlocked as exc:
+                # The writer's honest stop: what he was given cannot be written. The topic
+                # goes back to research with his reason, through the Director, and the day
+                # goes on (2026-10-15, «The Supernova Surprise» on claims about «Discovery»).
+                logger.info("script_blocked", extra={"topic_id": topic_id, "reason": str(exc)})
+                rejected.append(error_words(exc))
+                _topic_back_to_research(engine, topic_id, exc.blocker)
+                break
             except (ScriptRejected, NoVerifiedClaims) as exc:
                 # The draft was refused and nothing was stored — which is the pipeline working,
                 # not the day breaking. A model that writes narration it cannot attribute to a

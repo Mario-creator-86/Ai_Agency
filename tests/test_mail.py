@@ -618,7 +618,7 @@ def test_a_day_that_stops_writes_to_the_owner_where_and_why(engine, settings, st
 # --------------------------------------------------------------------------- 2026-09-11
 
 
-def test_the_configured_adapter_asks_ollama_for_thinking_off_and_reports_how_it_ended(
+def test_the_configured_adapter_asks_cloud_nothing_about_thinking_and_reports_how_it_ended(
     monkeypatch,
 ):
     """The studio's connections run through ConfiguredLLM, not the seeded local adapter."""
@@ -633,7 +633,9 @@ def test_the_configured_adapter_asks_ollama_for_thinking_off_and_reports_how_it_
     import asyncio
 
     result = asyncio.run(adapter.generate("qwen3.5:397b", "Verify", max_tokens=700))
-    assert seen["path"] == "/api/generate" and seen["body"]["think"] is False
+    # Cloud is asked nothing about thinking (2026-10-15: `think: false` made glm-5.3-flash
+    # narrate its reasoning into the answer); the local endpoint still is.
+    assert seen["path"] == "/api/generate" and "think" not in seen["body"]
     assert seen["body"]["options"]["num_predict"] == 700
     assert result.text == "" and result.raw_response["done_reason"] == "length"
     assert "thinking" not in result.raw_response

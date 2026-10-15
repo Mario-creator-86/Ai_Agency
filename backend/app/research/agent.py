@@ -644,6 +644,17 @@ def search_queries(title: str, topic: str = "") -> list[str]:
     three or more words is also asked as its first two; at most six searches.
     """
     queries: list[str] = []
+    # A capital that opens a sentence is not a name: «Discovery that the universe's
+    # expansion is accelerating…» (2026-10-14, d7d80450) searched Wikipedia for «Discovery»,
+    # found the album, the channel and the shuttle, and the studio read those instead of
+    # the Researcher's right pages. A word is a name at a sentence's start only when it is
+    # also capitalised inside a sentence, is an acronym, or starts a run of names.
+    inside: set[str] = set()
+    for text in (title, topic):
+        for index, word in enumerate(str(text).split()):
+            bare = re.sub(r"[’']s$", "", word.strip("'\"“”‘’(),.:;!?"))
+            if index and bare and bare[0].isupper():
+                inside.add(bare.lower())
     for text in (title, topic):
         words = [w.strip("'\"“”‘’(),.:;!?") for w in str(text).split()]
         run: list[str] = []
@@ -661,6 +672,14 @@ def search_queries(title: str, topic: str = "") -> list[str]:
         if run:
             runs.append(run)
         for group in runs:
+            if (
+                len(group) == 1
+                and words
+                and group[0] == re.sub(r"[’']s$", "", words[0])
+                and group[0].lower() not in inside
+                and not (group[0].isupper() and len(group[0]) >= 3)
+            ):
+                continue  # the sentence's first word, capitalised for that reason alone
             queries.append(" ".join(group[:4]))
             if len(group) >= 3:
                 queries.append(" ".join(group[:2]))

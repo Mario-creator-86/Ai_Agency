@@ -69,6 +69,18 @@ def scene_sources(engine, storyboard_id: str) -> dict[int, str]:
         }
 
 
+@pytest.fixture(autouse=True)
+def _the_production_stills_route(monkeypatch):
+    """The serial's complete prompt (never cut to fit, 2026-10-14) is judged against the route
+    it is bought on: production's GPU worker allows MAX_PROMPT, this world's default still
+    model only Runway's legacy thousand without this declaration."""
+    from app.media import prompt_lint
+    from app.media.cost_plan import STILLS_MODEL
+    from runpod_worker.contract import MAX_PROMPT
+
+    monkeypatch.setitem(prompt_lint.ALLOWANCES, STILLS_MODEL, MAX_PROMPT)
+
+
 def a_pass_built_board(engine, monkeypatch, settings) -> str:
     """The storyboard as `serial_unfilmed` builds it: from the rows, with no model."""
     episode_id = an_approved_episode_with_no_storyboard(engine, monkeypatch, settings)

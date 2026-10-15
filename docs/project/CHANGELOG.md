@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-10-15 — Cycle 2: the Owner's model stays, a blocked writer goes back to research, a first capital is not a name
+
+The Owner stopped the day's server himself and set the cycle: stop, fix, restart.
+
+- A sentence's first capital is no longer searched as a name (`research.agent.search_queries`): «Discovery that the universe's expansion…» had made the studio read the «Discovery» pages instead of the Researcher's right ones.
+- A writer's honest `blocker` is `ScriptBlocked`, not a format fault: his reason in the register, the topic PROPOSED again with a note to the Director (`_topic_back_to_research`), and research reads for it again (`_gather_for_candidates`: sources before the note are spent). The showrunner's blocker is refused in his words.
+- A model the Owner chose himself is never switched by the Director's repair (`switch_model`, `owner_home_model`): his card when it fails while another answers, nothing when the provider is down. `.env`: `STUDIO_MODEL_DENY_LIST=kimi-k3*`.
+- The Director's QC brief: a camera move or pace other than the plan's, while the scene still tells the same thing, is minor — nothing is bought again for it.
+- The showrunner's second JSON ask (cycle 1) removed: the serial stage's own retry with the reason already asks twice.
+- Test worlds aligned (serial sheet gate on the production route, whole text in editorial quality, LESSON_MAX_CHARS 4000, Cloud without `think` in test_mail), `.env.example` documents the night's three settings, the journals' heads repaired with `docs_note.py`, the secrets baseline reviewed. `scripts/restart.py --stop-only`.
+- Full suite read (detached): 5748 passed; 17 failures predate today, 10 are the night's structural work (paid-path audits, money adversary, readiness, rewrite learns) — listed in the roadmap with their owners.
+
 ## The studio publishes by itself again: the writers answer, the stuck film moves — 2026-10-15
 
 Nothing had been published since 2026-10-12. Four causes, each with evidence, each fixed where it

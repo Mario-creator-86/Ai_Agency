@@ -15,6 +15,19 @@
       instead; `NEEDS_RECONCILIATION` is not in `LIVE_PUBLICATION_STATES` (duplicate risk).
 - [ ] mypy: 20 pre-existing errors in events_feed, input_guard, redo_cap, goal, elevenlabs_lexicon.
 - [ ] A direct test of `_publish_one`'s SKIPPED on `ValueError`/`OSError`.
+- [ ] GPU batching across films (Owner, 2026-10-15): take every storyboard to its GPU boundary, one
+      session for all stills, then one for all motions (`RoundWork`/`run_prepared` serve repairs
+      today; the first-time steps of `_walk_staircase` are synchronous per board).
+- [ ] Open from the night's structural work (fail on 52bc6e3, passed before): `test_no_paid_path_escapes`
+      (3: `reference_image_adapter` reached on the walk with no fake; `gpu_batch.run_rounds` with no
+      booking/gate door via `prepared_batch`), `test_runpod_money_adversary` (3), `test_readiness`
+      (daily budget below one film), `test_rewrite_learns` (job-1).
+- [ ] Pre-existing failures (also on 3dad2ff): `test_bad_film_never_bought` (2), `test_film_close`
+      (`native_thinking` kwarg on the stub), `test_mode_lowered_mid_step`, `test_motion_v2` (5),
+      `test_next_round_balance` (4, `failure_kind`), `test_owner_takes_never_retired`,
+      `test_paid_path_write_lock` (2).
+- [ ] The hourly Cowork session presses «Începe ziua» and reassigns models; the Owner decides whether
+      it may act or only watch.
 - [ ] A ladder scene the studio cannot rewrite (no shot plan, closed film, a card) repeats
       «Directoarea nu a putut încă rescrie … studioul reia singur rescrierea» every day with no
       note: write one `developer_defect` note and stop repeating (seen in the three-days test).

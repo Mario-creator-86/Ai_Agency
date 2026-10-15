@@ -1,6 +1,6 @@
 {
-  "observed_at": "2026-10-15T04:49:51.292485+00:00",
-  "event_cursor": 24088,
+  "observed_at": "2026-10-15T06:30:15.714981+00:00",
+  "event_cursor": 24325,
   "claimed_tasks": [],
   "recent_runs": [
     {
@@ -393,33 +393,43 @@
       "source_changes_in_this_diagnosis": false
     }
   },
-  "last_reported_event_cursor": 24008,
-  "last_reported_summary": "Kimi-k3 a returnat JSON valid; Supernova a fost blocat de lipsa documentarii relevante, iar episodul JSON a fost respins la validare; rezumat 605 caractere fata de vechiul plafon 600. Fara episod nou sau media noua.",
+  "last_reported_event_cursor": 24274,
+  "last_reported_summary": "Sunt acceptate 6/7 imagini. Prima probă video LTX-2.5 este în coadă, cu primul cadru verificat din imaginea acceptată. Scena 7 este blocată de textul de pe plăcuță; nu există încă prompt corectat și verificat de Sarah. Filmul nu este finalizat.",
   "monitoring_status": "NEW_STILL_ACCEPTED_VISUAL_MISMATCH_AND_OLD_IMAGE_CAP_BLOCKS_VIDEO",
   "studio_status": {
     "autonomy_stopped": false,
     "autonomy_mode": "AUTONOMOUS_CEO",
-    "service_live": 200,
-    "service_ready": 200
+    "api_unreachable": true,
+    "daily_run_stored_status": "INTERRUPTED",
+    "daily_run_id": "79bdbdb8-572a-4982-bf54-fb51d592bb28",
+    "daily_stages_completed": 7,
+    "daily_stages_total": 13,
+    "running_db_rows_do_not_prove_active_execution": true,
+    "daily_stopped_at_stage": "media",
+    "daily_finished_at": "2026-10-15T06:13:04.969503+00:00",
+    "gpu_off_verified_at": "2026-10-15T06:13:09.670736+00:00"
   },
   "policy_changed_after_last_report": false,
   "service_check": {
-    "live": 200,
-    "ready": 200,
-    "service_started_by_codex": false
+    "at": "2026-10-15T06:30:15.714981+00:00",
+    "live": "UNREACHABLE",
+    "ready": "UNREACHABLE",
+    "shutdown_previously_confirmed": true,
+    "service_started_by_monitor": false
   },
   "last_run_inspected": {
-    "id": "12e76908-90a5-4dba-9304-d08b5a7ecc7a",
-    "task_type": "answer_mail",
-    "model_name": "kimi-k3",
-    "status": "SUCCEEDED",
-    "started_at": "2026-10-15T04:13:27.835452+00:00"
+    "id": "451d5493-0342-499d-a3d8-59cb74f251a1",
+    "task_type": "director_rewrite_review",
+    "model_name": "deepseek-v4.1-flash",
+    "status": "EMPTY_OUTPUT",
+    "started_at": "2026-10-15T06:00:37.619187+00:00",
+    "finished_at": "2026-10-15T06:13:04.950501+00:00"
   },
   "last_event_inspected": {
-    "sequence": 24088,
-    "event_id": "1da3a28b-3201-4cd5-9e3b-ae4f406e8e3f",
+    "sequence": 24325,
+    "event_id": "7e087b81-b3cc-4289-a8a9-cbcbe4f209c2",
     "event_type": "runpod.gpu_off_verified",
-    "timestamp": "2026-10-15T04:48:07.096668+00:00"
+    "timestamp": "2026-10-15T06:13:09.670736+00:00"
   },
   "local_reference_and_response_repairs": {
     "reference_doc": "REFERENCE_ROUTE_WARDROBE_AND_STUDIO_WAIT_2026-10-15.md",
@@ -479,16 +489,33 @@
     "stopped_at_stage": "serial_queue"
   },
   "last_quiet_check": {
-    "quiet_while_service_off": true,
-    "events_inspected_from": 24079,
-    "events_inspected_through": 24088,
-    "gpu_off_verified": true,
-    "service_live": "CONNECTION_REFUSED",
-    "service_ready": "CONNECTION_REFUSED",
-    "new_agent_run_observed": false,
-    "new_correspondence": false,
-    "new_saved_episode": false,
-    "new_media_generation": false,
+    "decision": "DONT_NOTIFY",
+    "reason": "studio_remains_stopped_no_new_events_runs_mail_or_generation",
+    "event_cursor_unchanged": 24325,
+    "active_queue_count": 0,
+    "documents_read": [
+      {
+        "name": "CURRENT_STATUS",
+        "modified": "2026-10-15T06:19:33.125626+00:00",
+        "characters": 789476
+      },
+      {
+        "name": "SERIAL_PROMPT_MODEL_LIMIT_2026-10-14",
+        "modified": "2026-10-14T10:43:22.720090+00:00",
+        "characters": 4701
+      },
+      {
+        "name": "AGENCY_LOOP_DIAGNOSIS_2026-10-14",
+        "modified": "2026-10-14T07:06:21.779126+00:00",
+        "characters": 7336
+      },
+      {
+        "name": "PROMPT_CONTRACT_FOLLOWUP_2026-10-14",
+        "modified": "2026-10-14T05:29:40.183864+00:00",
+        "characters": 9595
+      }
+    ],
+    "all_saved_v3_prompts_preserved": true,
     "models_called_by_monitor": false,
     "source_or_policy_changed_by_monitor": false
   },
@@ -619,19 +646,24 @@
     "observed_without_new_daily_or_agent_run": true
   },
   "current_daily_activity": {
-    "daily_run_id": "4d056eba-b933-4b55-826c-abab13d7cb7a",
-    "queue_task_id": "f7810bdd-c997-4294-874a-f1d3e1f89b96",
+    "daily_run_id": "79bdbdb8-572a-4982-bf54-fb51d592bb28",
+    "queue_task_id": "96d61072-6b90-4148-a505-9f92b5c34804",
     "manual": true,
-    "status": "COMPLETED",
-    "stage": "serial_next",
-    "stages_completed": 13,
+    "requested_at_utc": "2026-10-15T04:56:15.831186+00:00",
+    "status": "INTERRUPTED",
+    "stage": "media",
+    "stages_completed": 7,
     "stages_total": 13,
-    "actual_writer_model": "kimi-k3",
-    "episode_saved": false,
-    "no_new_cloud_generation": true,
-    "finished_at_utc": "2026-10-15T04:00:55.429742+00:00",
-    "completion_event": 24036,
-    "current_day_episode_stage_event": 24035
+    "episode_run_id": "22fd19eb-9a07-4dbb-aa79-7ac57abe4e03",
+    "actual_episode_model": "kimi-k3",
+    "episode_day": "2026-10-14",
+    "episode_result_pending": true,
+    "episode_saved": true,
+    "script_rejected_stage_event": 24125,
+    "no_new_cloud_generation": false,
+    "id": "79bdbdb8-572a-4982-bf54-fb51d592bb28",
+    "stopped_at_stage": "media",
+    "finished_at": "2026-10-15T06:13:04.969503+00:00"
   },
   "latest_script_format_rejection": {
     "run_id": "7c2e6b00-da6f-48b1-8685-ee32b40d8de3",
@@ -644,18 +676,15 @@
     "notification_sent_once": true
   },
   "last_check": {
-    "events_inspected_from": 23833,
-    "events_inspected_through": 24008,
-    "new_manual_daily_run": true,
-    "production_writer_actual_model": "kimi-k3",
-    "script_blocker_is_missing_relevant_research": true,
-    "episode_json_valid_but_not_accepted": true,
-    "new_saved_episode": false,
-    "new_media_generation": false,
+    "at": "2026-10-15T05:36:43.522188+00:00",
+    "decision": "NOTIFY",
     "service_live": 200,
     "service_ready": 200,
-    "models_called_by_monitor": false,
-    "source_or_policy_changed_by_monitor": false
+    "autonomy_stopped": false,
+    "events_inspected_from": 24255,
+    "events_inspected_through": 24274,
+    "production_parameters_changed_by_monitor": false,
+    "models_called_by_monitor": false
   },
   "latest_episode_format_rejection": {
     "run_ids": [
@@ -783,7 +812,7 @@
     "changed_by_monitor": false
   },
   "external_runtime_fixes_handoff": {
-    "current_status_modified_at_utc": "2026-10-15T04:23:53.012557+00:00",
+    "current_status_modified_at_utc": "2026-10-15T04:53:34.516413+00:00",
     "claims_cloud_think_omission_fix": true,
     "claims_json_writer_repair": true,
     "source_approved_still_skips_still_composition_issues_for_motion": true,
@@ -793,7 +822,8 @@
     "new_gpu_request_proof_absent": true,
     "tests_not_run_by_monitor": true,
     "published_film_work_not_performed_by_monitor": true,
-    "new_runtime_success_not_observed": true
+    "new_runtime_success_not_observed": true,
+    "tests_and_prompt_allowance_documentation_updated": true
   },
   "kimi_production_validation_findings": {
     "script_run_id": "949d26cd-2ca7-4997-8a74-985d5ccb364b",
@@ -851,6 +881,1148 @@
     ],
     "autonomy_stopped_last_read": false,
     "monitor_did_not_stop_or_start_service": true,
-    "new_generation_before_shutdown": false
+    "new_generation_before_shutdown": false,
+    "last_health_recheck_utc": "2026-10-15T04:54:32.192938+00:00",
+    "workflow_job_after_shutdown_event": 24089,
+    "no_new_agent_or_media_run": true,
+    "recovery_observed_at_utc": "2026-10-15T04:59:41.381509+00:00",
+    "latest_live_http": 200,
+    "latest_ready_http": 200,
+    "monitor_did_not_start_service": true
+  },
+  "new_approved_episode": {
+    "episode_id": "88c27e33-310d-4767-a5e1-c31b460b0235",
+    "title": "Twenty-Eight Rewrites Before Breakfast",
+    "storyboard_id": "2d276038-2009-4a6a-a75f-32ba5ab4b1ff",
+    "writer_run_id": "0165cb0f-6761-49e9-b979-1ef49b875312",
+    "actual_writer_model": "kimi-k3",
+    "reviewers": [
+      {
+        "id": "98a7543b-8245-45d2-be8a-eb5f122d42c7",
+        "task_type": "episode_review",
+        "model_name": "deepseek-v4.1-flash",
+        "display_name": "Sarah (Director)"
+      },
+      {
+        "id": "fe58b671-3bb4-4fa6-bcf4-8c427a993a6b",
+        "task_type": "editorial_judgement",
+        "model_name": "deepseek-v4.1-flash",
+        "display_name": "Sarah (Director)"
+      }
+    ],
+    "first_variant_rejected": true,
+    "first_variant_id": "27c6a77b-4aa1-4d53-bf41-ba582b1d875e",
+    "editorial_first_total": 26,
+    "editorial_approved_total": 38,
+    "approved_event": 24152,
+    "storyboard_created_event": 24154,
+    "scene_count": 7,
+    "shot_prompts_run_pending": "87d95086-d500-46ee-a9fc-476c6d64e13a",
+    "actual_shot_prompts_model": "mistral-large-4",
+    "initial_scene_prompt_audit": [
+      {
+        "scene": 1,
+        "scene_id": "5807b9c5-ef83-4eca-90d8-de0482a58958",
+        "series_look_version": 3,
+        "still_prompt_chars": 1365,
+        "motion_prompt_chars": 801,
+        "prompt_json_sha256": "20212bdefc27d3b567305ca344761a8b1c59d4117a0e95fa3796ee4585969576",
+        "visual_matches_saved_still": true,
+        "from_model": false
+      },
+      {
+        "scene": 2,
+        "scene_id": "91ea3b8f-a909-4c01-925a-7407127b1fcf",
+        "series_look_version": 3,
+        "still_prompt_chars": 1390,
+        "motion_prompt_chars": 792,
+        "prompt_json_sha256": "5e2afcaf051b25cbcc11dd2503371b74c31225179b0fd12f885d7394e0705816",
+        "visual_matches_saved_still": true,
+        "from_model": false
+      },
+      {
+        "scene": 3,
+        "scene_id": "2579a616-75fd-4a96-be09-0d89bbd24980",
+        "series_look_version": 3,
+        "still_prompt_chars": 1293,
+        "motion_prompt_chars": 699,
+        "prompt_json_sha256": "5368a370b6921af6da0d63e646aa4f42094a6c80fbdf63f0ab1720e9df699321",
+        "visual_matches_saved_still": true,
+        "from_model": false
+      },
+      {
+        "scene": 4,
+        "scene_id": "05de4750-8c79-4dfe-a71e-8c94b331e086",
+        "series_look_version": 3,
+        "still_prompt_chars": 1392,
+        "motion_prompt_chars": 778,
+        "prompt_json_sha256": "5b1117d0ff61b35b25c57cddf39619631a3b49ed34b46e1107940b1f54168d62",
+        "visual_matches_saved_still": true,
+        "from_model": false
+      },
+      {
+        "scene": 5,
+        "scene_id": "18948a0a-ebda-4ae8-9af9-f13fe0857414",
+        "series_look_version": 3,
+        "still_prompt_chars": 1425,
+        "motion_prompt_chars": 807,
+        "prompt_json_sha256": "79c48c0912773c28f129ace84dd93e914c5959b80007fcbc7ed29a97af593b9b",
+        "visual_matches_saved_still": true,
+        "from_model": false
+      },
+      {
+        "scene": 6,
+        "scene_id": "0b355363-2c3b-4d8f-bf2c-bf3cd5b6e7bd",
+        "series_look_version": 3,
+        "still_prompt_chars": 1387,
+        "motion_prompt_chars": 799,
+        "prompt_json_sha256": "1dce9851af48160d2ccd0d4fb5f54d408973e13a08aff7b0c97576f0826d6af5",
+        "visual_matches_saved_still": true,
+        "from_model": false
+      },
+      {
+        "scene": 7,
+        "scene_id": "5c8abffb-6b3d-4da5-bda3-ed0d3aac8e28",
+        "series_look_version": 3,
+        "still_prompt_chars": 1386,
+        "motion_prompt_chars": 780,
+        "prompt_json_sha256": "9c8574cedc6affeb68a5448d84de58ac5c4a67f0cfcb73556362d2851044c076",
+        "visual_matches_saved_still": true,
+        "from_model": false
+      }
+    ],
+    "gpu_request_sent": false,
+    "visual_quality_proven": false,
+    "film_completed": false,
+    "notification_sent_once": true
+  },
+  "marcus_latest_model_assignment": {
+    "event": 24157,
+    "configured_model": "deepseek-v4.1-flash",
+    "origin": "OWNER",
+    "approved_episode_actual_model_remains": "kimi-k3",
+    "new_model_production_run_not_yet_observed": true,
+    "changed_by_monitor": false
+  },
+  "new_reference_generation_audit": {
+    "storyboard_id": "2d276038-2009-4a6a-a75f-32ba5ab4b1ff",
+    "episode_title": "Twenty-Eight Rewrites Before Breakfast",
+    "shot_prompt_run_id": "87d95086-d500-46ee-a9fc-476c6d64e13a",
+    "actual_shot_prompt_model": "mistral-large-4",
+    "shot_prompts_from_model": 7,
+    "parse_method": "strict",
+    "prompt_written_event": 24162,
+    "requests": [
+      {
+        "job_id": "f795d3de-00ad-4b9b-99b6-6c03b03e8d99",
+        "scene": "1",
+        "actual_model": "Qwen-Image-Edit-2511",
+        "operation": "image",
+        "status": "COMPLETED",
+        "accepted": 0,
+        "series_look_version": 3,
+        "saved_prompt_chars": 1559,
+        "sent_prompt_chars": 1730,
+        "saved_prompt_preserved_as_exact_prefix": true,
+        "reference_instruction_appended_chars": 171,
+        "sent_prompt_sha256": "a208d474d4f105321a566f6bb56f215bf97a4a28f6ad320294a68a343c828230",
+        "reference_count": 1,
+        "asset_sha256": "642ed3ce61d327fd42587771683ad3a87e3afa31cb9257a80ead4c451fe0ffa4"
+      },
+      {
+        "job_id": "1496a2e4-7a2d-4e76-ae71-333555c9b4ba",
+        "scene": "1",
+        "actual_model": "Qwen-Image-Edit-2511",
+        "operation": "image",
+        "status": "COMPLETED",
+        "accepted": 1,
+        "series_look_version": 3,
+        "saved_prompt_chars": 1559,
+        "sent_prompt_chars": 1730,
+        "saved_prompt_preserved_as_exact_prefix": true,
+        "reference_instruction_appended_chars": 171,
+        "sent_prompt_sha256": "a208d474d4f105321a566f6bb56f215bf97a4a28f6ad320294a68a343c828230",
+        "reference_count": 1,
+        "asset_sha256": "295773f6b3f7e66eef5bb82953fdf6c104fa3afe97be2f11629818e113bcfa2e"
+      },
+      {
+        "job_id": "85c2e969-3afd-4592-a1f1-2c3e665fa4c0",
+        "scene": "2",
+        "actual_model": "Qwen-Image-Edit-2511",
+        "operation": "image",
+        "status": "COMPLETED",
+        "accepted": null,
+        "series_look_version": 3,
+        "saved_prompt_chars": 1577,
+        "sent_prompt_chars": 1836,
+        "saved_prompt_preserved_as_exact_prefix": true,
+        "reference_instruction_appended_chars": 259,
+        "sent_prompt_sha256": "9b9ff68bd4eb753275701cb81fa90ab2126959c5b366274c454e470350d13024",
+        "reference_count": 2,
+        "asset_sha256": "0f8e5ece6a99b196a26fd55a85bf154517d68cf7970ff2a96480b9924342ad8a"
+      },
+      {
+        "job_id": "f30f16ec-55dd-4a91-856b-ba27c8c0908d",
+        "scene": "2",
+        "actual_model": "Qwen-Image-Edit-2511",
+        "operation": "image",
+        "status": "RUNNING",
+        "accepted": null,
+        "series_look_version": 3,
+        "saved_prompt_chars": 1577,
+        "sent_prompt_chars": 1836,
+        "saved_prompt_preserved_as_exact_prefix": true,
+        "reference_instruction_appended_chars": 259,
+        "sent_prompt_sha256": "9b9ff68bd4eb753275701cb81fa90ab2126959c5b366274c454e470350d13024",
+        "reference_count": 2,
+        "asset_sha256": null
+      },
+      {
+        "job_id": "a74a91e7-b80e-4364-8e63-818bd53f0ee5",
+        "scene": "3",
+        "actual_model": "Qwen-Image-Edit-2511",
+        "operation": "image",
+        "status": "RUNNING",
+        "accepted": null,
+        "series_look_version": 3,
+        "saved_prompt_chars": 1526,
+        "sent_prompt_chars": 1789,
+        "saved_prompt_preserved_as_exact_prefix": true,
+        "reference_instruction_appended_chars": 263,
+        "sent_prompt_sha256": "0a1ed826c6f18ee2ed2868b58359a16b555645d396ec997c8548d6997d0f97ff",
+        "reference_count": 2,
+        "asset_sha256": null
+      },
+      {
+        "job_id": "9658b887-6ad9-479f-9112-216128ac60c9",
+        "scene": "3",
+        "actual_model": "Qwen-Image-Edit-2511",
+        "operation": "image",
+        "status": "RUNNING",
+        "accepted": null,
+        "series_look_version": 3,
+        "saved_prompt_chars": 1526,
+        "sent_prompt_chars": 1789,
+        "saved_prompt_preserved_as_exact_prefix": true,
+        "reference_instruction_appended_chars": 263,
+        "sent_prompt_sha256": "0a1ed826c6f18ee2ed2868b58359a16b555645d396ec997c8548d6997d0f97ff",
+        "reference_count": 2,
+        "asset_sha256": null
+      },
+      {
+        "job_id": "d4ef16e1-9774-4068-a273-86fc1c38024e",
+        "scene": "4",
+        "actual_model": "Qwen-Image-Edit-2511",
+        "operation": "image",
+        "status": "RUNNING",
+        "accepted": null,
+        "series_look_version": 3,
+        "saved_prompt_chars": 1658,
+        "sent_prompt_chars": 1917,
+        "saved_prompt_preserved_as_exact_prefix": true,
+        "reference_instruction_appended_chars": 259,
+        "sent_prompt_sha256": "691b97bb96934ef6d8def682ad889c61370812cb47b267e34ad5b8d4bc7db974",
+        "reference_count": 2,
+        "asset_sha256": null
+      },
+      {
+        "job_id": "f22c4dda-2385-4901-a31b-735dbcaa317c",
+        "scene": "4",
+        "actual_model": "Qwen-Image-Edit-2511",
+        "operation": "image",
+        "status": "RUNNING",
+        "accepted": null,
+        "series_look_version": 3,
+        "saved_prompt_chars": 1658,
+        "sent_prompt_chars": 1917,
+        "saved_prompt_preserved_as_exact_prefix": true,
+        "reference_instruction_appended_chars": 259,
+        "sent_prompt_sha256": "691b97bb96934ef6d8def682ad889c61370812cb47b267e34ad5b8d4bc7db974",
+        "reference_count": 2,
+        "asset_sha256": null
+      },
+      {
+        "job_id": "8e646982-561e-4ee2-be6f-85304cd72c20",
+        "scene": "5",
+        "actual_model": "Qwen-Image-Edit-2511",
+        "operation": "image",
+        "status": "RUNNING",
+        "accepted": null,
+        "series_look_version": 3,
+        "saved_prompt_chars": 1644,
+        "sent_prompt_chars": 1911,
+        "saved_prompt_preserved_as_exact_prefix": true,
+        "reference_instruction_appended_chars": 267,
+        "sent_prompt_sha256": "5c27e69e42c66417c06576b8b73e90dcd4a197bb982a8870f7c1e50fe855e2cf",
+        "reference_count": 2,
+        "asset_sha256": null
+      },
+      {
+        "job_id": "430ea62d-8df6-48df-b4d7-4b5c773642c3",
+        "scene": "5",
+        "actual_model": "Qwen-Image-Edit-2511",
+        "operation": "image",
+        "status": "RUNNING",
+        "accepted": null,
+        "series_look_version": 3,
+        "saved_prompt_chars": 1644,
+        "sent_prompt_chars": 1911,
+        "saved_prompt_preserved_as_exact_prefix": true,
+        "reference_instruction_appended_chars": 267,
+        "sent_prompt_sha256": "5c27e69e42c66417c06576b8b73e90dcd4a197bb982a8870f7c1e50fe855e2cf",
+        "reference_count": 2,
+        "asset_sha256": null
+      },
+      {
+        "job_id": "14784d1a-f624-4ef8-b7e5-7c1486800bd7",
+        "scene": "6",
+        "actual_model": "Qwen-Image-Edit-2511",
+        "operation": "image",
+        "status": "RUNNING",
+        "accepted": null,
+        "series_look_version": 3,
+        "saved_prompt_chars": 1567,
+        "sent_prompt_chars": 1834,
+        "saved_prompt_preserved_as_exact_prefix": true,
+        "reference_instruction_appended_chars": 267,
+        "sent_prompt_sha256": "0a4ff609df813d581b4b77594c1808e256d6724d2c5ea347566e1b6be292f111",
+        "reference_count": 2,
+        "asset_sha256": null
+      },
+      {
+        "job_id": "55c882da-faec-497d-bed2-aea3d07620ae",
+        "scene": "6",
+        "actual_model": "Qwen-Image-Edit-2511",
+        "operation": "image",
+        "status": "RUNNING",
+        "accepted": null,
+        "series_look_version": 3,
+        "saved_prompt_chars": 1567,
+        "sent_prompt_chars": 1834,
+        "saved_prompt_preserved_as_exact_prefix": true,
+        "reference_instruction_appended_chars": 267,
+        "sent_prompt_sha256": "0a4ff609df813d581b4b77594c1808e256d6724d2c5ea347566e1b6be292f111",
+        "reference_count": 2,
+        "asset_sha256": null
+      },
+      {
+        "job_id": "e73e93fb-e151-4304-8c5e-1a268a993070",
+        "scene": "7",
+        "actual_model": "Qwen-Image-Edit-2511",
+        "operation": "image",
+        "status": "RUNNING",
+        "accepted": null,
+        "series_look_version": 3,
+        "saved_prompt_chars": 1671,
+        "sent_prompt_chars": 1930,
+        "saved_prompt_preserved_as_exact_prefix": true,
+        "reference_instruction_appended_chars": 259,
+        "sent_prompt_sha256": "b8e849a86e5547ed8fa038529333f1d8922e198d01876f876fad2e4f937612e7",
+        "reference_count": 2,
+        "asset_sha256": null
+      },
+      {
+        "job_id": "133850db-f3c4-498a-a820-1ec9ecb0c3e3",
+        "scene": "7",
+        "actual_model": "Qwen-Image-Edit-2511",
+        "operation": "image",
+        "status": "RUNNING",
+        "accepted": null,
+        "series_look_version": 3,
+        "saved_prompt_chars": 1671,
+        "sent_prompt_chars": 1930,
+        "saved_prompt_preserved_as_exact_prefix": true,
+        "reference_instruction_appended_chars": 259,
+        "sent_prompt_sha256": "b8e849a86e5547ed8fa038529333f1d8922e198d01876f876fad2e4f937612e7",
+        "reference_count": 2,
+        "asset_sha256": null
+      }
+    ],
+    "first_asset_viewed_locally": true,
+    "first_asset_sha256_verified": true,
+    "visual_observation": [
+      "monitor interfaces and markings visible",
+      "lined/grid paper visible",
+      "character low in frame relative to requested composition"
+    ],
+    "first_qc_run_id": "22a5911e-9dcb-49f4-b316-128620a9fa7c",
+    "actual_first_qc_model": "mistral-large-4",
+    "first_qc_verdict": "regenerate_still",
+    "first_qc_public_reason": "Logo on headset and text on paper; medium shot instead of wide establishing shot.",
+    "second_qc_run_id": "55a77432-b8e9-4232-ae69-f4f55f0477ee",
+    "second_qc_pending_at_inspection": false,
+    "new_video_request_observed": false,
+    "no_manual_verdict_changes": true,
+    "notification_sent_once": true,
+    "second_qc_verdict": "regenerate_still",
+    "second_qc_public_reason": "Medium shot, eyes at viewer and both hands on mouse instead of wide establishing shot, eyes on monitor and hovering hand.",
+    "director_second_look_run_id": "5ca26152-93ab-45cd-b1e4-662c5d09b75e",
+    "actual_director_second_look_model": "deepseek-v4.1-flash",
+    "director_second_look_event": 24181,
+    "director_verdict": "OVERTURNED",
+    "director_accepted_minor_framing": true,
+    "accepted_scene1_take": {
+      "id": "ac49f415-574e-414e-9661-8df5ca21126a",
+      "scene_number": 1,
+      "status": "APPROVED",
+      "sha256": "295773f6b3f7e66eef5bb82953fdf6c104fa3afe97be2f11629818e113bcfa2e",
+      "path": "E:\\AI Acency\\Autonomous_AI_Studio_Documentation_v5_ECONOMY_TREASURY_VENDORSHOP\\backend\\storage\\media\\2d276038-2009-4a6a-a75f-32ba5ab4b1ff\\stills\\scene_01_c55f89aa_c2.png",
+      "approved_by": "director_look"
+    },
+    "accepted_cloud_job_id": "1496a2e4-7a2d-4e76-ae71-333555c9b4ba",
+    "accepted_asset_viewed_locally": true,
+    "accepted_asset_visual_observation": [
+      "lined/grid markings remain visible on desk papers",
+      "Kael faces viewer in medium shot"
+    ],
+    "qc_claim_pages_blank_disagrees_with_visual_inspection": true,
+    "batch_groups": [
+      {
+        "operation": "image",
+        "model": "Qwen-Image-Edit-2511",
+        "job_count": 2,
+        "created_at": "2026-10-15T05:07:29.068917+00:00"
+      },
+      {
+        "operation": "image",
+        "model": "Qwen-Image-Edit-2511",
+        "job_count": 12,
+        "created_at": "2026-10-15T05:11:56.418835+00:00"
+      }
+    ],
+    "total_image_requests_audited": 14,
+    "all_audited_saved_prompts_preserved": true,
+    "all_audited_scene_contracts_v3": true,
+    "audited_sent_prompt_char_range": [
+      1730,
+      1930
+    ],
+    "audited_reference_count_range": [
+      1,
+      2
+    ],
+    "last_delivery_snapshot": {
+      "image_jobs_total": 14,
+      "completed": 10,
+      "running": 4,
+      "accepted": 1,
+      "rejected": 1,
+      "acceptance_pending": 12
+    },
+    "latest_checked_qc_run": "699dfda4-06c8-4b78-8b02-621ecd411fc9",
+    "latest_qc_verdicts": [
+      {
+        "scene": 2,
+        "verdict": "regenerate_still",
+        "reason": "The gold nameplate on the desk carries engraved lettering, but the plan demands a completely blank nameplate with no letters anywhere in the frame."
+      }
+    ],
+    "latest_qc_updates": [
+      {
+        "run_id": "49eaaca0-ff4d-4ae3-8cf3-2d0419c5a2a9",
+        "task_summary": "Mă uit la imaginea scenei 3 înainte să se cumpere mișcarea și verific dacă au dispărut greșelile pentru care scena a fost rescrisă (1).",
+        "verdicts": [
+          {
+            "scene": 3,
+            "verdict": "regenerate_still",
+            "reason": "Kael sits at the render bay desk with blank pages and abstract screen glow, but the headset is worn on both ears rather than pushed up off one ear, and only one arm is crossed while the other rests on the mouse."
+          }
+        ]
+      },
+      {
+        "run_id": "352c6715-1ac1-4453-a3a7-2458ccdd58ca",
+        "task_summary": "Mă uit la imaginea scenei 3 înainte să se cumpere mișcarea și verific dacă au dispărut greșelile pentru care scena a fost rescrisă (1).",
+        "verdicts": [
+          {
+            "scene": 3,
+            "verdict": "regenerate_still",
+            "reason": "Kael sits forward with hands on the mouse and keyboard instead of leaning back with arms crossed, and the headset ear cup carries a visible circular logo."
+          }
+        ]
+      }
+    ],
+    "pending_qc_run": "958f6ffd-2d09-4d6d-8183-37d9a7137f2b",
+    "latest_qc_observed": [
+      {
+        "id": "2a2d6c8a-9f34-446e-b38b-c78190e28c5f",
+        "task_type": "still_qc",
+        "model_name": "mistral-large-4",
+        "status": "SUCCEEDED",
+        "started_at": "2026-10-15T05:25:20.654315+00:00",
+        "finished_at": "2026-10-15T05:27:19.196894+00:00",
+        "decisions": [
+          {
+            "scene": 6,
+            "verdict": "regenerate_still",
+            "reason": "A background monitor displays a document with text lines, violating the plan's requirement that every screen be completely blank with no lines or writing."
+          }
+        ]
+      },
+      {
+        "id": "f5a06332-b548-44f9-aa55-d4f95641718b",
+        "task_type": "still_qc",
+        "model_name": "mistral-large-4",
+        "status": "SUCCEEDED",
+        "started_at": "2026-10-15T05:27:21.059171+00:00",
+        "finished_at": "2026-10-15T05:28:22.145466+00:00",
+        "decisions": [
+          {
+            "scene": 6,
+            "verdict": "buy_motion",
+            "reason": "Dr. Aris sits centered at eye level in the warm hand-drawn studio office, shrugging with open hands and a quiet smile; brass lamps, wooden desks, plants, bookshelves and lantern-lit windows match the plan, and every page is blank with no text anywhere."
+          }
+        ]
+      },
+      {
+        "id": "33bb5e58-d3ac-4741-869f-0093a46cc78f",
+        "task_type": "still_qc",
+        "model_name": "mistral-large-4",
+        "status": "RUNNING",
+        "started_at": "2026-10-15T05:28:23.948935+00:00",
+        "finished_at": null,
+        "decisions": []
+      }
+    ],
+    "latest_cloud_state": [
+      {
+        "id": "f795d3de-00ad-4b9b-99b6-6c03b03e8d99",
+        "operation": "image",
+        "model": "Qwen-Image-Edit-2511",
+        "status": "COMPLETED",
+        "accepted": 0
+      },
+      {
+        "id": "1496a2e4-7a2d-4e76-ae71-333555c9b4ba",
+        "operation": "image",
+        "model": "Qwen-Image-Edit-2511",
+        "status": "COMPLETED",
+        "accepted": 1
+      },
+      {
+        "id": "85c2e969-3afd-4592-a1f1-2c3e665fa4c0",
+        "operation": "image",
+        "model": "Qwen-Image-Edit-2511",
+        "status": "COMPLETED",
+        "accepted": 1
+      },
+      {
+        "id": "f30f16ec-55dd-4a91-856b-ba27c8c0908d",
+        "operation": "image",
+        "model": "Qwen-Image-Edit-2511",
+        "status": "COMPLETED",
+        "accepted": 0
+      },
+      {
+        "id": "a74a91e7-b80e-4364-8e63-818bd53f0ee5",
+        "operation": "image",
+        "model": "Qwen-Image-Edit-2511",
+        "status": "COMPLETED",
+        "accepted": 1
+      },
+      {
+        "id": "9658b887-6ad9-479f-9112-216128ac60c9",
+        "operation": "image",
+        "model": "Qwen-Image-Edit-2511",
+        "status": "COMPLETED",
+        "accepted": 0
+      },
+      {
+        "id": "d4ef16e1-9774-4068-a273-86fc1c38024e",
+        "operation": "image",
+        "model": "Qwen-Image-Edit-2511",
+        "status": "COMPLETED",
+        "accepted": 0
+      },
+      {
+        "id": "f22c4dda-2385-4901-a31b-735dbcaa317c",
+        "operation": "image",
+        "model": "Qwen-Image-Edit-2511",
+        "status": "COMPLETED",
+        "accepted": 1
+      },
+      {
+        "id": "8e646982-561e-4ee2-be6f-85304cd72c20",
+        "operation": "image",
+        "model": "Qwen-Image-Edit-2511",
+        "status": "COMPLETED",
+        "accepted": 1
+      },
+      {
+        "id": "430ea62d-8df6-48df-b4d7-4b5c773642c3",
+        "operation": "image",
+        "model": "Qwen-Image-Edit-2511",
+        "status": "COMPLETED",
+        "accepted": 0
+      },
+      {
+        "id": "14784d1a-f624-4ef8-b7e5-7c1486800bd7",
+        "operation": "image",
+        "model": "Qwen-Image-Edit-2511",
+        "status": "COMPLETED",
+        "accepted": 0
+      },
+      {
+        "id": "55c882da-faec-497d-bed2-aea3d07620ae",
+        "operation": "image",
+        "model": "Qwen-Image-Edit-2511",
+        "status": "COMPLETED",
+        "accepted": 1
+      },
+      {
+        "id": "e73e93fb-e151-4304-8c5e-1a268a993070",
+        "operation": "image",
+        "model": "Qwen-Image-Edit-2511",
+        "status": "COMPLETED",
+        "accepted": 0
+      },
+      {
+        "id": "133850db-f3c4-498a-a820-1ec9ecb0c3e3",
+        "operation": "image",
+        "model": "Qwen-Image-Edit-2511",
+        "status": "COMPLETED",
+        "accepted": 0
+      },
+      {
+        "id": "696cea18-e9ed-4759-b5f8-ac0cd3aa6839",
+        "operation": "video",
+        "model": "LTX-2.5",
+        "status": "QUEUED",
+        "accepted": null
+      }
+    ],
+    "all_saved_v3_prompts_preserved_at_latest_check": true,
+    "latest_mail_inspected": {
+      "id": "d8fba541-c828-4bf9-8684-fe53151b85a5",
+      "actual_model": "mistral-large-4",
+      "done": false,
+      "type": "accounting_reconciliation_request",
+      "new_production_blocker_verified": false
+    },
+    "latest_request_audit": [
+      {
+        "id": "f795d3de-00ad-4b9b-99b6-6c03b03e8d99",
+        "operation": "image",
+        "model": "Qwen-Image-Edit-2511",
+        "saved_version": 3,
+        "prompt_chars": 1730,
+        "saved_still_preserved": true,
+        "reference_count": 1
+      },
+      {
+        "id": "1496a2e4-7a2d-4e76-ae71-333555c9b4ba",
+        "operation": "image",
+        "model": "Qwen-Image-Edit-2511",
+        "saved_version": 3,
+        "prompt_chars": 1730,
+        "saved_still_preserved": true,
+        "reference_count": 1
+      },
+      {
+        "id": "85c2e969-3afd-4592-a1f1-2c3e665fa4c0",
+        "operation": "image",
+        "model": "Qwen-Image-Edit-2511",
+        "saved_version": 3,
+        "prompt_chars": 1836,
+        "saved_still_preserved": true,
+        "reference_count": 2
+      },
+      {
+        "id": "f30f16ec-55dd-4a91-856b-ba27c8c0908d",
+        "operation": "image",
+        "model": "Qwen-Image-Edit-2511",
+        "saved_version": 3,
+        "prompt_chars": 1836,
+        "saved_still_preserved": true,
+        "reference_count": 2
+      },
+      {
+        "id": "a74a91e7-b80e-4364-8e63-818bd53f0ee5",
+        "operation": "image",
+        "model": "Qwen-Image-Edit-2511",
+        "saved_version": 3,
+        "prompt_chars": 1789,
+        "saved_still_preserved": true,
+        "reference_count": 2
+      },
+      {
+        "id": "9658b887-6ad9-479f-9112-216128ac60c9",
+        "operation": "image",
+        "model": "Qwen-Image-Edit-2511",
+        "saved_version": 3,
+        "prompt_chars": 1789,
+        "saved_still_preserved": true,
+        "reference_count": 2
+      },
+      {
+        "id": "d4ef16e1-9774-4068-a273-86fc1c38024e",
+        "operation": "image",
+        "model": "Qwen-Image-Edit-2511",
+        "saved_version": 3,
+        "prompt_chars": 1917,
+        "saved_still_preserved": true,
+        "reference_count": 2
+      },
+      {
+        "id": "f22c4dda-2385-4901-a31b-735dbcaa317c",
+        "operation": "image",
+        "model": "Qwen-Image-Edit-2511",
+        "saved_version": 3,
+        "prompt_chars": 1917,
+        "saved_still_preserved": true,
+        "reference_count": 2
+      },
+      {
+        "id": "8e646982-561e-4ee2-be6f-85304cd72c20",
+        "operation": "image",
+        "model": "Qwen-Image-Edit-2511",
+        "saved_version": 3,
+        "prompt_chars": 1911,
+        "saved_still_preserved": true,
+        "reference_count": 2
+      },
+      {
+        "id": "430ea62d-8df6-48df-b4d7-4b5c773642c3",
+        "operation": "image",
+        "model": "Qwen-Image-Edit-2511",
+        "saved_version": 3,
+        "prompt_chars": 1911,
+        "saved_still_preserved": true,
+        "reference_count": 2
+      },
+      {
+        "id": "14784d1a-f624-4ef8-b7e5-7c1486800bd7",
+        "operation": "image",
+        "model": "Qwen-Image-Edit-2511",
+        "saved_version": 3,
+        "prompt_chars": 1834,
+        "saved_still_preserved": true,
+        "reference_count": 2
+      },
+      {
+        "id": "55c882da-faec-497d-bed2-aea3d07620ae",
+        "operation": "image",
+        "model": "Qwen-Image-Edit-2511",
+        "saved_version": 3,
+        "prompt_chars": 1834,
+        "saved_still_preserved": true,
+        "reference_count": 2
+      },
+      {
+        "id": "e73e93fb-e151-4304-8c5e-1a268a993070",
+        "operation": "image",
+        "model": "Qwen-Image-Edit-2511",
+        "saved_version": 3,
+        "prompt_chars": 1930,
+        "saved_still_preserved": true,
+        "reference_count": 2
+      },
+      {
+        "id": "133850db-f3c4-498a-a820-1ec9ecb0c3e3",
+        "operation": "image",
+        "model": "Qwen-Image-Edit-2511",
+        "saved_version": 3,
+        "prompt_chars": 1930,
+        "saved_still_preserved": true,
+        "reference_count": 2
+      }
+    ],
+    "stills_step_completion": {
+      "24264": {
+        "event_type": "media.director_second_look",
+        "public_result": {
+          "storyboard_id": "2d276038-2009-4a6a-a75f-32ba5ab4b1ff",
+          "scene_index": 3,
+          "kind": "still",
+          "take_ids": [
+            "f215456e-ad51-4aaf-aaea-d038be431e4a"
+          ],
+          "refusal": [
+            "Imaginea nu arată ce cere planul scenei «Kael sits at the render bay desk with blank pages and abstract screen glow, but the headset is worn on both ears rather than pushed up off one ear, and only one arm is crossed while the other rests on the mouse.»",
+            "Imaginea nu arată ce cere scena (imaginea ei scrisă și narațiunea) «Kael sits at the render bay desk with blank pages and abstract screen glow, but the headset is worn on both ears rather than pushed up off one ear, and only one arm is crossed while the other rests on the mouse.»",
+            "Verdictul modelului de vedere: regenerate_still «Kael sits at the render bay desk with blank pages and abstract screen glow, but the headset is worn on both ears rather than pushed up off one ear, and only one arm is crossed while the other rests on the mouse.»"
+          ],
+          "verdict": "OVERTURNED",
+          "severity": "minor",
+          "redo": false,
+          "reason_ro": "Văd un cadru mediu curat, cu Kael la biroul lui din camera de randare, noaptea: păr blond nisipiu și spiky, cămașă ambră cu mâneci suflecate, pantaloni cargo închiși, ecrane cu lumină abstractă și hârtii complet albe, lămpi de alamă, plante și ferestre pe strada cu felinare — subiectul, decorul și vorbele scenei sunt acolo. Refuzul are dreptate doar într-un detaliu mic: căștile stau pe ureche, nu ridicate de pe o ureche, iar o singură mână e încrucișată, cealaltă stând pe mouse, ceea ce nu justifică refacerea.",
+          "run_id": "7f48fbfa-bfcb-4ce9-8252-97aa22a1895e",
+          "cause": "Promptul a îngropat clauza de postură — brațe încrucișate, căști ridicate de pe o ureche — între multe clauze de birou, mouse și ecrane, așa că modelul a revenit la o postură activă de lucru, cu mâna pe mouse și căștile pe ureche.",
+          "lesson": "Write the character's pose and the position of any worn prop as one short standalone clause before any desk, tool or screen detail, so the model does not default to an active working pose.",
+          "lesson_stored": true,
+          "layer": "still",
+          "source": "STILL",
+          "hard_limits": [],
+          "fail_closed": false,
+          "plan_as_bought": [],
+          "plan_may_be_newer": false
+        }
+      },
+      "24267": {
+        "event_type": "media.still_needs_owner",
+        "public_result": {
+          "severity": "WARNING",
+          "scene_number": 7,
+          "status": "NEEDS_OWNER",
+          "reason": "Scena 7: nu arată ce cere scena după rescriere — promptul de înlocuire trebuie verificat de Directoare pentru defectul constatat înainte de regenerare; o completare automată nu este o revizuire. Nu se cumpără altă imagine pe aceleași cuvinte; Directoarea le rescrie.",
+          "rerolls": 0,
+          "failure_kind": null,
+          "identity": "e4f2d3d307f6a1f0ad42f60c82b3b0a2d1e719d06fa83783631127523034f497",
+          "holds": true,
+          "rewrite": true
+        }
+      },
+      "24268": {
+        "event_type": "media.stills_step_finished",
+        "public_result": {
+          "storyboard_id": "2d276038-2009-4a6a-a75f-32ba5ab4b1ff",
+          "plan_hash": "ca84e9887af42756bbf3dfb521c02bbbb16812fdbee92ce7dc5e00cc214c26e4",
+          "model_id": "Qwen-Image-Edit-2511",
+          "ratio": "1530:2720",
+          "scenes": [
+            {
+              "scene_index": 1,
+              "scene_kind": "LIVE",
+              "references_sent": [
+                "character"
+              ],
+              "status": "APPROVED",
+              "take_id": "ac49f415-574e-414e-9661-8df5ca21126a",
+              "score": 0.0,
+              "approved_by": "director_look",
+              "director_look": {
+                "verdict": "OVERTURNED",
+                "severity": "minor",
+                "redo": false,
+                "reason_ro": "Văd un cadru mediu curat, cu Kael la biroul lui din camera de randare, noaptea: păr blond nisipiu, cască pe o ureche, cămașă ambră cu mâneci suflecate, monitoare complet albe și hârtii fără nicio scriere, lămpi de alamă, plante și ferestre pe strada cu felinare — subiectul, decorul și vorbele scenei sunt acolo. Refuzul are dreptate doar într-un detaliu mic: planul cerea un cadru larg de stabilire, iar imaginea e un cadru mediu, cu ambele mâini pe mouse în loc de o mână suspendată, ceea ce nu…",
+                "run_id": "5ca26152-93ab-45cd-b1e4-662c5d09b75e"
+              },
+              "rerolls": 0
+            },
+            {
+              "scene_index": 2,
+              "scene_kind": "LIVE",
+              "references_sent": [
+                "character",
+                "figure_one"
+              ],
+              "status": "APPROVED",
+              "take_id": "f308b171-12cf-447a-aae1-304f7831a9c4",
+              "score": 0.6143,
+              "rerolls": 0
+            },
+            {
+              "scene_index": 3,
+              "scene_kind": "LIVE",
+              "references_sent": [
+                "character",
+                "figure_one"
+              ],
+              "status": "APPROVED",
+              "take_id": "f215456e-ad51-4aaf-aaea-d038be431e4a",
+              "score": 0.0,
+              "approved_by": "director_look",
+              "director_look": {
+                "verdict": "OVERTURNED",
+                "severity": "minor",
+                "redo": false,
+                "reason_ro": "Văd un cadru mediu curat, cu Kael la biroul lui din camera de randare, noaptea: păr blond nisipiu și spiky, cămașă ambră cu mâneci suflecate, pantaloni cargo închiși, ecrane cu lumină abstractă și hârtii complet albe, lămpi de alamă, plante și ferestre pe strada cu felinare — subiectul, decorul și vorbele scenei sunt acolo. Refuzul are dreptate doar într-un detaliu mic: căștile stau pe ureche, nu ridicate de pe o ureche, iar o singură mână e încrucișată, cealaltă stând pe mouse, ceea ce nu…",
+                "run_id": "7f48fbfa-bfcb-4ce9-8252-97aa22a1895e"
+              },
+              "rerolls": 0
+            },
+            {
+              "scene_index": 4,
+              "scene_kind": "LIVE",
+              "references_sent": [
+                "character",
+                "figure_one"
+              ],
+              "status": "APPROVED",
+              "take_id": "51f8a01e-214d-4b2e-b4b9-25b094370dd4",
+              "score": 0.6186,
+              "rerolls": 0
+            },
+            {
+              "scene_index": 5,
+              "scene_kind": "LIVE",
+              "references_sent": [
+                "character",
+                "figure_one"
+              ],
+              "status": "APPROVED",
+              "take_id": "6586cedd-9ada-42fb-aacb-6b404d71c759",
+              "score": 0.6506,
+              "rerolls": 0
+            },
+            {
+              "scene_index": 6,
+              "scene_kind": "LIVE",
+              "references_sent": [
+                "character",
+                "figure_one"
+              ],
+              "status": "APPROVED",
+              "take_id": "554a086f-291a-452d-b2f0-07602f0fa589",
+              "score": 0.6749,
+              "rerolls": 0
+            },
+            {
+              "scene_index": 7,
+              "scene_kind": "LIVE",
+              "references_sent": [
+                "character",
+                "figure_one"
+              ],
+              "status": "NEEDS_OWNER",
+              "reason": "Scena 7: nu arată ce cere scena după rescriere — promptul de înlocuire trebuie verificat de Directoare pentru defectul constatat înainte de regenerare; o completare automată nu este o revizuire. Nu se cumpără altă imagine pe aceleași cuvinte; Directoarea le rescrie.",
+              "reasons": [
+                "Modelul de vedere a văzut text lizibil în imagine «The gold nameplate on the desk in the lower right carries engraved lettering, violating the plan's blank nameplate and no-text rule.»",
+                "Imaginea nu arată ce cere planul scenei «The gold nameplate on the desk in the lower right carries engraved lettering, violating the plan's blank nameplate and no-text rule.»",
+                "Verdictul modelului de vedere: regenerate_still «The gold nameplate on the desk in the lower right carries engraved lettering, violating the plan's blank nameplate and no-text rule.»",
+                "Modelul de vedere a văzut text lizibil în imagine «Sarah stands behind her mahogany desk with one hand on a closed blank ledger in the warm penthouse office, but the gold nameplate in the lower right carries engraved lettering, violating the plan's no-text rule and blank-nameplate requirement.»",
+                "Imaginea nu arată ce cere planul scenei «Sarah stands behind her mahogany desk with one hand on a closed blank ledger in the warm penthouse office, but the gold nameplate in the lower right carries engraved lettering, violating the plan's no-text rule and blank-nameplate requirement.»",
+                "Verdictul modelului de vedere: regenerate_still «Sarah stands behind her mahogany desk with one hand on a closed blank ledger in the warm penthouse office, but the gold nameplate in the lower right carries engraved lettering, violating the plan's no-text rule and blank-nameplate requirement.»"
+              ],
+              "rewrite": true,
+              "rerolls": 0
+            }
+          ],
+          "bought_images": 14,
+          "spent_credits_quoted": 147.0,
+          "spent_credits_measured": null,
+          "balance_before": null,
+          "balance_after": null,
+          "cap_credits": 441,
+          "needs_owner": [
+            7
+          ],
+          "stopped": null,
+          "mode_stopped": null,
+          "low_balance": null,
+          "reference_unverified": true,
+          "in_flight": [],
+          "collected": [],
+          "gpu": {
+            "rounds": 2,
+            "items_sent": 14,
+            "stopped": null,
+            "cap_stop": null,
+            "cancelled_items": 0,
+            "remote_job_ids": [
+              "ae3df10b-1f40-4cc8-948b-c608c7a90d4b-e1",
+              "a8962883-e925-48e8-a567-8ff9ef9a8cc3-e2"
+            ],
+            "billed_seconds": 240.978,
+            "overhead_credits": 28.0,
+            "forced_off": false,
+            "reconciled_credits": 0.0,
+            "weights_problem": null,
+            "refusal": null
+          }
+        }
+      }
+    },
+    "first_video_request_verified": {
+      "job_id": "696cea18-e9ed-4759-b5f8-ac0cd3aa6839",
+      "kind": "test_shot",
+      "actual_model": "LTX-2.5",
+      "status": "COMPLETED",
+      "scene_number": 1,
+      "duration_seconds": 7.0,
+      "motion_prompt_chars": 549,
+      "actual_motion_equals_saved": true,
+      "source_take_id": "ac49f415-574e-414e-9661-8df5ca21126a",
+      "source_jpeg_path": "E:\\AI Acency\\Autonomous_AI_Studio_Documentation_v5_ECONOMY_TREASURY_VENDORSHOP\\backend\\storage\\media\\2d276038-2009-4a6a-a75f-32ba5ab4b1ff\\stills\\first_scene_01_c55f89aa_c2.jpg",
+      "source_jpeg_sha256": "10c5658cccc4bba9e9acd9186ad48011b345f1bc7825f770cb86b041083fc9db",
+      "source_jpeg_matches_journal": true,
+      "approved_png_sha256_verified": true,
+      "source_is_accepted_candidate_2_not_rejected_candidate_1": true,
+      "old_paper_marking_risk_remains_in_source": true,
+      "no_finished_video_asset": false,
+      "accepted": false,
+      "take_id": "766362c7-834f-44eb-af99-6b49f665e009",
+      "qc_actual_model": "mistral-large-4",
+      "qc_run_id": "1d41b17f-cc92-48cc-8e25-d74da15afdeb",
+      "qc_verdict": "back_to_still",
+      "qc_public_findings": [
+        "ruled_papers_and_text",
+        "monitor_content",
+        "zoom_instead_of_static_camera"
+      ],
+      "no_accepted_video_or_finished_film": true
+    },
+    "scene7_editorial_hold": {
+      "event_sequence": 24267,
+      "both_candidates_refused_for": "engraved_text_on_nameplate",
+      "needs_prompt_rewrite": true,
+      "director_verified_replacement_not_observed": true,
+      "new_regeneration_not_observed": true,
+      "budget_block_not_indicated": true,
+      "draft_rewrite_run_id": "2be3ef2d-81f8-4ec0-97e1-723119a2e97a",
+      "draft_rewrite_model": "mistral-large-4",
+      "draft_rewrite_status": "SUCCEEDED",
+      "director_review_run_id": "451d5493-0342-499d-a3d8-59cb74f251a1",
+      "director_review_actual_model": "deepseek-v4.1-flash",
+      "director_review_status": "EMPTY_OUTPUT",
+      "verified_replacement_saved_or_bought": false
+    },
+    "scene1_returned_to_still": {
+      "event_sequence": 24280,
+      "formerly_approved_take_id": "ac49f415-574e-414e-9661-8df5ca21126a",
+      "current_status": "REJECTED",
+      "reason": "The source still contains ruled papers/text; motion QC also found camera zoom. The same still is held from another animation.",
+      "accepted_still_count_remaining": 5,
+      "no_same_input_resend_observed": true
+    },
+    "latest_editorial_repairs": [
+      {
+        "id": "666fa756-a744-4565-ae42-065806d099a6",
+        "task_type": "director_scene_brief",
+        "model_name": "deepseek-v4.1-flash",
+        "status": "SUCCEEDED",
+        "started_at": "2026-10-15T05:42:08.754061+00:00",
+        "finished_at": "2026-10-15T05:42:55.803958+00:00",
+        "error_detail": null,
+        "task_summary": "Citesc promptul scenei 1 din «Storyboard: Twenty-Eight Rewrites Before Breakfast» și motivele controlului; îi scriu lui Kael ce să evite.",
+        "public_output_fields": [
+          "action",
+          "diagnosis",
+          "layer",
+          "avoid",
+          "keep",
+          "change",
+          "summary_ro"
+        ],
+        "layer": "still",
+        "scene_index": null,
+        "action": "rewrite"
+      },
+      {
+        "id": "e0fbf9f2-20d1-497c-a69e-e3df2298a801",
+        "task_type": "scene_prompt_rewrite",
+        "model_name": "mistral-large-4",
+        "status": "SUCCEEDED",
+        "started_at": "2026-10-15T05:42:55.817777+00:00",
+        "finished_at": "2026-10-15T05:45:34.238533+00:00",
+        "error_detail": null,
+        "task_summary": "Rescriu scena 1 din «Storyboard: Twenty-Eight Rewrites Before Breakfast» după brief-ul Directoarei.",
+        "public_output_fields": [
+          "scene_index",
+          "subject",
+          "action",
+          "environment",
+          "camera",
+          "camera_move",
+          "lighting",
+          "composition",
+          "motion",
+          "emotion",
+          "background",
+          "continuity",
+          "ending_frame",
+          "avoid"
+        ],
+        "layer": null,
+        "scene_index": 1,
+        "action": "Kael sits frozen at his desk, one hand hovering just above the mouse, his eyes on the dark screen, his lips counting, his body unmoving; his lips keep counting while his hand hovers above the mouse and his eyes stay on the dark screen."
+      },
+      {
+        "id": "10213c26-5cda-40ad-a6c0-8daf7bce0c5e",
+        "task_type": "director_rewrite_review",
+        "model_name": "deepseek-v4.1-flash",
+        "status": "EMPTY_OUTPUT",
+        "started_at": "2026-10-15T05:45:34.255934+00:00",
+        "finished_at": "2026-10-15T05:59:00.015203+00:00",
+        "error_detail": "Modelul a atins limita de tokeni înainte să răspundă: a folosit bugetul pe raționament intern. Niciun răspuns de folosit.",
+        "task_summary": "Verific dacă rescrierea scenei 1 din «Storyboard: Twenty-Eight Rewrites Before Breakfast» tratează constatările înainte să cumpărăm ceva pe ea.",
+        "public_output_fields": []
+      },
+      {
+        "id": "1a826af2-9e84-463a-a593-64e7c977a181",
+        "task_type": "director_scene_brief",
+        "model_name": "deepseek-v4.1-flash",
+        "status": "SUCCEEDED",
+        "started_at": "2026-10-15T05:59:00.116858+00:00",
+        "finished_at": "2026-10-15T05:59:26.881379+00:00",
+        "error_detail": null,
+        "task_summary": "Citesc promptul scenei 7 din «Storyboard: Twenty-Eight Rewrites Before Breakfast» și motivele controlului; îi scriu lui Kael ce să evite.",
+        "public_output_fields": [
+          "action",
+          "diagnosis",
+          "layer",
+          "avoid",
+          "keep",
+          "change",
+          "summary_ro"
+        ],
+        "layer": "still",
+        "scene_index": null,
+        "action": "rewrite"
+      },
+      {
+        "id": "2be3ef2d-81f8-4ec0-97e1-723119a2e97a",
+        "task_type": "scene_prompt_rewrite",
+        "model_name": "mistral-large-4",
+        "status": "SUCCEEDED",
+        "started_at": "2026-10-15T05:59:26.895601+00:00",
+        "finished_at": "2026-10-15T06:00:37.597262+00:00",
+        "error_detail": null,
+        "task_summary": "Rescriu scena 7 din «Storyboard: Twenty-Eight Rewrites Before Breakfast» după brief-ul Directoarei.",
+        "public_output_fields": [
+          "scene_index",
+          "subject",
+          "action",
+          "environment",
+          "camera",
+          "camera_move",
+          "lighting",
+          "composition",
+          "motion",
+          "emotion",
+          "background",
+          "continuity",
+          "ending_frame",
+          "avoid"
+        ],
+        "layer": null,
+        "scene_index": 7,
+        "action": "Sarah stands behind her desk, one hand resting on a closed ledger."
+      },
+      {
+        "id": "451d5493-0342-499d-a3d8-59cb74f251a1",
+        "task_type": "director_rewrite_review",
+        "model_name": "deepseek-v4.1-flash",
+        "status": "RUNNING",
+        "started_at": "2026-10-15T06:00:37.619187+00:00",
+        "finished_at": null,
+        "error_detail": null,
+        "task_summary": "Verific dacă rescrierea scenei 7 din «Storyboard: Twenty-Eight Rewrites Before Breakfast» tratează constatările înainte să cumpărăm ceva pe ea.",
+        "public_output_fields": []
+      }
+    ],
+    "rewritten_prompts_saved_or_bought": false,
+    "latest_request_comparison": {
+      "all_saved_series_look_v3": true,
+      "all_image_prompts_preserved": true,
+      "actual_motion_matches_saved": true,
+      "image_request_count": 14,
+      "image_prompt_char_min": 1730,
+      "image_prompt_char_max": 1930,
+      "video_request_count": 1,
+      "new_requests_after_rewrite": 0,
+      "all_match_saved_at_0614_check": true
+    }
+  },
+  "pending_notification_when_running": {
+    "since_event": 24279,
+    "through_event": 24325,
+    "reason_not_notified": "Local API and TCP port 8000 are unreachable; heartbeat instruction says stay quiet while studio is stopped.",
+    "meaningful_findings": [
+      "First LTX-2.5 test clip failed QC for ruled papers/text, monitor content and camera zoom; source still returned to REJECTED.",
+      "Sarah delegated scene1 still rewrite to Kael; Mistral rewrite succeeded but Deepseek-v4.1-flash review ended EMPTY_OUTPUT, so no replacement was committed or bought.",
+      "Scene7 still rewrite also produced by Mistral; Sarah review row remains RUNNING while local service is unreachable.",
+      "No same rejected input was bought again; no finished film.",
+      "Scene7 rewrite review also ended EMPTY_OUTPUT on actual Deepseek-v4.1-flash; no unverified replacement was saved or regenerated. Day79bdbdb8 interrupted at media7/13 on service shutdown; GPU-off verified. No accepted video or finished film."
+    ]
   }
 }

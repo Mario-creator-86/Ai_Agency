@@ -401,14 +401,14 @@ def test_only_her_lesson_is_kept_unverified_for_its_kind_of_film(engine, staffed
     [
         "The rocky world with water is lit differently in every shot.",
         "Scene 4's ledger shows digits; ask for blank pages.",
-        "x" * 401,
+        "x" * 4001,
         "   ",
     ],
 )
 def test_a_lesson_about_this_film_or_a_report_is_not_kept(engine, staffed, lesson):
     """Her lesson goes through the store's own refusal with the film it was learned on: its
     title (here «A rocky world with water», most of its words), a scene by its number, a
-    report over 400 characters, nothing at all."""
+    report over LESSON_MAX_CHARS (4000) characters, nothing at all."""
     from app.media.prompt_agent import prompt_lessons
 
     ids = a_film(engine, voiceover=ENGLISH, with_source=True, title="A rocky world with water")

@@ -606,19 +606,23 @@ class Models:
         return GenerateResult("OK", 12, 1, None)
 
 
-def test_a_model_failing_now_is_switched_once_with_a_probe_and_what_to_revert_to(
+def test_a_model_the_owner_set_is_never_switched_when_it_fails_the_card_is_his(
     engine, studio, settings
 ):
+    """2026-10-15, the Owner: «modelele de LLM, dacă au fost alese de mine, rămân; nu se
+    schimbă singur». Lyra's model, set on his page, is refused by the provider three runs
+    running: her own probe fails, one other model answers — so it is her model's fault, not
+    an outage — and the repair changes nothing: his card says so, and the same case is not
+    offered again the same day. (Until today the repair switched her once to the model that
+    passed the probe and kept his as the home to revert to.)"""
     settings.model_deny_list = "denied-*"
     cloud = a_connection(
         engine,
         models=("broken-model", "claude-sonnet", "denied-model", "working-model"),
     )
-    unpriced = a_connection(engine, kind="openai", name="OpenAI", models=("gpt-unpriced",))
     owner_price(engine)
     lyra = agent_of(engine, "VoiceArtist")
     assign_agent(engine, lyra.id, cloud["models"]["broken-model"], lyra.version)
-    # Her model's last three runs since it was set were refused by the provider: it fails now.
     runs(
         engine,
         lyra.id,
@@ -632,77 +636,27 @@ def test_a_model_failing_now_is_switched_once_with_a_probe_and_what_to_revert_to
     fake = Models(refusing={"broken-model"})
     registry = ProviderRegistry()
     registry.register(cloud["id"], fake)
-    registry.register(unpriced["id"], Models(refusing=set()))
 
     matter = matter_of(engine, settings, "agent_failing_", registry)
     assert matter["repair"]["name"] == "switch_agent_model"
-    assert matter["evidence"]["cause"] == "PROVIDER_AUTH"
     done = run_repair(engine, settings, matter, registry)
-    assert done["result"]["status"] == "APPLIED", done["result"]
 
-    # Her own model asked first, and refused; then, not Anthropic, not denied, not unpriced:
-    # the one that passed the probe.
+    assert done["result"]["status"] == "DECLINED", done["result"]
+    assert done["result"]["changed"]["owner_chosen"] is True
+    assert done["result"]["changed"]["card"]
+    assert "ales de Owner" in done["result"]["outcome"]
+    # Her own model asked first and refused; one other, not denied, answered: a fault of his
+    # model, told to him, not an outage waited out.
     assert fake.asked == ["broken-model", "working-model"]
     with Session(engine) as session:
-        moved = session.get(Agent, lyra.id)
-        assert moved.model_id == cloud["models"]["working-model"]
-        own, probe = session.scalars(
-            select(AgentRun)
-            .where(AgentRun.task_type == "TEST_CONNECTIVITY")
-            .order_by(AgentRun.started_at)
-        ).all()
-        assert own.status == "FAILED" and own.model_name == "broken-model"
-        assert probe.status == "SUCCEEDED" and probe.model_name == "working-model"
-        # His choice stands behind the detour: home, and protected from the preference mover.
+        kept = session.get(Agent, lyra.id)
+        assert kept.model_id == cloud["models"]["broken-model"]
         assert owner_home_model(session, lyra.id) == cloud["models"]["broken-model"]
-        assert _owner_chose_models(session, moved, "VoiceArtist") is True
-    (assigned,) = [
+    assert not [
         e
         for e in events(engine, "agent.model_assigned")
         if e.aggregate_id == lyra.id and e.payload["assignment_origin"] == "DIRECTOR_REPAIR"
     ]
-    assert assigned.payload["previous"]["model_id"] == cloud["models"]["broken-model"]
-    (applied,) = events(engine, APPLIED_EVENT)
-    changed = applied.payload["changed"]
-    assert changed["revert"]["model_id"] == cloud["models"]["broken-model"]
-    assert changed["home_model_id"] == cloud["models"]["broken-model"]
-    assert [p["run_id"] for p in changed["probes"]] == [own.id, probe.id]
-    assert_a_report_not_a_letter(engine, "working-model")
-
-    # The same day her new model fails too: not a second switch, one card for the Owner.
-    fake.refusing.add("working-model")
-    runs(
-        engine,
-        lyra.id,
-        model="working-model",
-        provider=cloud["provider"],
-        at=datetime.now(UTC),  # after the probe that put her there
-        n=3,
-        status="FAILED",
-        error="ProviderHTTPError: HTTP 429 — limita",
-    )
-    again = run_repair(
-        engine, settings, matter_of(engine, settings, "agent_failing_", registry), registry
-    )
-    assert again["result"]["status"] == "DECLINED"
-    assert "o dată" in again["result"]["outcome"]
-    # The same case is not offered twice; a second task for it changes nothing either.
-    assert not [
-        m
-        for m in repair_matters(engine, settings, registry)
-        if m["matter_key"].startswith("agent_")
-    ]
-    execute_repair(
-        engine,
-        registry,
-        settings,
-        {"repair": "switch_agent_model", "params": {"agent_id": lyra.id}},
-        correlation_id=str(uuid4()),
-    )
-    (card,) = cards(engine, "director_model:")
-    assert card.subject_id == lyra.id and card.status == "PENDING"
-    with Session(engine) as session:
-        assert session.get(Agent, lyra.id).model_id == cloud["models"]["working-model"]
 
 
 def test_a_model_change_waits_for_the_owner_where_her_mode_does_not_reach_t2(

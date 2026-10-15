@@ -23,6 +23,7 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from uuid import uuid4
 
+import pytest
 from app.agents.repairs import DECLINED, RepairContext, agent_health
 from app.factual import agent_pipeline
 from app.factual.agent_pipeline import JSON_AGAIN, answered_with_object
@@ -314,3 +315,181 @@ def test_a_still_is_linted_against_the_allowance_of_the_route_it_is_bought_on(
     assert "OVER_CAP" in codes()
     monkeypatch.setitem(prompt_lint.ALLOWANCES, "seedream5_pro", MAX_PROMPT)
     assert "OVER_CAP" not in codes()
+
+
+# ------------------------------------------------------------------ 7. the writer's honest stop
+
+BLOCKED = (
+    '{"blocker": {"reason": "The verified claim set contains zero claims about the subject. '
+    'All 35 claims concern the word Discovery.", "needs": "Verified claims for this exact '
+    "topic: the 1998 observation by two teams that distant Type Ia supernovae were dimmer "
+    'than expected."}}'
+)
+
+
+def test_a_sentences_first_capital_is_not_searched_as_a_name():
+    """2026-10-14, d7d80450: «Discovery that the universe's expansion is accelerating…» made
+    the studio search Wikipedia for «Discovery» and read the album, the channel and the
+    shuttle. The first word of a sentence is a name only when it is also capitalised inside
+    a sentence, is an acronym, or starts a run of names."""
+    from app.research.agent import search_queries
+
+    queries = search_queries(
+        "The Supernova Surprise: How Distant Explosions Revealed Dark Energy",
+        "Discovery that the universe’s expansion is accelerating thanks to observations of "
+        "Type Ia supernovae",
+    )
+    assert "Discovery" not in queries and "Type Ia" in queries
+    # Still names: inside a sentence, an acronym, a run of two at the start.
+    assert "Nepal" in search_queries("Why Nepal Is Being Handed a Climate Bill", "Nepal owes.")
+    assert "CERN" in search_queries("A tale of nothing", "CERN measures the lifetime.")
+    assert "James Webb" in search_queries("A tale of nothing", "James Webb sees far.")
+
+
+def test_a_writer_who_stops_honestly_is_not_a_format_fault():
+    from app.factual.agent_pipeline import ScriptBlocked, _parse_script
+
+    with pytest.raises(ScriptBlocked) as refused:
+        _parse_script(BLOCKED)
+    assert "Scenaristul s-a oprit" in str(refused.value)
+    assert "zero claims about the subject" in str(refused.value)
+    assert "Type Ia" in refused.value.blocker.needs
+
+
+def test_a_blocked_topic_goes_back_to_research_and_is_read_for_again(engine, settings, monkeypatch):
+    """The topic is PROPOSED again with the writer's reason noted to the Director, and the
+    pages read before the note no longer count as its sources: `_gather_for_candidates`
+    reads for it again; a topic with sources and no such note is left alone, as before."""
+    from app.agents.identity import Blocker
+    from app.agents.models import AgentMessage
+    from app.factual.models import SourceSnapshot, TopicIdea
+    from app.providers.registry import ProviderRegistry
+    from app.runbook import stages
+    from app.services import utc_now
+
+    def topic_with_a_source(title: str, status: str) -> str:
+        topic_id, source_id = str(uuid4()), str(uuid4())
+        with Session(engine) as session, session.begin():
+            session.add(
+                TopicIdea(
+                    id=topic_id,
+                    title=title,
+                    topic="t",
+                    angle="a",
+                    target_audience="g",
+                    novelty_score=0.7,
+                    status=status,
+                    created_at=utc_now(),
+                )
+            )
+            session.flush()
+            session.add(
+                SourceSnapshot(
+                    id=source_id,
+                    topic_id=topic_id,
+                    url=f"https://en.wikipedia.org/wiki/{source_id[:8]}",
+                    title="Discovery",
+                    publisher="en.wikipedia.org",
+                    content_hash="0" * 64,
+                    raw_content="Discovery is the name of a space shuttle.",
+                    sanitized_content="Discovery is the name of a space shuttle.",
+                    fetched_at="2026-10-14T02:03:12+00:00",
+                )
+            )
+        return topic_id
+
+    blocked = topic_with_a_source("The Supernova Surprise", "SELECTED")
+    settled = topic_with_a_source("A topic whose writer wrote", "PROPOSED")
+
+    stages._topic_back_to_research(
+        engine, blocked, Blocker(reason="claims about the word Discovery", needs="Type Ia")
+    )
+    with Session(engine) as session:
+        assert session.get(TopicIdea, blocked).status == "PROPOSED"
+        notes = [
+            m
+            for m in session.scalars(select(AgentMessage))
+            if isinstance(m.body_json, dict) and m.body_json.get(stages.SCRIPT_BLOCKED_KEY)
+        ]
+        assert [n.body_json["topic_id"] for n in notes] == [blocked]
+        assert notes[0].intent == "STATUS"
+
+    asked: list[str] = []
+    monkeypatch.setattr(
+        stages,
+        "gather_sources",
+        lambda engine_, registry, settings_, topic_id, correlation, limit=4: (
+            asked.append(topic_id) or {"fetched": [], "failed": []}
+        ),
+    )
+    stages._gather_for_candidates(engine, ProviderRegistry(), settings)
+    assert blocked in asked and settled not in asked
+
+
+# ------------------------------------------------------------------ 8. the Owner's model stays
+
+
+def _marcus_whose_model_fails(engine, monkeypatch, candidate_answers: bool):
+    from app.agents.models import Agent
+    from app.agents.services import seed_initial_workforce
+
+    seed_initial_workforce(engine)
+    with Session(engine) as session:
+        marcus = session.scalar(select(Agent).where(Agent.display_name.like("Marcus%")))
+        agent_id = marcus.id
+    monkeypatch.setattr(agent_health, "_chosen_by_owner", lambda session, aid, mid: True)
+    monkeypatch.setattr(
+        agent_health,
+        "diagnosis",
+        lambda session, agent, now=None: {
+            "current": {"model": "gpt-oss:120b"},
+            "cause": "PROVIDER_ERROR",
+            "failing_now": True,
+        },
+    )
+    monkeypatch.setattr(
+        agent_health,
+        "candidates",
+        lambda session, agent, settings, registry: [
+            SimpleNamespace(id="m-mistral", model_name="mistral-large-4")
+        ],
+    )
+
+    def probe(context, aid, mid, model_name, name):
+        answered = candidate_answers and model_name != "gpt-oss:120b"
+        return {
+            "model": model_name,
+            "status": "SUCCEEDED" if answered else "FAILED",
+            "answered": answered,
+            "reason": None if answered else "ProviderHTTPError: HTTP 400",
+        }
+
+    monkeypatch.setattr(agent_health, "_probe", probe)
+    cards: list[str] = []
+    monkeypatch.setattr(
+        agent_health, "_ask_owner", lambda context, aid, why: cards.append(why) or "card"
+    )
+    assigned: list[tuple] = []
+    monkeypatch.setattr(
+        "app.integrations.services.assign_agent", lambda *a, **k: assigned.append((a, k))
+    )
+    return agent_id, cards, assigned
+
+
+def test_a_model_the_owner_chose_is_never_switched_by_the_repair(engine, settings, monkeypatch):
+    """2026-10-15, the Owner: «modelele de LLM, dacă au fost alese de mine, rămân; nu se
+    schimbă singur». His model fails and another answers: she tells him on a card and
+    changes nothing. Everything fails: an outage, no card, nothing changed."""
+    agent_id, cards, assigned = _marcus_whose_model_fails(engine, monkeypatch, True)
+    context = RepairContext(engine, settings, SimpleNamespace(), "corr")
+
+    result = agent_health.switch_model(context, {"agent_id": agent_id})
+
+    assert result["status"] == DECLINED and result["changed"]["owner_chosen"] is True
+    assert assigned == [] and len(cards) == 1 and "nu se schimbă singur" in cards[0]
+    assert "ales de Owner" in result["outcome_ro"]
+
+    agent_id, cards, assigned = _marcus_whose_model_fails(engine, monkeypatch, False)
+    result = agent_health.switch_model(context, {"agent_id": agent_id})
+    assert result["status"] == DECLINED and result["changed"]["provider_down"] is True
+    assert assigned == [] and cards == []
