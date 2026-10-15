@@ -5,6 +5,10 @@ AGENT_SCENARIO_ACCEPTANCE later used actual Ollama Cloud calls, with normal seri
 acceptance and real GPU/media/upload still pending. Current local UI evidence is reported
 separately below and does not prove those external workflows.
 
+## Intonation: lines written to be played, the direction rides to the voice, ElevenLabs plays it (2026-10-15)
+
+**Owner, 15:35Z:** «la sunet, momentul în care se pune din 11 Labs, să avem intonație, să avem surprindere, să avem emoție în ceea ce vorbește, să nu fie doar o poveste spusă fără absolut nimic.» **Ce era:** replicile episodului 3 erau punctuate dar plate (rapoarte citite, fără exclamație sau întrebare, `direction` gol la toate); ElevenLabs primea textul gol cu stability 0,5 și fără style; indicațiile de joc nu ajungeau la voce. **Ce este:** briefurile cer replici jucabile (scurte, întrebare, exclamație, interjecție, pauză cu «…» sau linie, cuvânt repetat a mirare) și o indicație de joc pe FIECARE replică (două–șase cuvinte); narațiunea factuală scrisă «pentru o voce vie». `speaker_voices.speaker_segments` păstrează `direction` pe preluare; asamblorul o trimite vocii în `extra`; `providers.elevenlabs.performance_terms`: pe Eleven v3/v4 o etichetă audio înaintea cuvintelor («[surprised]», «[whispers]», sau nota ei în paranteze), pe modelele v2 (care ar citi eticheta) setări expresive (stability 0,35, style 0,55); prima emoție din notă câștigă. Teste: `test_serial_voices`, `test_elevenlabs_adapter`, `test_publishes_alone` (brief), 464 passed pe suitele vocii/furnizorilor. Intră la următoarea repornire; episodul 3 are replicile scrise înainte (fără indicații), următorul episod le va avea. Rămas: judecata Directoarei să puncteze și «cum sună» (roadmap).
+
 ## The day ends on its goal: a short and a serial episode published, or a problem for the Owner (2026-10-15)
 
 **Owner, 15:20Z:** «Ce nu înțeleg eu este de ce se oprește tot fluxul și revine mâine … noi ar

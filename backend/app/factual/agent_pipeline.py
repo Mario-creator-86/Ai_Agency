@@ -577,9 +577,11 @@ FOLLOW|SERIES|COMMENT", "scenes": [{{"narration": "...", "visual": "...", "purpo
 - "hook": prima propoziție rostită. Se desenează pe coperta filmului, peste primul cadru
   filmat, deci cel mult vreo {hook_words} cuvinte și nicio cifră pe care afirmațiile de mai jos
   nu o poartă.
-- "narration": textul rostit în scenă, 10-800 de caractere, cu semne de punctuație ca în
+- "narration": textul rostit în scenă, 10-800 de caractere, scris pentru o voce vie, nu ca un
+  raport citit: propoziții scurte, o întrebare care ține respirația, o exclamație la surpriză,
+  o pauză (…) înainte de răspuns, un cuvânt repetat a mirare; cu semne de punctuație ca în
   vorbire: punct, semnul întrebării sau al exclamării la sfârșitul fiecărei propoziții, virgule
-  unde respiră vocea; vocea își ia ritmul din punctuație, iar subtitrările o urmează.
+  unde respiră vocea; vocea își ia ritmul și emoția din punctuație, iar subtitrările o urmează.
 
 {measured}AFIRMAȚII VERIFICATE (singura sursă de fapte permisă):
 """

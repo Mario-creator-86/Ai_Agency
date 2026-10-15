@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-15 — Intonation: the line's direction is played by the voice
+
+- `story/services.py`, `factual/agent_pipeline.py`: the briefs ask for performable lines and a direction on every line (the Owner, 2026-10-15 15:35Z).
+- `media/speaker_voices.py`: a take keeps its lines' directions; `media/assembler.py`: the direction goes to the voice in `extra`.
+- `providers/elevenlabs.py`: `performance_terms` — an audio tag before the words on Eleven v3/v4, expressive settings on v2; the note's first feeling wins.
+- Tests: `test_serial_voices`, `test_elevenlabs_adapter`, `test_publishes_alone`.
+
 ## 2026-10-15 — The day keeps going until a short and a serial episode are out
 
 The Owner, 15:20Z: the day stops only when a short and a serial episode are published, or on a problem he must solve; otherwise it keeps working.

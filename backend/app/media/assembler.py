@@ -6631,9 +6631,16 @@ def assemble_video_job(
                         f"vocea scenei {index}",
                     ):
                         stitched = _context_fields(context) if stitches(take_voice) else None
+                        # The line's acting note goes with its words: the voice plays it
+                        # (the Owner, 2026-10-15: «să avem intonație, surprindere, emoție»).
+                        direction = " ".join(str(part.get("direction") or "").split())
+                        extra_fields = {
+                            **(stitched or {}),
+                            **({"direction": direction} if direction else {}),
+                        }
                         said = asyncio.run(
-                            take_voice.synthesize(str(part["text"]), extra=stitched)
-                            if stitched
+                            take_voice.synthesize(str(part["text"]), extra=extra_fields)
+                            if extra_fields
                             else take_voice.synthesize(str(part["text"]))
                         )
                     if all_real:

@@ -71,6 +71,66 @@ FIELD_REFUSALS = frozenset({400, 422})
 #: The documented voice settings ("Create speech with timing", read 2026-10-02). Anything
 #: else a binding holds is never sent: an unknown key is a refusal waiting to happen.
 VOICE_SETTING_KEYS = ("stability", "similarity_boost", "style", "use_speaker_boost")
+#: Models that read a bracketed audio tag at the start of the text as a performance note
+#: («[surprised] What?»), never aloud: Eleven v3 and v4. The v2 models would read it.
+TAG_MODELS = ("eleven_v3", "eleven_v4")
+#: A writer's acting note → the tag the expressive models play. The first key found in the
+#: note wins; a note with none of them is played as its own first words, bracketed.
+PERFORMANCE_TAGS: tuple[tuple[str, str], ...] = (
+    ("whisper", "[whispers]"),
+    ("shout", "[shouts]"),
+    ("laugh", "[laughs]"),
+    ("giggl", "[laughs]"),
+    ("sigh", "[sighs]"),
+    ("surpris", "[surprised]"),
+    ("shock", "[shocked]"),
+    ("excit", "[excited]"),
+    ("angr", "[angry]"),
+    ("irritat", "[annoyed]"),
+    ("annoy", "[annoyed]"),
+    ("nervous", "[nervous]"),
+    ("afraid", "[fearful]"),
+    ("fear", "[fearful]"),
+    ("sad", "[sad]"),
+    ("tired", "[tired]"),
+    ("resign", "[resigned]"),
+    ("deadpan", "[deadpan]"),
+    ("dry", "[deadpan]"),
+    ("sarcas", "[sarcastic]"),
+    ("cheer", "[cheerfully]"),
+    ("warm", "[warmly]"),
+    ("calm", "[calm]"),
+    ("hesitat", "[hesitant]"),
+    ("curious", "[curious]"),
+    ("grim", "[grim]"),
+    ("relie", "[relieved]"),
+)
+#: What an acting note does to a v2 voice, which reads no tag: a less stable, more styled
+#: delivery (the documented ranges; the defaults are a measured 0.5 and no style).
+EXPRESSIVE_SETTINGS: dict[str, Any] = {"stability": 0.35, "style": 0.55}
+
+
+def performance_terms(direction: str | None, model: str | None) -> tuple[str, dict[str, Any]]:
+    """(the text prefix, the voice-setting overrides) that play a writer's acting note on
+    ``model``: a bracketed tag on a model that reads tags (`TAG_MODELS`), expressive
+    settings on one that would read the tag aloud; nothing for no note. The Owner,
+    2026-10-15: «la sunet … să avem intonație, surprindere, emoție în ceea ce vorbește, să
+    nu fie doar o poveste spusă fără absolut nimic»."""
+    note = " ".join(str(direction or "").lower().split())
+    if not note:
+        return "", {}
+    name = str(model or "").lower()
+    if not name.startswith(TAG_MODELS):
+        return "", dict(EXPRESSIVE_SETTINGS)
+    # The note's own first feeling wins («surprised, half-laughing» is played surprised).
+    found = [(note.find(key), tag) for key, tag in PERFORMANCE_TAGS if key in note]
+    if found:
+        return f"{min(found)[1]} ", {}
+    words = [w.strip(".,;:!?\"'()") for w in note.split()]
+    words = [w for w in words if w.isalpha()][:3]
+    return (f"[{' '.join(words)}] " if words else ""), {}
+
+
 #: The studio's defaults when the bible's binding sets nothing.
 DEFAULT_VOICE_SETTINGS: dict[str, Any] = {"stability": 0.5, "similarity_boost": 0.75}
 #: Fields that improve a recording but are not needed for one. Request stitching
@@ -419,15 +479,18 @@ class ElevenLabsTTSAdapter(TTSProvider):
             )
 
         options = self.request_settings(narration)
+        context = extra or {}
+        # The line's acting note, played: a tag before the words on v3/v4, expressive
+        # settings on v2 (`performance_terms`).
+        prefix, played = performance_terms(context.get("direction"), self.model)
         fields: dict[str, Any] = {
-            "text": narration,
+            "text": f"{prefix}{narration}",
             "model_id": self.model,
             # The API exposes no pitch control, so the adapter does not pretend to have one:
             # a pitch argument it silently dropped would read as applied.
-            "voice_settings": {**options.pop("voice_settings"), "speed": speed},
+            "voice_settings": {**options.pop("voice_settings"), **played, "speed": speed},
             **options,
         }
-        context = extra or {}
         stitched = {
             "previous_text": _context_text(context.get("previous_text"), tail=True),
             "next_text": _context_text(context.get("next_text"), tail=False),

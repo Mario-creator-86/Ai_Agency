@@ -111,9 +111,10 @@ def speaker_segments(
 ) -> list[dict[str, Any]]:
     """The takes of one scene: consecutive lines of one speaker joined, in the order said.
 
-    Each take is ``{speaker, character_id, text}``; the speaker is the roster name (None for
-    the narrator) and ``character_id`` the bible that speaker has, if any. The text is the
-    spoken words only: the lines were stored without names and directions.
+    Each take is ``{speaker, character_id, text, direction}``; the speaker is the roster name
+    (None for the narrator) and ``character_id`` the bible that speaker has, if any. The text
+    is the spoken words only; ``direction`` is how they are said, the lines' acting notes
+    joined, for the voice to play (2026-10-15).
     """
     bibles = speaker_bibles or {}
     takes: list[dict[str, Any]] = []
@@ -121,17 +122,25 @@ def speaker_segments(
         if not isinstance(line, dict):
             continue
         text = _words(line.get("text"))
+        direction = _words(line.get("direction"))
         if not text:
             continue
         speaker = str(line["speaker"]) if line.get("speaker") else None
         if takes and takes[-1]["speaker"] == speaker:
             takes[-1]["text"] = f"{takes[-1]['text']} {text}"
+            if direction and direction not in takes[-1]["direction"]:
+                takes[-1]["direction"] = "; ".join(
+                    part for part in (takes[-1]["direction"], direction) if part
+                )
             continue
         takes.append(
             {
                 "speaker": speaker,
                 "character_id": bibles.get(speaker) if speaker else None,
                 "text": text,
+                # How the line is said (the writer's acting note): the voice plays it
+                # (`providers.elevenlabs.performance_terms`, the Owner, 2026-10-15).
+                "direction": direction,
             }
         )
     return takes

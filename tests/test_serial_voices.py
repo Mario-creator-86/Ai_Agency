@@ -543,3 +543,29 @@ def test_the_shipped_voice_cast_proposes_eight_distinct_voices_for_the_eight_bib
     assert all(entry["catalogue_name"] for entry in raw["voices"].values())
     # The narrator on his data is the Organization default; no character takes its voice.
     assert "CwhRBWXzGAHq8TQ4Fs17" not in cast["voices"].values()
+
+
+def test_a_lines_direction_rides_with_the_take_and_the_voice_plays_it():
+    """The Owner, 2026-10-15: «la sunet … să avem intonație, surprindere, emoție». A take keeps
+    its lines' acting notes; ElevenLabs plays them as a tag before the words on v3/v4 and as
+    expressive settings on a v2 model, which would read the tag aloud; no note, nothing."""
+    from app.media.speaker_voices import speaker_segments
+    from app.providers.elevenlabs import EXPRESSIVE_SETTINGS, performance_terms
+
+    lines = [
+        {"speaker": KAEL, "text": "Zero. Again?", "direction": "surprised, half-laughing"},
+        {"speaker": KAEL, "text": "Fine.", "direction": "deadpan"},
+        {"speaker": SARAH, "text": "We ship tonight.", "direction": ""},
+    ]
+    takes = speaker_segments(lines, {KAEL: "k", SARAH: "s"})
+    assert takes[0]["direction"] == "surprised, half-laughing; deadpan"
+    assert takes[1]["direction"] == ""
+
+    assert performance_terms("surprised, half-laughing", "eleven_v3") == ("[surprised] ", {})
+    assert performance_terms("through gritted teeth", "eleven_v4_turbo") == (
+        "[through gritted teeth] ",
+        {},
+    )
+    assert performance_terms("whispering", "eleven_multilingual_v2") == ("", EXPRESSIVE_SETTINGS)
+    assert performance_terms("", "eleven_v3") == ("", {})
+    assert performance_terms(None, None) == ("", {})

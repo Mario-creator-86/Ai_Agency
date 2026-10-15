@@ -923,11 +923,16 @@ them in the whole episode, and each one who speaks acts in at least one event yo
 cite name fewer than two people, those they name speak. Everyone else, even someone who acts \
 in an event you cite, is "background" in a room or is mentioned in a line, and says nothing.
 3. Lines. Dialogue is a list of lines, each {{"speaker": a name from ALLOWED_NAMES, "text": \
-the words said aloud and nothing else, "direction": an optional acting note}}. A voice \
-reads "text" exactly as written, so it never holds a name, a colon, a bracket or a stage \
-direction. Punctuate every line as speech: a full stop, a question mark or an exclamation \
-mark at its end, commas where the speaker breathes, a dash or an ellipsis where the thought \
-breaks; the voice paces itself on the punctuation and the captions follow it.
+the words said aloud and nothing else, "direction": how it is said — the feeling and the \
+manner, in two to six words (surprised, half-laughing; whispering; through gritted teeth; \
+deadpan; relieved) — on EVERY line, because the voice plays it}}. A voice reads "text" \
+exactly as written, so it never holds a name, a colon, a bracket or a stage direction. \
+Write lines a voice can play, not a report read aloud: short sentences, a question, an \
+exclamation, an interjection, a pause marked by an ellipsis or a dash where the thought \
+breaks, a word repeated in disbelief; the surprise, the fear, the laugh must be in the \
+words themselves. Punctuate every line as speech: a full stop, a question mark or an \
+exclamation mark at its end, commas where the speaker breathes; the voice paces itself on \
+the punctuation and the captions follow it.
 4. Length. Aim for {min_words} to {max_words} spoken words in each beat (a scene holds at \
 most 9 seconds): a recommendation the Director weighs, not a rule that refuses the episode. \
 The whole episode is {min_episode_words} to {max_episode_words} spoken words, 45 to 70 \

@@ -1263,6 +1263,9 @@ def test_a_line_or_a_narration_without_its_full_stop_gets_one_and_the_writers_ar
     )
     assert scene.narration.endswith("verified.")
     assert "Punctuate every line as speech" in story._INSTRUCTIONS
+    assert "on EVERY line, because the voice plays it" in story._INSTRUCTIONS
+    assert "not a report read aloud" in story._INSTRUCTIONS
+    assert "scris pentru o voce vie" in agent_pipeline._WRITE_INSTRUCTIONS
     assert "semne de punctuație" in agent_pipeline._WRITE_INSTRUCTIONS
 
 
