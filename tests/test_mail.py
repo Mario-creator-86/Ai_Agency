@@ -1289,3 +1289,47 @@ def test_a_letter_about_money_that_went_out_is_written_each_time(engine, staffed
         resolve_message(session, first, resolution="Am trecut-o de mână.", resolved_by="Owner")
     assert write() != first
     assert len(_owner_rows(engine)) == 2
+
+
+def test_a_letter_that_is_the_directors_matter_goes_to_her_inbox_not_to_the_owner(engine):
+    """The Owner, 2026-10-15 19:30Z, checking his alerts: fifteen open letters, fourteen of
+    them the studio's own matter under his rule of 2026-10-12 (a day the studio cut and
+    resumes itself, the GPU guard's off, her acceptance of a film after QC…). Such a letter is
+    written to the Director in the same words; a paid step that waits on HIS cap still reaches
+    him."""
+    from app.agents.memory import agent_for_role
+    from app.agents.messages import is_for_owner, post_message
+    from app.agents.services import seed_initial_workforce
+    from sqlalchemy.orm import Session
+
+    seed_initial_workforce(engine)
+    with Session(engine) as session, session.begin():
+        director = agent_for_role(session, "Director")
+        hers = post_message(
+            session,
+            intent="ESCALATE",
+            subject="Ziua din 2026-10-15 a fost întreruptă la etapa «alegerea subiectului»",
+            body={"kind": "day_interrupted", "date": "2026-10-15"},
+            body_text="Ziua a fost întreruptă; se reia singură.",
+            to_owner=True,
+        )
+        walk = post_message(
+            session,
+            intent="ESCALATE",
+            subject="Foaia de filmare: «Storyboard: X» așteaptă decizia ta pe foaia de filmare",
+            body={"kind": "owner_shooting_sheet", "status": "WAITING"},
+            body_text="GPU-ul a fost oprit în timpul pasului.",
+            to_owner=True,
+        )
+        his = post_message(
+            session,
+            intent="ESCALATE",
+            subject="Foaia de filmare: «Storyboard: Y» așteaptă aprobarea ta",
+            body={"kind": "owner_shooting_sheet", "status": "NEEDS_APPROVAL"},
+            body_text="Pasul costă peste plafonul tău.",
+            to_owner=True,
+        )
+        assert hers.to_agent_id == director.id and not is_for_owner(hers)
+        assert hers.body_json["to"] == "Director" and hers.body_json["redirected_from"] == "Owner"
+        assert walk.to_agent_id == director.id and not is_for_owner(walk)
+        assert his.to_agent_id is None and is_for_owner(his)

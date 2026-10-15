@@ -47,6 +47,40 @@ OWNER_REPEAT_DAYS = 7
 #: that again did not confirm its stop, the worker failing again. They are his by the rule of
 #: 2026-10-12 (accounts, authorisations, security) and must reach him each time they happen.
 OWNER_ASKING_INTENTS = frozenset({"REQUEST_INFO", "REQUEST_REVIEW", "CHALLENGE", "ESCALATE"})
+#: Letters written «to the Owner» that are the Director's own matter under his rule of
+#: 2026-10-12 («nu trebuie să ajungă la mine, este la Director»: only accounts, authorisations
+#: and security are his; money goes through cards): a day the studio cut and resumes itself, the
+#: GPU guard's own off, a film continuation or purchase the studio itself interrupted and takes
+#: up again, her acceptance or refusal of pictures and films after quality control, her
+#: editorial judgement of a script. 2026-10-15 19:30Z he counted fifteen open letters and one
+#: real card; fourteen were these. Such a letter goes to the Director's inbox instead.
+DIRECTOR_MATTER_KINDS = frozenset(
+    {
+        "day_interrupted",
+        "runpod_gpu_guard_off",
+        "film_continue_interrupted",
+        "film_purchase_abandoned",
+        "owner_director_qc",
+        "owner_director_look",
+        "factual_short",
+    }
+)
+#: The shooting-sheet letter is his only when the film waits on HIS decision (a paid step
+#: above his cap: NEEDS_APPROVAL); a film that waits on the studio's own walk is hers.
+SHEET_LETTER_DIRECTOR_STATUSES = frozenset({"WAITING", "STOPPED", "SKIPPED"})
+
+
+def directors_matter(body: dict[str, Any] | None) -> bool:
+    """Whether a letter meant for the Owner is, by his letters rule, the Director's."""
+    data = body if isinstance(body, dict) else {}
+    kind = str(data.get("kind") or "")
+    if kind in DIRECTOR_MATTER_KINDS:
+        return True
+    return kind == "owner_shooting_sheet" and str(data.get("status") or "") in (
+        SHEET_LETTER_DIRECTOR_STATUSES
+    )
+
+
 #: The letters each of which is money that went out (`economy.accountant._letter_each_time`:
 #: «none may be folded into another»): a second one with the same words is a second purchase,
 #: so neither the week's rule nor a new text over the open one applies to them; they keep the
@@ -86,6 +120,16 @@ def post_message(
     (`OWNER_ASKING_INTENTS`). Either way the letter returned is the one he reads."""
     if intent not in MESSAGE_INTENTS:
         raise MessageError(f"Unknown message intent {intent!r}")
+    if to_owner and directors_matter(body):
+        from app.agents.memory import agent_for_role  # noqa: PLC0415 - memory imports us
+
+        director = agent_for_role(session, "Director")
+        if director is not None:
+            # His letters rule (2026-10-12): the Director's matter goes to her inbox, in
+            # the same words, and never counts among what waits for him.
+            to_owner = False
+            to_agent_id = director.id
+            body = {**dict(body or {}), "to": "Director", "redirected_from": "Owner"}
     if to_owner:
         to_agent_id = None
         body = {**dict(body or {}), "to": "Owner", "owner_attention": True}
