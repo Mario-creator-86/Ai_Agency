@@ -1060,6 +1060,33 @@ def restore_sent_back_scenes(
                 look=look,
                 correlation_id=correlation_id,
             )
+            # The clip's record is what the hero gate and the sheet read (`assembler.hero_gate`:
+            # a PAID hero with a PASSED record is accepted without the Owner's look): as the
+            # motion step writes it when her look keeps a clip, PASSED as hers, the blocks
+            # kept beside her reason (2026-10-15 07:13Z: restored takes with a FAILED record
+            # sent him a letter asking for his look at the test shot).
+            from app.media.assembler import CLIP_QC_EVENT, clip_qc_of  # noqa: PLC0415
+
+            earlier = clip_qc_of(session, clip_id) or {}
+            append_event(
+                session,
+                CLIP_QC_EVENT,
+                "scene_take",
+                clip_id,
+                1,
+                {
+                    **earlier,
+                    "storyboard_id": storyboard_id,
+                    "scene_number": scene,
+                    "take_id": clip_id,
+                    "attempt": int(earlier.get("attempt") or 1) + 1,
+                    "verdict": "PASSED",
+                    "passed": True,
+                    "accepted_by": DIRECTOR_LOOK_APPROVER,
+                    "director_look": look_record(look),
+                },
+                correlation_id,
+            )
             append_event(
                 session,
                 SCENE_RESTORED_EVENT,
@@ -1077,7 +1104,57 @@ def restore_sent_back_scenes(
                 correlation_id,
             )
         restored.append(scene)
+    settle_clips_she_kept(engine, storyboard_id=storyboard_id, correlation_id=correlation_id)
     return restored
+
+
+def settle_clips_she_kept(engine: Any, *, storyboard_id: str, correlation_id: str) -> list[str]:
+    """Every PAID clip of the film her look kept (approved_by `DIRECTOR_LOOK_APPROVER`) whose
+    latest record still says FAILED gets the PASSED record her note carries — what the hero
+    gate and the sheet read. Idempotent; returns the take ids settled. 2026-10-15 07:13Z: the
+    first restore wrote the takes but not the record, and the hero waited for the Owner's
+    look over a clip she had already kept."""
+    from app.db import lock_for_write  # noqa: PLC0415
+    from app.media.assembler import CLIP_QC_EVENT, clip_qc_of  # noqa: PLC0415
+    from app.services import append_event  # noqa: PLC0415
+
+    settled: list[str] = []
+    with Session(engine) as session, session.begin():
+        lock_for_write(session)
+        clips = session.scalars(
+            select(SceneTake).where(
+                SceneTake.storyboard_id == storyboard_id,
+                SceneTake.kind.in_(("test_shot", "motion")),
+                SceneTake.status == "PAID",
+                SceneTake.approved_by == DIRECTOR_LOOK_APPROVER,
+            )
+        ).all()
+        for clip in clips:
+            earlier = clip_qc_of(session, clip.id)
+            if earlier is None or earlier.get("verdict") == "PASSED":
+                continue
+            note = take_note(session, clip.id) or {}
+            append_event(
+                session,
+                CLIP_QC_EVENT,
+                "scene_take",
+                clip.id,
+                1,
+                {
+                    **earlier,
+                    "storyboard_id": storyboard_id,
+                    "scene_number": int(clip.scene_number),
+                    "take_id": clip.id,
+                    "attempt": int(earlier.get("attempt") or 1) + 1,
+                    "verdict": "PASSED",
+                    "passed": True,
+                    "accepted_by": DIRECTOR_LOOK_APPROVER,
+                    "director_look": note.get("director_look"),
+                },
+                correlation_id,
+            )
+            settled.append(clip.id)
+    return settled
 
 
 def clip_settled(

@@ -1,6 +1,6 @@
 {
-  "observed_at": "2026-10-15T07:05:16.920558+00:00",
-  "event_cursor": 24387,
+  "observed_at": "2026-10-15T07:25:32.098813+00:00",
+  "event_cursor": 24447,
   "claimed_tasks": [],
   "recent_runs": [
     {
@@ -393,45 +393,46 @@
       "source_changes_in_this_diagnosis": false
     }
   },
-  "last_reported_event_cursor": 24347,
-  "last_reported_summary": "Studioul a reluat ziua. Primul clip a fost respins pentru hârtii cu linii/text, monitoare și zoom; imaginea inițială a fost retrasă. Rescrierile scenelor1 și7 nu au trecut de verificarea Sarah/Deepseek (EMPTY_OUTPUT). Proba LTX-2.5 pentru scena2 folosește corect propria imagine aprobată, dar și acest prim cadru conține hârtii cu linii, contrar verdictului QC; risc concret de repetare a defectului. Niciun film finalizat.",
+  "last_reported_event_cursor": 24447,
+  "last_reported_summary": "Sarah/Deepseek a privit efectiv primul clip, l-a acceptat cu abatere minoră și a restaurat imaginea și clipul (ambele accepted=1), fără regenerare. Restul mișcării rămâne blocat HERO_NOT_APPROVED: poarta cadrului de probă citește vechiul QC FAILED pentru clipul PAID/director_look și cere Owner. Nu este refuz bugetar. Filmul nu e finalizat.",
   "monitoring_status": "NEW_STILL_ACCEPTED_VISUAL_MISMATCH_AND_OLD_IMAGE_CAP_BLOCKS_VIDEO",
   "studio_status": {
     "autonomy_stopped": false,
     "autonomy_mode": "AUTONOMOUS_CEO",
     "api_unreachable": true,
-    "daily_run_stored_status": "INTERRUPTED",
-    "daily_run_id": "80c89659-94c2-410c-a35b-9952c98a7c1e",
-    "daily_stages_completed": 7,
+    "daily_run_stored_status": "RUNNING",
+    "daily_run_id": "fce118fd-4aa2-443a-813a-66b46ffcb3bb",
+    "daily_stages_completed": 11,
     "daily_stages_total": 13,
     "running_db_rows_do_not_prove_active_execution": true,
     "daily_stopped_at_stage": "media",
     "daily_finished_at": "2026-10-15T06:39:24.903405+00:00",
     "gpu_off_verified_at": "2026-10-15T06:45:04.738251+00:00",
     "resumed_from_daily_run": "79bdbdb8-572a-4982-bf54-fb51d592bb28",
-    "active_film_continue_task": null
+    "active_film_continue_task": null,
+    "running_db_row_does_not_prove_active_execution": true
   },
   "policy_changed_after_last_report": false,
   "service_check": {
-    "at": "2026-10-15T07:05:16.920558+00:00",
+    "at": "2026-10-15T07:25:32.098813+00:00",
     "live": "UNREACHABLE",
     "ready": "UNREACHABLE",
-    "shutdown_previously_confirmed": true,
-    "service_started_by_monitor": false
+    "service_started_by_monitor": false,
+    "no_new_shutdown_event_yet": true
   },
   "last_run_inspected": {
-    "id": "e3a3786b-d5e3-45b7-b4a1-70d48b5b0048",
-    "task_type": "director_review",
+    "id": "a82c69f6-a01f-4fd2-a020-3e33552aed5a",
+    "task_type": "prompt_lesson_reading",
     "model_name": "deepseek-v4.1-flash",
-    "status": "SUCCEEDED",
-    "started_at": "2026-10-15T06:37:53.511016+00:00",
-    "finished_at": "2026-10-15T06:38:49.679605+00:00"
+    "status": "RUNNING",
+    "started_at": "2026-10-15T07:16:00.170325+00:00",
+    "finished_at": null
   },
   "last_event_inspected": {
-    "sequence": 24387,
-    "event_id": "9b0996eb-359d-4f95-bfe5-e25648b0207e",
-    "event_type": "runpod.gpu_off_verified",
-    "timestamp": "2026-10-15T06:45:04.738251+00:00"
+    "sequence": 24447,
+    "event_id": "354d311c-6dd7-48c8-8b9a-a7e39925c7d8",
+    "event_type": "agent.state_changed",
+    "timestamp": "2026-10-15T07:16:00.332452+00:00"
   },
   "local_reference_and_response_repairs": {
     "reference_doc": "REFERENCE_ROUTE_WARDROBE_AND_STUDIO_WAIT_2026-10-15.md",
@@ -492,40 +493,11 @@
   },
   "last_quiet_check": {
     "decision": "DONT_NOTIFY",
-    "reason": "studio_remains_stopped_no_new_events_runs_mail_or_generation",
-    "event_cursor_unchanged": 24387,
-    "active_queue": [
-      {
-        "id": "1085c8ce-0662-4efd-9cb1-57bc4c7ac782",
-        "task_type": "DIRECTOR_LOOP",
-        "status": "QUEUED",
-        "attempts": 0,
-        "updated_at": "2026-10-15T06:40:31.760193+00:00"
-      }
-    ],
-    "documents_read": [
-      {
-        "name": "CURRENT_STATUS",
-        "modified": "2026-10-15T07:02:03.073668+00:00",
-        "characters": 794288
-      },
-      {
-        "name": "SERIAL_PROMPT_MODEL_LIMIT_2026-10-14",
-        "modified": "2026-10-14T10:43:22.720090+00:00",
-        "characters": 4701
-      },
-      {
-        "name": "AGENCY_LOOP_DIAGNOSIS_2026-10-14",
-        "modified": "2026-10-14T07:06:21.779126+00:00",
-        "characters": 7336
-      },
-      {
-        "name": "PROMPT_CONTRACT_FOLLOWUP_2026-10-14",
-        "modified": "2026-10-14T05:29:40.183864+00:00",
-        "characters": 9595
-      }
-    ],
+    "reason": "local_service_unreachable_and_no_new_events_or_generation",
+    "event_cursor_unchanged": 24447,
+    "known_hero_gate_block_already_reported": true,
     "all_saved_v3_prompts_preserved": true,
+    "request_count": 17,
     "models_called_by_monitor": false,
     "source_or_policy_changed_by_monitor": false
   },
@@ -660,9 +632,9 @@
     "queue_task_id": "96d61072-6b90-4148-a505-9f92b5c34804",
     "manual": true,
     "requested_at_utc": "2026-10-15T04:56:15.831186+00:00",
-    "status": "INTERRUPTED",
-    "stage": "media",
-    "stages_completed": 7,
+    "status": "RUNNING",
+    "stage": "serial_next",
+    "stages_completed": 11,
     "stages_total": 13,
     "episode_run_id": "22fd19eb-9a07-4dbb-aa79-7ac57abe4e03",
     "actual_episode_model": "kimi-k3",
@@ -671,11 +643,14 @@
     "episode_saved": true,
     "script_rejected_stage_event": 24125,
     "no_new_cloud_generation": false,
-    "id": "80c89659-94c2-410c-a35b-9952c98a7c1e",
+    "id": "fce118fd-4aa2-443a-813a-66b46ffcb3bb",
     "stopped_at_stage": "media",
     "finished_at": "2026-10-15T06:39:24.903405+00:00",
     "resumed_from": "79bdbdb8-572a-4982-bf54-fb51d592bb28",
-    "prior_stages_reused_without_new_llm_calls": true
+    "prior_stages_reused_without_new_llm_calls": true,
+    "media_stage_status": "SKIPPED",
+    "media_stage_reason": "HERO_NOT_APPROVED despite accepted Director second look",
+    "api_unreachable": true
   },
   "latest_script_format_rejection": {
     "run_id": "7c2e6b00-da6f-48b1-8685-ee32b40d8de3",
@@ -688,13 +663,14 @@
     "notification_sent_once": true
   },
   "last_check": {
-    "at": "2026-10-15T06:37:03.749649+00:00",
+    "at": "2026-10-15T07:17:24.858308+00:00",
     "decision": "NOTIFY",
-    "events_inspected_from": 24326,
-    "events_inspected_through": 24347,
+    "events_inspected_from": 24388,
+    "events_inspected_through": 24447,
     "service_live": 200,
     "service_ready": 200,
-    "new_accepted_video_or_finished_film": false,
+    "new_accepted_existing_clip": true,
+    "new_gpu_request": false,
     "models_called_by_monitor": false,
     "source_or_policy_changed_by_monitor": false
   },
@@ -1851,7 +1827,7 @@
       "source_is_accepted_candidate_2_not_rejected_candidate_1": true,
       "old_paper_marking_risk_remains_in_source": true,
       "no_finished_video_asset": false,
-      "accepted": false,
+      "accepted": true,
       "take_id": "766362c7-834f-44eb-af99-6b49f665e009",
       "qc_actual_model": "mistral-large-4",
       "qc_run_id": "1d41b17f-cc92-48cc-8e25-d74da15afdeb",
@@ -1861,7 +1837,11 @@
         "monitor_content",
         "zoom_instead_of_static_camera"
       ],
-      "no_accepted_video_or_finished_film": true
+      "no_accepted_video_or_finished_film": false,
+      "restored_by_director_second_look": true,
+      "current_take_status": "PAID",
+      "approved_by": "director_look",
+      "film_not_finished": true
     },
     "scene7_editorial_hold": {
       "event_sequence": 24267,
@@ -2120,6 +2100,39 @@
         0.14
       ],
       "costs_claimed_by_other_session_not_reconciled_by_monitor": true
+    },
+    "scene1_actual_clip_second_look": {
+      "run_id": "a6ad2d12-56e6-426c-88bf-2c92471c643f",
+      "actual_model": "deepseek-v4.1-flash",
+      "task_type": "director_second_look",
+      "status": "SUCCEEDED",
+      "source": "CLIP",
+      "verdict": "OVERTURNED",
+      "severity": "minor",
+      "redo": false,
+      "restoration_event_sequence": 24410,
+      "still_take_id": "ac49f415-574e-414e-9661-8df5ca21126a",
+      "still_current_status": "APPROVED",
+      "clip_take_id": "766362c7-834f-44eb-af99-6b49f665e009",
+      "clip_current_status": "PAID",
+      "approved_by": "director_look",
+      "image_journal_accepted": true,
+      "video_journal_accepted": true,
+      "restored_without_new_gpu_purchase": true,
+      "causal_diagnosis_mismatch": "Director says motion prompt requested camera approach, but actual request was previously verified identical to saved motion and starts Static camera on a fixed tripod; camera diagnosis is not supported by actual prompt."
+    },
+    "hero_gate_block_after_director_acceptance": {
+      "event_sequence": 24414,
+      "status": "HERO_NOT_APPROVED",
+      "rest_of_motion_not_bought": true,
+      "reservation_usd_released": 2.8,
+      "owner_escalation_mail_id": "28ae0932-f290-4371-a142-321afad367b3",
+      "director_investigation_mail_id": "033c0dd8-c716-469d-9c22-5fa27a2767bf",
+      "not_budget_refusal": true,
+      "code_verified": "assembler.hero_gate reads prior media.clip_qc_checked verdict for PAID takes; restored take is PAID with approved_by director_look, so old FAILED remains a gate blocker. Only APPROVED status bypasses that check.",
+      "source_path": "backend/app/media/assembler.py",
+      "source_line": 10045,
+      "no_gate_or_verdict_changed_by_monitor": true
     }
   },
   "deferred_findings_reported_after_restart": {

@@ -709,6 +709,44 @@ def test_a_scene_sent_back_for_its_clip_is_restored_by_her_look_and_buys_nothing
         assert restored_clip.failure_code is None
         note = fix_check.take_note(session, "clip-1")
         assert note and note["approved_by"] == fix_check.DIRECTOR_LOOK_APPROVER
+        # What the hero gate reads: the clip's latest record, PASSED as hers.
+        from app.media.assembler import clip_qc_of
+
+        record = clip_qc_of(session, "clip-1")
+        assert record and record["verdict"] == "PASSED" and record["passed"] is True
+        assert record["accepted_by"] == fix_check.DIRECTOR_LOOK_APPROVER
+        assert record["director_look"]["reason_ro"] == "e bine așa"
+    # A clip she kept whose record was never rewritten (the first restore of 07:12Z) is
+    # settled on the next walk: the record says PASSED, as her note says.
+    with Session(engine) as session, session.begin():
+        from app.media.assembler import CLIP_QC_EVENT
+        from app.services import append_event
+
+        append_event(
+            session,
+            CLIP_QC_EVENT,
+            "scene_take",
+            "clip-1",
+            1,
+            {
+                "storyboard_id": board,
+                "scene_number": 1,
+                "take_id": "clip-1",
+                "attempt": 3,
+                "verdict": "FAILED",
+                "passed": False,
+                "blocks_ro": ["x"],
+            },
+            "c",
+        )
+    assert fix_check.settle_clips_she_kept(engine, storyboard_id=board, correlation_id="c") == [
+        "clip-1"
+    ]
+    with Session(engine) as session:
+        settled = clip_qc_of(session, "clip-1")
+        assert settled["verdict"] == "PASSED" and settled["attempt"] == 4
+        assert settled["director_look"]["reason_ro"] == "e bine așa"
+    assert fix_check.settle_clips_she_kept(engine, storyboard_id=board, correlation_id="c") == []
     # Nothing left to offer: the scene is restored, the next walk prices nothing for it.
     assert (
         fix_check.restore_sent_back_scenes(
