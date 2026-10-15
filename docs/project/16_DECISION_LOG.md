@@ -1,5 +1,9 @@
 # Architectural / Product Decision Log v5
 
+## O singură imagine pe scenă (Proprietarul, 2026-10-15 21:10Z) (2026-10-15)
+
+Decizie: pasul de imagini cumpără un singur candidat pe scenă (STILL_CANDIDATES = 1), nu doi. Motiv: Proprietarul — «ne costă bani pentru că facem câte două imagini, vreau să facem doar 1»; promptul e aprobat de Directoare înainte de cumpărare, iar o imagine refuzată se reface pe un prompt revizuit sub plafonul randărilor. Respins: a păstra doi candidați «ca să aibă din ce alege» — alegerea se face pe prompt, nu pe loterie. Suita de teste rămâne pe două candidate (fixture), cu un test care fixează valoarea de producție la 1.
+
 ## Bucla de audit se oprește singură ca defect de unealtă (Proprietarul, 2026-10-15 20:14Z) (2026-10-15)
 
 Decizie: când Directoarea refuză aceleași cuvinte ale unei scene cu aceeași constatare de trei ori la rând (suprapunere de cuvinte ≥ 0,6), indiferent dacă rescrierile Editorului au aterizat, studioul înregistrează TOOL_DEFECT pe acele cuvinte, scrie nota pentru dezvoltator în firul Directoarei (rezolvată pe loc, niciodată scrisoare către Proprietar), oprește rundele și nu cumpără nimic pe scena aceea până se schimbă cuvintele. Motiv: Proprietarul — «trebuie să avem un proces automat care intervine în astfel de situații»; azi 16 refuzuri pe o scenă pentru propoziții ale compozitorului, pe care Editorul nu le putea atinge. Respins: continuarea nelimitată a rundelor (timp și nervi, fără convergență) și cumpărarea sub plafon (regula lui de la 18:15Z). Rămâne: rundele fără plafon pentru constatări diferite.

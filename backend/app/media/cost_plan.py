@@ -47,10 +47,14 @@ MEASURED = "MEASURED"
 #: bake-off measures it. The Owner reads it as an estimate, never as «tarif publicat».
 ESTIMATED = "ESTIMATED"
 
-#: The stills every LIVE scene buys before any motion: two candidates at 2K (1530:2720).
+#: The stills every LIVE scene buys before any motion: ONE candidate at 2K (1530:2720).
+#: Two until 2026-10-15 21:10Z — the Owner, watching the Speed of Light film buy ten images
+#: for five scenes: «ne costă bani pentru că facem câte două imagini, vreau să facem doar 1».
+#: The prompt is approved by the Director before the purchase, so one picture is the bet; a
+#: refused one is redone on a reviewed prompt under the renders cap, never bought twice blind.
 STILLS_MODEL = "seedream5_pro"
 STILLS_RESOLUTION = "2K"
-STILL_CANDIDATES = 2
+STILL_CANDIDATES = 1
 
 #: What "the premium model everywhere" means when the plan reports its saving.
 PREMIUM_REFERENCE = ("seedance2_5", "1080p")

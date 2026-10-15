@@ -33,7 +33,6 @@ from app.agents.reviews import (
 from app.agents.services import seed_initial_workforce
 from app.factual.models import ScriptDraft, TopicIdea
 from app.media.cost_plan import (
-    STILL_CANDIDATES,
     STILLS_MODEL,
     STILLS_RESOLUTION,
     price_shot,
@@ -379,7 +378,10 @@ def test_a_failed_render_becomes_priced_redo_proposals_never_render_again(engine
     assert set(by) == {(None, "audio"), (3, "still"), (3, "motion"), (5, "card"), (6, "card")}
     assert by[(None, "audio")]["credits"] == 0
     assert by[(5, "card")]["credits"] == 0 and by[(6, "card")]["credits"] == 0
-    still = price_still(STILLS_MODEL, STILLS_RESOLUTION, STILL_CANDIDATES)
+    from app.media import cost_plan
+
+    # The suite buys two candidates (conftest); read the value the module holds now.
+    still = price_still(STILLS_MODEL, STILLS_RESOLUTION, cost_plan.STILL_CANDIDATES)
     shot = price_shot("seedance2", "1080p", 4.0)
     assert by[(3, "still")]["credits"] == still
     assert by[(3, "motion")]["credits"] == shot

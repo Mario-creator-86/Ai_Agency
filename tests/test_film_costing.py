@@ -1349,3 +1349,15 @@ def test_a_paid_shot_without_a_clip_report_is_judged_before_the_staircase_waits(
             )
         ).all()
     assert len(reports) == 1
+
+
+def test_production_buys_one_still_per_scene():
+    """2026-10-15 21:10Z, the Owner watching the Speed of Light film buy ten images for five
+    scenes: «ne costă bani pentru că facem câte două imagini, vreau să facem doar 1». The
+    suite keeps two (conftest), production one: read from the source, not the patched module."""
+    import re
+    from pathlib import Path
+
+    source = Path(__file__).resolve().parents[1] / "backend" / "app" / "media" / "cost_plan.py"
+    match = re.search(r"^STILL_CANDIDATES = (\d+)$", source.read_text(encoding="utf-8"), re.M)
+    assert match and int(match.group(1)) == 1

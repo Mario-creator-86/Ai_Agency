@@ -32,6 +32,24 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(pytest.mark.real_encode)
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _two_still_candidates_as_the_suite_was_written():
+    """Production buys ONE still per scene since 2026-10-15 21:10Z (the Owner: «vreau să facem
+    doar 1», `cost_plan.STILL_CANDIDATES`); the suite's fixtures, prices and choices were
+    written on two candidates, and keep them. `test_production_buys_one_still_per_scene`
+    reads the production value from the source."""
+    from app.agents import reviews
+    from app.media import assembler, cost_plan, shooting_sheet, stills_stage
+
+    holders = (cost_plan, stills_stage, shooting_sheet, assembler, reviews)
+    before = {id(m): m.STILL_CANDIDATES for m in holders}
+    for module in holders:
+        module.STILL_CANDIDATES = 2
+    yield
+    for module in holders:
+        module.STILL_CANDIDATES = before[id(module)]
+
+
 @pytest.fixture(autouse=True)
 def shipped_music_library(monkeypatch):
     """Every test reads the music library the release ships (empty), never the Owner's own
