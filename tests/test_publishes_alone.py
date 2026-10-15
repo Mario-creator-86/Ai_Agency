@@ -1129,6 +1129,19 @@ def test_the_serial_still_always_says_its_surfaces_are_blank_and_the_editor_is_t
     assert "screen" not in SERIAL_BLANK_SENTENCE and "blank" in SERIAL_BLANK_SENTENCE
     told = prompt_agent._SERIAL_SHOTS_INSTRUCTIONS
     assert "nameplate" in told and "leave such objects out" in told
+    # The Owner, 2026-10-15 14:15Z: the first prompt complete the first time — the room by
+    # its own objects, the pose first, a chain of moments for the clip, the feeling in the
+    # body, the camera as a storytelling choice, never a timid zoom on a face.
+    for phrase in (
+        "ONLY by its own objects",
+        "ONE short clause",
+        "chain of two or three moments",
+        "comedy, suspense, fear",
+        "never the same move twice in a row",
+        "never a timid zoom on a face",
+        "the still is drawn from the first moment, the clip plays the chain",
+    ):
+        assert phrase in told, phrase
 
 
 # ------------------------------------------------------ 18. the room is the beat's, not the block's
