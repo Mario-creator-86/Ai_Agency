@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-10-15 — The viewing is notes, not a veto, on a film accepted under the cap
+
+After her ACCEPT under the cap (12:49Z), the Director's viewing refused episode 2 on the publish path — first for the studio's own captions read as «burned-in writing» — put the storyboard on REJECTED and told four departments to remake it.
+
+- `agents/editorial.py`: `accepted_under_cap`; a viewing's REJECT on a film accepted under the Owner's cap is recorded APPROVE with her reasons (notes, not a veto), no «Refăcut» handoffs, the lesson kept, a storyboard an earlier viewing refused back to RENDERED; the brief says the captions at the bottom of the frames are the film's subtitles, never writing.
+- `runbook/stages.py`: `_publish_one` has her view such a film again; the publish queue and the topic selection read the newest viewing per film (`_viewing_rejected`), not any refusal ever written.
+- `workflows/passes/director_qc_review.py`: a film accepted under the cap, refused by a viewing and not on a channel is walked again once per refused viewing, so the walk publishes it.
+- Tests: `test_editorial`, `test_director_decides_qc`.
+
 ## 2026-10-15 — A verdict without a reason takes it from the cause
 
 - `agents/reviews.py`: `FindingVerdict` takes a missing or blank `reason` from the verdict's `cause` (then its `lesson`) and cuts an overlong reason, cause or lesson to its room instead of refusing the whole decision: at 12:38Z the Director's second answer on 2d276038 wrote a cause and a lesson for every REAL finding and no reason, her decision was refused twice (`verdicts.N.reason: Field required`) and the film waited while the Owner asked for the publication. Test in `test_director_decides_qc` (130 passed with the look and repair-review suites).

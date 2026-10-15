@@ -5,6 +5,33 @@ AGENT_SCENARIO_ACCEPTANCE later used actual Ollama Cloud calls, with normal seri
 acceptance and real GPU/media/upload still pending. Current local UI evidence is reported
 separately below and does not prove those external workflows.
 
+## Cycle 7f: the viewing cannot withhold a film accepted under the cap; the studio's captions are not writing (2026-10-15)
+
+**Verificat live (12:49Z, pe ea51f27 + a50c680).** Regula plafonului a mers: la prima citire
+după repornire Directoarea nu a mai cumpărat nimic (raportul avea două refaceri cumpărate),
+decizia ei a devenit ACCEPT sub plafon (`accepted_under_cap: limited [2, 3, 4, 5, 7]`), raportul
+PASSED s-a scris, continuarea a mers la publicare. La 12:49:09Z «vizionarea» ei (ultima privire
+dinainte de publicare, `agents/editorial.py`) a REFUZAT filmul — primul motiv: subtitrările arse
+de studio citite ca «scris în cadru»; apoi camera greșită și posturile — a trecut storyboard-ul pe
+REJECTED și a trimis patru departamente «Refăcut: … Do not publish». Publicare: zero.
+
+**Ce este.**
+- `agents/editorial.py`: `accepted_under_cap(session, asset)` (decizia ei nouă sub plafon pe
+  film); un REJECT al vizionării pe un film acceptat sub plafon se înregistrează APPROVE cu
+  motivele ei (note, nu veto; `under_cap` pe eveniment), fără «Refăcut» către departamente,
+  lecția se păstrează, iar un storyboard refuzat de o vizionare anterioară revine RENDERED.
+  Instrucțiunile vizionării spun că subtitrările din josul cadrelor sunt ale filmului, nu scris.
+- `runbook/stages.py`: `_publish_one` revizionează un film refuzat de vizionare dar acceptat
+  sub plafon (vizionarea e note acum); cozile citesc verdictul CEL MAI NOU al vizionării
+  (`_viewing_rejected`), nu orice refuz scris vreodată.
+- `workflows/passes/director_qc_review.py`: un film acceptat sub plafon, refuzat de vizionare și
+  nepublicat e plimbat din nou, o dată pe vizionare refuzată (cheia o numește), sub cauza
+  raportului picat; plimbarea îl publică.
+
+Teste: `test_editorial` (vizionarea sub plafon e note; captions în brief), `test_director_decides_qc`
+(filmul acceptat sub plafon și refuzat de vizionare e plimbat din nou), suita cardului. Cele două
+eșecuri din `test_editorial` (think:false pe extra) sunt pre-existente (lista din roadmap).
+
 ## Cycle 7e: three renders a layer a scene, then the film ships as it stands (the Owner, 12:20Z) (2026-10-15)
 
 **Owner, 12:20Z (decizie):** «Avem nevoie de publicare! Nu mai regenera altceva. … Randările

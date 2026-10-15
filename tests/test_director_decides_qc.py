@@ -4839,3 +4839,80 @@ def test_a_verdict_without_a_reason_takes_it_from_the_cause_and_overlong_words_a
 
     with pytest.raises(ValueError):
         FindingVerdict.model_validate({"finding": 5, "verdict": "REAL"})
+
+
+def test_a_film_accepted_under_the_cap_and_refused_by_her_viewing_is_walked_again(
+    engine, settings, studio, monkeypatch
+):
+    """12:49Z, 2d276038: accepted under the cap, then refused by her viewing on the publish
+    path, the film stood: an ACCEPTED report is final and the pass never queued it again. A
+    film accepted under the cap whose newest viewing refused it and that is not out on a
+    channel is walked again at once; once a viewing approved it, nothing more is queued."""
+    from app.media.models import EditorialReview
+    from app.runbook import stages
+
+    film = failed_film(engine, local_move=False)
+    now = utc_now()
+    with Session(engine) as session, session.begin():
+        for n in range(3):
+            take_id = str(uuid4())
+            session.add(
+                SceneTake(
+                    id=take_id,
+                    storyboard_id=film["board"],
+                    scene_number=5,
+                    kind="still",
+                    prompt_hash=uuid4().hex,
+                    model_id="seedream5_pro",
+                    resolution="1080:1920",
+                    status="REJECTED",
+                    failure_code="LOCAL.STILL_GATE",
+                    path=f"storage/{take_id}.bin",
+                    sha256=uuid4().hex,
+                    remote_task_id=f"task-{n}",
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+    repairs = [{"scene_index": 5, "redo": "still", "reason": "three stacked panels"}]
+    registry, _model = director_says(studio, answer(verdicts_for(film), "REPAIR", repairs))
+    FakeRedoPath(engine, monkeypatch, still_status="PAID")
+    _production(engine)
+    done = stages.director_decides_failed_film(
+        engine, settings, None, registry, film["report"], film["asset"]
+    )
+    assert done["outcome"] == "ACCEPTED"
+    assert _pass(engine, settings) == {"queued": []}  # accepted: nothing to queue
+
+    def viewed(verdict: str) -> None:
+        with Session(engine) as session, session.begin():
+            session.add(
+                EditorialReview(
+                    id=str(uuid4()),
+                    media_asset_id=film["asset"],
+                    storyboard_id=film["board"],
+                    verdict=verdict,
+                    story="",
+                    reasons_json=[],
+                    notes_json={},
+                    reviewer_agent_id=None,
+                    run_id=None,
+                    frames_seen=0,
+                    model_used=False,
+                    created_at=utc_now(),
+                    event_id=None,
+                )
+            )
+
+    viewed("REJECT")
+    assert _pass(engine, settings) == {"queued": [film["board"]]}
+    assert _pass(engine, settings) == {"queued": []}  # once per refused viewing
+    with Session(engine) as session, session.begin():
+        task = session.scalars(
+            select(TaskQueueItem).where(TaskQueueItem.task_type == "FILM_CONTINUE")
+        ).all()[-1]
+        assert task.payload["cause"] == f"director_qc:{film['report']}"
+        task.status = "COMPLETED"
+    assert _pass(engine, settings) == {"queued": []}  # that viewing's walk ran
+    viewed("APPROVE")
+    assert _pass(engine, settings) == {"queued": []}

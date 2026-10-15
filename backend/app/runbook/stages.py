@@ -56,7 +56,12 @@ from app.agents.director import (
     file_stage_reports,
     letter_to_owner,
 )
-from app.agents.editorial import EditorialError, editorial_review, latest_editorial
+from app.agents.editorial import (
+    EditorialError,
+    accepted_under_cap,
+    editorial_review,
+    latest_editorial,
+)
 from app.agents.memory import agent_for_role, remember
 from app.agents.models import AgentMessage
 from app.agents.reviews import (
@@ -774,9 +779,7 @@ def topics_in_production(session: Session) -> tuple[list[str], list[str]]:
     ):
         verdicts[verdict_row.media_asset_id] = verdict_row.status  # the newest per asset
     published = set(session.scalars(select(PublicationRecord.media_asset_id)))
-    rejected = {
-        r.media_asset_id for r in session.scalars(select(EditorialReview)) if r.verdict == "REJECT"
-    }
+    rejected = _viewing_rejected(session)
     live: list[str] = []
     stalled: list[str] = []
     for topic in selected:
@@ -6902,6 +6905,16 @@ OUT_ON_THE_CHANNEL = ("PUBLISHED", "PUBLISHED_SIMULATED", "SCHEDULED", "REMOTE_C
 SETTLING_ELSEWHERE_STATES = ("FAILED_RETRYABLE", "NEEDS_RECONCILIATION")
 
 
+def _viewing_rejected(session: Session) -> set[str]:
+    """The films whose NEWEST viewing the Director refused. Until 2026-10-15 any refusal
+    ever written kept a film out: a film viewed again under the Owner's cap (APPROVE with
+    her notes) was still out of the queue on its older REJECT."""
+    newest: dict[str, str] = {}
+    for review in session.scalars(select(EditorialReview).order_by(EditorialReview.created_at)):
+        newest[str(review.media_asset_id)] = str(review.verdict)
+    return {asset for asset, verdict in newest.items() if verdict == "REJECT"}
+
+
 def _publish_one(
     engine: Engine,
     vault: Any,
@@ -6936,6 +6949,14 @@ def _publish_one(
     # change something, not a silent skip.
     with Session(engine) as session:
         editorial = latest_editorial(session, asset_id)
+        if (
+            editorial is not None
+            and editorial.verdict != "APPROVE"
+            and accepted_under_cap(session, asset_id) is not None
+        ):
+            # Refused by a viewing, accepted under the Owner's cap (2026-10-15): viewed
+            # again, and her viewing is notes now, not a veto (`editorial_review`).
+            editorial = None
     if editorial is None:
         if registry is None or not _has_language_model(registry):
             return {
@@ -7305,11 +7326,7 @@ def _publish(
             )
         )
         # A film the Director rejected stays out of the queue; the next one comes forward.
-        rejected_assets = {
-            review.media_asset_id
-            for review in session.scalars(select(EditorialReview))
-            if review.verdict == "REJECT"
-        }
+        rejected_assets = _viewing_rejected(session)
         # The queue holds files, but the channel receives films. One film rendered four times
         # is four QC-passed assets: publishing them in turn would put the same video on the
         # channel four times, once per day. So the queue is collapsed to one entry per film —

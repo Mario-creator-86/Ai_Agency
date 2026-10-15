@@ -89,6 +89,34 @@ def _his_card_open(session: Any, storyboard_id: str) -> bool:
     )
 
 
+def _refused_viewing_to_publish(session: Any, asset_id: str) -> str | None:
+    """The id of the newest viewing that refused a film accepted under the Owner's cap and
+    not out on a channel, else None: its walk is queued once per such viewing (the key names
+    it), and `runbook.stages._publish_one` has her view the film again, as notes."""
+    from sqlalchemy import select  # noqa: PLC0415
+
+    from app.agents.editorial import accepted_under_cap  # noqa: PLC0415
+    from app.media.models import EditorialReview  # noqa: PLC0415
+    from app.publishing.models import PublicationRecord  # noqa: PLC0415
+
+    newest = session.scalar(
+        select(EditorialReview)
+        .where(EditorialReview.media_asset_id == asset_id)
+        .order_by(EditorialReview.created_at.desc())
+    )
+    if newest is None or str(newest.verdict) == "APPROVE":
+        return None
+    if accepted_under_cap(session, asset_id) is None:
+        return None
+    out = session.scalar(
+        select(PublicationRecord.id).where(
+            PublicationRecord.media_asset_id == asset_id,
+            PublicationRecord.status.in_(("PUBLISHED", "SCHEDULED", "REMOTE_CONFIRMED")),
+        )
+    )
+    return None if out is not None else str(newest.id)
+
+
 def _developer_waits(session: Any, report_id: str) -> bool:
     """Whether this failed report waits on the developer: its only fix, a free one, was made
     `runbook.stages.FREE_FIXES_PER_FILM` times without curing a measured serious defect, and
@@ -114,6 +142,7 @@ def queue_director_reviews(context: WatchdogContext) -> dict[str, Any]:
     from sqlalchemy import select  # noqa: PLC0415
     from sqlalchemy.orm import Session  # noqa: PLC0415
 
+    from app.agents.editorial import accepted_under_cap  # noqa: PLC0415
     from app.db import lock_for_write  # noqa: PLC0415
     from app.media.director_qc import decision_state  # noqa: PLC0415
     from app.media.models import QualityControlReport, Storyboard, VideoRenderJob  # noqa: PLC0415
@@ -166,6 +195,24 @@ def queue_director_reviews(context: WatchdogContext) -> dict[str, Any]:
                 .order_by(QualityControlReport.verified_at.desc())
                 .limit(1)
             )
+            if report is not None and report.status == "PASSED":
+                # Accepted under the Owner's cap (the PASSED report her decision stands on),
+                # then refused by her viewing on the publish path (12:49Z, 2d276038): walked
+                # again once per such viewing, so the walk publishes it, her viewing being
+                # notes now, not a veto (`editorial_review`); once out, nothing more.
+                viewing = _refused_viewing_to_publish(session, asset_id)
+                shipped = accepted_under_cap(session, asset_id) if viewing else None
+                if viewing and shipped and shipped.get("report_id"):
+                    key = f"film-continue-{storyboard_id}-publish-again-{viewing}"
+                    standing = session.scalar(
+                        select(TaskQueueItem.id).where(TaskQueueItem.idempotency_key == key)
+                    )
+                    if standing is None:
+                        failed_report = str(shipped["report_id"])
+                        owed.append(
+                            (storyboard_id, key, f"{CAUSE_PREFIX}{failed_report}", failed_report)
+                        )
+                continue
             if report is None or report.status != "FAILED" or str(report.verified_at) < since:
                 continue
             if _developer_waits(session, str(report.id)):

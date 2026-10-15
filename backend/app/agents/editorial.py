@@ -145,7 +145,10 @@ _INSTRUCTIONS = (
     "narration, what quality control measured{frames_note}. Judge it as the audience will: "
     "{judgement}; do the pictures show the story rather than decorate it — one frame from "
     "every scene is attached, and a blank field, stripes, noise or garbled writing in any of "
-    "them means REJECT, however good the rest is; is it worth their time. {nature} Return "
+    "them means REJECT, however good the rest is (the studio burns its own captions — the "
+    "narration's words, a few at a time — into the bottom of every frame: they are the "
+    "film's subtitles, never writing in the picture and never a reason); is it worth their "
+    "time. {nature} Return "
     'only JSON: {{"verdict": "APPROVE" | "REJECT", "story": "one sentence: {story_note}", '
     '"reasons": ["..."], "notes_for": {{"ScriptWriter": "...", "VideoEditor": "...", '
     '"VoiceArtist": "...", "Publisher": "..."}}, "lesson": "one general rule about how the '
@@ -405,6 +408,27 @@ def frames_for(
     return frames
 
 
+def accepted_under_cap(session: Session, media_asset_id: str) -> dict[str, Any] | None:
+    """The Director's newest QC decision on this film when it accepted the film under the
+    Owner's cap (`runbook.stages.RENDERS_PER_LAYER`, 2026-10-15: «publicăm ce avem»), else
+    None: such a film is published as it stands, and her viewing writes notes, not a veto."""
+    from app.media.director_qc import DECISION_EVENT  # noqa: PLC0415 - media imports agents
+    from app.models import DomainEvent  # noqa: PLC0415
+
+    for event in session.scalars(
+        select(DomainEvent)
+        .where(DomainEvent.event_type == DECISION_EVENT)
+        .order_by(DomainEvent.sequence.desc())
+    ):
+        payload = event.payload if isinstance(event.payload, dict) else {}
+        if str(payload.get("media_asset_id") or "") != media_asset_id:
+            continue
+        if payload.get("outcome") == "ACCEPTED" and payload.get("accepted_under_cap"):
+            return dict(payload)
+        return None
+    return None
+
+
 def latest_editorial(session: Session, media_asset_id: str) -> EditorialReview | None:
     return session.scalar(
         select(EditorialReview)
@@ -498,6 +522,23 @@ def editorial_review(
     else:
         raise EditorialError("Niciun model de limbaj: Directorul nu poate viziona materialul")
 
+    # The Owner, 2026-10-15: a film accepted under his cap is published as it stands. Her
+    # viewing still says what it saw — the reasons stay on the record, the lesson is kept —
+    # but it is not a veto: the verdict is APPROVE under the cap, no department is told to
+    # remake anything, and a storyboard a viewing refused earlier stands RENDERED again.
+    with Session(engine) as session:
+        under_cap = accepted_under_cap(session, media_asset_id)
+    if verdict.verdict == "REJECT" and under_cap is not None:
+        verdict = EditorialVerdict(
+            verdict="APPROVE",
+            story=verdict.story,
+            reasons=verdict.reasons,
+            notes_for=verdict.notes_for,
+            lesson=verdict.lesson,
+        )
+    else:
+        under_cap = None
+
     with Session(engine) as session, session.begin():
         review_id = str(uuid4())
         event = append_event(
@@ -512,6 +553,7 @@ def editorial_review(
                 "reasons": verdict.reasons,
                 "frames_seen": len(frames),
                 "title": facts["title"],
+                "under_cap": under_cap is not None,
             },
             correlation,
         )
@@ -536,6 +578,12 @@ def editorial_review(
             board = session.get(Storyboard, facts["storyboard_id"])
             if board is not None:
                 board.status = "REJECTED"
+        elif under_cap is not None and facts["storyboard_id"]:
+            board = session.get(Storyboard, facts["storyboard_id"])
+            if board is not None and board.status == "REJECTED":
+                # Refused by an earlier viewing of the same film, never closed: a film
+                # with a finished render that goes out under the cap.
+                board.status = "RENDERED"
         roles = {
             role.name: agent
             for agent, role in session.execute(
@@ -577,7 +625,7 @@ def editorial_review(
                 storyboard_id=facts.get("storyboard_id"),
             )
         sent = 0
-        if verdict.verdict == "REJECT":
+        if verdict.verdict == "REJECT" and under_cap is None:
             for role_name, note in verdict.notes_for.items():
                 target = roles.get(DEPARTMENTS.get(role_name, role_name))
                 if target is None or not str(note).strip():
