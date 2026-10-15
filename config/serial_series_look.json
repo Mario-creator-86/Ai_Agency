@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "status": "PROPOSED",
   "proposed_on": "2026-10-11",
   "proposed_by": "the Owner's office picture, 2026-10-11 («acesta este biroul; serialul ar trebui să păstreze oarecum o tematică»)",
@@ -30,5 +30,5 @@
     "single": "Medium close-up single at eye level on {name}, facing the viewer",
     "close": "Close-up at eye level on {name}'s reaction, facing the viewer"
   },
-  "max_prompt_chars": 980
+  "max_prompt_chars": 20000
 }

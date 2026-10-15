@@ -39,7 +39,7 @@ from app.agents.models import (
     RoleCapability,
 )
 from app.agents.schemas import AgentRunView, AgentView, ModelView, ProviderView, RoleView
-from app.config import DEFAULT_DIRECTOR_TOKEN_MULTIPLIER
+from app.config import DEFAULT_DIRECTOR_TOKEN_MULTIPLIER, DEFAULT_LLM_CONTEXT_MULTIPLIER
 from app.db import lock_for_write
 from app.economy.accountant import may_run_agent
 from app.models import DomainEvent, OwnerPolicy
@@ -707,6 +707,11 @@ def _failure_detail(exc: BaseException) -> str:
     name = type(exc).__name__
     status = getattr(exc, "http_status", None)
     if not isinstance(status, int) or isinstance(status, bool):
+        if getattr(exc, "unanswered", False) is True:
+            return (
+                name + ": furnizorul nu a încheiat răspunsul; adapterul nu retrimite apelul, "
+                "deoarece poate continua și costa la furnizor"
+            )
         return name
     keyless_meaning = {
         401: "serviciul local nu este autentificat la contul furnizorului (nu are cheie în "
@@ -717,6 +722,21 @@ def _failure_detail(exc: BaseException) -> str:
     meaning = (
         keyless_meaning.get(status) if getattr(exc, "keyless", False) is True else None
     ) or _HTTP_MEANING_RO.get(status)
+    request_meanings = {
+        "OUTPUT_LIMIT": (
+            "cererea depășește limita de răspuns a modelului; "
+            "parametrul de tokeni trebuie corectat, nu cheia"
+        ),
+        "CONTEXT_LIMIT": (
+            "contextul complet depășește fereastra modelului; "
+            "sarcina trebuie împărțită fără tăierea mesajelor"
+        ),
+        "UNSUPPORTED_THINKING": "modelul nu acceptă parametrul de gândire trimis de aplicație",
+    }
+    if status == 400:
+        meaning = request_meanings.get(getattr(exc, "reason_code", None) or "") or (
+            "furnizorul a respins forma sau parametrii cererii; motivul exact nu este disponibil"
+        )
     if meaning is None and 500 <= status < 600:
         meaning = "furnizorul are o problemă de partea lui; se reîncearcă mai târziu"
     word = getattr(exc, "word", None)
@@ -795,17 +815,23 @@ def run_agent_task(
             if role is not None and role.name == "Director"
             else 1
         )
-        effective_max_tokens = max_tokens * multiplier if max_tokens is not None else None
+        context_multiplier = getattr(
+            settings, "llm_context_multiplier", DEFAULT_LLM_CONTEXT_MULTIPLIER
+        )
+        effective_max_tokens = (
+            max_tokens * multiplier * context_multiplier if max_tokens is not None else None
+        )
         context = {
             **context,
             "generation_limits": {
                 "requested_max_tokens": max_tokens,
                 "token_multiplier": multiplier,
+                "context_multiplier": context_multiplier,
                 "effective_max_tokens": effective_max_tokens,
             },
         }
         if summary:
-            context = {**context, "task_summary": " ".join(str(summary).split())[:300]}
+            context = {**context, "task_summary": " ".join(str(summary).split())}
 
         # Which model answers this call: the agent's own, or the slot the caller named.
         # A named model must exist, be available, and satisfy what the role requires — a
@@ -882,6 +908,14 @@ def run_agent_task(
             session.flush()
             return AgentRunView.model_validate(run).model_dump()
 
+        if getattr(adapter, "is_ollama_cloud", False) is True:
+            effective_max_tokens = None
+            context["generation_limits"] = {
+                **context["generation_limits"],
+                "effective_max_tokens": None,
+                "output_limit_source": "provider_native",
+            }
+
         model_name = model_rec.model_name
         provider_name = provider_rec.name
         provider_id = provider_rec.id
@@ -944,8 +978,14 @@ def run_agent_task(
         raw = gen_result.raw_response if isinstance(gen_result.raw_response, dict) else {}
         http_status: int | None = None
         if (output_text or "").strip():
-            status = "SUCCEEDED"
-            error_detail = None
+            incomplete = raw.get("done_reason") == "length"
+            status = "INCOMPLETE_OUTPUT" if incomplete else "SUCCEEDED"
+            error_detail = (
+                "Modelul s-a oprit la limita de tokeni. Răspunsul vizibil este păstrat complet, "
+                "dar este incomplet și nu autorizează executarea sarcinii."
+                if incomplete
+                else None
+            )
         else:
             status = "EMPTY_OUTPUT"
             error_detail = (
@@ -1033,7 +1073,7 @@ def run_agent_task(
         # no visible text; then there is nothing real to say and no event is emitted.
         # The bubble pages through the text at reading speed and the chat shows all of it;
         # the payload is capped only so an event stays an event, not a document.
-        message_text = " ".join((output_text or "").split())[:1200]
+        message_text = " ".join((output_text or "").split())
         if emit_message and status == "SUCCEEDED" and message_text:
             append_event_with_outbox(
                 session,

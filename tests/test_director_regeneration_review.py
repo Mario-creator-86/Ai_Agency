@@ -216,4 +216,4 @@ def test_the_gpu_request_uses_the_exact_words_sarah_reviewed_for_the_kelvin_defe
     assert models.posts() == 2
     assert spy.asked[-1]["prompt"] == expected != old_prompt
     assert expected == reviewed_prompt
-    assert "The researcher remains seen from behind throughout." in expected
+    assert words in expected  # The complete orientation, including "back to the camera".

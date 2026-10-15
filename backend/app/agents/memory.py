@@ -25,7 +25,7 @@ from app.services import utc_now
 
 #: How many records one run is given. Memory is a briefing, not an archive; the archive is the
 #: table itself, and the ids of what was used are recorded on the run.
-RECALL_LIMIT = 12
+RECALL_LIMIT = 120
 #: TEMP_CONTEXT is about the current work; it should not outlive the week.
 TEMP_CONTEXT_DAYS = 3
 MAX_CONTENT = 600
@@ -36,7 +36,7 @@ class MemoryError(ValueError):
 
 
 def _clip(text: str) -> str:
-    return " ".join(str(text).split())[:MAX_CONTENT]
+    return str(text).strip()
 
 
 def remember(

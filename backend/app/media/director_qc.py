@@ -1401,6 +1401,28 @@ def _older_than(moment: Any, days: float) -> bool:
     return now - then > timedelta(days=days)
 
 
+def current_approved_still(session: Session, storyboard_id: str, scene: int) -> SceneTake | None:
+    """A reusable picture must match today's words/reference and its verified file."""
+    from app.media.assembler import still_options, usable_take  # noqa: PLC0415
+
+    row = session.scalar(
+        select(StoryboardScene).where(
+            StoryboardScene.storyboard_id == storyboard_id, StoryboardScene.scene_index == scene
+        )
+    )
+    if row is None:
+        return None
+    view = {"visual_prompt": row.visual_prompt, "character_ids": list(row.character_ids_json or [])}
+    return usable_take(
+        session,
+        storyboard_id,
+        scene,
+        "still",
+        still_options(session.get_bind().engine, view),
+        statuses=("APPROVED",),
+    )
+
+
 def bought_not_in_film(session: Session, storyboard_id: str) -> list[dict[str, Any]]:
     """The approved takes bought for her earlier REPAIRs of this film that none of its films
     holds yet, one per (scene, kind), with the moment that REPAIR began ({scene_index, kind,
@@ -1433,6 +1455,10 @@ def bought_not_in_film(session: Session, storyboard_id: str) -> list[dict[str, A
             if (scene, kind) in found:
                 continue
             take = new_approved_take(session, storyboard_id, scene, kind, since)
+            if kind == "still" and take is not None:
+                current = current_approved_still(session, storyboard_id, scene)
+                if current is None or current.id != take:
+                    continue
             if take is not None and take not in in_films:
                 found[(scene, kind)] = {
                     "scene_index": scene,
@@ -3058,7 +3084,7 @@ def director_letter(
             "ASKED": f"Filmul «{title}»: refacerea hotărâtă de Directoare așteaptă răspunsul tău",
             "BOUGHT_WAITING": (
                 f"Filmul «{title}»: s-a cumpărat pentru refacerea hotărâtă de Directoare; "
-                "așteaptă aprobarea preluării noi"
+                "studioul verifică și continuă refacerea"
             ),
             "REPAIRED": (
                 f"Filmul «{title}» refăcut la decizia Directoarei a trecut controlul calității"

@@ -109,3 +109,19 @@ test('a report the studio wrote by itself is not shown as written by the Owner',
   assert.ok(html.includes('Studioul (verificare automată)'), html);
   assert.equal((html.match(/Proprietar/g) || []).length, 1, "only the Owner's own letter is his");
 });
+
+
+test('an Owner status report does not ask for an answer', () => {
+  const html = renderThread({ thread_id: 'notice', subject: 'Refacerea continuă', messages: [
+    { id: 'n', intent: 'STATUS', to_name: 'Owner', for_owner: true, status: 'OPEN', body_json: { outcome: 'BOUGHT_WAITING' }, body_text: 'Studioul verifică refacerea.' }
+  ] }, options);
+  assert.ok(!html.includes('așteaptă răspunsul tău'));
+  assert.ok(!html.includes('is-owner'));
+});
+
+test('an actual paid approval still asks the Owner even in a status envelope', () => {
+  const html = renderThread({ thread_id: 'approval', subject: 'Aprobă', messages: [
+    { id: 'a', intent: 'STATUS', to_name: 'Owner', for_owner: true, status: 'OPEN', body_json: { outcome: 'ASKED', approval_id: 'paid-1' } }
+  ] }, options);
+  assert.ok(html.includes('așteaptă răspunsul tău'));
+});

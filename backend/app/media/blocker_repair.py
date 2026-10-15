@@ -270,7 +270,7 @@ def _pause_letter(session: Session, sheet: dict[str, Any], fingerprint: str, gua
     post_message(
         session,
         intent="ESCALATE" if owners else "STATUS",
-        subject=f"Remedierea foii e în pauză: {sheet.get('title') or identifier}"[:200],
+        subject=f"Remedierea foii e în pauză: {sheet.get('title') or identifier}",
         body={
             "kind": PAUSED_KIND,
             "storyboard_id": identifier,
@@ -501,7 +501,7 @@ def submit_sheet_issues(engine: Engine, sheet: dict[str, Any]) -> dict[str, Any]
             report = post_message(
                 session,
                 intent="REQUEST_REVIEW",
-                subject=f"Blocaje foaie: {sheet.get('title') or identifier}"[:200],
+                subject=f"Blocaje foaie: {sheet.get('title') or identifier}",
                 body={
                     "kind": REPORT_KIND,
                     "storyboard_id": identifier,
@@ -686,7 +686,7 @@ def _finish(
                 post_message(
                     session,
                     intent="ESCALATE",
-                    subject=f"Foaia necesită intervenție: {title}"[:200],
+                    subject=f"Foaia necesită intervenție: {title}",
                     body={"storyboard_id": payload["storyboard_id"], "kind": "sheet_repair_owner"},
                     body_text=note + "\n" + "\n".join(i["detail"] for i in remaining),
                     from_agent_id=director.id if director else None,
@@ -844,7 +844,7 @@ def process_sheet_repair(
                     work = post_message(
                         session,
                         intent="HANDOFF",
-                        subject=f"Repară foaia: {current.get('title')}"[:200],
+                        subject=f"Repară foaia: {current.get('title')}",
                         body={
                             "kind": WORK_KIND,
                             "executed_by_worker": True,

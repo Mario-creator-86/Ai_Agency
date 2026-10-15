@@ -1,12 +1,14 @@
 """Answer, or think and then answer.
 
-Ollama generation asks for thinking off, so a model's whole token budget goes to its visible
-answer — which is right for a model that then answers plainly (qwen3.5 verifies a claim in
-seventy tokens). Some models do the opposite: asked not to think, they narrate their
+Local Ollama generation asks for thinking off, so a model's whole token budget goes to its
+visible answer — which is right for a model that then answers plainly (qwen3.5 verifies a
+claim in seventy tokens). Some models do the opposite: asked not to think, they narrate their
 reasoning into the answer instead — the Director on `glm-5.3` wrote twelve thousand tokens
 of inventory and reached the JSON only as the budget ran out; asked a second time to
 "just format it", it narrated again. Such a model answers cleanly only when it is allowed
-to think natively, where the reasoning stays out of the visible text.
+to think natively, where the reasoning stays out of the visible text. Ollama Cloud is
+therefore asked nothing about thinking at all (`integrations.llm`, 2026-10-15): the first
+attempt there already thinks natively, and the second attempt below matters for the rest.
 
 So a structured answer is asked for twice at most: once with thinking off; if no object at all
 comes back, once more with the model's own thinking on and the same budget. No model is

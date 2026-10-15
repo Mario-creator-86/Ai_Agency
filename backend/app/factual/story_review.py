@@ -269,7 +269,7 @@ def letter_to_writer(verdict: str, notes: list[str], retention: dict[str, Any]) 
     row she judged against, not only to the notes."""
     words = (
         f"Scenariul nu poate intra în producție așa cum e ({review_verdict(verdict)}). "
-        + " ".join(str(note) for note in notes[:6])
+        + " ".join(str(note) for note in notes)
     ).strip()
     expected = retention_sentence(retention)
     return f"{words} {expected}".strip() if expected else words
@@ -543,7 +543,7 @@ def review_story(
                 "cta_fit": opinion.cta_fit,
             }
             retention = opinion.retention.model_dump()
-            notes.extend(str(note) for note in opinion.notes[:6])
+            notes.extend(str(note) for note in opinion.notes)
             # The Director may send back a script the checks did not catch; she may not wave
             # through one they did. Taste can be stricter than a rule, never looser — once per
             # story: a second REVISE on taste alone, on a draft that passes every check, is a
@@ -591,7 +591,7 @@ def review_story(
                 retention_json=retention,
                 scores_json=scores,
                 notes_json={
-                    "notes": notes[:12],
+                    "notes": notes,
                     "failed": every_failure,
                     "flagged": flagged,
                     "taste_only": taste_only and verdict == "REVISE",
@@ -623,7 +623,7 @@ def review_story(
             post_message(
                 session,
                 intent="REQUEST_REVIEW",
-                subject=f"Povestea «{facts['title'][:60]}»: {review_verdict(verdict)}",
+                subject=f"Povestea «{facts['title']}»: {review_verdict(verdict)}",
                 body={
                     "kind": "story_review",
                     "verdict": verdict,
@@ -648,7 +648,7 @@ def review_story(
         "verdict": verdict,
         "checks": checks,
         "failed": broken,
-        "notes": notes[:12],
+        "notes": notes,
         "retention": retention,
         "scores": scores,
         "estimated_seconds": facts["estimated_seconds"],
@@ -680,7 +680,7 @@ def _ask_director(
     told which exchange this is, what she asked for last time, and that the last exchange is a
     decision: a REVISE there is a refusal that will not say its name.
     """
-    payload = json.dumps(facts, ensure_ascii=False, default=str)[:14000]
+    payload = json.dumps(facts, ensure_ascii=False, default=str)
     prompt = _INSTRUCTIONS
     prompt += (
         f"\nThis is exchange {exchange}. Continue revising until the checks pass; "
@@ -691,7 +691,7 @@ def _ask_director(
     if earlier_notes:
         prompt += (
             "What you asked for last time:\n"
-            + "\n".join(f"- {note}" for note in earlier_notes[:8])
+            + "\n".join(f"- {note}" for note in earlier_notes)
             + "\nFor each one, say whether this draft addressed it. A note you have already "
             "given and the writer has acted on is settled — do not raise it again, and do not "
             "trade it for a new one of the same size. The question is whether the film is good "
@@ -738,7 +738,7 @@ def _ask_director(
         prompt,
         TEMPLATE_VERSION,
         correlation,
-        summary=f"Citesc povestea «{facts['title'][:50]}» înainte de producție.",
+        summary=f"Citesc povestea «{facts['title']}» înainte de producție.",
         max_tokens=3000,
         temperature=0.2,
         emit_message=False,
@@ -780,7 +780,7 @@ def story_gate(session: Session, script_id: str) -> tuple[bool, str]:
         notes = (review.notes_json or {}).get("notes") or []
         return False, (
             f"Recenzia de poveste s-a încheiat cu {review.verdict}. "
-            + " ".join(str(note) for note in notes[:3])
+            + " ".join(str(note) for note in notes)
         )
     # Measured again here rather than trusted from the review: a PASS written before the
     # narration was measured, or by hand, must not buy a shot for a film about something its
@@ -789,7 +789,7 @@ def story_gate(session: Session, script_id: str) -> tuple[bool, str]:
     if grounding is not None and not grounding["passed"]:
         return False, (
             "Narațiunea nu spune ce spun afirmațiile și subiectul ei. "
-            + " ".join(grounding["reasons"][:3])
+            + " ".join(grounding["reasons"])
         )
     return True, ""
 
@@ -892,7 +892,7 @@ def remember_shipped_story(
         session,
         memory_class="AGENT_OPINION",
         content=(
-            f"Povestea «{title[:80]}»: "
+            f"Povestea «{title}»: "
             f"{count(len(outcome.rounds), 'versiune citită', 'versiuni citite')} de Director; "
             f"{said}. Ultima ei notă: {cut_at_word(note, 300) or 'niciuna'}"
         ),

@@ -9,6 +9,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DIRECTOR_TOKEN_MULTIPLIER = 2
+DEFAULT_LLM_CONTEXT_MULTIPLIER = 10
 #: How many versions of one script the Director's editorial judgement scores before the
 #: best-scored one ships (the Owner, 2026-10-11, 23:30: «vreau să încerce de 10 ori»). The
 #: module that runs the rounds imports it (`app.agents.editorial_judgement.EDITORIAL_ROUNDS`).
@@ -261,9 +262,10 @@ class Settings(BaseSettings):
     #: motion, paid redos), in dollars (STUDIO_FILM_BUDGET_USD). Before every paid step of the
     #: shooting sheet, what the books already hold for the film plus the step's cap must fit
     #: under it, otherwise the step is refused OVER_FILM_BUDGET (the Owner's explicit consent
-    #: on the sheet may go over it). Unset, it is `motion_budget_usd` plus the stills cap of a
-    #: six-scene film at the published price (`shooting_sheet.film_ceiling_micros`): 15.24 USD
-    #: with the defaults. Measured 2026-10-01: a six-shot seedance2_5 sheet at 1080p caps at
+    #: on the sheet may go over it). Unset, it follows the Owner's active daily budget;
+    #: shared daily/monthly reservations still constrain every purchase. With no daily
+    #: budget, the configuration fallback is motion plus six-scene stills (15.24 USD).
+    #: Measured 2026-10-01: a six-shot seedance2_5 sheet at 1080p caps at
     #: about 26 USD, twice the per-film figure the preflight used to show; the real figure is
     #: the Owner's to set.
     film_budget_usd: float | None = Field(default=None, ge=0.0, le=100_000.0)
@@ -423,6 +425,9 @@ class Settings(BaseSettings):
     #: after the cyclotron QC retry exhausted 6,000 tokens without a visible answer. Other
     #: employees and the independent daily token/USD gates keep their own limits.
     director_token_multiplier: int = Field(default=DEFAULT_DIRECTOR_TOKEN_MULTIPLIER, ge=1, le=4)
+    #: Owner, 2026-10-14: ten times the internal LLM allowance, with complete messages.
+    #: This scales bounded output once; actual provider limits and financial gates remain.
+    llm_context_multiplier: int = Field(default=DEFAULT_LLM_CONTEXT_MULTIPLIER, ge=1, le=100)
 
     #: Shot-plan output, independent of the Owner's daily token/USD gates. A demonstrated
     #: exhausted native-thinking call is retried as whole single-scene work, with this cap.

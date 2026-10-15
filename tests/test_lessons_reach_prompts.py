@@ -257,11 +257,11 @@ def test_a_lesson_inside_a_longer_one_brings_the_longer_back(engine):
 
 def test_a_lesson_that_is_empty_a_report_or_about_one_film_is_refused(engine):
     ids = studio(engine)
-    long = "word " * 79 + "wordy"  # 400 characters
+    long = "word " * 799 + "wordy"  # 4000 characters
     with Session(engine) as session, session.begin():
         assert record_prompt_lesson(session, "") is False
         assert record_prompt_lesson(session, "   \n ") is False
-        assert record_prompt_lesson(session, long + "!") is False, "401 characters: a report"
+        assert record_prompt_lesson(session, long + "!") is False, "4001 characters: a report"
         assert record_prompt_lesson(session, f"Storyboard {ids['board']}: {LEDGER}") is False
         head = ids["board"][:8]
         assert record_prompt_lesson(session, f"In {head} the ledger had words.") is False

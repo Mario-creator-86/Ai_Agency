@@ -269,12 +269,12 @@ def _record_decision(
             interpretation=interpretation or str(matter["observation"]),
             confidence=confidence,
             decision=decision,
-            action=f"{repair.name}: {repair.summary}"[:1200],
+            action=f"{repair.name}: {repair.summary}",
             owner_role=DIRECTOR,
             review_after_videos=None,
             review_after_at=(_now() + timedelta(hours=REVIEW_AFTER_HOURS)).isoformat(),
             state="OPEN" if outcome_ro is None else "REVIEWED",
-            outcome=None if outcome_ro is None else str(outcome_ro)[:4000],
+            outcome=None if outcome_ro is None else str(outcome_ro),
             reviewed_at=None if outcome_ro is None else now,
             published_at_decision=published,
             matter_key=str(matter["matter_key"]),
@@ -604,7 +604,7 @@ def execute_repair(
         "status": result["status"],
         "repair": name,
         "decision_id": decision_id,
-        "outcome": str(result["outcome_ro"])[:500],
+        "outcome": str(result["outcome_ro"]),
         "changed": result.get("changed") or {},
     }
 
@@ -679,7 +679,7 @@ def close_decision(session: Session, decision_id: str, outcome_ro: str) -> bool:
     if row is None or row.state != "OPEN":
         return False
     row.state = "REVIEWED"
-    row.outcome = str(outcome_ro)[:4000]
+    row.outcome = str(outcome_ro)
     row.reviewed_at = utc_now()
     return True
 

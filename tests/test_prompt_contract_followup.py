@@ -139,8 +139,9 @@ def test_all_nine_offline_proposals_fit_without_pretending_sarah_approved_them()
     for example in result["examples"]:
         assert not example["auto_apply"]
         assert example["status"] == "OFFLINE_DRAFT_NOT_DIRECTOR_APPROVED"
-        assert example["prompt_units"]["still"] <= words.lint.DEFAULT_PROMPT_MAX_UTF16
-        assert example["prompt_units"]["motion"] <= words.lint.DEFAULT_PROMPT_MAX_UTF16
+        contract = {"model_id": example["model"]}
+        assert example["prompt_units"]["still"] <= words.lint.prompt_cap(contract, "still")
+        assert example["prompt_units"]["motion"] <= words.lint.prompt_cap(contract, "motion")
 
 
 def test_a_motion_correction_is_not_refused_for_an_unchanged_accepted_still_prompt():

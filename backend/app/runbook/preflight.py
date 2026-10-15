@@ -1119,7 +1119,7 @@ def _daily_budget_films_check(
         if env == "PRODUCTION":
             from app.media.shooting_sheet import film_ceiling_micros  # noqa: PLC0415
 
-            return film_ceiling_micros(settings)[0]
+            return film_ceiling_micros(settings, engine=engine)[0]
         return int(
             estimate_film_cost_micros(engine, "", environment=env, settings=settings)[
                 "motion_usd_micros"
@@ -1187,6 +1187,24 @@ def _daily_budget_films_check(
         "per_film_usd": format_micros(here),
         "daily_limit_usd": format_micros(limit),
     }
+    if environment == "PRODUCTION":
+        from app.media.shooting_sheet import film_ceiling_micros  # noqa: PLC0415
+
+        _, source = film_ceiling_micros(settings, engine=engine)
+        if source == "buget_zilnic":
+            return _check(
+                "daily_budget_films",
+                True,
+                INFORMATIONAL,
+                f"Bugetul zilnic de {_usd(limit)} USD este comun tuturor filmelor și agenților. "
+                "Nu ai stabilit un plafon separat pe film: fiecare pas folosește suma rămasă "
+                "după cheltuielile și rezervările existente. Majorarea bugetului se aplică "
+                "la următoarea verificare; suma nu se multiplică după numărul filmelor.",
+                "",
+                detail=detail,
+                value=value,
+                passed="shared_budget",
+            )
     if films * here > limit:
         return _check(
             "daily_budget_films",

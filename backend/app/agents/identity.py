@@ -20,22 +20,25 @@ import hashlib
 import json
 import re
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass, field
+from copy import deepcopy
+from dataclasses import dataclass, field, replace
+from functools import lru_cache, reduce
+from operator import or_
 from types import UnionType
 from typing import Annotated, Any, Literal, Union, get_args, get_origin
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, create_model
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
 from app.agents.memory import readable_classes, recall
 from app.agents.models import MEMORY_CLASSES, Agent, AgentMessage, MemoryRecord, Role
-from app.config import ROOT
+from app.config import DEFAULT_LLM_CONTEXT_MULTIPLIER, ROOT
 from app.media.models import CharacterBible
 from app.services import append_event, utc_now
 
-IDENTITY_VERSION = "identity-v2"
+IDENTITY_VERSION = "identity-v3-complete"
 
 #: The sections of a work contract, in the order they are told. Each is a list of sentences.
 CONTRACT_SECTIONS = (
@@ -231,14 +234,12 @@ def _open_messages(session: Session, agent: Agent) -> list[tuple[AgentMessage, s
 
     This is the channel the Director's production indications travel through: a HANDOFF filed
     to the sound or video department enters that employee's every run until the work is done
-    or the message is resolved. Capped at the ten newest so one noisy inbox cannot swallow
-    the prompt.
+    or the message is resolved. Every open message and its thread travel in full.
     """
     rows = session.scalars(
         select(AgentMessage)
         .where(AgentMessage.to_agent_id == agent.id, AgentMessage.status == "OPEN")
         .order_by(AgentMessage.created_at.desc())
-        .limit(10)
     ).all()
     senders = {
         a.id: a.display_name
@@ -252,26 +253,28 @@ def _open_messages(session: Session, agent: Agent) -> list[tuple[AgentMessage, s
 def _message_line(message: AgentMessage, from_name: str) -> str:
     body = message.body_json if isinstance(message.body_json, dict) else {}
     detail = str(message.body_text or body.get("instructions") or body.get("detail") or "").strip()
-    if len(detail) > 600:
-        detail = detail[:599] + "…"
     line = f"- [{message.intent} from {from_name}, {message.created_at[:16]}] {message.subject}"
     if detail:
         line += f": {detail}"
+    if body:
+        line += "\n" + json.dumps(body, ensure_ascii=False, default=str)
     return line
 
 
 def _thread_lines(session: Session, message: AgentMessage, names: dict[str, str]) -> list[str]:
-    """What was said earlier in this letter's thread, newest three, so the reply fits."""
+    """Every earlier message of the relevant thread, including its structured evidence."""
     from app.agents.messages import thread_messages  # noqa: PLC0415
 
     earlier = [
         m for m in thread_messages(session, message.thread_id or message.id) if m.id != message.id
-    ][-3:]
+    ]
     lines = []
     for m in earlier:
         who = names.get(m.from_agent_id or "", "the Owner" if m.from_agent_id is None else "?")
-        text = " ".join((m.body_text or "").split())[:240]
+        text = str(m.body_text or "")
         lines.append(f"    earlier, {who}: {m.subject}" + (f" — {text}" if text else ""))
+        if m.body_json:
+            lines.append(json.dumps(m.body_json, ensure_ascii=False, default=str))
     return lines
 
 
@@ -319,9 +322,13 @@ def compose_identity(session: Session, agent: Agent, *, task_type: str = "") -> 
             "work is done or the message is resolved):"
         )
         thread_names = {a.id: a.display_name for a in session.scalars(select(Agent))}
+        read_threads: set[str] = set()
         for m, from_name in asked:
             lines.append(_message_line(m, from_name))
-            lines.extend(_thread_lines(session, m, thread_names))
+            thread = m.thread_id or m.id
+            if thread not in read_threads:
+                lines.extend(_thread_lines(session, m, thread_names))
+                read_threads.add(thread)
     lines.append("STANDING RULES:")
     lines.extend(f"- {rule}" for rule in STANDING_RULES)
     system = "\n".join(lines)
@@ -375,16 +382,11 @@ def identity_view(engine: Engine, agent_id: str) -> dict[str, Any] | None:
 
 
 def clipped(limit: int) -> Callable[[Any], Any]:
-    """A before-validator that cuts a string to ``limit`` instead of refusing the answer.
-
-    A model asked for a scene description writes 330 characters where the schema allowed
-    300, and the whole episode was thrown away for it; a topic sentence ran to 220 and the
-    day's proposals with it. Text fields are clipped: the record stays honest (it is what the
-    model said, shortened) and one long field no longer costs the work of the whole run.
-    """
+    """Compatibility validator: preserve the complete answer instead of silently clipping."""
+    del limit
 
     def clip(value: Any) -> Any:
-        return value[:limit] if isinstance(value, str) else value
+        return value
 
     return clip
 
@@ -394,13 +396,15 @@ def joined(limit: int) -> Callable[[Any], Any]:
 
     The showrunner wrote each beat's dialogue as an array of lines — a reasonable reading of
     "dialogue" — and eight beats were thrown away for a bracket. Lines are joined, then
-    clipped like any other text.
+    preserved in full.
     """
+
+    del limit
 
     def join(value: Any) -> Any:
         if isinstance(value, list):
             value = "\n".join(str(item) for item in value if item is not None)
-        return value[:limit] if isinstance(value, str) else value
+        return value
 
     return join
 
@@ -536,8 +540,7 @@ def _fit_value(value: Any, annotation: Any, metadata: Iterable[Any]) -> Any:
     if origin in _SEQUENCES:
         if not isinstance(value, list):
             return value
-        limit = _limit_of(found)
-        items = value[:limit] if limit is not None and len(value) > limit else list(value)
+        items = list(value)
         inner = get_args(annotation)
         if origin is tuple and not (len(inner) == 2 and inner[1] is Ellipsis):
             return items  # tuple[str, int]: each place its own type, not fitted here
@@ -560,19 +563,12 @@ def _fit_value(value: Any, annotation: Any, metadata: Iterable[Any]) -> Any:
             choice = _CHOICE_PATTERN.match(pattern) if pattern else None
             if choice is not None:
                 value = _code_word(value, choice.group(1).split("|"))
-            limit = _limit_of(found)
-            return cut_at_word(value, limit) if limit is not None else value
+            return value
     return value
 
 
 def fit_to_schema(data: Any, model: type[BaseModel]) -> Any:
-    """A decoded answer fitted to ``model`` before it is validated, the way
-    `app.media.prompt_agent._coerce` fits the Video Editor's shot plan: a string longer than its
-    max_length is cut at a word boundary (the opening kept, the tail dropped), a list longer than
-    its max_length is truncated, a nested model and a list of models are fitted the same way,
-    and a Literal, an Enum or a code-word pattern is matched whatever its case and spacing.
-    Nothing is added, removed or retyped: what pydantic would refuse for its content it still
-    refuses. A copy; what the model said is not changed."""
+    """Normalize code words and nested shapes without shortening text or dropping items."""
     if not isinstance(data, dict):
         return data
     fitted = dict(data)
@@ -583,12 +579,60 @@ def fit_to_schema(data: Any, model: type[BaseModel]) -> Any:
     return fitted
 
 
+def _complete_annotation(annotation: Any) -> Any:
+    origin, args = get_origin(annotation), get_args(annotation)
+    if origin is Annotated:
+        base = _complete_annotation(args[0])
+        metadata = _complete_metadata(args[1:], text=args[0] is str)
+        return Annotated[base, *metadata] if metadata else base
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        return complete_schema(annotation)
+    if origin in (Union, UnionType):
+        return reduce(or_, (_complete_annotation(arg) for arg in args))
+    if origin in _SEQUENCES:
+        return origin[tuple(_complete_annotation(arg) for arg in args)]
+    return annotation
+
+
+def _complete_metadata(metadata: Iterable[Any], *, text: bool) -> list[Any]:
+    kept = []
+    for meta in metadata:
+        length = getattr(meta, "max_length", None)
+        if length is not None:
+            if text and type(meta).__name__ == "MaxLen":
+                continue
+            meta = replace(
+                meta, max_length=None if text else length * DEFAULT_LLM_CONTEXT_MULTIPLIER
+            )
+        kept.append(meta)
+    return kept
+
+
+@lru_cache(maxsize=256)
+def complete_schema[T: BaseModel](model: type[T]) -> type[T]:
+    """Keep semantic validators, remove arbitrary text caps and expand item ceilings x10.
+
+    Actual media/platform request limits are enforced by their adapters and input guards.
+    No model response is shortened to make an otherwise invalid decision look valid.
+    """
+    fields: dict[str, Any] = {}
+    for name, info in model.model_fields.items():
+        copied = deepcopy(info)
+        annotation, _ = _unwrap(info.annotation, ())
+        text = annotation is str or (
+            get_origin(annotation) in (Union, UnionType) and str in get_args(annotation)
+        )
+        copied.metadata = _complete_metadata(copied.metadata, text=text)
+        fields[name] = (_complete_annotation(info.annotation), copied)
+    return create_model(f"{model.__name__}Complete", __base__=model, **fields)
+
+
 def refusal_words(exc: ValidationError) -> str:
     """Why a schema refused an answer, in plain words for the model that wrote it and for the
     note the Owner reads: ``where: what`` per error, pydantic's prefixes dropped."""
     errors = exc.errors(include_url=False)
     lines: list[str] = []
-    for error in errors[:MAX_REFUSAL_LINES]:
+    for error in errors:
         where = ".".join(str(part) for part in error.get("loc") or ()) or "the answer"
         message = str(error.get("msg") or error.get("type") or "invalid")
         for prefix in ("Value error, ", "Assertion failed, "):
@@ -597,7 +641,7 @@ def refusal_words(exc: ValidationError) -> str:
         lines.append(f"{where}: {message}")
     if len(errors) > len(lines):
         lines.append(f"and {len(errors) - len(lines)} more")
-    return "; ".join(lines)[:MAX_REFUSAL_CHARS]
+    return "; ".join(lines)
 
 
 def read_structured(text: str, model: type[BaseModel]) -> tuple[BaseModel | None, str | None]:
@@ -629,7 +673,7 @@ def read_structured(text: str, model: type[BaseModel]) -> tuple[BaseModel | None
             continue
         if isinstance(data, dict):
             try:
-                return model.model_validate(fit_to_schema(data, model)), None
+                return complete_schema(model).model_validate(fit_to_schema(data, model)), None
             except ValidationError as exc:
                 present = sum(1 for name in model.model_fields if name in data)
                 candidate = (-present, exc.error_count(), refusal_words(exc))

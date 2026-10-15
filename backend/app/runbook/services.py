@@ -673,7 +673,7 @@ def _open_safe_mode(session: Session, reason: str, trigger: str, run_id: str | N
     session.add(
         SafeModeRecord(
             id=identifier,
-            reason=reason[:2000],
+            reason=reason,
             trigger=trigger,
             run_id=run_id,
             entered_at=utc_now(),
@@ -723,7 +723,7 @@ def clear_safe_mode(engine: Engine, notes: str, correlation_id: str = "") -> dic
         if current is None:
             raise RunbookError("Studioul nu este în mod sigur.")
         current.cleared_at = utc_now()
-        current.cleared_notes = notes.strip()[:2000]
+        current.cleared_notes = notes.strip()
         current.event_id = append_event(
             session,
             "runbook.safe_mode_cleared",
@@ -886,7 +886,7 @@ def _finished(
         engine,
         "runbook.stage_finished",
         run_id,
-        {"stage": stage, "status": status, "reason": reason[:300]},
+        {"stage": stage, "status": status, "reason": reason},
         correlation_id,
     )
 

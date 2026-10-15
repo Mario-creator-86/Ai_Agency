@@ -1280,6 +1280,7 @@ def _sheet(
                 still_prompt=still_text,
                 motion_prompt=motion_text,
                 model_id=entry.get("model_id") if kind == "LIVE" else None,
+                contract={"still_model_id": ctx.stills_model, "model_id": model_id},
                 composition_issues=tuple(
                     composition_issues(
                         package,
@@ -1824,6 +1825,9 @@ def build_sheet(
     ``environment`` (default: the studio's) decides what the assemble step accepts.
     ``read_live`` also adds each scene's redo plans (the «Refă» buttons) to the page.
     """
+    from app.media.factory import reference_model_for_storyboard  # noqa: PLC0415
+
+    stills_model = reference_model_for_storyboard(engine, storyboard_id, stills_model)
     ctx = _context(
         engine,
         capabilities=capabilities,
@@ -2660,18 +2664,31 @@ def _settings_of(settings: Any) -> Any:
     return settings if settings is not None else _studio_settings()
 
 
-def film_ceiling_micros(settings: Any, table: PriceTable | None = None) -> tuple[int, str]:
+def film_ceiling_micros(
+    settings: Any, table: PriceTable | None = None, *, engine: Engine | None = None
+) -> tuple[int, str]:
     """(the most one PRODUCTION film may spend, in USD micros; where the figure comes from).
 
-    `settings.film_budget_usd` when the Owner set it ("setare"); otherwise the per-film motion
-    budget plus the stills cap of a six-scene film at the published price ("implicit"):
-    12 + 3.24 = 15.24 USD with the defaults."""
+    An explicit film budget wins. Otherwise the Owner's active daily budget is the film's
+    ceiling too; shared daily/monthly reservations still bound each actual purchase. Without
+    an active daily budget, retain the motion-plus-stills configuration fallback."""
     from app.media.still_gate import MAX_REROLLS  # noqa: PLC0415 - still_gate reaches qc
 
     chosen = _settings_of(settings)
     figure = getattr(chosen, "film_budget_usd", None)
     if isinstance(figure, int | float) and not isinstance(figure, bool) and figure >= 0:
         return round(float(figure) * 1_000_000), "setare"
+    if engine is not None:
+        from app.economy.models import SpendingBudget  # noqa: PLC0415
+
+        with Session(engine) as session:
+            daily = session.scalar(
+                select(func.min(SpendingBudget.limit_usd_micros)).where(
+                    SpendingBudget.period == "DAILY", SpendingBudget.active.is_(True)
+                )
+            )
+        if daily is not None:
+            return int(daily), "buget_zilnic"
     prices = table or load_price_table()
     motion = getattr(chosen, "motion_budget_usd", None)
     motion_usd = float(motion) if isinstance(motion, int | float) else 12.0
@@ -2689,7 +2706,7 @@ def film_budget_view(
     engine: Engine, storyboard_id: str, settings: Any, table: PriceTable | None = None
 ) -> dict[str, Any]:
     """The film's ceiling as the sheet shows it: the limit, what it already holds, the rest."""
-    limit, source = film_ceiling_micros(settings, table)
+    limit, source = film_ceiling_micros(settings, table, engine=engine)
     spent = film_spend_micros(engine, storyboard_id)
     return {
         "limit_usd_micros": limit,
@@ -3325,8 +3342,10 @@ def _run_sheet_step(
     unasked: bool = False,
 ) -> dict[str, Any]:
     """`run_sheet_step` inside the film's purchase lease."""
+    from app.media.factory import reference_image_adapter  # noqa: PLC0415
     from app.services import studio_environment  # noqa: PLC0415
 
+    image_adapter = reference_image_adapter(engine, storyboard_id, image_adapter)
     stills_model = str(getattr(image_adapter, "model", None) or STILLS_MODEL)
     ctx = _context(
         engine,

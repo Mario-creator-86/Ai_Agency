@@ -37,7 +37,7 @@ from pydantic import (
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
-from app.agents.identity import blocker_of, clipped, parse_structured
+from app.agents.identity import blocker_of, clipped, complete_schema, parse_structured
 from app.agents.memory import agent_for_role, remember
 from app.agents.messages import post_message
 from app.agents.services import run_agent_task
@@ -492,7 +492,10 @@ def propose_topics(
     rejected: list[dict[str, str]] = []
     for raw in loose.candidates[:MAX_CANDIDATES]:
         try:
-            candidates.append(TopicCandidate.model_validate(raw))
+            # The complete answer, never refused for a long field (2026-10-14/15: the
+            # validators keep the text whole, so the schema's caps are lifted the same way
+            # `read_structured` lifts them; `clipped` is kept for the field order).
+            candidates.append(complete_schema(TopicCandidate).model_validate(raw))
         except ValidationError as exc:
             field = ".".join(str(x) for x in exc.errors()[0]["loc"]) if exc.errors() else "?"
             rejected.append(

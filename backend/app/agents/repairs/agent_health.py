@@ -670,6 +670,19 @@ def switch_model(context: RepairContext, params: Mapping[str, Any]) -> dict[str,
         if probe["answered"]:
             chosen = (model_id, model_name)
             break
+    if chosen is None and len(probes) > 1 and all(p["status"] in DOWN for p in probes):
+        # Her model and every candidate failed the same way at the same moment: the provider
+        # is down, not her model (2026-10-14 21:38Z, HTTP 400 on every model for four minutes:
+        # three cards «Aleg eu modelul» reached the Owner, who refused all three — the choice
+        # of a model is hers, and an outage is nobody's decision). Nothing changes; the next
+        # loop probes again, and a fresh failure of hers raises a fresh case.
+        return outcome(
+            DECLINED,
+            f"{failing} Niciun model de pe o conexiune verificată nu a răspuns la probă: "
+            "furnizorul nu răspunde acum pentru niciunul. Nu te întreb; reîncerc la trecerea "
+            "următoare.",
+            changed={"probes": probes, "provider_down": True},
+        )
     if chosen is None:
         why = (
             f"{failing} Niciun model de pe o conexiune verificată, prețuit și potrivit rolului "

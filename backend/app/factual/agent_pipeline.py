@@ -231,7 +231,7 @@ def agent_extract_claims(
         agent = _resolve_agent(session, agent_id)
         agent_identifier = agent.id
         title = source.title
-        evidence = wrap_in_inert_boundary(source.sanitized_content[:12000], source.content_hash)
+        evidence = wrap_in_inert_boundary(source.sanitized_content, source.content_hash)
 
     result = run_agent_task(
         engine,
@@ -254,7 +254,7 @@ def agent_extract_claims(
     created = extract_claims(
         engine, source_id, items, correlation_id, extracted_by_agent_id=agent_identifier
     )
-    summary = f"Am extras {len(created)} afirmații din «{title[:60]}» — toate UNVERIFIED."
+    summary = f"Am extras {len(created)} afirmații din «{title}» — toate UNVERIFIED."
     _announce(engine, agent_identifier, summary, result["id"], correlation_id)
     return {"agent_id": agent_identifier, "run_id": result["id"], "claims": created}
 
@@ -431,7 +431,7 @@ def agent_verify_claim(
         claim_id,
         verdict["status"],
         float(verdict["confidence"]),
-        str(verdict.get("notes") or "").strip()[:2000] or "Fără explicație din partea agentului.",
+        str(verdict.get("notes") or "").strip() or "Fără explicație din partea agentului.",
         quote or None,
         correlation_id,
         verified_by_agent_id=verifier_id,
@@ -842,7 +842,7 @@ def _cost_paragraph(engine: Engine, target_seconds: int) -> str:
     scenes = int(budget["scenes"]) or 1
     try:
         table = price_table_for(engine, runway_connection_id(engine))
-        ceiling, source = film_ceiling_micros(_studio_settings(), table)
+        ceiling, source = film_ceiling_micros(_studio_settings(), table, engine=engine)
         seconds = float(budget["target_seconds"]) / scenes
         priced = _live_scene_price(engine, seconds, table)
     except (UnpricedError, KeyError, ValueError, OSError) as exc:
@@ -915,7 +915,7 @@ def _measured_paragraph(engine: Engine, channel_id: str | None) -> str:
         seconds = row.get("seconds")
         total = row.get("editorial_total")
         return (
-            f"- «{str(row.get('title') or '')[:60]}»: reținere medie "
+            f"- «{str(row.get('title') or '')}»: reținere medie "
             f"{decimal(float(row['measured_view_percentage']), 0)}%, cârlig «{hook or '—'}», "
             f"CTA {row.get('cta_kind') or 'nedeclarat'}"
             + (f", {decimal(float(seconds), 0)} s" if isinstance(seconds, int | float) else "")
@@ -1017,7 +1017,7 @@ def agent_write_script(
             )
         prompt += (
             "\nCE TREBUIE SCHIMBAT:\n"
-            + "\n".join(f"- {note}" for note in notes[:8])
+            + "\n".join(f"- {note}" for note in notes)
             + (
                 "\nREVIZUIEȘTE scenariul de mai sus. Păstrează ce funcționează — cârligul care "
                 "prinde, scenele bune, formulările care merg — și schimbă numai ce cer notele. "
@@ -1044,6 +1044,19 @@ def agent_write_script(
         max_tokens=7200,
         temperature=0.4,
         emit_message=False,
+    )
+    result = answered_with_object(
+        engine,
+        registry,
+        writer_id,
+        "write_script",
+        prompt,
+        "v1",
+        correlation_id,
+        result,
+        summary=f"Scriu scenariul pentru «{topic_title}»",
+        max_tokens=7200,
+        temperature=0.4,
     )
     if result["status"] != "SUCCEEDED" or not (result.get("output_text") or "").strip():
         detail = result.get("error_detail") or "fără text vizibil"
@@ -1076,6 +1089,19 @@ def agent_write_script(
             max_tokens=7200,
             temperature=0.3,
             emit_message=False,
+        )
+        result = answered_with_object(
+            engine,
+            registry,
+            writer_id,
+            "write_script",
+            prompt,
+            "v1+retry",
+            correlation_id,
+            result,
+            summary=f"Rescriu «{topic_title}»",
+            max_tokens=7200,
+            temperature=0.3,
         )
         if result["status"] != "SUCCEEDED" or not (result.get("output_text") or "").strip():
             detail = result.get("error_detail") or "fără text vizibil"
@@ -1122,6 +1148,19 @@ def agent_write_script(
             max_tokens=7200,
             temperature=0.2,
             emit_message=False,
+        )
+        result = answered_with_object(
+            engine,
+            registry,
+            writer_id,
+            "write_script",
+            prompt,
+            "v1+cards",
+            correlation_id,
+            result,
+            summary=f"Rescriu «{topic_title}» (grafice)",
+            max_tokens=7200,
+            temperature=0.2,
         )
         if result["status"] != "SUCCEEDED" or not (result.get("output_text") or "").strip():
             detail = result.get("error_detail") or "fără text vizibil"
@@ -1198,7 +1237,7 @@ def agent_write_script(
     _announce(
         engine,
         writer_id,
-        f"Am scris «{draft.title[:50]}» — {len(scenes)} scene, {len(cited)} afirmații citate."
+        f"Am scris «{draft.title}» — {len(scenes)} scene, {len(cited)} afirmații citate."
         + (f" {len(cut)} scene tăiate: nicio afirmație în spatele lor." if cut else ""),
         result["id"],
         correlation_id,
@@ -1299,6 +1338,60 @@ def _script_object(raw: str) -> Any:
             return json.loads(text[start : end + 1])
         except json.JSONDecodeError:
             return None
+
+
+#: The second attempt of a writer whose first answer carried no object at all: JSON mode with
+#: the model's own thinking on, the way `agents.structured` asks again (2026-10-15: on Cloud
+#: the adapter no longer sends `think: false`, so this is for a model that narrates anyway).
+JSON_AGAIN = {"think": True, "format": "json"}
+
+
+def answered_with_object(
+    engine: Engine,
+    registry: ProviderRegistry,
+    agent_id: str,
+    task_type: str,
+    prompt: str,
+    template_version: str,
+    correlation_id: str,
+    result: dict[str, Any],
+    *,
+    summary: str,
+    max_tokens: int,
+    temperature: float | None,
+) -> dict[str, Any]:
+    """The run, or one more run of the same prompt when its answer had no JSON object at all.
+
+    A writer who narrates his reasoning into the answer (glm-5.3-flash told not to think:
+    38,000–74,000 tokens of «Let me work through this…», four episodes and three scripts
+    refused «nu a răspuns cu un obiect JSON» on 2026-10-14/15) is asked once more in JSON mode
+    with his own thinking on. Both runs stay on record; the second answers if it has an
+    object, else the first stands and the caller refuses it as before.
+    """
+    text = result.get("output_text") or ""
+    if result.get("status") != "SUCCEEDED" or _script_object(text) is not None:
+        return result
+    logger.info(
+        "writer_answered_without_object",
+        extra={"task_type": task_type, "model": result.get("model_name")},
+    )
+    again = run_agent_task(
+        engine,
+        registry,
+        agent_id,
+        task_type,
+        prompt,
+        template_version + "+json",
+        correlation_id,
+        summary=f"{summary} (a doua încercare: JSON, cu gândire proprie)",
+        max_tokens=max_tokens,
+        temperature=temperature,
+        emit_message=False,
+        extra=dict(JSON_AGAIN),
+    )
+    if again.get("status") == "SUCCEEDED" and _script_object(again.get("output_text") or ""):
+        return again
+    return result
 
 
 def _scene_dicts(raw: str) -> list[dict[str, Any]]:

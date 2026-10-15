@@ -1486,7 +1486,7 @@ def _record(
                         f"“{title}” that quality control refused: {outcome['verdict']} "
                         f"({outcome['severity']}) — {outcome['reason_ro']}"
                         + (f" Cause: {cause}" if cause else "")
-                    )[:2000],
+                    ),
                     source_type="run",
                     source_id=outcome["run_id"],
                     agent_id=director_id,
@@ -1722,7 +1722,7 @@ def _look(
     layout = str((view or {}).get("layout") or _LAYOUT[kind])
     writing = str((view or {}).get("writing") or _WRITING[kind])
     prompt = _instructions(
-        kind, scene_index, title[:80], layout, writing, rule, marked
+        kind, scene_index, title, layout, writing, rule, marked
     ) + wrap_in_inert_boundary(_fit_shown(shown), "second-look")
     try:
         parsed, first, second = structured_run(
@@ -1735,7 +1735,7 @@ def _look(
             correlation_id or str(uuid4()),
             schema,
             "",
-            summary=_SUMMARY_RO[kind].format(scene=scene_index, title=title[:60]),
+            summary=_SUMMARY_RO[kind].format(scene=scene_index, title=title),
             max_tokens=2000,
             extra={"images": pictures},
             model_id=model_id,
@@ -1811,7 +1811,7 @@ def _fit_shown(shown: dict[str, Any]) -> str:
         if isinstance(scene.get("plan"), dict):
             scene["plan"] = {**scene["plan"], "look": None}
         shown["scene"] = scene
-    return json.dumps(shown, ensure_ascii=False, default=str)[:SHOWN_CHARS]
+    return json.dumps(shown, ensure_ascii=False, default=str)
 
 
 def _loose_answer(text: str) -> dict[str, Any]:

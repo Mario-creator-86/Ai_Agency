@@ -1,0 +1,941 @@
+{
+  "scope": "Internal LLM dossier/message cuts; identifiers and external transport guards retained",
+  "changes": [
+    {
+      "file": "backend\\app\\agents\\command.py",
+      "removed_slices": [
+        {
+          "line_before": 1173,
+          "expression": "json.dumps(\n        {\n            \"company\": {\n                \"maturity\": state[\"maturity\"],\n                \"measured_films\": state[\"measured_films\"],\n                \"environment\": state[\"environment\"],\n                \"channels\": [\n    "
+        },
+        {
+          "line_before": 1485,
+          "expression": "outcome[:4000]"
+        },
+        {
+          "line_before": 526,
+          "expression": "\"; \".join(reasons)[:2000]"
+        },
+        {
+          "line_before": 1197,
+          "expression": "state[\"backlog\"][:5]"
+        }
+      ]
+    },
+    {
+      "file": "backend\\app\\agents\\director.py",
+      "removed_slices": [
+        {
+          "line_before": 141,
+          "expression": "f\"Defect de unealtă (pentru dezvoltator): {message.subject}\"[:200]"
+        },
+        {
+          "line_before": 287,
+          "expression": "str(outcome.get(\"reason\", \"\"))[:200]"
+        },
+        {
+          "line_before": 291,
+          "expression": "(\n                    f\"{stage_name(stage)[:1].upper()}{stage_name(stage)[1:]}: \"\n                    f\"{stage_status(status)} — {reason}\"\n                )[:200]"
+        },
+        {
+          "line_before": 396,
+          "expression": "f\"{INVESTIGATE_PREFIX}{message.subject}\"[:200]"
+        },
+        {
+          "line_before": 296,
+          "expression": "str(outcome.get(\"reason\", \"\"))[:2000]"
+        },
+        {
+          "line_before": 431,
+          "expression": "f\"Am nevoie de decizia ta: {message.subject}\"[:200]"
+        },
+        {
+          "line_before": 583,
+          "expression": "blocker.reason[:150]"
+        }
+      ]
+    },
+    {
+      "file": "backend\\app\\agents\\editorial.py",
+      "removed_slices": [
+        {
+          "line_before": 514,
+          "expression": "verdict.reasons[:4]"
+        },
+        {
+          "line_before": 516,
+          "expression": "facts[\"title\"][:120]"
+        },
+        {
+          "line_before": 549,
+          "expression": "facts['title'][:120]"
+        },
+        {
+          "line_before": 558,
+          "expression": "subject[:200]"
+        },
+        {
+          "line_before": 605,
+          "expression": "summary_text[:600]"
+        },
+        {
+          "line_before": 260,
+          "expression": "grounding[\"reasons\"][:2]"
+        },
+        {
+          "line_before": 472,
+          "expression": "json.dumps(shown, ensure_ascii=False)[:14000]"
+        },
+        {
+          "line_before": 560,
+          "expression": "summary_text[:4000]"
+        },
+        {
+          "line_before": 590,
+          "expression": "f\"Refăcut: {facts['title'][:110]}\"[:200]"
+        },
+        {
+          "line_before": 590,
+          "expression": "facts['title'][:110]"
+        }
+      ]
+    },
+    {
+      "file": "backend\\app\\agents\\editorial_judgement.py",
+      "removed_slices": [
+        {
+          "line_before": 441,
+          "expression": "str(context.get(\"title\") or \"\")[:60]"
+        },
+        {
+          "line_before": 793,
+          "expression": "title[:120]"
+        },
+        {
+          "line_before": 803,
+          "expression": "(\n            f\"Judecata editorială: «{title[:70]}» pleacă sub prag, {judgement.total}/50 după \"\n            f\"{count(len(outcome.rounds), 'versiune', 'versiuni')}\"\n        )[:200]"
+        },
+        {
+          "line_before": 819,
+          "expression": "body_text[:4000]"
+        },
+        {
+          "line_before": 804,
+          "expression": "title[:70]"
+        }
+      ]
+    },
+    {
+      "file": "backend\\app\\agents\\ensemble.py",
+      "removed_slices": [
+        {
+          "line_before": 636,
+          "expression": "(primary.get(\"output_text\") or \"\")[:4000]"
+        },
+        {
+          "line_before": 637,
+          "expression": "(peer.get(\"output_text\") or \"\")[:4000]"
+        },
+        {
+          "line_before": 625,
+          "expression": "evidence[:6000]"
+        },
+        {
+          "line_before": 635,
+          "expression": "evidence[:6000]"
+        }
+      ]
+    },
+    {
+      "file": "backend\\app\\agents\\mail.py",
+      "removed_slices": [
+        {
+          "line_before": 843,
+          "expression": "\" \".join(reason.split())[:200]"
+        },
+        {
+          "line_before": 524,
+          "expression": "(\n                f\"Nu pot răspunde la asta: {blocker.reason}\"\n                + (f\" Am nevoie de: {blocker.needs}\" if blocker.needs else \"\")\n            )[:4000]"
+        },
+        {
+          "line_before": 557,
+          "expression": "f\"Re: {subject}\"[:200]"
+        },
+        {
+          "line_before": 398,
+          "expression": "f\"Re: {letter.subject}\"[:200]"
+        }
+      ]
+    },
+    {
+      "file": "backend\\app\\agents\\messages.py",
+      "removed_slices": [
+        {
+          "line_before": 92,
+          "expression": "\" \".join(str(subject).split())[:200]"
+        },
+        {
+          "line_before": 214,
+          "expression": "\" \".join(str(subject).split())[:200]"
+        },
+        {
+          "line_before": 310,
+          "expression": "(\"Fwd: \" + original.subject)[:200]"
+        }
+      ]
+    },
+    {
+      "file": "backend\\app\\agents\\reviews.py",
+      "removed_slices": [
+        {
+          "line_before": 488,
+          "expression": "json.dumps(facts, ensure_ascii=False, default=str)[:12000]"
+        },
+        {
+          "line_before": 1423,
+          "expression": "str(film.get(\"title\") or \"\")[:80]"
+        },
+        {
+          "line_before": 1980,
+          "expression": "json.dumps(facts, ensure_ascii=False)[:12000]"
+        },
+        {
+          "line_before": 1639,
+          "expression": "json.dumps(shown, ensure_ascii=False, default=str)[:12000]"
+        },
+        {
+          "line_before": 239,
+          "expression": "title[:80]"
+        },
+        {
+          "line_before": 249,
+          "expression": "title[:80]"
+        },
+        {
+          "line_before": 263,
+          "expression": "summary[:200]"
+        },
+        {
+          "line_before": 1678,
+          "expression": "(\n                f\"Pictures refused by the gate, scene {index} of “{shown.get('film')}”: \"\n                f\"{parsed.decision}\"\n                + (f\" candidate {parsed.candidate}\" if parsed.candidate else \"\")\n                + f\" — {parsed"
+        },
+        {
+          "line_before": 2002,
+          "expression": "script_title[:80]"
+        },
+        {
+          "line_before": 251,
+          "expression": "review.notes[:3]"
+        },
+        {
+          "line_before": 547,
+          "expression": "diagnosis.diagnosis[:150]"
+        },
+        {
+          "line_before": 1489,
+          "expression": "blocker.reason[:300]"
+        },
+        {
+          "line_before": 1668,
+          "expression": "blocker.reason[:300]"
+        },
+        {
+          "line_before": 2102,
+          "expression": "metadata.title[:120]"
+        },
+        {
+          "line_before": 2092,
+          "expression": "metadata.title[:80]"
+        },
+        {
+          "line_before": 2093,
+          "expression": "metadata.hold_reasons[:3]"
+        }
+      ]
+    },
+    {
+      "file": "backend\\app\\agents\\services.py",
+      "removed_slices": [
+        {
+          "line_before": 1040,
+          "expression": "\" \".join((output_text or \"\").split())[:1200]"
+        },
+        {
+          "line_before": 812,
+          "expression": "\" \".join(str(summary).split())[:300]"
+        }
+      ]
+    },
+    {
+      "file": "backend\\app\\agents\\repairs\\desk.py",
+      "removed_slices": [
+        {
+          "line_before": 682,
+          "expression": "str(outcome_ro)[:4000]"
+        },
+        {
+          "line_before": 607,
+          "expression": "str(result[\"outcome_ro\"])[:500]"
+        },
+        {
+          "line_before": 272,
+          "expression": "f\"{repair.name}: {repair.summary}\"[:1200]"
+        },
+        {
+          "line_before": 277,
+          "expression": "str(outcome_ro)[:4000]"
+        }
+      ]
+    },
+    {
+      "file": "backend\\app\\economy\\accountant.py",
+      "removed_slices": [
+        {
+          "line_before": 1210,
+          "expression": "json.dumps(figures, ensure_ascii=False, default=str)[:12000]"
+        },
+        {
+          "line_before": 735,
+          "expression": "subject[:200]"
+        },
+        {
+          "line_before": 796,
+          "expression": "subject[:200]"
+        },
+        {
+          "line_before": 824,
+          "expression": "reason[:300]"
+        },
+        {
+          "line_before": 857,
+          "expression": "reason[:300]"
+        },
+        {
+          "line_before": 827,
+          "expression": "reason[:300]"
+        },
+        {
+          "line_before": 860,
+          "expression": "reason[:300]"
+        },
+        {
+          "line_before": 1291,
+          "expression": "str(m.body_json.get(\"justification\") or \"\")[:500]"
+        },
+        {
+          "line_before": 1320,
+          "expression": "report.summary[:400]"
+        }
+      ]
+    },
+    {
+      "file": "backend\\app\\economy\\repurchase_gate.py",
+      "removed_slices": [
+        {
+          "line_before": 399,
+          "expression": "str(decided.get(\"reason\") or \"\")[:300]"
+        },
+        {
+          "line_before": 506,
+          "expression": "reasons[:12]"
+        },
+        {
+          "line_before": 824,
+          "expression": "(f\"Refacerea scenei {scene} din «{title[:80]}»: contabilitatea nu e de acord\")[:200]"
+        },
+        {
+          "line_before": 621,
+          "expression": "str(plan.get(\"reason_ro\") or \"\")[:600]"
+        },
+        {
+          "line_before": 713,
+          "expression": "reason[:300]"
+        },
+        {
+          "line_before": 948,
+          "expression": "f\"{refused}; Directoarea a acceptat defectul ca minor: {decision.reason}\"[:300]"
+        },
+        {
+          "line_before": 988,
+          "expression": "str(decided.get(\"reason\") or \"\")[:300]"
+        },
+        {
+          "line_before": 603,
+          "expression": "\" \".join(str(getattr(board, \"title\", \"\") or \"\").split())[:120]"
+        },
+        {
+          "line_before": 702,
+          "expression": "f\"blocaj declarat: {blocker.reason}\"[:300]"
+        },
+        {
+          "line_before": 802,
+          "expression": "title[:60]"
+        },
+        {
+          "line_before": 803,
+          "expression": "verdict.reason[:220]"
+        },
+        {
+          "line_before": 812,
+          "expression": "f\"Contabila a fost de acord: {verdict.reason}\"[:300]"
+        },
+        {
+          "line_before": 925,
+          "expression": "f\"{refused}; Directoarea a insistat: {decision.reason}\"[:300]"
+        },
+        {
+          "line_before": 932,
+          "expression": "(\n                f\"{refused}; Directoarea nu mai cumpără scena pe aceste cuvinte: {decision.reason}\"\n            )[:300]"
+        },
+        {
+          "line_before": 784,
+          "expression": "title[:60]"
+        },
+        {
+          "line_before": 824,
+          "expression": "title[:80]"
+        },
+        {
+          "line_before": 868,
+          "expression": "title[:60]"
+        },
+        {
+          "line_before": 895,
+          "expression": "f\"Re: {subject}\"[:200]"
+        },
+        {
+          "line_before": 916,
+          "expression": "title[:60]"
+        },
+        {
+          "line_before": 917,
+          "expression": "decision.reason[:220]"
+        }
+      ]
+    },
+    {
+      "file": "backend\\app\\factual\\agent_pipeline.py",
+      "removed_slices": [
+        {
+          "line_before": 234,
+          "expression": "source.sanitized_content[:12000]"
+        },
+        {
+          "line_before": 257,
+          "expression": "title[:60]"
+        },
+        {
+          "line_before": 434,
+          "expression": "str(verdict.get(\"notes\") or \"\").strip()[:2000]"
+        },
+        {
+          "line_before": 1201,
+          "expression": "draft.title[:50]"
+        },
+        {
+          "line_before": 918,
+          "expression": "str(row.get('title') or '')[:60]"
+        },
+        {
+          "line_before": 1020,
+          "expression": "notes[:8]"
+        }
+      ]
+    },
+    {
+      "file": "backend\\app\\factual\\story_review.py",
+      "removed_slices": [
+        {
+          "line_before": 683,
+          "expression": "json.dumps(facts, ensure_ascii=False, default=str)[:14000]"
+        },
+        {
+          "line_before": 651,
+          "expression": "notes[:12]"
+        },
+        {
+          "line_before": 741,
+          "expression": "facts['title'][:50]"
+        },
+        {
+          "line_before": 792,
+          "expression": "grounding[\"reasons\"][:3]"
+        },
+        {
+          "line_before": 895,
+          "expression": "title[:80]"
+        },
+        {
+          "line_before": 546,
+          "expression": "opinion.notes[:6]"
+        },
+        {
+          "line_before": 594,
+          "expression": "notes[:12]"
+        },
+        {
+          "line_before": 272,
+          "expression": "notes[:6]"
+        },
+        {
+          "line_before": 694,
+          "expression": "earlier_notes[:8]"
+        },
+        {
+          "line_before": 783,
+          "expression": "notes[:3]"
+        },
+        {
+          "line_before": 626,
+          "expression": "facts['title'][:60]"
+        }
+      ]
+    },
+    {
+      "file": "backend\\app\\story\\review.py",
+      "removed_slices": [
+        {
+          "line_before": 968,
+          "expression": "[because, *verdict.reasons][:8]"
+        },
+        {
+          "line_before": 969,
+          "expression": "(verdict.notes or f\"Rescrie părțile notate slab ({', '.join(low)}).\")[:1200]"
+        },
+        {
+          "line_before": 1031,
+          "expression": "reasons[:8]"
+        },
+        {
+          "line_before": 1032,
+          "expression": "\"; \".join(reasons)[:1200]"
+        },
+        {
+          "line_before": 1115,
+          "expression": "(verdict.notes or \"; \".join(verdict.reasons))[:2000]"
+        },
+        {
+          "line_before": 1149,
+          "expression": "(\n                f\"{verdict.verdict} for the episode “{title[:120]}”\"\n                + (f\": {'; '.join(verdict.reasons)}\" if verdict.reasons else \".\")\n            )[:600]"
+        },
+        {
+          "line_before": 1135,
+          "expression": "f\"Rescris: {title[:110]}\"[:200]"
+        },
+        {
+          "line_before": 1137,
+          "expression": "f\"{episode.notes} — {director_name}\"[:4000]"
+        },
+        {
+          "line_before": 1056,
+          "expression": "title[:80]"
+        },
+        {
+          "line_before": 1421,
+          "expression": "shipped.version.title[:80]"
+        },
+        {
+          "line_before": 1150,
+          "expression": "title[:120]"
+        },
+        {
+          "line_before": 1135,
+          "expression": "title[:110]"
+        }
+      ]
+    },
+    {
+      "file": "backend\\app\\story\\services.py",
+      "removed_slices": [
+        {
+          "line_before": 646,
+          "expression": "str(continuity.get(\"summary\") or \"\")[:600]"
+        },
+        {
+          "line_before": 1834,
+          "expression": "notes.strip()[:2000]"
+        },
+        {
+          "line_before": 1853,
+          "expression": "episode.title[:120]"
+        }
+      ]
+    },
+    {
+      "file": "backend\\app\\story\\serial_stage.py",
+      "removed_slices": [
+        {
+          "line_before": 956,
+          "expression": "str(facts.get(\"title\") or \"\")[:80]"
+        },
+        {
+          "line_before": 102,
+          "expression": "reason[:300]"
+        },
+        {
+          "line_before": 248,
+          "expression": "(lead + outcome[\"reason\"])[:300]"
+        },
+        {
+          "line_before": 461,
+          "expression": "f\"FAIL: {notes}\"[:300]"
+        },
+        {
+          "line_before": 582,
+          "expression": "item[\"title\"][:80]"
+        },
+        {
+          "line_before": 717,
+          "expression": "(lead + outcome[\"reason\"])[:300]"
+        },
+        {
+          "line_before": 1201,
+          "expression": "(lead + outcome[\"reason\"])[:300]"
+        },
+        {
+          "line_before": 481,
+          "expression": "title[:80]"
+        },
+        {
+          "line_before": 866,
+          "expression": "title[:80]"
+        },
+        {
+          "line_before": 1166,
+          "expression": "title[:80]"
+        },
+        {
+          "line_before": 854,
+          "expression": "title[:80]"
+        },
+        {
+          "line_before": 1144,
+          "expression": "title[:80]"
+        },
+        {
+          "line_before": 843,
+          "expression": "title[:80]"
+        },
+        {
+          "line_before": 1131,
+          "expression": "title[:80]"
+        },
+        {
+          "line_before": 1151,
+          "expression": "title[:80]"
+        },
+        {
+          "line_before": 1155,
+          "expression": "title[:80]"
+        },
+        {
+          "line_before": 670,
+          "expression": "title[:80]"
+        }
+      ]
+    },
+    {
+      "file": "backend\\app\\runbook\\stages.py",
+      "removed_slices": [
+        {
+          "line_before": 2004,
+          "expression": "_no_stop(reason)[:300]"
+        },
+        {
+          "line_before": 2164,
+          "expression": "_no_stop(reason)[:300]"
+        },
+        {
+          "line_before": 3047,
+          "expression": "reason_text[:1500]"
+        },
+        {
+          "line_before": 3082,
+          "expression": "(str(outcome.get(\"reason\") or \"\").rstrip() + \" \" + said).strip()[:1500]"
+        },
+        {
+          "line_before": 5253,
+          "expression": "(\n            f\"promptul nu a fost corectat ({done.get('reason') or 'fără motiv'}); nu se cumpără \"\n            \"din nou aceleași cuvinte\"\n        )[:300]"
+        },
+        {
+          "line_before": 5583,
+          "expression": "str(look.get(\"reason_ro\") or \"\")[:300]"
+        },
+        {
+          "line_before": 827,
+          "expression": "f\" Ales de Director: {notes}\"[:220]"
+        },
+        {
+          "line_before": 1377,
+          "expression": "reason[:120]"
+        },
+        {
+          "line_before": 2809,
+          "expression": "f\"{stop_reason_words(engine)} {said}\"[:500]"
+        },
+        {
+          "line_before": 2970,
+          "expression": "\" \".join(str(film.get(\"reason\") or \"\").split())[:400]"
+        },
+        {
+          "line_before": 3657,
+          "expression": "awaiting_owner[0][\"reason\"][:500]"
+        },
+        {
+          "line_before": 6388,
+          "expression": "\" \".join(str(reason).split())[:1500]"
+        },
+        {
+          "line_before": 6580,
+          "expression": "str(refusal[\"reason\"])[:500]"
+        },
+        {
+          "line_before": 6809,
+          "expression": "refusal[\"reason\"][:500]"
+        },
+        {
+          "line_before": 6866,
+          "expression": "(\n                f\"Filmul «{metadata['title'][:100]}» nu a urcat pe {channel_name}: \"\n                f\"{publication_status(published['status'])}\"\n                + (f\" — {detail}\" if detail else \"\")\n                + \".\"\n            )[:50"
+        },
+        {
+          "line_before": 7088,
+          "expression": "reason[:500]"
+        },
+        {
+          "line_before": 2127,
+          "expression": "f\"Filmul «{title}» așteaptă: studioul este în mediul {environment}\"[:200]"
+        },
+        {
+          "line_before": 2391,
+          "expression": "f\"Film retras: «{title}», pe loc de {count(days, 'zi', 'zile')}\"[:200]"
+        },
+        {
+          "line_before": 2533,
+          "expression": "f\"Foaia de filmare: «{title}» {headline}\"[:200]"
+        },
+        {
+          "line_before": 3304,
+          "expression": "f\"{stop_reason_words(engine)} Filmul următor nu a fost început.\"[:500]"
+        },
+        {
+          "line_before": 6670,
+          "expression": "\"; \".join(str(r) for r in editorial_reasons)[:300]"
+        },
+        {
+          "line_before": 6717,
+          "expression": "\"; \".join(hold[\"hold_reasons\"])[:300]"
+        },
+        {
+          "line_before": 6730,
+          "expression": "metadata[\"title\"][:100]"
+        },
+        {
+          "line_before": 6803,
+          "expression": "refusal[\"reason\"][:500]"
+        },
+        {
+          "line_before": 6819,
+          "expression": "metadata[\"title\"][:100]"
+        },
+        {
+          "line_before": 950,
+          "expression": "\" \".join(grounding[\"reasons\"])[:300]"
+        },
+        {
+          "line_before": 2371,
+          "expression": "reason[:300]"
+        },
+        {
+          "line_before": 3538,
+          "expression": "f\"{stop_reason_words(engine)} {sentence(error_words(exc))}\"[:500]"
+        },
+        {
+          "line_before": 4966,
+          "expression": "f\"{FREE_FIX_NOTE_SUBJECT} «{title}»\"[:200]"
+        },
+        {
+          "line_before": 5988,
+          "expression": "outcome.reason_ro[:300]"
+        },
+        {
+          "line_before": 6756,
+          "expression": "\"; \".join(prepared.get(\"hold_reasons\", []))[:300]"
+        },
+        {
+          "line_before": 6787,
+          "expression": "metadata['title'][:80]"
+        },
+        {
+          "line_before": 7302,
+          "expression": "refusal[\"reason\"][:500]"
+        },
+        {
+          "line_before": 5700,
+          "expression": "exc.reason_ro[:300]"
+        },
+        {
+          "line_before": 5922,
+          "expression": "exc.reason_ro[:300]"
+        },
+        {
+          "line_before": 6028,
+          "expression": "str(\n                            held.get(\"reason\")\n                            or summary.get(\"stopped\")\n                            or \"mișcarea nu a fost cumpărată\"\n                        )[:300]"
+        },
+        {
+          "line_before": 6848,
+          "expression": "metadata['title'][:100]"
+        },
+        {
+          "line_before": 6851,
+          "expression": "metadata['title'][:100]"
+        },
+        {
+          "line_before": 6867,
+          "expression": "metadata['title'][:100]"
+        }
+      ]
+    },
+    {
+      "file": "backend\\app\\runbook\\services.py",
+      "removed_slices": [
+        {
+          "line_before": 726,
+          "expression": "notes.strip()[:2000]"
+        },
+        {
+          "line_before": 889,
+          "expression": "reason[:300]"
+        },
+        {
+          "line_before": 676,
+          "expression": "reason[:2000]"
+        }
+      ]
+    },
+    {
+      "file": "backend\\app\\media\\scene_rewrite.py",
+      "removed_slices": [
+        {
+          "line_before": 3107,
+          "expression": "DEVELOPER_NOTE_SUBJECT.format(scene=index, title=str(context[\"title\"])[:80])[:200]"
+        },
+        {
+          "line_before": 4104,
+          "expression": "str(context[\"title\"])[:80]"
+        },
+        {
+          "line_before": 3107,
+          "expression": "str(context[\"title\"])[:80]"
+        },
+        {
+          "line_before": 2303,
+          "expression": "context['title'][:60]"
+        },
+        {
+          "line_before": 3472,
+          "expression": "(\n                    f\"Scene {context['scene_index']} of “{context['title'][:80]}” \"\n                    + (\n                        \"failed delivery\"\n                        if brief.get(\"action\") == \"retry_delivery\"\n                     "
+        },
+        {
+          "line_before": 1905,
+          "expression": "context['title'][:60]"
+        },
+        {
+          "line_before": 1907,
+          "expression": "context['title'][:60]"
+        },
+        {
+          "line_before": 2503,
+          "expression": "context['title'][:60]"
+        },
+        {
+          "line_before": 3289,
+          "expression": "context['title'][:80]"
+        },
+        {
+          "line_before": 3351,
+          "expression": "context['title'][:80]"
+        },
+        {
+          "line_before": 4325,
+          "expression": "context['title'][:100]"
+        },
+        {
+          "line_before": 3473,
+          "expression": "context['title'][:80]"
+        }
+      ]
+    },
+    {
+      "file": "backend\\app\\media\\blocker_repair.py",
+      "removed_slices": [
+        {
+          "line_before": 273,
+          "expression": "f\"Remedierea foii e în pauză: {sheet.get('title') or identifier}\"[:200]"
+        },
+        {
+          "line_before": 504,
+          "expression": "f\"Blocaje foaie: {sheet.get('title') or identifier}\"[:200]"
+        },
+        {
+          "line_before": 689,
+          "expression": "f\"Foaia necesită intervenție: {title}\"[:200]"
+        },
+        {
+          "line_before": 847,
+          "expression": "f\"Repară foaia: {current.get('title')}\"[:200]"
+        }
+      ]
+    },
+    {
+      "file": "backend\\app\\media\\picture_qc.py",
+      "removed_slices": [
+        {
+          "line_before": 1123,
+          "expression": "str(look.get(\"reason\") or \"\")[:300]"
+        },
+        {
+          "line_before": 1154,
+          "expression": "str(verdicts[0].get(\"reason\") or \"\")[:300]"
+        },
+        {
+          "line_before": 1562,
+          "expression": "title[:80]"
+        }
+      ]
+    },
+    {
+      "file": "backend\\app\\media\\prompt_agent.py",
+      "removed_slices": [
+        {
+          "line_before": 1802,
+          "expression": "strip_on_screen_text(\" \".join(str(raw.get(\"subject\") or \"\").split()))[:200]"
+        },
+        {
+          "line_before": 1252,
+          "expression": "facts['title'][:50]"
+        }
+      ]
+    },
+    {
+      "file": "backend\\app\\media\\second_look.py",
+      "removed_slices": [
+        {
+          "line_before": 1814,
+          "expression": "json.dumps(shown, ensure_ascii=False, default=str)[:SHOWN_CHARS]"
+        },
+        {
+          "line_before": 1725,
+          "expression": "title[:80]"
+        },
+        {
+          "line_before": 1484,
+          "expression": "(\n                        f\"Second look at the {kind.replace('_', ' ')} of scene {scene_index} of \"\n                        f\"“{title}” that quality control refused: {outcome['verdict']} \"\n                        f\"({outcome['severity']}) —"
+        },
+        {
+          "line_before": 1738,
+          "expression": "title[:60]"
+        }
+      ]
+    }
+  ]
+}

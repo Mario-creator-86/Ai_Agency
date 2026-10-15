@@ -965,8 +965,8 @@ def _held_to_her_rubric(verdict: EpisodeVerdict, director_name: str) -> EpisodeV
     return verdict.model_copy(
         update={
             "verdict": "FAIL",
-            "reasons": [because, *verdict.reasons][:8],
-            "notes": (verdict.notes or f"Rescrie părțile notate slab ({', '.join(low)}).")[:1200],
+            "reasons": [because, *verdict.reasons],
+            "notes": (verdict.notes or f"Rescrie părțile notate slab ({', '.join(low)})."),
         }
     )
 
@@ -1028,8 +1028,8 @@ def review_episode(
         reasons = [checks[name]["reason"] for name in failed if checks[name]["reason"]]
         verdict = EpisodeVerdict(
             verdict="FAIL",
-            reasons=reasons[:8],
-            notes="; ".join(reasons)[:1200],
+            reasons=reasons,
+            notes="; ".join(reasons),
             story="",
         )
     elif registry is not None and registry.registered_ids():
@@ -1053,7 +1053,7 @@ def review_episode(
             prompt,
             TEMPLATE_VERSION,
             correlation,
-            summary=f"Citesc episodul «{title[:80]}» înainte de filmare.",
+            summary=f"Citesc episodul «{title}» înainte de filmare.",
             max_tokens=3000,
             temperature=0.1,
             emit_message=False,
@@ -1112,7 +1112,7 @@ def review_episode(
         ).event_id
         if verdict.verdict == "FAIL":
             episode.status = "REJECTED"
-            episode.notes = (verdict.notes or "; ".join(verdict.reasons))[:2000] or None
+            episode.notes = (verdict.notes or "; ".join(verdict.reasons)) or None
             # A FAIL the computed rules gave without her reading is signed by the checks
             # (2026-10-13): the cover and the list said «respins de Director» for a verdict
             # she never gave («The Ninth Rewrite», 9 din 10 verificări, fără rubrică).
@@ -1132,9 +1132,9 @@ def review_episode(
                 post_message(
                     session,
                     intent="HANDOFF",
-                    subject=f"Rescris: {title[:110]}"[:200],
+                    subject=f"Rescris: {title}",
                     body={"episode_id": episode.id, "verdict": "FAIL"},
-                    body_text=f"{episode.notes} — {director_name}"[:4000],
+                    body_text=f"{episode.notes} — {director_name}",
                     from_agent_id=director_id,
                     to_agent_id=showrunner.id,
                     # The run is on the episode's review record; the letter is the note.
@@ -1147,9 +1147,9 @@ def review_episode(
             session,
             memory_class="AGENT_OPINION",
             content=(
-                f"{verdict.verdict} for the episode “{title[:120]}”"
+                f"{verdict.verdict} for the episode “{title}”"
                 + (f": {'; '.join(verdict.reasons)}" if verdict.reasons else ".")
-            )[:600],
+            ),
             source_type="run" if run_id else "system",
             source_id=run_id or episode.id,
             agent_id=director_id,
@@ -1418,7 +1418,7 @@ def judged_review(
                     session,
                     row,
                     f"Judecata editorială a ales versiunea {shipped.number} "
-                    f"(«{shipped.version.title[:80]}», {chosen}) în locul acesteia ({scored}).",
+                    f"(«{shipped.version.title}», {chosen}) în locul acesteia ({scored}).",
                     correlation,
                     superseded_by=shipped_id,
                 )

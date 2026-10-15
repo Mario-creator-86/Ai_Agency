@@ -88,7 +88,8 @@ import asyncio
 import hashlib
 import inspect
 import json
-from collections.abc import Callable, Mapping, Sequence
+import re
+from collections.abc import Callable, Generator, Mapping, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
@@ -161,6 +162,7 @@ from app.media.markings import planned_markings
 from app.media.mode_guard import PurchaseGuard, unasked_refusal
 from app.media.models import SceneTake, Storyboard, StoryboardScene
 from app.media.picture_qc import StillJudgement, judge_still
+from app.media.prepared_batch import RoundWork, purchase_flow
 from app.media.prompt_lint import (
     BLOCK,
     LintScene,
@@ -400,6 +402,7 @@ class _Scene:
     #: The plan's objects that carry their own markings (`markings.planned_markings`), for the
     #: gate (`still_gate.StillPlan.expected_markings`): a thermometer's scale is not writing.
     expected_markings: tuple[str, ...] = ()
+    prompt_issues: tuple[str, ...] = ()
 
 
 @dataclass
@@ -450,7 +453,12 @@ def serial_scene_picture(package: Mapping[str, Any]) -> str:
     2026-10-12, f06808c9 scene 1 (the review of 9ac0195, finding 4): ``writer_visual`` said
     «Marcus alone at his desk» while the composed beat put Marcus and Sarah in frame; a gate
     shown the writer's line refuses every correct still of the beat as «not the scene»."""
-    from app.media.prompt_agent import _short_name, _still_moment  # noqa: PLC0415 - large
+    from app.media.prompt_agent import (  # noqa: PLC0415 - large
+        _short_name,
+        _still_moment,
+        partial_clothing_sentence,
+        serial_partial_characters,
+    )
 
     people = [
         _short_name(person.get("name"))
@@ -464,6 +472,7 @@ def serial_scene_picture(package: Mapping[str, Any]) -> str:
         f"In frame: {', '.join(dict.fromkeys(people))}." if people else "",
         f"{moment[:1].upper()}{moment[1:]}." if moment else "",
     ]
+    parts.extend(partial_clothing_sentence(person) for person in serial_partial_characters(package))
     return " ".join(part for part in parts if part)
 
 
@@ -496,6 +505,50 @@ def _still_plan(scene: _Scene, *, faces_forbidden: bool, rules: tuple[str, ...])
     were rewritten to fix. The one place a still's plan is built, for every still bought or
     collected — the per-request path, the RunPod rounds and the scene redo — so none of them
     can leave the fix check out."""
+    requirements: list[dict[str, str]] = []
+    for match in re.finditer(
+        r"Only the body parts specified for (.+?) enter the frame; the face stays outside it",
+        scene.picture,
+        re.IGNORECASE,
+    ):
+        name = match.group(1)
+        requirements.append(
+            {
+                "finding": (
+                    f"{name} is cropped to the specified body parts; "
+                    f"no face, profile or head of {name} is visible."
+                ),
+                "expected": scene.picture,
+                "layer": "still",
+                "source": "current_plan",
+                "source_id": f"partial:{name}",
+                "cause": (
+                    "Verify this explicit framing condition on the actual image, "
+                    "not from the prompt. "
+                    "A large visible face is not a minor trace."
+                ),
+            }
+        )
+    if re.search(r"\bunruled\b", scene.words, re.IGNORECASE):
+        requirements.append(
+            {
+                "finding": (
+                    "The pages are blank and unruled: "
+                    "no ledger grid, printed lines, letters or numbers on the pages."
+                ),
+                "expected": (
+                    "Smooth undecorated blank pages; preserve markings "
+                    "on other objects explicitly named by the plan."
+                ),
+                "layer": "still",
+                "source": "current_plan",
+                "source_id": "unruled-pages",
+                "cause": (
+                    "A ruled grid contradicts the explicitly unruled pages "
+                    "even when its text is too small to read."
+                ),
+            }
+        )
     return StillPlan(
         scene=scene.index,
         still_prompt=scene.words,
@@ -507,7 +560,7 @@ def _still_plan(scene: _Scene, *, faces_forbidden: bool, rules: tuple[str, ...])
         scene_picture=scene.picture,
         narration=scene.narration,
         purpose=scene.purpose,
-        must_fix=scene.must_fix,
+        must_fix=(*scene.must_fix, *requirements),
         expected_markings=scene.expected_markings,
     )
 
@@ -519,6 +572,7 @@ def _read_scenes(engine: Engine, storyboard_id: str) -> tuple[dict[str, Any], li
     since the Owner last decided about it (`assembler.scene_memory`)."""
     from app.agents.editorial import is_serial_film  # noqa: PLC0415 - agents import media
     from app.factual.models import ScriptDraft  # noqa: PLC0415
+    from app.media.prompt_agent import incomplete_plan_fields  # noqa: PLC0415
     from app.media.services import ReferenceRequired  # noqa: PLC0415 - services imports media
 
     loaded: dict[str, bytes] = {}
@@ -576,6 +630,7 @@ def _read_scenes(engine: Engine, storyboard_id: str) -> tuple[dict[str, Any], li
                 narration=" ".join(str(row.voiceover_segment or "").split()),
                 purpose=str(row.story_purpose or ""),
                 expected_markings=marked,
+                prompt_issues=tuple(incomplete_plan_fields(package, layers=("still",))),
             )
             if kind == LIVE_KIND:
                 # The picture's open items only: a finding treated in the motion's words is
@@ -1830,6 +1885,7 @@ class _StillRounds:
 
     # ----------------------------------------------------------------------- run
 
+    @purchase_flow
     def run(
         self,
         deferred: list[tuple[_Scene, dict[str, Any]]],
@@ -1837,8 +1893,7 @@ class _StillRounds:
         permit: Any,
         guard: PurchaseGuard | None,
         stopped: Callable[[], str | None],
-    ) -> dict[str, Any]:
-        from app.media.gpu_batch import run_rounds  # noqa: PLC0415 - gpu_batch reads runpod
+    ) -> Generator[RoundWork, dict[str, Any], dict[str, Any]]:
         from app.workflows.director_upkeep import director_wait_work  # noqa: PLC0415
 
         buying = {scene.index for scene, _entry in deferred}
@@ -1875,9 +1930,9 @@ class _StillRounds:
             first += self._send(state)
         summary: dict[str, Any] = {"rounds": 0, "stopped": None, "cap_stop": None}
         if first:
-            summary = run_rounds(
-                self.engine,
-                self.adapter,
+            summary = yield RoundWork(
+                engine=self.engine,
+                adapter=self.adapter,
                 permit=permit,
                 purpose="image",
                 first_round=first,
@@ -2054,7 +2109,13 @@ def run_stills_stage(
             )
     findings = lint_film(
         [
-            LintScene(scene=scene.index, kind=scene.kind, still_prompt=scene.words)
+            LintScene(
+                scene=scene.index,
+                kind=scene.kind,
+                still_prompt=scene.words,
+                contract={"still_model_id": model_id},
+                composition_issues=scene.prompt_issues if scene.index in to_buy else (),
+            )
             for scene in scenes
         ],
         bible=bible,

@@ -318,3 +318,61 @@ def test_a_changed_prompt_during_her_brief_leaves_the_delivery_held(engine, tmp_
     result = scene_rewrite.director_ladder(engine, agents_say(studio, agents), board, [1])
     assert not result["recovered"]
     assert "Promptul scenei s-a schimbat" in result["not_rewritten"][0]["reason"]
+
+
+@pytest.mark.parametrize("layer", ["still", "motion"])
+def test_film_quality_rewrite_does_not_inherit_a_later_delivery_failure(
+    engine, tmp_path, monkeypatch, layer
+):
+    board, take_id = failed_delivery(engine, tmp_path)
+    with Session(engine) as session, session.begin():
+        for take in session.scalars(select(SceneTake).where(SceneTake.storyboard_id == board)):
+            if take.kind == "still":
+                take.status = "REJECTED"
+                take.failure_code = "LOCAL.STILL_GATE"
+                take.failure_detail = "The delivered picture has the wrong wardrobe."
+    original = scene_rewrite.scene_context(engine, board, 1)
+    assert original["delivery_failure"]["take_id"] == take_id
+    seen = {}
+
+    def capture(_engine, _registry, context, outcome, _correlation):
+        seen.update(context)
+        return outcome
+
+    monkeypatch.setattr(scene_rewrite, "_rung", capture)
+    scene_rewrite.rewrite_for_redo(
+        engine,
+        object(),
+        board,
+        1,
+        layer,
+        ["The delivered film zooms although the scene requires a static camera."],
+        str(uuid4()),
+    )
+    assert "delivery_failure" not in seen
+    assert seen["layers"] == (layer,)
+    assert seen["failures"][0]["code"] == "QC.FILM"
+    assert seen["failures"][1:] == original["failures"]
+    assert any(f["code"] == "LOCAL.STILL_GATE" for f in seen["failures"])
+    # The independent delivery ladder still has its own verified terminal context.
+    assert scene_rewrite.scene_context(engine, board, 1)["delivery_failure"]["take_id"] == take_id
+
+
+def test_delivery_brief_schema_requires_the_explicit_retry_action():
+    schema = scene_rewrite.brief_schema(("motion",), delivery=True)
+    assert "action" in schema.model_json_schema()["required"]
+    with pytest.raises(ValueError):
+        schema.model_validate(BRIEF)
+    assert schema.model_validate({**BRIEF, "action": "retry_delivery"}).action == "retry_delivery"
+
+
+@pytest.mark.parametrize("action", ["rewrite", "retry_delivery"])
+def test_director_brief_json_example_names_the_actual_action(action):
+    instructions = scene_rewrite._BRIEF_INSTRUCTIONS.format(
+        scene=1,
+        title="Delivery or visual QC",
+        failures="one refusal",
+        layers="motion",
+        action=action,
+    )
+    assert f'"action": "{action}"' in instructions

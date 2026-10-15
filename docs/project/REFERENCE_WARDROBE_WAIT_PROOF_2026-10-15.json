@@ -1,0 +1,16 @@
+{
+  "storyboard_id": "f06808c9-40d4-4f40-a980-84b6a5540348",
+  "selected_reference_route": "Qwen-Image-Edit-2511",
+  "over_cap_blocks": [],
+  "integrity_blocks": [
+    "still_prompt: ținuta vizibilă a lui Sarah lipsește; păstrați partea corpului cerută și descrieți «Crisp navy two-piece executive blazer»",
+    "still_prompt: ținuta vizibilă a lui Sarah lipsește; păstrați partea corpului cerută și descrieți «white collared shirt»",
+    "still_prompt: ținuta vizibilă a lui Sarah lipsește; păstrați partea corpului cerută și descrieți «and sky-blue tie»"
+  ],
+  "owner_notice_requires_response": false,
+  "owner_notice_display_subject": "Filmul «The Zero Script Club»: s-a cumpărat pentru refacerea hotărâtă de Directoare; studioul verifică și continuă refacerea",
+  "production_db_mode": "ro",
+  "models_called": false,
+  "gpu_called": false,
+  "production_writes": false
+}

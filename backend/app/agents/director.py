@@ -138,7 +138,7 @@ def _developer_defect(
     row = post_message(
         session,
         intent="STATUS",
-        subject=f"Defect de unealtă (pentru dezvoltator): {message.subject}"[:200],
+        subject=f"Defect de unealtă (pentru dezvoltator): {message.subject}",
         body={"kind": DEVELOPER_DEFECT_KIND, "about_message_id": message.id, "note": note},
         body_text=note,
         from_agent_id=director.id,
@@ -284,16 +284,16 @@ def file_stage_reports(
                 outcome.get("agent_id") or owners.get(stage) or (director.id if director else None)
             )
             status = str(outcome.get("status", ""))
-            reason = str(outcome.get("reason", ""))[:200]
+            reason = str(outcome.get("reason", ""))
             message = post_message(
                 session,
                 intent="STATUS",
                 subject=(
                     f"{stage_name(stage)[:1].upper()}{stage_name(stage)[1:]}: "
                     f"{stage_status(status)} — {reason}"
-                )[:200],
+                ),
                 body={"stage": stage, **outcome},
-                body_text=str(outcome.get("reason", ""))[:2000] or None,
+                body_text=str(outcome.get("reason", "")) or None,
                 from_agent_id=reporter,
                 to_agent_id=None,
                 correlation_id=correlation,
@@ -393,7 +393,7 @@ def _apply_decisions(
             request = post_message(
                 session,
                 intent="REQUEST_INFO",
-                subject=f"{INVESTIGATE_PREFIX}{message.subject}"[:200],
+                subject=f"{INVESTIGATE_PREFIX}{message.subject}",
                 body={
                     "about_message_id": message.id,
                     "note": decision.note,
@@ -428,7 +428,7 @@ def _apply_decisions(
             post_message(
                 session,
                 intent="ESCALATE",
-                subject=f"Am nevoie de decizia ta: {message.subject}"[:200],
+                subject=f"Am nevoie de decizia ta: {message.subject}",
                 body={"about_message_id": message.id},
                 body_text=decision.note or "Aceasta este o decizie care îți aparține.",
                 from_agent_id=director.id,
@@ -580,7 +580,7 @@ def director_review(
             post_message(
                 session,
                 intent="ESCALATE",
-                subject=f"Revizuirea Directorului, blocată: {blocker.reason[:150]}",
+                subject=f"Revizuirea Directorului, blocată: {blocker.reason}",
                 body={"reason": blocker.reason, "needs": blocker.needs, "owner_attention": True},
                 from_agent_id=director_id,
                 run_id=result["id"],

@@ -1,4 +1,319 @@
-# CURRENT STATUS — State on 2026-10-14
+# CURRENT STATUS — State on 2026-10-15
+
+## VERIFICARE ORARĂ 06:40–07:00 — Marcus pus înapoi pe kimi-k3 (din pagină), rulare manuală pornită 06:55; ATENȚIE: lucru în paralel (2026-10-15 07:00, Claude/Cowork verificare orară programată)
+
+Sesiunea programată a Owner-ului (verificare din oră în oră, fără shell: doar MCP Filesystem + browserul
+integrat). Găsit la 06:40: studioul HEALTHY, rularea manuală 1743a88e (b86164a2) ÎNCHEIATĂ la 06:13 cu
+0 scenarii / 0 episoade / nimic randat / nimic publicat; cercul «resume queued» s-a stins singur, cum
+era prevăzut. Cauza citită din istoricul lui Marcus (pagina lui, «Răspunsul exact al modelului»): din
+14.10 05:07 Marcus e pe glm-5.3-flash și TOATE rulările structurate (scenariu, episod, corespondență)
+sunt SUCCEEDED cu «Let me work through this carefully…» și zero JSON — pe 13.10, pe kimi-k3 (modelul
+din seed și «acasă» al Owner-ului), scria JSON corect de fiecare dată. Sondele Directoarei din 00:38 pe
+kimi-k3/minimax-m3/nemotron-3-ultra au picat toate cu HTTP 400 (regresia num_predict, scoasă la 00:50),
+deci reparația automată nu l-a mutat; rulările «reușite» fără JSON nu sunt văzute de `agent_health`
+(MODEL_FAULTS = FAILED/EMPTY_OUTPUT). Aceeași cauză e confirmată independent în secțiunea de mai jos
+(«think:false pe Cloud rupe glm-5.3-flash»), scrisă în paralel de altă sesiune Claude (cu shell).
+
+**Ce am făcut (DB, din pagină, fără cod):**
+1. 06:52 — Setări → Angajați → Marcus: model principal glm-5.3-flash → **kimi-k3** (Ollama Cloud,
+   4481573d), salvat (PUT /settings/agents/fdd42e07…/model, versiunea 497). «Testează răspunsul»:
+   kimi-k3 a răspuns în 15 s («Da, sunt funcțional…»), rulare ec032fae, 214.638 tokeni de intrare
+   (identitatea lui Marcus are 647.358 caractere: 120 amintiri + 60 de mesaje deschise cu firele lor),
+   cost 0,107 USD. Revenirea la glm-5.3-flash, dacă vrei după fix-ul `think`, e aceeași listă.
+2. 06:55 — «Pornește rularea de azi» (a doua rulare manuală a zilei): POST /runbook/runs → QUEUED,
+   sarcina f7810bdd-c997-4294-874a-f1d3e1f89b96, 03:55:39Z. Confirmarea: pași plătiți până la bugetul
+   de 20 USD (6,96 USD cheltuiți azi), plafon 50 USD/pas. GPU e oprit normal (nu e hold al Owner-ului).
+
+**Pentru sesiunea cu shell (lucrăm în paralel!):** o repornire între ~06:56 și ~07:30 taie rularea
+f7810bdd la etapa curentă (fix-ul reluării din worker.py se încarcă abia la acea pornire și ar
+relua-o la primul tic). Dacă repornești, fă-o după ce rularea se încheie sau acceptă reluarea.
+Subiectul «The Supernova Surprise» are afirmații în mare parte nerelevante (pagini Wikipedia pentru
+«Discovery», «Exactly», «Distant», «Word»…) — scenaristul, oricare ar fi modelul, va refuza pe bună
+dreptate; calea reală de publicare azi e episodul serialului (Channel B) și «The Zero Script Club».
+Separat, de redus: cele 60 de mesaje deschise către Marcus (fiecare rulare poartă ~215k tokeni).
+
+**07:03, rularea f7810bdd deja la 10/13:** Marcus pe kimi-k3 a întors JSON la «episodul din serial»,
+dar episodul a fost respins pe format («fiecare beat are nevoie de scenă, de replici cu vorbitor și
+text, și de cel puțin un eveniment citat») — cel mai probabil regresia #6 de mai jos (`story/services.py`
+validează direct, cu `max_length`), al cărei fix e neîncărcat până la repornire. Deci repornirea cu codul
+nou rămâne pasul decisiv; după ea, o rulare nouă ar trebui să scrie episodul și să randeze scena 4.
+
+## AGENȚIA PUBLICĂ SINGURĂ — cauzele blocajului din 13–15.10, reparate; claim eliberat (2026-10-15 ~07:30, Claude)
+
+Owner: «verifică Agenția, ce o oprește din a face publicările; ajustezi ce trebuie, o lași să
+publice singură și o urmărești; verifică și problemele cu LLM-uri, parametri de rezolvat».
+Ultimele publicări: 10, 11, 12 octombrie. Audit pe DB live citită read-only, `studio.log`, cod
+și o sondă pe contul Ollama Cloud al Owner-ului (abonament; nimic tipărit din cheie).
+
+**Ce oprea publicarea, cu dovezi.**
+1. `think: false` pe Ollama Cloud rupea `glm-5.3-flash` (Marcus: scenarist și showrunner). Sonda:
+   toate cele 5 modele răspund 200 la toate formele de cerere (HTTP 400 de pe 14.10 seara era
+   `num_predict=480000`, deja scos la restartul 00:50); dar GLM cu `think:false` scrie raționamentul
+   în răspunsul vizibil, la 7/7 variante, iar fără `think` răspunde JSON (gândirea în câmpul
+   separat), cu `format:json` la fel. În DB: 4 rulări `write_episode` SUCCEEDED cu 38k–74k tokeni
+   de «Let me work through this…» și zero JSON; `write_script` la fel → «nu a răspuns cu un obiect
+   JSON» → niciun scenariu, niciun episod, nimic de randat. Același mecanism: EMPTY_OUTPUT ×21 la
+   rescrieri și timeout-urile de 600 s.
+2. Filmul serialului «The Zero Script Club» (f06808c9) stătea de la 13.10: scena 4 are imagine nouă
+   APROBATĂ (20:20Z), Contabila a aprobat refacerea mișcării (0,33 USD), dar `_motion_state` rejudeca
+   `still_prompt`-ul imaginii deja cumpărate (lint «ținuta vizibilă a lui Sarah lipsește») și refuza
+   mișcarea LINT_BLOCKED — 13 plimbări «nimic nu se putea reface».
+3. Reluarea zilei întrerupte: fix-ul din noapte (worker.py, passes/resume_interrupted_day.py) era
+   necomis și neîncărcat.
+4. Când furnizorul cade pentru toate modelele, `switch_model` trimitea cardul «Aleg eu modelul»
+   Owner-ului (3 carduri pe 14.10 21:41Z, toate refuzate de el).
+5. Două capcane din harta porților: un film cu QC trecut dar nepublicat ținea subiectul «în
+   producție» la nesfârșit; o excepție neprinsă în `_publish_one` deschidea safe mode.
+6. Regresie în lucrul necomis al nopții: `clipped()` nu mai taie textele, dar schemele păstrau
+   `max_length`, deci un subiect sau un episod cu un câmp lung era REFUZAT (nu scurtat):
+   `research/agent.py` și `story/services.py` validau direct, nu prin `complete_schema`.
+
+**Ce s-a schimbat.** `integrations/llm.py`: Cloud nu mai primește `think` (nativ, ca `num_predict`);
+local rămâne `think:false`; `extra` poate impune. `factual/agent_pipeline.py:answered_with_object`
++ `story/services.py:episode_object`: un scriitor care narează e întrebat o dată în JSON cu
+gândire proprie, apoi refuzat ca înainte. `media/assembler.py:_motion_state`: cuvintele unei
+imagini APROBATE nu se rejudecă la cumpărarea mișcării. `agents/repairs/agent_health.py`: toate
+sondele picate la furnizor = DECLINED «reîncerc la trecerea următoare», fără card. `runbook/stages.py`:
+`_publish_one` prinde `ValueError`/`OSError` → SKIPPED; `topics_in_production` nu mai ține un
+subiect cu QC trecut nepublicat peste `PUBLISH_WAIT_DAYS=3`. `research/agent.py`, `story/services.py`:
+validare prin `complete_schema`. Teste: `tests/test_publishes_alone.py` (8), `test_cycle_fixes.py`
+aliniat la regula «textul rămâne întreg».
+
+**Verificat.** Sondă live (înainte și după): JSON pe deepseek-v4-pro, deepseek-v4.1-flash,
+glm-5.3-flash, kimi-k3, mistral-large-4. Suite: noile teste + scriitori, poveste, QC Directoare,
+reluare, reparații, publicare; 957 teste frontend, tsc, build, check_docs, check_secrets. Suita completă backend
+rula detașat la commit (Owner: «commit changes, să putem testa»); rezultatul în nota următoare. mypy: 20 erori preexistente în 5
+fișiere ale lucrului necomis (events_feed, input_guard, redo_cap, goal, elevenlabs_lexicon),
+niciuna în fișierele atinse azi — de curățat separat.
+
+**Ce a mai ieșit la suita completă.** (7) Promptul complet al serialului (nu se mai taie, din
+noapte) e judecat de lint după ruta pe care se cumpără: producția cumpără pe GPU (Qwen,
+20 000 de caractere), lumea de test a zilei autonome cumpăra pe «seedream» cu limita veche de
+1 000 → 4 teste cădeau LINT_BLOCKED. `prompt_lint.ALLOWANCES` (limita declarată a fiecărei
+rute, pe id de model; modelele worker-ului poartă MAX_PROMPT) înlocuiește căutarea în WORKFLOWS;
+lumea de test declară limita rutei de producție pentru furnizorul ei fals, prețurile rămân.
+(8) Testul «un still/hero picat se cumpără o dată în trei zile, cu o scrisoare» cădea încă din
+75f2267 (12.10: un refuz de calitate nu-i scrie Owner-ului): aliniat la regulă — nicio
+scrisoare, nicio recumpărare (imaginile cerute o dată, hero-ul cumpărat o dată; re-rularea e
+a scării Directoarei), Directoarea ține filmul, registrul zilei o spune. Filmul fixture-ului nu are plan de
+cadre, deci scara ei nu-l poate rescrie: «studioul reia singur rescrierea» zi de zi, fără notă
+— capcană notată în roadmap.
+
+**Neatins.** Baza live, politici, modele alocate, GPU, cardurile refuzate. Nicio apăsare, nicio
+cumpărare de mână; filmul îl duce circuitul studioului (continuarea după restart cumpără mișcarea
+scenei 4 sub regula lui de 50 USD/pas și bugetul zilnic de 20 USD, Contabila a fost de acord).
+
+**Urmează, de urmărit după repornire (din copii read-only ale DB).** (a) f06808c9: mișcarea scenei 4
+cumpărată → reasamblare → QC → publicare; (b) Marcus scrie scenariul «The Supernova Surprise» cu
+JSON; (c) niciun card nou de model, nicio scrisoare de calitate către Owner; (d) bugetul zilei.
+
+## DAY_RESUME_LOOP — rulare manuală pornită de verificarea orară; fix încă NEACTIVAT; niciun claim (2026-10-15 05:50, Claude/Cowork verificare orară)
+
+Verificarea de la 05:40 a găsit exact ce prevedea secțiunea de mai jos: studioul sănătos (HEALTHY),
+nimeni altcineva la lucru, dar ziua 10-15 tot în cerc — «daily run resume queued» ×23 până la 05:31,
+rularea ceasului de la 05:00:01 refuzată prin regulă (zi întreruptă, cut_id fd287887), nicio rulare
+nouă, nimic produs. Repornirea nu se poate face din sesiune (fără shell; terminalul e accesibil doar
+cu click, fără tastatură), deci codul nou din worker.py / passes/resume_interrupted_day.py NU este
+încărcat. Ca să existe progres azi, am apăsat «Pornește rularea de azi» din pagină (calea manuală din
+worker.daily_run, care nu trece prin refuzurile ceasului; confirmarea afișată: pașii plătiți se cumpără
+singur până la bugetul de 20 USD, plafon 50 USD/pas). Sarcina 1743a88e, pornită 02:46:41Z; la 05:48
+rularea trecuse documentarea (24 afirmații verificate), alegerea subiectului (filmul «The Zero Script
+Club» deja în producție) și intrase în «episodul din serial» (7/13). Odată ce această rulare se
+încheie, cercul «resume queued» dispare singur (resumable_run cere ca nimic să nu fi rulat după
+rularea întreruptă). Observat din nou: «Scenaristul nu a răspuns cu un obiect JSON» la «scenariu și
+storyboard» (a treia rulare consecutivă azi, glm-5.3-flash) — de urmărit separat. Rămâne de făcut de
+cineva cu shell: suita + repornire în fereastră liniștită, ca fix-ul reluării să fie activ la
+următoarea întrerupere. Detalii: DAY_RESUME_LOOP_2026-10-15.md (secțiunea «05:40»).
+
+## DAY_RESUME_LOOP — fix local, NEVERIFICAT cu suita, NEACTIVAT; claim eliberat (2026-10-15 05:05, Claude/Cowork verificare orară)
+
+Studioul rula sănătos (PID 15596, /health/ready HEALTHY) dar stătea pe loc din 01:42: rularea zilei
+fd287887 (10-15) a fost tăiată de repornirile din 00:45/00:50 la «episodul din serial»; reluarea ei
+(sarcina 47a1b570, 01:47) a fost refuzată tăcut de worker.daily_run (attempt = 4 rulări > 3), iar
+pasul resume_interrupted_day a re-anunțat «daily run resume queued» cu același task_id la fiecare
+10 minute (×19 până la 04:50) fără să ruleze nimic. Rularea de la 05:00 e refuzată prin regulă
+(ziua întreruptă). Fix chirurgical: worker.py (reluarea e plafonată de numărul de întreruperi ale
+zilei, nu de rulările ei), passes/resume_interrupted_day.py (o cerere pe rulare pe pornire, cheie cu
+START_TOKEN; evenimentul doar pentru sarcină nouă), tests/test_resume_after_finished_runs.py (3
+regresii). py_compile și ruff pe fișierele noi trec local; pytest/mypy/check_docs NU rulate (fără
+shell Windows); nicio repornire făcută; nimic în DB/politici/modele/GPU. Următorul pas: suita, apoi
+repornire în fereastră liniștită; reluarea pornește singură la primul tic. Detalii și dovezi:
+DAY_RESUME_LOOP_2026-10-15.md.
+
+## CLOUD_PARAMETER_REGRESSION — final live validation and Owner objection (2026-10-15, Codex /root)
+
+Do not reintroduce num_predict=-1: Codex initially added it and Cloud rejected it. Final code omits num_predict for native agency allowance; full prompt/system stay. Actual short probes confirm omitted parameter -> OK (18+2 tokens, 0.00001 VR), -1 -> HTTP400 positive required, 480000 -> HTTP400 above actual model maximum393216. Technical probes are Test izolat Codex records, not production progress. No GPU/content/verdict/account/policy edits. Backend reloaded by Codex while no model calls were RUNNING, old verified PID11580 -> PID15596; health/live and ready200. 40 final tests pass after omission fix. Day review with large inbox has not been proven successful. Owner objects to parameter changes: no further parameter mutations/probes. Read corrected SARAH_MARCUS_CLOUD_RESPONSE_2026-10-15.md and proof. Historical sections below describe earlier stages; the final omission rule supersedes their -1 mentions.
+
+
+## SARAH_MARCUS_CLOUD_RESPONSE — verified locally, claim released (2026-10-15, Codex /root)
+
+Sarah director_review f3e5b084 failed HTTP 400 with 480000 requested output tokens. The exact old vendor reason was discarded, so the token anomaly is not falsely presented as recovered provider evidence. Marcus episode 1e6bc6f4 timed out after 600 seconds, separately; second episode faf07b36 also timed out at 21:32:01 UTC before restart. Both model metadata calls declare 1048576 context tokens, not the output ceiling. Cloud agency calls now use provider-native output (omit num_predict at Cloud transport), complete input, streaming of all visible chunks, no premature-success/no timeout resend; fixed safe refusal categories improve future diagnostics. Direct small tests/local output limits remain. Nine new regressions; 45 initial and 153 expanded tests pass (1 real integration skipped), 18 final overlapping tests pass; Ruff, scoped mypy, docs/diff checks pass. No paid model/GPU tests or production state changes. Backend restarted externally at 21:35:29 UTC (PID 11580), after source saves; health/live and health/ready 200. No live agent success claim. Local/uncommitted, claim released. Read SARAH_MARCUS_CLOUD_RESPONSE_2026-10-15.md and proof JSON. Previous reference/wardrobe fixes loaded by that observed restart too.
+
+## VISIBLE_WARDROBE_REFERENCE_ROUTE_AND_STUDIO_WAIT — verified locally, claim released (2026-10-15, Codex /root)
+
+Partial visible characters retain their canonical clothing without adding face/hair. The same
+contract reaches QC. Legacy missing partial wardrobe blocks animation; a recomposed candidate
+is checked against its new words. Choose a discovered reference-capable sibling on the same
+verified RunPod connection before pricing/approval when a stored readable portrait exists;
+current family selects Qwen-Image-Edit-2511, preserving original adapters and batch sharing.
+Sheet/API/staircase/redo use that choice. Motion lint uses the accepted still's actual model,
+not the old 1000 fallback. Partial framing and explicit unruled pages receive individual
+visual checks (still-qc-v5-contract), retaining minor/marking and financial/STOP safeguards.
+STATUS Owner reports are informative; real questions/approvals stay highlighted. Legacy wait
+headlines are corrected in projection, without rewriting the recorded letters.
+
+Read-only actual proof: Edit-2511 selected, zero image OVER_CAP blocks, old scene-4 words
+blocked for missing Sarah clothing; current Owner notice requires no response. No generation
+through Edit or final visual-quality proof by Codex. 151 expanded and 78 follow-up tests pass,
+12 final targeted tests pass; earlier overlapping suite 173 passed. Nine new file regressions
+plus one motion-limit regression; 957 frontend tests, TypeScript/build and scoped 11-module
+mypy pass. events_feed's unrelated pre-existing type errors remain; changed text is linted.
+No production state writes, model/GPU calls or service restart. Backend activation requires
+normal restart after the ongoing episode LLM call; frontend built. Local/uncommitted; claim
+released. Handoff: REFERENCE_ROUTE_WARDROBE_AND_STUDIO_WAIT_2026-10-15.md and
+REFERENCE_WARDROBE_WAIT_PROOF_2026-10-15.json.
+
+## SARAH_QC_VS_DELIVERY_CONTEXT — verified locally, claim released (2026-10-14, Codex /root)
+
+Live Zero Script Club plan repair resolved local blockers at event 22405; current scene-4
+prompts are 1,859/584 characters, but no new GPU job or accepted picture exists. Sarah's
+actual deepseek-v4.1-flash second looks confirm wrong Nadia wardrobe, missing Sarah and zoom.
+Film-QC rewrite inherited a later undelivered take's delivery_failure, conflicting with the
+active visual finding; JSON brief example also omitted action. Both repair decisions ended
+NOTHING_DONE. Fix: task-specific QC.FILM context, explicit action in director-scene-brief-v4,
+required delivery action, independent verified delivery ladder and all financial/STOP gates.
+53 relevant tests passed, five new regressions; Ruff/format/mypy/doc hashes/diff checks pass.
+No paid calls, server restart or production state mutations. Local/uncommitted; activation
+requires next normal server start. No active claim remains.
+
+Separate live faults: Director HTTP 400 and GLM episode ProviderUnreachable after ten minutes;
+provider cause of HTTP 400 not proven. Scene-4 Sarah's visible wardrobe is not explicit in
+current text and her cast entry is absent; Director semantic review is still required.
+Latest read: service unavailable, GPU-off verified through event 22637; Owner GPU hold was
+released earlier (22387), while global autonomy_stopped remains false. No completed film.
+Evidence/handoff: SARAH_QC_DELIVERY_DIAGNOSIS_2026-10-14.md.
+
+## LIVE_PROMPT_APPROVAL_AND_ABORTED_REDO — verified locally, claim released (2026-10-14, Codex /root)
+
+Live scene-4 request sent the complete changed 1,844-character prompt to Qwen-Image-2512;
+Nadia's actual mistral-large-4 verdict uses the new 20 USD film ceiling. Earlier TREATS
+approval still covered incomplete legacy background/wardrobe fields. Sarah proposed a
+stale free replacement, while two new requests were submitted. Owner GPU hold cancelled
+both without delivered images, yet the continuation reported bought/waiting progress.
+
+Local fixes: initial/redo plan integrity, exact current reviewed words, validated current
+accepted replacements, cancellation/no-delivery outcome handling without deleting uncertain
+purchases or rejected delivered media; complete factual fields and body-to-camera conditions.
+Director instructions v11 require actual current verified reuse evidence. Applies to future
+work and revalidation of legacy drafts; no published film or production row was changed.
+
+Verification (overlapping suites): 153 Director/QC/rewrite/redo tests passed; 103 native/context
+functional tests passed; final 38 financial-boundary/native-bundle/new-regression tests passed.
+18 new regressions. Static financial gate/probe pass without relaxing the scanner; internal
+GPU methods named run_purchase avoid collision with SQLAlchemy Session.execute. Ruff and
+scoped mypy pass. Owner GPU hold retained, no paid calls, service restart or production writes.
+At final read GPU-off was verified and local health endpoints were unavailable.
+
+Changes remain local/uncommitted and load on the next normal server restart. New generated
+visual quality and completed-film progress remain unproven. No active claim remains.
+Detailed handoff and curated public evidence: LIVE_PROMPT_APPROVAL_AND_ABORTED_REDO_2026-10-14.md
+and LIVE_PROMPT_APPROVAL_PROOF_2026-10-14.json.
+
+## BUDGET_AND_COMPLETE_CONTEXT — verified locally, claim released (2026-10-14, Codex /root)
+
+Owner requests removing obsolete blockers after budget changes, LLM allowances x10 and
+complete messages without silent shortening. An unset per-film ceiling now follows the
+active DAILY budget; explicit film ceilings, shared reservations, monthly/daily spend,
+STOP, prompt review and QC stay enforced. Historical repurchase outcomes are re-evaluated
+when budget/approval context changes; normal spending cannot create another review loop,
+and an accepted minor defect still costs nothing even under insufficient purchase funds.
+
+Global STUDIO_LLM_CONTEXT_MULTIPLIER defaults to 10, applied once alongside the existing
+Director multiplier. Identity v3 includes complete open messages and relevant threads,
+120 complete selected memories, full body_json/body_text. Schema normalization never cuts
+text/list items; LLM parsing retains semantic validators and expands list ceilings x10.
+QC/editorial/financial dossiers, peer reviews, shot fields, all rewrite history and payload
+claims/lessons travel complete. Advisory dossier budgets are x10; actual GPU/platform
+contracts remain explicit refusals, never arbitrary text truncation. Provider length-stop
+responses are preserved as INCOMPLETE_OUTPUT and cannot authorize downstream execution.
+
+Verification, overlapping suites (do not sum): core/budget/messages 211 passed; latest
+complete-context/history/prompt/native-bundle suite 173 passed; film budget/sheet/preflight
+and writer context suite 100 passed; earlier broader agency/Director/rewrites suite 322
+passed with two obsolete history expectations subsequently replaced and rechecked. Two
+new files supply 27 regressions. Full frontend 955 passed; typecheck/build pass (existing
+bundle-size warning). A pre-existing Windows portrait test failure was due to LF delimiting
+a CRLF file, inspecting unrelated video blob functions; normalizing EOL fixes the test
+without changing portraits. Scoped mypy passes all 39 changed production modules, including
+prior tasks. Ruff, formatting, diff and document/architecture hash checks pass.
+
+Read-only production proof: Zero Script Club's new computed ceiling is 20 USD; historical
+spend 12.843153 USD; room 7.156847 USD. Old CLOSED event 21777 is not reused by the new code.
+The local API remains unavailable; no service start/restart, model/GPU calls or production
+scene/verdict/account/STOP/policy writes occurred. Changes load at the next normal start;
+real prompt → exact request → accepted new still → clip/QC/finished film remains unproven.
+Current source changes are local and uncommitted, alongside earlier prompt/GPU batch work.
+Evidence/next-AI handoff: BUDGET_AND_COMPLETE_CONTEXT_2026-10-14.md, its proof JSON and
+COMPLETE_LLM_CONTEXT_CHANGES_2026-10-14.json. No active claim remains.
+
+## APPROVED_GPU_BATCHES — verified locally, claim released (2026-10-14, Codex /root)
+
+Owner requests ready approved image/video work to be sent together before RunPod generation.
+Director repairs now finish all corrections before GPU, prepare the image layer and then
+eligible videos, and batch compatible ready purchases through the existing redo code.
+Cooperative flows preserve per-purchase guards, budgets, retirement restoration and QC;
+the outer film lease stays held until settlement. Every GPU permit is checked. Startup is
+shared once; no scene borrows another cap. All chunks/uploads validate before GPU-on, model
+work stays contiguous, and queue/input TTLs include earlier work and cache/GPU waits.
+STOP is rechecked after preparation; discarded preparation never clears an old uncertain
+purchase. Interruptions run purchase cleanup before closing suspended flows. Automatic
+scope is the current film's stage/repair; multi-film executor support retains separate keys
+and requires the caller to hold each film lease. No global agency task scheduler is added.
+
+Verification (overlapping suites, do not sum): expanded media/worker/Director/prompt suite
+393 passed; later core/session/redo recheck 187 passed; financial/reference/input adversary
+suite 98 passed; final input/batch/refusal recheck 161 passed; latest bundle integration and
+interruption suite 12 passed. Native still integration sends four candidates for two redos
+in one batch and settles two separate holds; native video integration sends two scenes with
+their accepted first frames in one batch. Four older Director fixtures also failed under
+HEAD because Nadia received no required verdict; those fixtures now give her an explicit
+simulated APPROVE, while the dedicated refusal/discussion tests stay intact.
+Ruff and formatting pass (11 source/test files); scoped mypy passes all eight changed
+production modules. Documentation inventory/architecture hashes and diff check pass. Full
+secret scan: 1,299 files, 82 existing findings, all reviewed in .secrets.baseline. No production DB writes, paid
+LLM/GPU calls, worker deployment or server restart. The final read-only journal has no active
+real GPU jobs/sessions (event cursor 21805); local API at port 8000 was unavailable. Activation
+and real worker/cache/visual validation await the next normal server start.
+
+Implementation and next-AI instructions: APPROVED_GPU_BATCHES_2026-10-14.md.
+
+## SERIAL_PROMPT_MODEL_LIMIT — verified locally, claim released (2026-10-14, Codex /root)
+
+Owner rejects the serial's 980-character cap. Serial look v3 uses the current GPU request/
+worker allowance of 20,000 characters; remove the loader's 2,000 clamp. Complete canonical
+identities, first moments, expression/background/continuity stay; oversized candidates are
+held by model-aware lint, never silently truncated. Sheet, initial still generation, still
+redo and serial rewrite checks use the
+applicable allowance, respecting explicit vendor terms and native character versus UTF-16
+units. Eight read-only current Zero Script Club scenes recompose with 13 losses reduced to
+zero (1,429–1,933 characters). Full exact before/after proof is saved; production DB untouched.
+
+Two compiler tests also failed under HEAD: a motion chain erased independent neighbours,
+and the 14-word world summary lost the visible-pencil condition. Both are fixed while
+shared object/negative lists remain intact. Final combined suite: 249 passed, including
+the initial 13 new regressions and complete transfer to both Qwen workflow bindings. Scoped
+mypy passes five core prompt source modules; Ruff/format, Git diff and doc hashes pass.
+After wiring the two downstream still purchase gates, their generation/redo/sheet suite
+passed 80 tests. Final new-regression rerun: 15 passed; both actual still-stage tests also
+fail as OVER_CAP on HEAD, proving the missing model propagation. Secret scan: 1,296 files,
+all findings already reviewed; final changed-file rescan: 17 files, no new finding.
+No model/GPU calls, spend/policy changes or server start.
+
+The API was unavailable on port 8000; no active agent/GPU jobs at the final runtime check.
+Next normal start loads new code; look v3 re-describes open scenes through the existing
+pipeline. Do not copy offline proposals to DB or bypass Sarah/QC. Kelvin acceptance routing
+and Zero Script Club's film budget are separate unresolved runtime issues. No active claim.
+Details/rollback: SERIAL_PROMPT_MODEL_LIMIT_2026-10-14.md / .json.
 
 ## AGENCY_LOOP_DIAGNOSIS — verified, claim released; Owner requests commit and stop (2026-10-14, Codex /root)
 
@@ -6384,3 +6699,5 @@ Frontend tests: **164 pass** (162 after the verifier's two files, plus the two f
 Evidence: `shots_final3/`, `shots_live_p8/`, `shots_scene_p8/`, `shots_p8_states/`,
 `shots_p8_dstates/` in the session scratchpad. No server, no Unreal, no Python suite, no provider,
 no git command that changes state.
+
+Final repository hygiene: format/diff checks pass; 76 changed text files scanned, no new secret findings after removing redundant digest literals from public proof (complete prompt strings remain available for identity verification).

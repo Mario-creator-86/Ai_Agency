@@ -523,7 +523,7 @@ def prioritise_backlog(engine: Engine) -> list[dict[str, Any]]:
                 score -= 0.1
                 reasons.append("greu de produs")
             topic.priority = round(score, 4)
-            topic.priority_reason = "; ".join(reasons)[:2000]
+            topic.priority_reason = "; ".join(reasons)
             changed.append(
                 {"topic_id": topic.id, "priority": topic.priority, "reason": topic.priority_reason}
             )
@@ -1194,7 +1194,7 @@ def _choose(
                     "queue_backlog": state["agents"]["queue_backlog"],
                     "dead_letter_tasks": state["agents"]["dead_letter_tasks"],
                 },
-                "backlog": state["backlog"][:5],
+                "backlog": state["backlog"],
                 "open_decisions": state["open_decisions"],
             },
             "matters": [
@@ -1214,7 +1214,7 @@ def _choose(
         },
         ensure_ascii=False,
         default=str,
-    )[:14000]
+    )
     prompt = _INSTRUCTIONS.format(
         limit=MAX_ASSIGNMENTS, repairs=MAX_REPAIRS
     ) + wrap_in_inert_boundary(payload, "company-state")
@@ -1482,6 +1482,6 @@ def review_decision(engine: Engine, decision_id: str, outcome: str) -> dict[str,
         if row is None:
             raise CommandError(f"Decizia {decision_id} nu există")
         row.state = "REVIEWED"
-        row.outcome = outcome[:4000]
+        row.outcome = outcome
         row.reviewed_at = utc_now()
         return {"decision_id": decision_id, "state": row.state, "outcome": row.outcome}

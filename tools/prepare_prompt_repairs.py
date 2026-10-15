@@ -46,6 +46,11 @@ PATCHES = {
         ),
     },
     (SERIAL_ID, 4): {
+        "background": (
+            "The calculator with its paper roll, a jar of sharpened pencils and two untouched "
+            "cups of tea stay on Nadia's desk. Warm lamplight and bookshelves fill the quiet "
+            "office behind her."
+        ),
         "action": (
             "Nadia taps the brass pen on the blank green ledger, then lays it flat;"
             " Sarah's shoulder and arm stay at the right edge."

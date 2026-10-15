@@ -250,7 +250,7 @@ _OUTCOME_RO = {
     "ACCEPT_REFUSED": "acceptarea refuzată (nu era a ei de trecut cu vederea)",
     "REPAIRED": "refăcut, din nou la control",
     "ASKED": "refacerea așteaptă răspunsul tău",
-    "BOUGHT_WAITING": "s-a cumpărat, așteaptă aprobarea preluării",
+    "BOUGHT_WAITING": "s-a cumpărat; studioul verifică refacerea",
     "NOTHING_DONE": "nimic din lista ei nu se putea face",
     "CLOSED": "închis",
 }

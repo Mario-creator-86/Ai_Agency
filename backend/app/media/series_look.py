@@ -24,14 +24,15 @@ from collections.abc import Collection
 from pathlib import Path
 from typing import Any
 
+from runpod_worker.contract import MAX_PROMPT
+
 from app.config import ROOT
 
 #: The Owner's proposal file for the serial's look.
 SERIES_LOOK_FILE = ROOT / "config" / "serial_series_look.json"
 
-#: What a serial prompt may be at most, when the file does not say: the style block first,
-#: then the room, the people, the action and the camera. A longer prompt buries the shot.
-DEFAULT_MAX_PROMPT_CHARS = 980
+#: The serial uses the current GPU route's request allowance, not an editorial length cap.
+DEFAULT_MAX_PROMPT_CHARS = MAX_PROMPT
 
 #: The shot sizes the serial varies between, when the file does not name them. ``{name}`` is
 #: the character the shot is on.
@@ -147,7 +148,7 @@ def load_series_look(path: Path | None = None) -> dict[str, Any]:
         "continuity_rules": _strings(data.get("continuity_rules")) if in_use else [],
         "avoid": _strings(data.get("avoid")) if in_use else [],
         "shot_sizes": sizes,
-        "max_prompt_chars": max(300, min(2000, cap)),
+        "max_prompt_chars": cap if 0 < cap <= MAX_PROMPT else MAX_PROMPT,
         "file": str(source),
     }
 

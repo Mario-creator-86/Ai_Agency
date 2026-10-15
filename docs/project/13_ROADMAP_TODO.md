@@ -1,5 +1,100 @@
 # Roadmap / TODO v3
 
+## 2026-10-15 — The studio publishes by itself (Claude)
+
+- [x] Cloud asked nothing about thinking; writers get a JSON second attempt; serial film unblocked
+      from the approved still's lint; outage ≠ Owner card; publish faults SKIPPED; QC-passed wait
+      bounded; night's resume fix committed.
+- [ ] Watch after the restart: f06808c9 motion → assembly → QC → publish; Marcus's Supernova
+      script in JSON; no model card, no quality letter to the Owner; the day's budget.
+- [ ] A Director REJECT of a Publisher HOLD lifts the hold (`reviews.approved_metadata` treats
+      RESOLVED as approval): decide REJECT = keep holding.
+- [ ] The Owner's yes on `publishing.public_publish` does not continue the film (waits for the
+      next 05:00); queue the continuation like a paid-media yes.
+- [ ] `FAILED_RETRYABLE` uploads reach the Owner after three watchdog passes (~30 min) — back off
+      instead; `NEEDS_RECONCILIATION` is not in `LIVE_PUBLICATION_STATES` (duplicate risk).
+- [ ] mypy: 20 pre-existing errors in events_feed, input_guard, redo_cap, goal, elevenlabs_lexicon.
+- [ ] A direct test of `_publish_one`'s SKIPPED on `ValueError`/`OSError`.
+- [ ] A ladder scene the studio cannot rewrite (no shot plan, closed film, a card) repeats
+      «Directoarea nu a putut încă rescrie … studioul reia singur rescrierea» every day with no
+      note: write one `developer_defect` note and stop repeating (seen in the three-days test).
+- [ ] The rewrite's own lint judges a serial still against the look's cap (20 000) while the
+      sheet judges it against the route's: on a route below the look's cap the two disagree and
+      the rewrite never converges (not production's case today).
+
+2026-10-15 final Cloud correction: -1 sentinel rejected live, removed; omitted num_predict returns OK in a short paid probe (0.00001 VR). Actual DeepSeek-v4.1-flash max output393216, so480000 invalid. Technical probes not film progress. Backend15596 ready; Owner objects to further parameter changes, no more probes. See corrected SARAH_MARCUS_CLOUD_RESPONSE report.
+
+## 2026-10-15 — Cloud response contract
+
+- [x] Diagnose actual Sarah HTTP 400 / Marcus 600-second timeout separately.
+- [x] Use provider-native Cloud output and complete streaming without unsafe resend.
+- [x] Safe technical refusal categories; nine regressions and expanded provider/runbook checks.
+- [x] Backend restart observed after source saves; both health checks 200.
+- [ ] Observe real agent result without launching a test generation.
+
+
+## 2026-10-15 — Visible wardrobe and reference route
+
+- [x] Preserve partial-character wardrobe in composition/QC and refuse old incomplete input before animation.
+- [x] Select discovered compatible RunPod reference route before pricing/approval; share prepared adapters per batch.
+- [x] Use actual still model limit in video plan; add explicit framing/unruled-page QA conditions.
+- [x] Informational Owner reports and truthful legacy headings; retain real approvals.
+- [x] Source/API/UI regression suites and read-only real-data proof.
+- [ ] Activate backend at normal restart after current LLM call and observe reviewed Edit/reference generation and final visual QC.
+
+## 2026-10-14 — Sarah QC versus delivery context
+
+- [x] Isolate film visual-QC rewrite from an unrelated undelivered request.
+- [x] Make action explicit in brief v4 and required for delivery; preserve verified delivery and financial gates.
+- [x] Five regressions, 53 relevant tests and source/document checks passed.
+- [ ] Observe actual brief/rewrite/review after normal restart; inspect provider error bodies and Sarah cast/wardrobe completeness before generation.
+
+## 2026-10-14 — Live prompt approval and cancelled redo
+
+- [x] Trace complete real Qwen text, old TREATS approval, legacy incomplete fields and current budget verdict.
+- [x] Enforce complete plans, exact current reviewed text and verified current accepted replacement files.
+- [x] Route missing clauses to Sarah/rewriter; preserve long factual fields and subject orientation.
+- [x] Exclude cancelled undelivered work from bought/waiting progress while preserving actual QC rejections.
+- [x] Verify 18 new regressions plus existing Director, native-bundle and financial-boundary checks.
+- [ ] Observe activation at next normal restart and actual revised generation/visual QC.
+
+Handoff: LIVE_PROMPT_APPROVAL_AND_ABORTED_REDO_2026-10-14.md.
+
+## 2026-10-14 — Budget changes and complete LLM context
+
+- [x] Replace the unset implicit film ceiling with the current shared daily limit.
+- [x] Re-evaluate obsolete financial outcomes after budget/approval changes; retain minor acceptances.
+- [x] LLM output x10, complete messages/threads/memory/dossiers and no silent schema fitting.
+- [x] Preserve complete shot fields, evidence, lessons and rewrite history; flag provider partial output.
+- [x] Verify local gates/route regression suites, 955 frontend tests, types/build and code/doc checks.
+- [ ] Observe activation through the next normal server start and actual reviewed generation/QC.
+
+Handoff: BUDGET_AND_COMPLETE_CONTEXT_2026-10-14.md.
+
+## 2026-10-14 — Approved GPU bundles
+
+- [x] Prepare Director repairs across scenes before GPU dispatch; images precede eligible videos.
+- [x] Reuse existing purchase gates, per-scene holds and QC; combine compatible ready RunPod work.
+- [x] Upload and validate the entire bundle before GPU-on; queue all chunks before polling.
+- [x] Account once for shared startup, preserve individual caps/refunds and uncertain-job proofs.
+- [x] Extend queued jobs/input URLs for earlier work, cache waits and waiting for GPU availability.
+- [x] Verify native still/video redo integration, financial guards, STOP, idempotency and references.
+- [ ] Observe the next normal RunPod generation after server activation; confirm actual worker/cache
+  reuse and visual QC. No paid cloud verification was performed in this implementation task.
+
+Scope, files and next-AI instructions: APPROVED_GPU_BATCHES_2026-10-14.md.
+
+## 2026-10-14 — Serial prompt route allowance
+
+- [x] Replace the local 980-character cap and 2,000-character clamp with the GPU route's
+  20,000-character request allowance; preserve complete first-frame and character conditions.
+- [x] Align sheet/repair lint and verify identical text at both Qwen workflow nodes, without
+  paid generation; eight recorded serial scenes lose zero required conditions after recomposition.
+- [ ] Confirm normal runtime re-description and Sarah-approved image generation/visual QC
+  after the Owner next starts the studio. Kelvin acceptance routing and film budget remain separate.
+
+Evidence and rollback: SERIAL_PROMPT_MODEL_LIMIT_2026-10-14.md / .json.
+
 ## Agency loop diagnosis — 2026-10-14
 
 - [x] Exclude confirmed uploaded films from repair/writes/purchases; settle stale reports.

@@ -138,14 +138,14 @@ LESSONS_REFUTED_GIVEN = 4
 LESSON_MIN_WORDS = 3
 #: How many new lessons the Director reads in one call of `reconcile_prompt_lessons`; the rest
 #: wait for the next writer.
-LESSONS_READ_AT_ONCE = 6
+LESSONS_READ_AT_ONCE = 60
 #: How many of the newest live lessons of its scope a new one is compared with before it is
 #: kept, and how many of the newest live lessons are read at all.
-LESSONS_COMPARED = 40
+LESSONS_COMPARED = 400
 LESSONS_SCANNED = 200
 #: A lesson longer than this is a report, not a rule: refused whole, never cut (a cut rule
 #: says half of what it meant and is then obeyed as written).
-LESSON_MAX_CHARS = 400
+LESSON_MAX_CHARS = 4000
 #: A new lesson whose content words are at least this share inside an older one says the
 #: same thing (`lesson_overlap`, measured from the NEW lesson's words): it replaces the older
 #: (a correction wins, a recurring lesson comes back to the top), never the reverse.
@@ -219,8 +219,8 @@ REFUTED_RULE = (
 #: What the payload of each call may take, in characters of JSON. Whole claims and then scenes
 #: are dropped to fit (`trim_payload`); nothing is ever sliced mid-string. The studio's lessons
 #: ride whole on top of this budget (`fit_with_lessons`), never trimmed for the film's sake.
-MAX_BIBLE_PAYLOAD_CHARS = 12000
-MAX_SHOTS_PAYLOAD_CHARS = 16000
+MAX_BIBLE_PAYLOAD_CHARS = 120000
+MAX_SHOTS_PAYLOAD_CHARS = 160000
 
 #: A storyboard whose model shot plan could not be read, even after the one re-ask. It is
 #: not rendered until a plan is written: template prompts are a TEST convenience only.
@@ -785,14 +785,13 @@ def _coerce(data: dict[str, Any], model: type[BaseModel]) -> dict[str, Any]:
         if name not in data or (bible and name == "card_palette"):
             continue
         value = data[name]
-        limit = _max_length(field)
         scrub = bible and name in PROMPT_BOUND_BIBLE_FIELDS
         if field.annotation is str:
             text = " ".join(_flatten(value).split())
             if scrub:
                 found_hex.extend(_HEX_COLOUR.findall(text))
                 text = _scrub_codes(text)
-            fitted[name] = _fit(text, limit) if limit else text
+            fitted[name] = text
         elif field.annotation == list[str]:
             items = value if isinstance(value, list) else [value]
             cleaned = [" ".join(_flatten(item).split()) for item in items]
@@ -804,7 +803,7 @@ def _coerce(data: dict[str, Any], model: type[BaseModel]) -> dict[str, Any]:
                     for item in cleaned
                     if not _HEX_COLOUR.search(item) and not lint.ENUM_CODE.search(item)
                 ]
-            fitted[name] = cleaned[:limit] if limit else cleaned
+            fitted[name] = cleaned
         else:
             fitted[name] = value
     if bible:
@@ -920,7 +919,9 @@ def _shots_from(items: Any) -> dict[int, ShotPrompt]:
         if not isinstance(raw, dict):
             continue
         try:
-            shot = ShotPrompt.model_validate(_coerce(raw, ShotPrompt))
+            from app.agents.identity import complete_schema  # noqa: PLC0415
+
+            shot = complete_schema(ShotPrompt).model_validate(_coerce(raw, ShotPrompt))
         except ValidationError:
             continue
         shots.setdefault(shot.scene_index, shot)
@@ -992,8 +993,10 @@ def parse_shot_plan(text: str) -> ShotPlanParse:
 def _parse_shot_pack(text: str) -> ShotPack | None:
     """Every shot that can be placed, as a pack; None when not one shot could be read."""
     parsed = parse_shot_plan(text)
-    shots = [parsed.shots[index] for index in parsed.shots][:60]
-    return ShotPack(shots=shots) if shots else None
+    from app.agents.identity import complete_schema  # noqa: PLC0415
+
+    shots = [parsed.shots[index] for index in parsed.shots]
+    return complete_schema(ShotPack)(shots=shots) if shots else None
 
 
 # ------------------------------------------------------------------ whole-item payloads
@@ -1016,45 +1019,9 @@ def _dumps(data: Any) -> str:
 
 
 def trim_payload(data: dict[str, Any], limit: int) -> tuple[dict[str, Any], dict[str, int]]:
-    """The payload made to fit ``limit`` characters by dropping whole items, never by slicing.
-
-    First the longest claims, one at a time; then the studio's prompt lessons, last first;
-    then whole scenes from the end. What is sent always parses, and whatever is sent is
-    whole: the payload used to be cut at 12,000 / 16,000 characters, mid-string, and the
-    model was handed JSON that did not close. Returns the fitted copy and what was dropped.
-    """
-    fitted: dict[str, Any] = json.loads(_dumps(data))
-    dropped = {"claims": 0, "lessons": 0, "scenes": 0}
-    while len(_dumps(fitted)) > limit:
-        holders = [
-            scene
-            for scenes in _scene_lists(fitted)
-            for scene in scenes
-            if isinstance(scene, dict) and isinstance(scene.get("claims"), list) and scene["claims"]
-        ]
-        if holders:
-            longest = max(
-                (
-                    (scene, position)
-                    for scene in holders
-                    for position in range(len(scene["claims"]))
-                ),
-                key=lambda pair: len(_dumps(pair[0]["claims"][pair[1]])),
-            )
-            del longest[0]["claims"][longest[1]]
-            dropped["claims"] += 1
-            continue
-        lessons = fitted.get("lessons")
-        if isinstance(lessons, list) and lessons:
-            lessons.pop()
-            dropped["lessons"] += 1
-            continue
-        lists = [scenes for scenes in _scene_lists(fitted) if scenes]
-        if not lists:
-            break
-        lists[0].pop()
-        dropped["scenes"] += 1
-    return fitted, dropped
+    """Compatibility entry point: keep all evidence; batching partitions whole scenes."""
+    del limit
+    return json.loads(_dumps(data)), {"claims": 0, "lessons": 0, "scenes": 0}
 
 
 def fit_with_lessons(data: dict[str, Any], lessons: Sequence[str], limit: int) -> dict[str, Any]:
@@ -1197,7 +1164,9 @@ def _parse_bible(text: str) -> VisualBible | None:
     if data is None:
         return None
     try:
-        return VisualBible.model_validate(_coerce(data, VisualBible))
+        from app.agents.identity import complete_schema  # noqa: PLC0415
+
+        return complete_schema(VisualBible).model_validate(_coerce(data, VisualBible))
     except ValidationError:
         return None
 
@@ -1249,7 +1218,7 @@ def build_visual_bible(
             + wrap_in_inert_boundary(payload, "approved-film"),
             BIBLE_TEMPLATE,
             correlation,
-            f"Stabilesc privirea filmului «{facts['title'][:50]}».",
+            f"Stabilesc privirea filmului «{facts['title']}».",
             2200,
         )
         if result is not None:
@@ -1799,7 +1768,7 @@ def _second_framing(raw: Any) -> dict[str, Any] | None:
         if isinstance(value, bool) or not isinstance(value, int | float):
             return None
         centre.append(round(min(1.0, max(0.0, float(value))), 3))
-    subject = strip_on_screen_text(" ".join(str(raw.get("subject") or "").split()))[:200]
+    subject = strip_on_screen_text(" ".join(str(raw.get("subject") or "").split()))
     return {"subject": subject, "centre_x": centre[0], "centre_y": centre[1]}
 
 
@@ -2068,14 +2037,64 @@ def _serial_framing(package: dict[str, Any], look: dict[str, Any], focus: str) -
     return _clean_cut(re.split(r"[,;:]", camera, maxsplit=1)[0]) if camera else ""
 
 
+def serial_partial_characters(package: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Canonical clothing for people whose body parts enter a single's frame."""
+    framed = {
+        str(c.get("id") or c.get("name"))
+        for c in package.get("in_frame") or []
+        if isinstance(c, dict)
+    }
+    action = _still_moment(str(package.get("action") or ""))
+    partial = []
+    for character in package.get("characters") or []:
+        if (
+            not isinstance(character, dict)
+            or str(character.get("id") or character.get("name")) in framed
+        ):
+            continue
+        name = _short_name(character.get("name"))
+        if not name:
+            continue
+        for clause in re.split(r"[;.!?]", action):
+            if re.search(
+                rf"\b{re.escape(name)}['’]s\s+[^;.!?]*\b"
+                r"(?:shoulder|upper arm|forearm|hand|elbow)\b",
+                clause,
+                re.IGNORECASE,
+            ):
+                if re.search(
+                    r"\b(?:shoulder|upper arm|forearm|hand|elbow)\s+(?:is |remains? )?"
+                    r"(?:absent|invisible|not visible)\b|\bno shoulder\b",
+                    clause,
+                    re.IGNORECASE,
+                ):
+                    continue
+                partial.append({**character, "visible_description": clause.strip()})
+                break
+    return partial
+
+
+def partial_clothing_sentence(character: Mapping[str, Any]) -> str:
+    name = _short_name(character.get("name"))
+    outfit = " ".join(str(character.get("outfit") or "").split()).rstrip(". ")
+    return (
+        (
+            f"The visible clothing of {name} matches the canonical outfit: {outfit}. "
+            f"Only the body parts specified for {name} enter the frame; the face stays outside it."
+        )
+        if outfit
+        else ""
+    )
+
+
 def compose_serial_prompt(package: dict[str, Any], look: dict[str, Any]) -> str:
     """The text the model receives for a serial shot, the series' look first, word for word.
 
     Then the room, the fixed framing for the shot's size, how one picture fills the tall
     frame, the people in frame (each as their bible describes them) and the first moment of
-    the action; then, while there is room, the expression, the background and the continuity.
-    The people are given less of their description, and then the action less of its words,
-    until the prompt fits the look's cap: the look, the room and the frame never shrink.
+    the action. Required content is never cut to fit: the model-aware linter holds an
+    oversized prompt for rewrite before payment. Expression, background and continuity
+    stay too: a correction in those fields must not disappear under a length cap.
 
     2026-10-11 (f06808c9): the stills of scenes 3, 4 and 7 came back as the same picture
     three times, stacked, on both candidates. Their prompts carried the plan's camera as a
@@ -2083,7 +2102,6 @@ def compose_serial_prompt(package: dict[str, Any], look: dict[str, Any]) -> str:
     action as a chain («taps …, pauses …, then lays the pen flat»): an image model draws a
     chain as panels. The path's move and the whole chain are the motion prompt's.
     """
-    cap = int(look.get("max_prompt_chars") or 900)
     people = [c for c in package.get("in_frame") or [] if isinstance(c, dict)]
     focus = _short_name(people[0].get("name")) if people else "the speaker"
     framing = _serial_framing(package, look, focus)
@@ -2107,34 +2125,19 @@ def compose_serial_prompt(package: dict[str, Any], look: dict[str, Any]) -> str:
     if action and not action.endswith("."):
         action += "."
 
-    def build(per_person: int, action_text: str) -> str:
-        who = "; ".join(_identity(c, per_person) for c in people)
-        parts = [
-            *head,
-            f"In frame, facing the viewer: {who}." if who else "",
-            _sentence(action_text) if action_text else "",
-        ]
-        return " ".join(part for part in parts if part)
-
-    minimum = 45
-    # The first hair and garment clauses are canonical, not optional detail. Shorten
-    # the action before dropping either one; an impossible fit is reported below.
-    for c in people:
-        face = _clauses(c.get("face_hair"), ";")
-        outfit = _clauses(c.get("outfit"), ",;")
-        required = f"{_short_name(c.get('name'))}: " + ", ".join(
-            [*face[:1], *(("wearing " + outfit[0][:1].lower() + outfit[0][1:],) if outfit else ())]
+    # The old 980-character fit cut Sarah's pose after Marcus's action. Keep every
+    # canonical identity and first moment, even on overflow, so lint can reject the
+    # complete candidate instead of passing an incomplete instruction to the GPU.
+    who = "; ".join(
+        _identity(
+            person,
+            sum(len(str(person.get(key) or "")) for key in ("name", "face_hair", "outfit")) + 32,
         )
-        minimum = max(minimum, len(required))
-    per = max(minimum, 220 if len(people) <= 1 else 130 if len(people) == 2 else 90)
-    text = build(per, action)
-    while len(text) > cap and per > minimum:
-        per = max(minimum, per - 10)
-        text = build(per, action)
-    if len(text) > cap and action:
-        room = len(action) - (len(text) - cap)
-        text = build(per, _clean_cut(_fit(action, room - 1)) + "." if room > 20 else "")
-    text = _clean_cut(_fit(text, cap))
+        for person in people
+    )
+    parts = [*head, f"In frame, facing the viewer: {who}." if who else "", _sentence(action)]
+    parts.extend(partial_clothing_sentence(person) for person in serial_partial_characters(package))
+    text = " ".join(part for part in parts if part)
     # The exclusions are the look's own words already ("No written words ..."); a list of
     # them under «Avoid:» is read literally by an image model and is never said here.
     for prefix, value in (
@@ -2147,9 +2150,7 @@ def compose_serial_prompt(package: dict[str, Any], look: dict[str, Any]) -> str:
             continue
         if prefix and said[:1].isupper() and not said.startswith(("AMN", "I ")):
             said = said[:1].lower() + said[1:]
-        candidate = f"{text} {_sentence(prefix + said)}"
-        if len(candidate) <= cap:
-            text = candidate
+        text = f"{text} {_sentence(prefix + said)}"
     return text
 
 
@@ -2455,7 +2456,7 @@ def compose_prompt(package: dict[str, Any], bible: dict[str, Any]) -> str:
         said = once(value)
         if said:
             parts.append(f"{label}: {said}")
-    parts.append(f"Avoid: {', '.join(str(a) for a in (package.get('avoid') or [])[:6])}")
+    parts.append(f"Avoid: {', '.join(str(a) for a in (package.get('avoid') or []))}")
     text = " ".join(f"{part}." for part in parts if part)
     return cut_at_sentence(text, MAX_PROMPT_CHARS)
 
@@ -2800,6 +2801,14 @@ def _then_head(part: str, start: int) -> str:
     return re.sub(r"(?:\s+\b(?:and|or|but)\b)+$", "", head, flags=re.IGNORECASE).strip()
 
 
+_SUBJECT_CAMERA_ORIENTATION = re.compile(
+    r"\b(?:with\s+)?(?:his|her|their|its|the)\s+"
+    r"(?:back|backs|shoulder|shoulders|side|sides|face|faces|front|profile)\s+"
+    r"(?:turned\s+)?(?:to|towards?|away\s+from)\s+(?:the\s+)?camera\b",
+    re.IGNORECASE,
+)
+
+
 def _clauses_of(text: Any, *, motion: bool = False) -> list[str]:
     """The clauses of a plan field that may enter a prompt, in the plan's words.
 
@@ -2848,10 +2857,11 @@ def _clauses_of(text: Any, *, motion: bool = False) -> list[str]:
             or _QUOTE_MARKS.search(part)
         ):
             return ""
+        camera_instruction = _SUBJECT_CAMERA_ORIENTATION.sub("", part)
         if motion and (
             any(
                 match.group(0).casefold() not in ("locked", "static", "movement")
-                for match in _CAMERA_WORDS.finditer(part)
+                for match in _CAMERA_WORDS.finditer(camera_instruction)
             )
             or lint.camera_moves(part)
             or lint.THEN_CHAIN.search(part)
@@ -2869,7 +2879,17 @@ def _clauses_of(text: Any, *, motion: bool = False) -> list[str]:
     clauses: list[str] = []
     for proposition in re.split(r"[;.!?]\s*|\s*\(|\)\s*|\s+-{1,2}\s+|\s*—\s*", said):
         if motion:
-            clauses.append(proposition)
+            # A later-moment clause or scene pointer must not erase its independent
+            # neighbours. Keep ordinary object lists and the scope of negations whole.
+            independent = lint.THEN_CHAIN.search(proposition) or lint.SCENE_REFERENCE.search(
+                proposition
+            )
+            scoped_negative = lint.NEGATION.search(proposition) or lint.INLINE_EXCLUSION.search(
+                proposition
+            )
+            clauses.extend(
+                proposition.split(",") if independent and not scoped_negative else [proposition]
+            )
         else:
             for clause in proposition.split(","):
                 if lint.NEGATION.search(clause) or lint.INLINE_EXCLUSION.search(clause):
@@ -3193,7 +3213,7 @@ def _motion_intent(
     amplitude = str(package.get("motion_amplitude") or AMPLE).strip().lower()
     return {
         "camera_move": move,
-        "world": _sentence(_phrase([world], 14)) if world else DEFAULT_WORLD_MOTION,
+        "world": _sentence(world) if world else DEFAULT_WORLD_MOTION,
         "subject": _sentence(subject),
         "subject_clauses": [_sentence(clause) for clause in subject_clauses],
         "action_clauses": [_sentence(clause) for clause in action_clauses],
@@ -3315,6 +3335,74 @@ def _ending_sentence(value: Any) -> str:
     )
 
 
+def incomplete_plan_fields(
+    package: Mapping[str, Any], *, layers: tuple[str, ...] = ("still", "motion")
+) -> list[str]:
+    """Find broken saved clauses without deleting them or guessing their missing words."""
+    fields: set[str] = set()
+    if "still" in layers:
+        fields.update(
+            (
+                "subject",
+                "action",
+                "environment",
+                "camera",
+                "lighting",
+                "composition",
+                "emotion",
+                "background",
+                "continuity",
+            )
+        )
+    if "motion" in layers:
+        fields.update(("action", "environment", "motion", "ending_frame", "motion_emotion"))
+    cast = [
+        character
+        for key in ("characters", "in_frame")
+        for character in package.get(key) or []
+        if isinstance(character, dict)
+    ]
+    issues: list[str] = []
+    for field in sorted(fields):
+        text = " ".join(str(package.get(field) or "").split())
+        if not text:
+            continue
+        for clause in re.split(r"[;.!?](?:\s+|$)", text):
+            clause = clause.strip(" ,;:.")
+            if lint.dangling(clause):
+                issues.append(
+                    f"{field}: fragment incomplet «{clause}»; editorul trebuie să rescrie "
+                    "fraza integral înainte de aprobarea promptului"
+                )
+        # A formerly clipped locked garment ("and sky-blue") matches the beginning of
+        # its canonical clause ("and sky-blue tie"), not a complete garment. Keep the
+        # source intact; only the editor and Director may choose the corrected wording.
+        tail = re.findall(r"\w+(?:[-']\w+)*", text.casefold())
+        for character in cast:
+            for garment in _clauses(character.get("outfit"), ",;"):
+                canonical = re.findall(r"\w+(?:[-']\w+)*", garment.casefold())
+                for size in range(len(canonical) - 1, 1, -1):
+                    if tail[-size:] == canonical[:size]:
+                        issue = (
+                            f"{field}: ținuta lui {_short_name(character.get('name'))} este "
+                            f"incompletă; fragmentul canonic trebuie să fie «{garment}»"
+                        )
+                        if issue not in issues:
+                            issues.append(issue)
+                        break
+    if "still" in layers and package.get("still_prompt"):
+        sent = " ".join(re.findall(r"\w+(?:-\w+)*", str(package["still_prompt"]).casefold()))
+        for person in serial_partial_characters(package):
+            for garment in _clauses(person.get("outfit"), ",;"):
+                expected = " ".join(re.findall(r"\w+(?:-\w+)*", garment.casefold()))
+                if expected and expected not in sent:
+                    issues.append(
+                        f"still_prompt: ținuta vizibilă a lui {_short_name(person.get('name'))} "
+                        f"lipsește; păstrați partea corpului cerută și descrieți «{garment}»"
+                    )
+    return issues
+
+
 def composition_issues(
     package: Mapping[str, Any],
     still: str,
@@ -3323,7 +3411,7 @@ def composition_issues(
     layers: tuple[str, ...] = ("still", "motion"),
 ) -> list[str]:
     """Required meaning lost during composition must block, never masquerade as a repair."""
-    issues: list[str] = []
+    issues = incomplete_plan_fields({**package, "still_prompt": still}, layers=layers)
     ending = str(package.get("ending_frame") or "").strip()
     if ending and "motion" in layers:
         expected = _ending_sentence(ending)
@@ -4357,7 +4445,7 @@ class _LessonRelation(BaseModel):
     @field_validator("why", mode="before")
     @classmethod
     def _clip(cls, value: Any) -> Any:
-        return " ".join(value.split())[:300] if isinstance(value, str) else value
+        return " ".join(value.split()) if isinstance(value, str) else value
 
 
 class LessonReading(BaseModel):

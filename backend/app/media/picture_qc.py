@@ -1120,7 +1120,7 @@ def earlier_acceptances(
                     report_id=report_id,
                     decided_at=str(payload.get("_at") or at),
                     verdicts=("OVERTURNED",),
-                    reason=str(look.get("reason") or "")[:300],
+                    reason=str(look.get("reason") or ""),
                     still_take=takes[index][0],
                     clip_take=takes[index][1],
                 )
@@ -1151,7 +1151,7 @@ def earlier_acceptances(
                     report_id=report_id,
                     decided_at=at,
                     verdicts=tuple(dict.fromkeys(words)),
-                    reason=str(verdicts[0].get("reason") or "")[:300],
+                    reason=str(verdicts[0].get("reason") or ""),
                     still_take=takes[index][0],
                     clip_take=takes[index][1],
                 )
@@ -1559,8 +1559,7 @@ def evaluate_pictures(
             PictureReport,
             '{"scenes": [...], "characters": [...]}',
             summary=(
-                f"Mă uit la cele {len(frames)} cadre ale filmului «{title[:80]}» înainte de "
-                "Director."
+                f"Mă uit la cele {len(frames)} cadre ale filmului «{title}» înainte de Director."
             ),
             max_tokens=4000,
             temperature=0.1,
@@ -2296,6 +2295,14 @@ def judge_still(
     prompt = (
         _STILL_INSTRUCTIONS.format(scene=plan.scene)
         + (_FIXES_NOTE if must_fix else "")
+        + (
+            "\nSome must_fix items are explicit conditions of the current plan. Verify them "
+            "against the pixels independently: a face or profile where only a shoulder/arm "
+            "is requested persists as a serious framing defect; ruled or gridded pages "
+            "are not unruled blank pages. Do not infer compliance from the prompt text.\n"
+            if any(item.get("source") == "current_plan" for item in plan.must_fix)
+            else ""
+        )
         + (markings_note(marked) + "\n" if marked else "")
         + wrap_in_inert_boundary(json.dumps(shown, ensure_ascii=False), "the-still")
     )
@@ -2308,7 +2315,11 @@ def judge_still(
         looker_id,
         STILL_TASK,
         prompt,
-        STILL_FIX_TEMPLATE_VERSION if must_fix else STILL_TEMPLATE_VERSION,
+        "still-qc-v5-contract"
+        if any(item.get("source") == "current_plan" for item in plan.must_fix)
+        else STILL_FIX_TEMPLATE_VERSION
+        if must_fix
+        else STILL_TEMPLATE_VERSION,
         correlation_id,
         still_report_schema(len(must_fix)),
         '{"stills": [...]}',

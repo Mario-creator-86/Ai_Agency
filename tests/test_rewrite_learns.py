@@ -53,12 +53,10 @@ from app.media.scene_rewrite import (
     BRIEF_EVENT,
     LOCK_COMPOSER,
     LOCK_PICTURE,
-    MAX_OLDER_BRIEFS,
     MAX_PAYLOAD_CHARS,
     MINOR,
     MISSES,
     MOTION,
-    OLDER_DIAGNOSIS_CHARS,
     STILL,
     STILL_KEPT_WHOLE,
     TREATS,
@@ -622,19 +620,15 @@ def test_older_briefs_beyond_the_ones_shown_whole_are_shown_in_short(engine, tmp
 
     assert context is not None
     assert [b["diagnosis"].split(" because")[0] for b in context["briefs"]] == [
-        f"diagnosis number {n}" for n in range(17, 21)
+        f"diagnosis number {n}" for n in range(1, 21)
     ]
-    older = context["older_briefs"]
-    assert len(older) == MAX_OLDER_BRIEFS
-    assert [b["diagnosis"].split(" because")[0] for b in older] == [
-        f"diagnosis number {n}" for n in range(5, 17)
-    ]
-    assert all(len(b["diagnosis"]) <= OLDER_DIAGNOSIS_CHARS for b in older)
-    assert older[0]["cause"] == "cause number 5"
+    assert context["older_briefs"] == []
+    assert len(context["briefs"]) == 20
+    assert len(context["briefs"][0]["diagnosis"]) > 200
     agents = Agents([SECOND_SHOT], [TREATED])
     rewrite_failed_scene(engine, they_say(studio, agents), storyboard_id, 1, str(uuid4()))
     (asked,) = agents.briefs
-    assert "older_briefs_in_short" in asked and "diagnosis number 5" in asked
+    assert "diagnosis number 1" in asked and "diagnosis number 20" in asked
 
 
 def test_a_long_history_keeps_every_lesson_whole_and_first(engine, tmp_path, studio):
@@ -707,7 +701,8 @@ def test_a_long_history_keeps_every_lesson_whole_and_first(engine, tmp_path, stu
     # The newest refusal and brief are still whole; the oldest were said in short.
     assert data["refusals"][0]["reasons"][0] == reason[:400]
     assert data["earlier_briefs"][-1]["diagnosis"].startswith("diagnosis 3")
-    assert data["older_briefs_in_short"][0]["diagnosis"].startswith("diagnosis 0")
+    assert data["earlier_briefs"] == context["briefs"]
+    assert data["refusals"] == context["failures"]
 
 
 #: Where a lock's quote is read for the schema tests (`lock_texts`): the rewritten prompts, the
@@ -1535,26 +1530,21 @@ def test_the_second_rewrite_and_its_review_fit_the_budget_with_her_feedback(
     whole = json.dumps(
         [context["failures"], context["briefs"], context["older_briefs"]], ensure_ascii=False
     )
-    assert len(whole) > 2 * MAX_PAYLOAD_CHARS
+    assert len(whole) > 28000  # exceeds both former 14,000-character payloads
     agents = Agents([FIRST_SHOT, SECOND_SHOT], [MISSED, TREATED])
 
     outcome = rewrite_failed_scene(engine, they_say(studio, agents), storyboard_id, 1, str(uuid4()))
 
     assert outcome["rewritten"] is True, outcome
 
-    def size(data: dict[str, Any]) -> int:
-        return len(
-            json.dumps({k: v for k, v in data.items() if k != "lessons"}, ensure_ascii=False)
-        )
-
-    assert size(boundary_data(agents.briefs[0], "scene-brief")) <= MAX_PAYLOAD_CHARS
+    brief_data = boundary_data(agents.briefs[0], "scene-brief")
+    assert brief_data["earlier_briefs"] == context["briefs"]
+    assert brief_data["refusals"] == context["failures"]
     first, second = agents.rewrites
-    assert size(boundary_data(first, "scene-rewrite")) <= MAX_PAYLOAD_CHARS
-    # The second rewrite's data and her feedback are fitted together.
     feedback = boundary_data(second, "rewrite-feedback")
-    assert size(boundary_data(second, "scene-rewrite")) + size(feedback) <= MAX_PAYLOAD_CHARS
-    for review in agents.reviews:
-        assert size(boundary_data(review, "rewrite-review")) <= MAX_PAYLOAD_CHARS
+    for prompt in (first, second):
+        payload = boundary_data(prompt, "scene-rewrite")
+        assert payload["refusals"] == context["failures"]
     # Said once: the moves' sentences and the layer's terms are not in her feedback, and her
     # earlier review gives quality control's words by id, not again.
     assert "camera_move_sentences" not in feedback and "this_layer" not in feedback

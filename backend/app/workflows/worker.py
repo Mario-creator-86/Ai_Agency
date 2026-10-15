@@ -195,6 +195,8 @@ def build_task_handlers(
             done_id = done.id if done is not None else None
             cut = next((run for run in runs_today if run.status in (INTERRUPTED, RUNNING)), None)
             cut_id = cut.id if cut is not None else None
+            # How many times today was cut off: what bounds its resumes (below).
+            cut_count = sum(1 for run in runs_today if run.status == INTERRUPTED)
             previous = session.get(DailyRun, resume_of) if resume_of else None
             previous_date = previous.business_date if previous is not None else None
             previous_status = previous.status if previous is not None else None
@@ -227,12 +229,19 @@ def build_task_handlers(
                     ),
                     "run_id": later[-1] if later else resume_of,
                 }
-            if attempt > settings.daily_max_attempts:
+            # A resume continues the day the clock already started — its completed stages
+            # are replayed, never done again — so it is not one of the day's re-attempts
+            # (those run the whole day) and their cap does not count it. What bounds it is
+            # how many times the day was cut off. Measured 2026-10-15: a day cut off once,
+            # with three runs on its date (two finished ones before it), had its one resume
+            # refused «și-a folosit cele 3 încercări» and stood still until the Owner.
+            if cut_count > settings.daily_max_attempts:
                 return {
                     "status": "SKIPPED",
                     "reason": (
-                        f"Ziua {today} și-a folosit cele {settings.daily_max_attempts} "
-                        "încercări; reluarea ei este decizia Owner-ului."
+                        f"Ziua {today} a fost întreruptă de {cut_count} ori, peste cele "
+                        f"{settings.daily_max_attempts} reluări; reluarea ei este decizia "
+                        "Owner-ului."
                     ),
                     "run_id": resume_of,
                 }

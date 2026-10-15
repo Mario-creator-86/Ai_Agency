@@ -59,7 +59,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
-from app.agents.identity import clipped, cut_at_word
+from app.agents.identity import clipped
 from app.agents.memory import agent_for_role
 from app.agents.messages import post_message
 from app.agents.models import AgentMessage
@@ -390,10 +390,8 @@ def judgement_prompt(
     """
     if kind not in KINDS:
         raise ValueError(f"unknown kind {kind!r}; one of {KINDS}")
-    shown = cut_at_word(text, TEXT_BUDGET)
+    shown = text
     payload: dict[str, Any] = {"text": shown, "context": context}
-    if len(shown) < len(text):
-        payload["text_cut_at"] = len(shown)
     data = json.dumps(payload, ensure_ascii=False, default=str).replace(
         "</untrusted_source_evidence", "<\\/untrusted_source_evidence"
     )
@@ -438,7 +436,7 @@ def judge(
         logger.info("editorial_judgement_without_director", extra={"kind": kind})
         return None
     what = "short-ul" if kind == FACTUAL_SHORT else "episodul"
-    title = str(context.get("title") or "")[:60]
+    title = str(context.get("title") or "")
     parsed, first, second = structured_run(
         engine,
         registry,
@@ -790,7 +788,7 @@ def letter_to_owner(
     what = "short-ul" if outcome.kind == FACTUAL_SHORT else "episodul"
     times = "o dată" if len(outcome.rounds) == 1 else f"de {len(outcome.rounds)} ori"
     body_text = (
-        f"Am citit {what} «{title[:120]}» {times} și am trimis scenaristului câte un brief la "
+        f"Am citit {what} «{title}» {times} și am trimis scenaristului câte un brief la "
         f"fiecare versiune sub prag; {_stopped_ro(outcome)}. "
         f"Pleacă versiunea {outcome.shipped.number}, cea mai bine notată: {judgement.total}/50 "
         f"(pragul este {PASS_TOTAL}/50, niciun criteriu sub {CRITERION_FLOOR}). Notele: {scored}. "
@@ -801,9 +799,9 @@ def letter_to_owner(
         session,
         intent="STATUS",
         subject=(
-            f"Judecata editorială: «{title[:70]}» pleacă sub prag, {judgement.total}/50 după "
+            f"Judecata editorială: «{title}» pleacă sub prag, {judgement.total}/50 după "
             f"{count(len(outcome.rounds), 'versiune', 'versiuni')}"
-        )[:200],
+        ),
         body={
             "kind": outcome.kind,
             "version_id": outcome.shipped.version.id,
@@ -816,7 +814,7 @@ def letter_to_owner(
             "threshold": {"total": PASS_TOTAL, "floor": CRITERION_FLOOR},
             "stopped": outcome.stopped,
         },
-        body_text=body_text[:4000],
+        body_text=body_text,
         from_agent_id=director_id,
         to_owner=True,
         correlation_id=correlation_id,

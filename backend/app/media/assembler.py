@@ -21,7 +21,7 @@ import shutil
 import subprocess
 import tempfile
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Generator, Mapping, Sequence
 from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -76,6 +76,7 @@ from app.media.models import (
     StoryboardScene,
     VideoRenderJob,
 )
+from app.media.prepared_batch import RoundWork, flow_call, purchase_flow
 from app.media.production_policy import (
     FailureRecord,
     FailureVerdict,
@@ -9228,7 +9229,7 @@ def _motion_state(
 
     With ``redo`` (a scene the Owner is having redone) that scene's shot is planned again and
     a third step, ``scene_redo``, buys it alone."""
-    from app.media.prompt_agent import motion_prompt_for  # noqa: PLC0415
+    from app.media.prompt_agent import incomplete_plan_fields, motion_prompt_for  # noqa: PLC0415
     from app.media.shooting_sheet import price_table_for  # noqa: PLC0415 - it imports us
 
     # The table the sheet prices with — the local selection's models at 0 credits and the
@@ -9342,6 +9343,22 @@ def _motion_state(
                 still_prompt=still_text,
                 motion_prompt=motion_text,
                 model_id=model_id,
+                contract={
+                    "still_model_id": str(still.model_id)
+                    if still is not None
+                    else prices.stills_model
+                },
+                # The still's words were judged when the still was bought: with one APPROVED
+                # (`still`), only a new still would need them right, and this step buys
+                # motion from the picture that exists. 2026-10-14/15 (f06808c9): scene 4's
+                # new still was approved, the Accountant agreed to its motion redo, and the
+                # redo was refused LINT_BLOCKED thirteen walks running on the still prompt's
+                # wardrobe clause — a block on a picture nobody was going to buy again.
+                composition_issues=(
+                    tuple(incomplete_plan_fields(package, layers=("still",)))
+                    if still is None
+                    else ()
+                ),
             )
         )
         view.append(
@@ -11425,6 +11442,7 @@ class _ShotRounds:
 
     # ----------------------------------------------------------------------- run
 
+    @purchase_flow
     def run(
         self,
         shots: list[_ShotRound],
@@ -11432,8 +11450,7 @@ class _ShotRounds:
         permit: Any,
         guard: Any,
         stopped: Callable[[], str | None],
-    ) -> dict[str, Any]:
-        from app.media.gpu_batch import run_rounds  # noqa: PLC0415 - gpu_batch reads runpod
+    ) -> Generator[RoundWork, dict[str, Any], dict[str, Any]]:
         from app.providers.runpod.batch import UNCERTAIN  # noqa: PLC0415
         from app.workflows.director_upkeep import director_wait_work  # noqa: PLC0415
 
@@ -11443,9 +11460,9 @@ class _ShotRounds:
             first += self._send(state, seed=state.seed, prompt=state.prompt)
         summary: dict[str, Any] = {"rounds": 0, "stopped": None, "cap_stop": None}
         if first:
-            summary = run_rounds(
-                self.engine,
-                shots[0].adapter,
+            summary = yield RoundWork(
+                engine=self.engine,
+                adapter=shots[0].adapter,
                 permit=permit,
                 purpose="video",
                 first_round=first,
@@ -11526,6 +11543,7 @@ def _gpu_precheck(
         raise MotionStepRefused(str(exc.code), exc.reason_ro, plan=plan) from exc
 
 
+@purchase_flow
 def run_motion_step(
     engine: Engine,
     storyboard_id: str,
@@ -11559,7 +11577,7 @@ def run_motion_step(
     timezone: str | None = None,
     proposal: bool = False,
     director_repair: bool = False,
-) -> dict[str, Any]:
+) -> Generator[RoundWork, dict[str, Any], dict[str, Any]]:
     """One step of the motion staircase (``test_shot`` or ``motion``), bought only under the
     Owner's yes for this plan and this cap.
 
@@ -12483,7 +12501,8 @@ def run_motion_step(
             scene_dicts=scene_dicts,
         )
         try:
-            gpu = rounds.run(
+            gpu = yield from flow_call(
+                rounds.run,
                 deferred_shots,
                 permit=StepPermit.from_guard(
                     guard,
@@ -14204,7 +14223,11 @@ def _still_redo_plan(
     from app.media.still_gate import MAX_REROLLS  # noqa: PLC0415 - still_gate reaches qc
 
     index = int(scene["scene_index"])
-    model_id = stills_model or STILLS_MODEL
+    from app.media.factory import reference_model_for_storyboard  # noqa: PLC0415
+
+    model_id = (
+        reference_model_for_storyboard(engine, plan["storyboard_id"], stills_model) or STILLS_MODEL
+    )
     try:
         per_request = price_still(model_id, STILLS_RESOLUTION, STILL_CANDIDATES, table=prices)
         row = prices.row(model_id, STILLS_RESOLUTION)
@@ -14247,6 +14270,13 @@ def _still_redo_plan(
         # plan shows them, its hash binds the Owner's yes to them, and the purchase sends them.
         rewrite = _scene_prompt_rewrite(session, plan["storyboard_id"], index, model_id)
     package = scene.get("prompt_json") or {}
+    from app.media.prompt_agent import incomplete_plan_fields  # noqa: PLC0415
+
+    incomplete = incomplete_plan_fields(
+        rewrite["package"] if rewrite is not None else package, layers=("still",)
+    )
+    if incomplete:
+        raise SceneRedoRefused("LINT_BLOCKED", "; ".join(incomplete), plan=plan)
     words = " ".join(str(package.get("still_prompt") or scene.get("visual_prompt") or "").split())
     pictured = scene
     shown: dict[str, Any] | None = None
@@ -15094,6 +15124,7 @@ def _record_redone_film(
     }
 
 
+@purchase_flow
 def redo_scene(
     engine: Engine,
     storyboard_id: str,
@@ -15127,7 +15158,7 @@ def redo_scene(
     unasked: bool = False,
     proposal: bool = False,
     director_repair: bool = False,
-) -> dict[str, Any]:
+) -> Generator[RoundWork, dict[str, Any], dict[str, Any]]:
     """Redo one scene (``still`` | ``motion`` | ``card``) or the film's sound (``audio``).
 
     ``director_repair`` (with ``unasked``): the Director's repair of a defect quality control
@@ -15251,6 +15282,9 @@ def redo_scene(
     no_room = disk_refusal(storage_root, settings)
     if no_room:
         raise SceneRedoRefused(LOW_DISK, no_room, plan=plan)
+    from app.media.factory import reference_image_adapter  # noqa: PLC0415
+
+    image_adapter = reference_image_adapter(engine, storyboard_id, image_adapter)
     from app.media.shooting_sheet import (  # noqa: PLC0415 - it imports us
         FilmBusy,
         PurchaseGateRefused,
@@ -15330,16 +15364,19 @@ def redo_scene(
             except PurchaseGateRefused as exc:
                 raise SceneRedoRefused(exc.status, exc.reason_ro, plan=plan) from exc
             try:
-                return _paid_redo(
-                    engine,
-                    storyboard_id,
-                    correlation_id,
-                    plan,
-                    kind=kind,
-                    plan_hash=str(plan_hash),
-                    current=current,
-                    reservation_id=reservation_id,
-                    **kwargs,
+                return (
+                    yield from flow_call(
+                        _paid_redo,
+                        engine,
+                        storyboard_id,
+                        correlation_id,
+                        plan,
+                        kind=kind,
+                        plan_hash=str(plan_hash),
+                        current=current,
+                        reservation_id=reservation_id,
+                        **kwargs,
+                    )
                 )
             except SceneRedoRefused:
                 release_step_hold(engine, reservation_id, "refacerea refuzată", correlation_id)
@@ -15349,6 +15386,7 @@ def redo_scene(
         raise SceneRedoRefused(exc.status, exc.reason_ro, plan=plan) from exc
 
 
+@purchase_flow
 def _paid_redo(
     engine: Engine,
     storyboard_id: str,
@@ -15383,7 +15421,7 @@ def _paid_redo(
     unasked: bool = False,
     proposal: bool = False,
     director_repair: bool = False,
-) -> dict[str, Any]:
+) -> Generator[RoundWork, dict[str, Any], dict[str, Any]]:
     """The paid part of `redo_scene`, under the film's lease and the step's budget hold: the
     hold is settled once the redo is in the books and let go when nothing was bought.
 
@@ -15412,7 +15450,8 @@ def _paid_redo(
                     "Niciun model video conectat și verificat; mișcarea nu se poate cumpăra.",
                     plan=plan,
                 )
-            summary = run_motion_step(
+            summary = yield from flow_call(
+                run_motion_step,
                 engine,
                 storyboard_id,
                 correlation_id,
@@ -15448,7 +15487,8 @@ def _paid_redo(
             detail["motion"] = summary
             spent = (float(summary["spent_credits_quoted"]), summary["spent_credits_measured"])
         else:
-            outcome = _redo_still(
+            outcome = yield from flow_call(
+                _redo_still,
                 engine,
                 storyboard_id,
                 correlation_id,
@@ -15976,6 +16016,7 @@ def _redo_next_step(
     return "Nimic de reasamblat."
 
 
+@purchase_flow
 def _redo_still(
     engine: Engine,
     storyboard_id: str,
@@ -15999,7 +16040,7 @@ def _redo_still(
     meter: SpendMeter | None = None,
     unasked: bool = False,
     director_repair: bool = False,
-) -> dict[str, Any]:
+) -> Generator[RoundWork, dict[str, Any], dict[str, Any]]:
     """One scene's still bought again: one pair of candidates (at most two re-rolls within the
     cap), judged as the stills step judges them, under the Owner's yes for this redo.
 
@@ -16055,6 +16096,9 @@ def _redo_still(
         scene.identity = still_fields(str(rewrite["visual_prompt"]), scene.reference)
         scene.look_block = str(rewrite["package"].get("look_block") or "")
         scene.camera_move = str(rewrite["package"].get("camera_move") or "")
+        from app.media.prompt_agent import incomplete_plan_fields  # noqa: PLC0415
+
+        scene.prompt_issues = tuple(incomplete_plan_fields(rewrite["package"], layers=("still",)))
     if environment == "PRODUCTION" and scene.source not in shot_plan_sources(engine, storyboard_id):
         raise SceneRedoRefused(
             "NEEDS_SHOT_PLAN",
@@ -16088,7 +16132,16 @@ def _redo_still(
             plan=plan,
         )
     findings = lint_film(
-        [LintScene(scene=index, kind=LIVE_KIND, still_prompt=scene.words)], bible=bible
+        [
+            LintScene(
+                scene=index,
+                kind=LIVE_KIND,
+                still_prompt=scene.words,
+                contract={"still_model_id": model_id},
+                composition_issues=scene.prompt_issues,
+            )
+        ],
+        bible=bible,
     )
     if has_block(findings):
         blocks = [f for f in findings if f.severity == "BLOCK"]
@@ -16230,7 +16283,8 @@ def _redo_still(
     if first is not None and first.index != index and first.reuse is not None and first.reuse.path:
         figure_one = Path(str(first.reuse.path)).read_bytes()
     if batching:
-        rounds = _redo_still_rounds(
+        rounds = yield from flow_call(
+            _redo_still_rounds,
             engine,
             storyboard_id,
             correlation_id,
@@ -16322,6 +16376,7 @@ def _redo_still(
     }
 
 
+@purchase_flow
 def _redo_still_rounds(
     engine: Engine,
     storyboard_id: str,
@@ -16347,10 +16402,12 @@ def _redo_still_rounds(
     requester: str,
     meter: SpendMeter | None,
     unasked: bool,
-) -> dict[str, Any]:
+) -> Generator[RoundWork, dict[str, Any], dict[str, Any]]:
     """One scene's still redo on RunPod Serverless (2026-10-09): the stills step's own rounds
     (`stills_stage._StillRounds`, `gpu_batch.run_rounds`) for this one scene, under the yes
-    `_redo_still` has just spent. One GPU session switched on for the redo (the Policy Kernel's
+    `_redo_still` has just spent. The synchronous call opens one session; the Director's
+    prepared flow combines compatible ready redos while retaining this purchase's own guard,
+    cap and budget hold. The session is authorised by every participating permit (the kernel's
     ``infra.gpu_on`` for ``media.scene_redo``, this plan, this approval) and off right after its
     last result; each round (the pair, then a re-roll) is one batch job, priced with its GPU
     start and cut to what is left of the redo's cap; his mode and the autonomy stop are read
@@ -16399,7 +16456,8 @@ def _redo_still_rounds(
     )
     entry: dict[str, Any] = {"scene_index": index, "scene_kind": LIVE_KIND}
     try:
-        gpu = rounds.run(
+        gpu = yield from flow_call(
+            rounds.run,
             [(scene, entry)],
             permit=StepPermit.from_guard(
                 guard,

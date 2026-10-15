@@ -18,7 +18,7 @@ from uuid import uuid4
 
 import pytest
 from app.media.assembler import SCENE_PROMPTS_REWRITTEN_EVENT
-from app.media.models import MediaAsset, SceneTake, VideoRenderJob
+from app.media.models import MediaAsset, SceneTake, StoryboardScene, VideoRenderJob
 from app.media.prompt_agent import motion_prompt_for
 from app.media.scene_rewrite import BRIEF_EVENT, REWRITE_REASON, SERIAL_RECOMPOSE_REASON
 from app.media.toolchain import find_ffmpeg
@@ -211,6 +211,13 @@ def test_only_her_briefs_rewrite_counts_as_the_correction(engine, tmp_path):
 
     def rewritten(reason: str, layer: str = "motion") -> None:
         with Session(engine) as session, session.begin():
+            current = session.scalar(
+                select(StoryboardScene).where(
+                    StoryboardScene.storyboard_id == storyboard_id,
+                    StoryboardScene.scene_index == 1,
+                )
+            )
+            package = dict(current.prompt_json or {})
             append_event(
                 session,
                 SCENE_PROMPTS_REWRITTEN_EVENT,
@@ -223,6 +230,9 @@ def test_only_her_briefs_rewrite_counts_as_the_correction(engine, tmp_path):
                     "reason": reason,
                     "decided_by": "director",
                     "layer": layer,
+                    "still_prompt": package.get("still_prompt") or current.visual_prompt,
+                    "motion_prompt": package.get("motion_prompt") or "",
+                    "review": {"verdict": "TREATS"},
                 },
                 str(uuid4()),
             )

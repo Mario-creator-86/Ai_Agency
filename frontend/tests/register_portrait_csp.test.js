@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const main = readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
+const main = readFileSync(new URL('../src/main.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const backend = readFileSync(new URL('../../backend/app/main.py', import.meta.url), 'utf8');
 
 /** The body of `function registerPortrait`, up to the next top-level function. */

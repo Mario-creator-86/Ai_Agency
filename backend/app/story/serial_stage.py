@@ -99,7 +99,7 @@ def serial_continuation_key(storyboard_id: str) -> str:
 
 
 def _outcome(status: str, reason: str, **artefacts: Any) -> dict[str, Any]:
-    return {"status": status, "reason": reason[:300], "artefacts": artefacts}
+    return {"status": status, "reason": reason, "artefacts": artefacts}
 
 
 def _transient(exc: BaseException) -> bool:
@@ -245,7 +245,7 @@ def _naming_the_day(outcome: dict[str, Any], date_iso: str, quiet: list[str]) ->
         lead = f"Ziua povestită: {date_iso}. "
     else:
         return outcome
-    return {**outcome, "reason": (lead + outcome["reason"])[:300]}
+    return {**outcome, "reason": (lead + outcome["reason"])}
 
 
 def unfinished_episodes(session: Session, before: str) -> list[tuple[str, StoryEpisode]]:
@@ -458,7 +458,7 @@ def _tell_the_day(
             break
         notes = review.get("notes") or "; ".join(review.get("reasons") or [])
         if drafts >= MAX_DRAFTS or stored >= MAX_DRAFTS_PER_DAY:
-            counts["refusal"] = f"FAIL: {notes}"[:300]
+            counts["refusal"] = f"FAIL: {notes}"
             then = (
                 "o rulare următoare o scrie din nou, cu motivele"
                 if stored < MAX_DRAFTS_PER_DAY
@@ -478,7 +478,7 @@ def _tell_the_day(
             title = episode.title if episode is not None else ""
         return _outcome(
             COMPLETED,
-            f"Episodul „{title[:80]}” pentru {date_iso} a trecut citirea Directorului și "
+            f"Episodul „{title}” pentru {date_iso} a trecut citirea Directorului și "
             "așteaptă aprobarea ta; politica canalului nu îi permite Directorului să aprobe "
             "singură.",
             **counts,
@@ -579,7 +579,7 @@ def run_serial_stage(
     try:
         for item in _left_by_earlier_runs(engine, today):
             counts["episode_id"], counts["resumed"] = item["episode_id"], item["kind"]
-            title, date_iso = item["title"][:80], item["date"]
+            title, date_iso = item["title"], item["date"]
             # The day it tells, on the run card too: the morning that films yesterday's
             # script is every morning after the first (rehearsal on a copy, 2026-09-24).
             counts["told_date"] = date_iso
@@ -667,7 +667,7 @@ def run_serial_stage(
                     state = {"APPROVED": "aprobat", "DRAFT": "ciornă", "REJECTED": "respins"}
                     return _outcome(
                         COMPLETED,
-                        f"Ultima zi povestită este {date_told}: „{title[:80]}” "
+                        f"Ultima zi povestită este {date_told}: „{title}” "
                         f"({state.get(status, status.lower())}). Nicio zi încheiată de după ea "
                         f"nu are încă ce povesti{days}"
                         + (
@@ -714,7 +714,7 @@ def run_serial_stage(
                 if again["drafts"]
                 else f"Ziua {date_iso}, sărită până acum, se povestește. "
             )
-            return {**outcome, "reason": (lead + outcome["reason"])[:300]}
+            return {**outcome, "reason": (lead + outcome["reason"])}
         outcome = _tell_the_day(
             engine, registry, log_id, date_iso, counts, language, correlation, rounds=rounds
         )
@@ -840,7 +840,7 @@ def run_serial_next_stage(
                     return _outcome(
                         COMPLETED,
                         f"Scenariul de mâine pentru {today} era deja scris și aprobat: "
-                        f"„{title[:80]}”; a fost pregătit de filmare acum, iar "
+                        f"„{title}”; a fost pregătit de filmare acum, iar "
                         + _filming_words(_queue_filming(engine, counts, episode_id)),
                         **counts,
                     )
@@ -851,7 +851,7 @@ def run_serial_next_stage(
             )
             return _outcome(
                 COMPLETED,
-                f"Scenariul de mâine pentru {today} este deja scris: „{title[:80]}” "
+                f"Scenariul de mâine pentru {today} este deja scris: „{title}” "
                 f"({state.get(status, status.lower())}{spent}); nu se scrie din nou." + not_readied,
                 **counts,
             )
@@ -863,7 +863,7 @@ def run_serial_next_stage(
             )
             return _outcome(
                 COMPLETED,
-                f"Scenariul de mâine nu se scrie: episodul „{title[:80]}” {why}, iar numărul "
+                f"Scenariul de mâine nu se scrie: episodul „{title}” {why}, iar numărul "
                 "lui în serial se fixează la aprobare.",
                 **counts,
             )
@@ -953,7 +953,7 @@ def _press_words(outcome: dict[str, Any], facts: dict[str, Any], day_drafts: int
     Nothing stored is the stage's own reason.
     """
     counts = outcome["artefacts"]
-    title = str(facts.get("title") or "")[:80]
+    title = str(facts.get("title") or "")
     status = facts.get("episode_status")
     if status == "APPROVED":
         how = (
@@ -1128,7 +1128,7 @@ def tell_day_now(
                     who = "tine" if by == "owner" else "Director"
                     outcome = _outcome(
                         COMPLETED,
-                        f"Episodul „{title[:80]}” pentru {date_iso}, aprobat de {who}, a fost "
+                        f"Episodul „{title}” pentru {date_iso}, aprobat de {who}, a fost "
                         "pregătit de filmare acum; "
                         + _filming_words(_queue_filming(engine, counts, episode_id)),
                         **counts,
@@ -1141,18 +1141,18 @@ def tell_day_now(
                     )
             elif status == "DRAFT":
                 raise DayNotTold(
-                    f"Episodul „{title[:80]}” pentru {date_iso} a trecut citirea Directorului "
+                    f"Episodul „{title}” pentru {date_iso} a trecut citirea Directorului "
                     "și așteaptă aprobarea ta; nu se scrie altul, pentru că numărul lui în "
                     "serial se fixează la aprobare."
                 )
             elif status == "REJECTED":
                 raise DayNotTold(
                     f"Ziua {date_iso} și-a folosit cele {MAX_DRAFTS_PER_DAY} ciorne (ultima: "
-                    f"„{title[:80]}”); serialul trece la altă zi."
+                    f"„{title}”); serialul trece la altă zi."
                 )
             else:
                 raise DayNotTold(
-                    f"Ziua {date_iso} are deja episodul „{title[:80]}” (aprobat, pregătit de "
+                    f"Ziua {date_iso} are deja episodul „{title}” (aprobat, pregătit de "
                     "filmare); nu se scrie din nou."
                 )
 
@@ -1163,7 +1163,7 @@ def tell_day_now(
                 "așteaptă aprobarea ta" if kind == "owner" else "așteaptă încă citirea Directorului"
             )
             raise DayNotTold(
-                f"Episodul „{title[:80]}” {why}, iar numărul lui în serial se fixează la "
+                f"Episodul „{title}” {why}, iar numărul lui în serial se fixează la "
                 f"aprobare; ziua {date_iso} se scrie după el."
             )
         if not has_model:
@@ -1198,7 +1198,7 @@ def tell_day_now(
                 f"Ziua {date_iso} se scrie din nou: ciornele ei au fost respinse "
                 f"({len(told)} din cel mult {MAX_DRAFTS_PER_DAY}). "
             )
-            outcome = {**outcome, "reason": (lead + outcome["reason"])[:300]}
+            outcome = {**outcome, "reason": (lead + outcome["reason"])}
         else:
             outcome = _tell_the_day(
                 engine,

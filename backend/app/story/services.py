@@ -50,7 +50,7 @@ from pydantic import (
 from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session
 
-from app.agents.identity import clipped, joined
+from app.agents.identity import clipped, complete_schema, joined
 from app.agents.language import audience_language_line
 from app.agents.memory import agent_for_role, remember
 from app.agents.models import Agent, Role
@@ -329,7 +329,10 @@ class _Episode(BaseModel):
     )
 
 
-_EPISODE = TypeAdapter(_Episode)
+# Validated complete (2026-10-15): the validators no longer clip a long beat, so the
+# schema's caps are lifted here as `read_structured` lifts them; a 700-character scene
+# is an episode, not a refusal.
+_EPISODE = TypeAdapter(complete_schema(_Episode))
 
 
 def business_date(timezone: str, when: datetime | None = None) -> str:
@@ -643,7 +646,7 @@ def advance_continuity(session: Session, episode: StoryEpisode, correlation_id: 
             "episode_number": number,
             "episode_id": episode.id,
             "title": episode.title,
-            "summary": str(continuity.get("summary") or "")[:600],
+            "summary": str(continuity.get("summary") or ""),
             "business_date": continuity.get("business_date"),
         }
     )
@@ -1128,21 +1131,28 @@ def _resolve_showrunner(session: Session, agent_id: str | None) -> Agent:
     return _resolve_agent(session, agent_id, PREFERRED_SHOWRUNNER_ROLE)
 
 
-def _parse_episode(raw: str) -> _Episode:
+def episode_object(raw: str) -> Any:
+    """The JSON object in the writer's answer (fences and prose tolerated), or None."""
     text = raw.strip()
     fenced = re.search(r"```(?:json)?\s*(.+?)\s*```", text, re.DOTALL)
     if fenced:
         text = fenced.group(1)
     try:
-        data = json.loads(text)
+        return json.loads(text)
     except json.JSONDecodeError:
         start, end = text.find("{"), text.rfind("}")
         if start == -1 or end <= start:
-            raise DraftRefused("Showrunner-ul nu a răspuns cu un obiect JSON.", raw) from None
+            return None
         try:
-            data = json.loads(text[start : end + 1])
+            return json.loads(text[start : end + 1])
         except json.JSONDecodeError:
-            raise DraftRefused("Showrunner-ul nu a răspuns cu un obiect JSON.", raw) from None
+            return None
+
+
+def _parse_episode(raw: str) -> _Episode:
+    data = episode_object(raw)
+    if data is None:
+        raise DraftRefused("Showrunner-ul nu a răspuns cu un obiect JSON.", raw)
     try:
         return _EPISODE.validate_python(data)
     except ValidationError as exc:
@@ -1695,6 +1705,32 @@ def write_episode(
             temperature=0.7,
             emit_message=False,
         )
+        if (
+            result["status"] == "SUCCEEDED"
+            and episode_object(result.get("output_text") or "") is None
+        ):
+            # A showrunner who narrated instead of answering (the 2026-10-15 refusals: four
+            # answers in a row with no object) is asked once more in JSON mode with his own
+            # thinking on, like a script writer (`agent_pipeline.answered_with_object`).
+            again = run_agent_task(
+                engine,
+                registry,
+                showrunner_id,
+                "write_episode",
+                prompt,
+                EPISODE_TEMPLATE_VERSION + "+json",
+                correlation,
+                summary=(
+                    f"Scriu episodul {episode_number} pentru ziua {date_iso} "
+                    "(a doua încercare: JSON, cu gândire proprie)."
+                ),
+                max_tokens=7200,
+                temperature=0.7,
+                emit_message=False,
+                extra={"think": True, "format": "json"},
+            )
+            if again["status"] == "SUCCEEDED" and episode_object(again.get("output_text") or ""):
+                result = again
         if result["status"] != "SUCCEEDED" or not (result.get("output_text") or "").strip():
             detail = result.get("error_detail") or "fără text vizibil"
             raise StoryError(f"Showrunner-ul nu a produs un episod ({result['status']}: {detail})")
@@ -1831,7 +1867,7 @@ def decide_episode(
         if episode.status != "DRAFT":
             raise StoryError(f"Episodul este deja {work_status(episode.status)}")
         episode.status = "APPROVED" if approve else "REJECTED"
-        episode.notes = notes.strip()[:2000] or None
+        episode.notes = notes.strip() or None
         episode.reviewed_by = "owner"
         episode.event_id = append_event(
             session,
@@ -1850,7 +1886,7 @@ def decide_episode(
             memory_class="OWNER_POLICY",
             content=(
                 f"The Owner {'approved' if approve else 'rejected'} the episode "
-                f"“{episode.title[:120]}”" + (f": {episode.notes}" if episode.notes else ".")
+                f"“{episode.title}”" + (f": {episode.notes}" if episode.notes else ".")
             ),
             source_type="owner",
             source_id=episode.id,

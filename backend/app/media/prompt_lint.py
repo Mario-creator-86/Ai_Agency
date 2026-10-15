@@ -19,6 +19,8 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from runpod_worker.contract import MAX_PROMPT, WORKFLOWS
+
 from app.wording import count as count_ro
 
 BLOCK = "BLOCK"
@@ -35,6 +37,12 @@ VEO_MOTION_CLOSING = "Continuous, seamless shot."
 
 # Runway's promptText maxLength, when the contract does not state one.
 DEFAULT_PROMPT_MAX_UTF16 = 1000
+#: What each connected image route allows for one prompt, in characters, by model id: the
+#: GPU worker declares MAX_PROMPT for every workflow it serves (`runpod_worker.contract`);
+#: another vendor declares its own here. A model absent is linted on the explicit terms of
+#: its contract, else on Runway's legacy figure. A serial's complete prompt is never cut to
+#: fit (2026-10-14), so the route it is bought on must be the one it is judged against.
+ALLOWANCES: dict[str, int] = {model: MAX_PROMPT for model in WORKFLOWS}
 
 STILL_WORDS = (60, 120)
 # The motion prompt's band of words. 20-70 since the Nepal film (2026-09-27); 25-95 since
@@ -680,29 +688,39 @@ def model_family(model_id: str | None) -> str | None:
     return None
 
 
-def prompt_cap(contract: Mapping[str, Any] | None, target: str) -> int:
-    """The promptText limit in UTF-16 units from a contract, else Runway's 1000."""
+def _prompt_limit(contract: Mapping[str, Any] | None, target: str) -> tuple[int, bool]:
+    """(allowance, measured in characters): explicit terms, the route's declared allowance
+    (`ALLOWANCES`), legacy Runway."""
     if not contract:
-        return DEFAULT_PROMPT_MAX_UTF16
-    for key in ("prompt_max_utf16", "prompt_max"):
+        return DEFAULT_PROMPT_MAX_UTF16, False
+    for key in ("prompt_max_utf16", "prompt_max_chars", "prompt_max"):
         value = contract.get(key)
         if isinstance(value, bool):
             continue
         if isinstance(value, int) and value > 0:
-            return value
+            return value, key == "prompt_max_chars"
         if isinstance(value, Mapping):
             task = "text_to_image" if target == "still" else "image_to_video"
             chosen = value.get(task)
             if isinstance(chosen, int) and not isinstance(chosen, bool) and chosen > 0:
-                return chosen
+                return chosen, key == "prompt_max_chars"
             numbers = [
                 v
                 for v in value.values()
                 if isinstance(v, int) and not isinstance(v, bool) and v > 0
             ]
             if numbers:
-                return min(numbers)
-    return DEFAULT_PROMPT_MAX_UTF16
+                return min(numbers), key == "prompt_max_chars"
+    model_id = contract.get("still_model_id") if target == "still" else None
+    model_id = model_id or contract.get("model_id") or contract.get("model")
+    if isinstance(model_id, str) and model_id in ALLOWANCES:
+        return ALLOWANCES[model_id], True
+    return DEFAULT_PROMPT_MAX_UTF16, False
+
+
+def prompt_cap(contract: Mapping[str, Any] | None, target: str) -> int:
+    """The explicit vendor allowance or the selected route's declared request limit."""
+    return _prompt_limit(contract, target)[0]
 
 
 def _sequence_in(text: str) -> str:
@@ -811,7 +829,9 @@ def _finding(code: str, severity: str, scene: int | None, evidence: str, message
 # --- checks shared by both prompts -----------------------------------------------------------
 
 
-def _hygiene(text: str, scene: int | None, target: str, cap: int) -> list[Finding]:
+def _hygiene(
+    text: str, scene: int | None, target: str, cap: int, *, characters: bool = False
+) -> list[Finding]:
     where = WHERE_RO[target]
     findings: list[Finding] = []
 
@@ -882,17 +902,18 @@ def _hygiene(text: str, scene: int | None, target: str, cap: int) -> list[Findin
             )
         )
 
-    units = utf16_units(text)
+    units = len(text) if characters else utf16_units(text)
     if units > cap:
-        overflow = text[_index_at_units(text, cap) :]
+        overflow = text[cap if characters else _index_at_units(text, cap) :]
         shown = _excerpt(overflow, 60)
+        measure = "caractere" if characters else "unități"
         findings.append(
             _finding(
                 "OVER_CAP",
                 BLOCK,
                 scene,
                 overflow,
-                f"Promptul {where} are {units} unități, peste limita de {cap} a modelului. "
+                f"Promptul {where} are {units} {measure}, peste limita de {cap} a modelului. "
                 f"Partea care nu încape începe cu „{shown}”. Promptul nu se taie: "
                 "se rescrie mai scurt.",
             )
@@ -912,7 +933,8 @@ def lint_still_prompt(
     kind: str = LIVE,
 ) -> list[Finding]:
     """Findings for the prompt sent to the image model for one LIVE scene."""
-    findings = _hygiene(text, scene, "still", prompt_cap(contract, "still"))
+    cap, characters = _prompt_limit(contract, "still")
+    findings = _hygiene(text, scene, "still", cap, characters=characters)
 
     exclusions = [match.group(0) for match in INLINE_EXCLUSION.finditer(text)]
     if len(exclusions) > MAX_INLINE_EXCLUSIONS:
@@ -1077,7 +1099,8 @@ def lint_motion_prompt(
     contract: Mapping[str, Any] | None = None,
 ) -> list[Finding]:
     """Findings for the promptText sent with the approved still to the video model."""
-    findings = _hygiene(text, scene, "motion", prompt_cap(contract, "motion"))
+    cap, characters = _prompt_limit(contract, "motion")
+    findings = _hygiene(text, scene, "motion", cap, characters=characters)
     family = model_family(model_id)
     model_name = model_id or "modelul video"
 
@@ -1257,7 +1280,9 @@ def lint_scene(
 ) -> list[Finding]:
     """Findings for one scene: its kind, then its prompts if it is filmed."""
     kind = (scene.kind or "").upper()
-    terms = scene.contract if scene.contract is not None else contract
+    terms = dict(scene.contract if scene.contract is not None else contract or {})
+    if scene.model_id:
+        terms.setdefault("model_id", scene.model_id)
     if kind not in SCENE_KINDS:
         return [
             _finding(

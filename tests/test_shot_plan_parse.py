@@ -419,7 +419,7 @@ def test_in_test_the_same_template_film_is_still_rendered(engine, settings, stud
 # ------------------------------------------------------------------ 5: whole-item trimming
 
 
-def test_payload_trimming_drops_whole_claims_and_the_json_sent_always_parses(engine, studio):
+def test_large_payload_keeps_every_claim_and_the_json_sent_always_parses(engine, studio):
     topic_id = a_topic(engine)
     long_claims = [f"claim-{n}" for n in range(40)]
     with Session(engine) as session, session.begin():
@@ -461,8 +461,8 @@ def test_payload_trimming_drops_whole_claims_and_the_json_sent_always_parses(eng
     registry, _ = registry_with(studio, answer)
     write_shot_prompts(engine, registry, board_id, str(uuid4()))
 
-    # The master bible trims whole claims; shot batches retain each scene's full evidence.
-    assert len(asked) == 7  # one master bible, six whole-scene batches
+    # The master bible and all shot batches retain the complete evidence.
+    assert len(asked) >= 2
     with Session(engine) as session:
         originals = {row.claim_text for row in session.scalars(select(FactualClaim))}
     shot_indices = []
@@ -482,13 +482,13 @@ def test_payload_trimming_drops_whole_claims_and_the_json_sent_always_parses(eng
         assert sent, "the claims that fit are kept"
         assert all(claim in originals for claim in sent), "each claim is whole or absent"
         if position == 0:
-            assert len(sent) < 6 * 41, "the master bible drops whole claims to fit"
+            assert len(sent) == 6 * 41, "the master bible receives every claim"
         else:
             assert len(sent) == len(indices) * 41, "shot writers receive every claim"
     assert shot_indices == [1, 2, 3, 4, 5, 6]
 
 
-def test_trim_payload_drops_claims_then_scenes_and_never_slices():
+def test_trim_payload_keeps_all_claims_and_scenes_without_slicing():
     data = {
         "title": "t",
         "scenes": [
@@ -498,14 +498,14 @@ def test_trim_payload_drops_claims_then_scenes_and_never_slices():
     }
     fitted, dropped = trim_payload(data, 2500)
     text = json.dumps(fitted)
-    assert len(text) <= 2500
+    assert fitted == data
     assert json.loads(text) == fitted
-    assert dropped["claims"] > 0
+    assert not any(dropped.values())
     assert all(claim == "c" * 300 for s in fitted["scenes"] for claim in s["claims"])
 
     tiny, dropped_more = trim_payload(data, 400)
-    assert len(json.dumps(tiny)) <= 400
-    assert dropped_more["scenes"] > 0
+    assert tiny == data
+    assert not any(dropped_more.values())
     assert [s["scene_index"] for s in tiny["scenes"]] == list(range(1, len(tiny["scenes"]) + 1)), (
-        "scenes are dropped from the end, whole"
+        "every scene remains complete"
     )

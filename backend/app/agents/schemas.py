@@ -82,7 +82,7 @@ class RunAgentCommand(BaseModel):
     schema_version: Literal[1] = 1
     command_id: UUID
     task_type: str = Field(min_length=1, max_length=100)
-    objective: str = Field(min_length=1, max_length=2000)
+    objective: str = Field(min_length=1, max_length=20000)
     prompt_template_version: str = Field(default="v1", max_length=50)
     max_tokens: int | None = Field(default=None, ge=1, le=8192)
     temperature: float | None = Field(default=None, ge=0.0, le=2.0)

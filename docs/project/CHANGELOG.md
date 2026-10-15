@@ -1,5 +1,100 @@
 # Changelog
 
+## The studio publishes by itself again: the writers answer, the stuck film moves — 2026-10-15
+
+Nothing had been published since 2026-10-12. Four causes, each with evidence, each fixed where it
+was, with a probe on the Owner's own Ollama Cloud account before and after.
+
+- `think: false` on Ollama Cloud made `glm-5.3-flash` (Marcus) narrate its reasoning into the
+  visible answer — 38k–74k tokens, no JSON, four episodes and three scripts refused. Cloud is
+  now asked nothing about thinking (`integrations/llm.py`; local Ollama keeps `think: false`),
+  and a writer whose answer has no object is asked once more in JSON mode with native thinking
+  (`agent_pipeline.answered_with_object`, `story.services.episode_object`).
+- The serial film «The Zero Script Club» was held LINT_BLOCKED on the still prompt of a still
+  already bought and approved; `_motion_state` no longer re-judges an approved still's words
+  when motion is bought.
+- A provider outage that fails every probe is DECLINED «reîncerc la trecerea următoare», not a
+  card for the Owner (`agents/repairs/agent_health.py`).
+- `_publish_one` turns a `ValueError`/`OSError` of one upload into SKIPPED instead of safe mode;
+  a QC-passed film unpublished for `PUBLISH_WAIT_DAYS` (3) no longer holds the next topic.
+- Regression caught in the night's uncommitted work: `clipped()` kept text whole while schemas
+  kept `max_length`, so a long field refused a topic or an episode; `research/agent.py` and
+  `story/services.py` validate through `complete_schema` now.
+- The night's day-resume fix (`workflows/worker.py`, `passes/resume_interrupted_day.py`) is
+  committed with this.
+- Tests: `tests/test_publishes_alone.py`; `test_cycle_fixes.py` aligned to the whole-text rule.
+- A still is linted against the allowance of the route it is bought on: `prompt_lint.ALLOWANCES`
+  (declared per model id; the GPU worker's workflows carry MAX_PROMPT) replaces the WORKFLOWS
+  lookup, and the autonomous-day test world declares the production allowance for its fake stills
+  vendor (four serial expectations were LINT_BLOCKED on Runway's legacy thousand).
+- `test_a_failing_still_or_hero_is_bought_once_over_three_days_*` aligned to 75f2267 (no sheet
+  letter for a quality refusal; the Director holds the film) — it had failed since 2026-10-12.
+
+## 2026-10-15 — Day resume loop (Claude/Cowork hourly check; local, unverified by the suite, not activated)
+
+A day cut off by a restart was resumed once, refused (`attempt` counted the date's finished runs against `daily_max_attempts`), and then announced «resume queued» every 10 minutes for the same finished task. Resume is now bounded by the number of interruptions of the day; the pass asks once per interrupted run per start (START_TOKEN in the key) and announces only a new task. Three regressions in tests/test_resume_after_finished_runs.py. pytest/mypy not run from the session; restart pending. Handoff: DAY_RESUME_LOOP_2026-10-15.md.
+
+2026-10-15 final Cloud correction: -1 sentinel rejected live, removed; omitted num_predict returns OK in a short paid probe (0.00001 VR). Actual DeepSeek-v4.1-flash max output393216, so480000 invalid. Technical probes not film progress. Backend15596 ready; Owner objects to further parameter changes, no more probes. See corrected SARAH_MARCUS_CLOUD_RESPONSE report.
+
+## 2026-10-15 — Sarah/Marcus Cloud response
+
+Fix oversized multiplied Cloud output allowance, stream complete visible answers, preserve token counts and reject incomplete streams, report safe technical causes for provider refusals. No timeout resend in adapter. Nine transport regressions and provider/runbook checks; activation after active paid call remains pending.
+
+
+## 2026-10-15 — Reference routing, partial wardrobe and studio wait
+
+Partial clothing reaches generation and QC; legacy omissions stop animation. Discovered compatible RunPod reference route is selected before cost/approval on sheet/API/Director paths. Video lint uses the actual image model. Framing and unruled pages are checked individually. Owner reports are informative; real approvals retained. Expanded local tests and real-data read-only proof; no production mutation or paid test. Handoff: REFERENCE_ROUTE_WARDROBE_AND_STUDIO_WAIT_2026-10-15.md.
+
+## 2026-10-14 — Sarah visual-QC and delivery routing
+
+Film-QC prompt repair no longer inherits an unrelated terminal delivery instruction. Explicit brief v4 action contract and required delivery action; five regressions with 53 relevant tests passed. No production generation/restart. See SARAH_QC_DELIVERY_DIAGNOSIS_2026-10-14.md.
+
+## 2026-10-14 — Complete approved prompts and truthful redo progress
+
+- Reject incomplete legacy plan fields before initial/redo GPU purchase and route full findings to Sarah.
+- Require exact current reviewed prompt text and verified current accepted files for reuse.
+- Preserve long factual rewrite fields and complete body-to-camera movement descriptions.
+- Stop cancelled undelivered redo from appearing as bought/waiting progress; retain uncertain and QC-rejected outputs.
+- 18 new regressions; Director/QC/native-bundle/financial gate checks passed. No live paid call or production mutation.
+- Handoff: LIVE_PROMPT_APPROVAL_AND_ABORTED_REDO_2026-10-14.md and public proof JSON.
+
+## 2026-10-14 — Current budgets and complete LLM communication
+
+- Unset film ceiling follows the Owner's current daily limit; cached financial refusals are re-evaluated.
+- Complete current/historical messages, QC/financial/editorial dossiers, shot fields and peer reviews.
+- Configurable global LLM output multiplier x10, complete response schemas and explicit incomplete-output state.
+- Local financial/prompt/bundle regression suites, full 955 frontend cases, build/types/mypy/code/doc checks.
+- No production scene/policy/verdict writes, model/GPU calls or service activation.
+- Handoff and read-only proof: BUDGET_AND_COMPLETE_CONTEXT_2026-10-14.md/.json.
+
+## 2026-10-14 — Prepare and submit approved GPU bundles
+
+Director QC repairs prepare all corrections before dispatch and group compatible RunPod
+image requests, then videos whose starting images are accepted. Keep the existing purchase,
+QC, hold, retirement restoration and synchronous APIs through cooperative preparation flows.
+Each permission is checked; startup is shared, caps/costs/refunds remain per purchase. Keep
+the outer film lease through settlement and count only prepared purchases against redo quota.
+All chunk contracts and input uploads finish before GPU-on; model work is contiguous and
+queue/input lifetimes include earlier chunks and cache/GPU waits. Recheck STOP after
+preparation and do not erase older uncertain jobs when discarding unsent preparation.
+Native still/video integration, queue, money, idempotency and reference tests use isolated
+databases and simulated transports. No production database edits, cloud calls or deployment.
+Detailed verification and next-AI handoff: CURRENT_STATUS.md / APPROVED_GPU_BATCHES_2026-10-14.md.
+
+## 2026-10-14 — Serial prompts use the GPU route allowance
+
+Owner requests the selected route's limit instead of 980 characters. Serial look v3 allows
+the existing 20,000-character RunPod request/worker envelope; the loader no longer clamps it
+to 2,000. Preserve complete canonical identities and first moments, expression, background
+and continuity; hold over-limit candidates for rewrite instead of cutting them. Sheet/repair
+lint uses the applicable allowance and native character units, preserving other vendor terms.
+Eight current serial scenes recompose with 13 missing conditions reduced to zero. New tests
+verify identical complete text at the Qwen text and reference workflow nodes. Repair two
+older motion regressions: independent clauses beside `then`/scene pointers and the full world
+sentence survive, while object/negative lists remain scoped. No production scene changes,
+model/GPU requests, budget changes or server activation. Final checks and evidence:
+SERIAL_PROMPT_MODEL_LIMIT_2026-10-14.md and CURRENT_STATUS.md.
+
 ## 2026-10-14 — Agency loop diagnosis and actual agent probes
 
 Prevent already uploaded films from re-entering repair; settle their obsolete correspondence.

@@ -1,0 +1,80 @@
+{
+  "inspected_at": "2026-10-14T21:32:35.503619+00:00",
+  "model_calls": true,
+  "gpu_calls": false,
+  "production_writes": "technical AgentRun probes and normal runtime events only; no scene/verdict/account/policy edits",
+  "metadata_calls": [
+    "POST /api/show: deepseek-v4.1-flash",
+    "POST /api/show: glm-5.3-flash"
+  ],
+  "declared_context_tokens": 1048576,
+  "exact_old_400_reason_retained": false,
+  "runs": [
+    {
+      "id": "f3e5b084-9ccc-4647-9157-10804cfcdfaf",
+      "agent_id": "c313fd50-34c0-4ae0-992d-b3b67270c0d8",
+      "task_type": "director_review",
+      "model_name": "deepseek-v4.1-flash",
+      "status": "FAILED",
+      "started_at": "2026-10-14T21:21:59.132860+00:00",
+      "finished_at": "2026-10-14T21:22:00.525538+00:00",
+      "error_detail": "ProviderHTTPError: HTTP 400",
+      "objective_chars": 21940,
+      "system_chars": 1671361,
+      "generation_limits": {
+        "requested_max_tokens": 24000,
+        "token_multiplier": 2,
+        "context_multiplier": 10,
+        "effective_max_tokens": 480000
+      }
+    },
+    {
+      "id": "1e6bc6f4-7e80-4463-83cc-951e543af89f",
+      "agent_id": "fdd42e07-df06-44bb-994b-87454beff7a1",
+      "task_type": "write_episode",
+      "model_name": "glm-5.3-flash",
+      "status": "FAILED",
+      "started_at": "2026-10-14T21:11:49.846893+00:00",
+      "finished_at": "2026-10-14T21:21:50.296798+00:00",
+      "error_detail": "ProviderUnreachable",
+      "objective_chars": 20897,
+      "system_chars": 646701,
+      "generation_limits": {
+        "requested_max_tokens": 7200,
+        "token_multiplier": 1,
+        "context_multiplier": 10,
+        "effective_max_tokens": 72000
+      }
+    }
+  ],
+  "activation": {
+    "backend_process_id": 15596,
+    "backend_started_at_utc": "2026-10-14T21:35:29.403232+00:00",
+    "source_saved_before_process_start": true,
+    "health_live": 200,
+    "health_ready": 200,
+    "restart_by_codex": true,
+    "observed_at": "2026-10-14T21:36:51.024016+00:00",
+    "post_restart_agent_success_observed": "technical probe only, not day review",
+    "old_process_id": 11580,
+    "models_running_at_restart": 0,
+    "final_native_mode": "omit num_predict; never -1"
+  },
+  "second_marcus_episode": {
+    "id": "faf07b36-b6bd-475d-a3db-3859ba8b19ca",
+    "status": "FAILED",
+    "finished_at": "2026-10-14T21:32:01.056404+00:00"
+  },
+  "actual_parameter_validation": {
+    "model": "deepseek-v4.1-flash",
+    "maximum_output_tokens_reported": 393216,
+    "num_predict_480000_refused": true,
+    "num_predict_minus_one_refused": true,
+    "omitted_num_predict_reply": "OK",
+    "success_run_id": "a52d260d-61f2-494f-b169-05436d2373d9",
+    "success_cost_vr": "0.00001",
+    "negative_parameter_probe": "8df5219a-dd23-4ff0-b651-c5eab796c9e6",
+    "oversized_parameter_probe": "172d43e8-2f04-47a8-a62b-cef9eb92f43d",
+    "note": "Test izolat Codex; short technical context, no production progress"
+  }
+}

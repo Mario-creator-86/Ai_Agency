@@ -1,5 +1,87 @@
 # Architectural / Product Decision Log v5
 
+2026-10-15 final Cloud correction: -1 sentinel rejected live, removed; omitted num_predict returns OK in a short paid probe (0.00001 VR). Actual DeepSeek-v4.1-flash max output393216, so480000 invalid. Technical probes not film progress. Backend15596 ready; Owner objects to further parameter changes, no more probes. See corrected SARAH_MARCUS_CLOUD_RESPONSE report.
+
+## 2026-10-15 — Native Cloud output and incremental response
+
+Owner asks to preserve complete messages and fix Sarah/Marcus failures. Context multipliers do not define the vendor output ceiling: Cloud agency calls defer it to the native provider instead of sending 480000. Full input remains. Streaming retains every visible chunk and waits for completion; unsent/unanswered retry distinctions remain. Old HTTP 400 has no retained vendor reason and is not retroactively classified. No policy, architecture or production verdict change. See SARAH_MARCUS_CLOUD_RESPONSE_2026-10-15.md.
+
+
+## 2026-10-15 — ADR-REFERENCE-COMPATIBILITY-AND-PARTIAL-VISIBILITY
+
+Owner explicitly asks reference generation when portraits are available. Resolve the compatible reference sibling declared by the selected RunPod text model family, only from the same verified/discovered connection, before pricing/approval. Do not change persisted settings or invent a vendor, price or reference. Preserve partial visibility without introducing a face; require canonical wardrobe and explicit image-QA conditions. Recipient Owner does not imply a required reply for STATUS. No architecture/database migration or policy/paid-call change.
+
+## 2026-10-14 — ADR-TASK-SPECIFIC-DIRECTOR-FAILURE-ROUTING
+
+Film-QC findings select visual rewrite even when a newer take failed delivery. Clear the task routing flag, preserve history and do not release any purchase. The independent delivery ladder still requires terminal journal evidence and explicit retry_delivery. Brief v4 includes the action contract. No database/spec migration; no paid call or production mutation.
+
+## ADR-CURRENT-REVIEWED-PROMPT-AND-DELIVERED-REDO (2026-10-14)
+
+Approval authorizes the complete exact current reviewed text. Old TREATS metadata cannot
+bypass integrity checks; incomplete legacy fields return to the existing Director/agent
+rewrite route. Free replacement requires actual current prompt/reference identity and a
+verified accepted file. Owner cancellation without delivery cannot advance bought/waiting
+production progress; uncertain purchases and delivered QC failures remain tracked. Financial
+history is preserved. No production mutation, restart or paid call; no schema migration.
+Handoff: LIVE_PROMPT_APPROVAL_AND_ABORTED_REDO_2026-10-14.md.
+
+## ADR-BUDGET-CHANGE-AND-COMPLETE-LLM-EVIDENCE (2026-10-14)
+
+Owner supersedes the unset 15.24 USD film fallback when an active daily budget exists:
+the daily sum becomes the implicit film ceiling, while every common daily/monthly hold,
+cost and explicit film cap remains enforced. This does not reset historical spend.
+Re-evaluate cached financial outcomes under changed budget versions/periods/film ceilings/
+paid-media approval rules; retain history, avoid invalidation on ordinary spend, and keep
+free minor acceptance independent of purchase funds. A changed budget is no fabricated approval.
+
+Owner requires x10 internal LLM allowances and complete messages. Preserve all selected
+text/JSON/list evidence and rewrite history, expand response/selection allowances and retain
+semantic validation. No prefix fitting may turn an invalid response into an approval.
+Keep declared media/platform transport limits and report actual provider length stops.
+No production policy/take mutation or service/GPU/model activation. No schema migration.
+Rollback only this task's hunks; preserve earlier uncommitted prompt and batching work.
+Evidence: BUDGET_AND_COMPLETE_CONTEXT_2026-10-14.md and its proof/changes JSON.
+
+## ADR-PREPARE-APPROVED-GPU-BUNDLES (2026-10-14)
+
+Owner requests ready image/video work to leave together after preparation and approval.
+Director repairs now complete all scene corrections before purchase, then prepare the image
+layer and eligible video layer separately. Cooperative purchase flows suspend at the GPU
+boundary while retaining the original guards, lease and individual budget holds; compatible
+requests share one batch/session. The synchronous public APIs retain their behavior. The
+outer film lease stays held until every nested purchase settles. Only genuinely prepared
+purchases occupy redo quota; an unanswered approval cannot starve an approved later scene.
+
+Every participating permit is checked by the infrastructure kernel. Shared startup is priced
+once and allocated; scene caps cannot borrow from each other. Refunds/proven-unsent jobs and
+measured overages remain attributed to their own purchases. Input reservation/upload/validation
+of every chunk precedes GPU-on, exact prepared prompts are dispatched without rebuilding,
+model work is contiguous, queue/input TTLs include the work ahead and applicable waits.
+Abandoned preparation cannot clear an earlier uncertain purchase. STOP is rechecked after
+preparation, before GPU-on and before dispatch. Published/closed films and final Owner takes
+retain their guards. Automatic grouping is scoped to the current film's stage/repair; the
+executor also supports multiple film identities when the caller retains all required leases.
+
+No DB migration, external worker deployment, GPU start, paid LLM call, production DB write or
+server activation. Four old Director integration fixtures failed under HEAD because they
+did not answer Nadia's newer mandatory gate; give those fixtures an explicit simulated
+APPROVE, retaining dedicated refusal/discussion tests. Architecture hashes unchanged.
+Evidence and activation instructions: APPROVED_GPU_BATCHES_2026-10-14.md and CURRENT_STATUS.md.
+
+## ADR-SERIAL-PROMPT-ROUTE-LIMIT (2026-10-14)
+
+Owner rejects the serial's 980-character local ceiling. Use the existing GPU request/worker
+allowance of 20,000 characters, with serial look version 3; remove the loader's 2,000 clamp.
+Keep complete character identity, first-frame action and other scene fields. Oversized
+candidates are held by model-aware lint, never silently cut. Explicit vendor caps retain
+priority; the native worker counts characters, legacy Runway counts UTF-16 units. This is
+a transport allowance, not a claimed optimum or proof of image quality. The pinned Qwen
+ComfyUI source and both workflow bindings were checked without GPU execution. Eight current
+serial scenes recompose with 13 required-content losses reduced to zero. Two older motion
+loss regressions were also repaired without splitting shared object/negative lists.
+No DB migration, policy/spending change, provider call or server restart. Proof, activation
+and rollback: SERIAL_PROMPT_MODEL_LIMIT_2026-10-14.md / .json. Architecture hashes unchanged.
+
 ## ADR-AGENCY-REPAIR-PROGRESS-MUST-BE-OBSERVABLE (2026-10-14)
 
 Use the exact publication/render asset relationship to retire production work, regardless
@@ -4327,3 +4409,39 @@ The Owner's cards of 2026-10-09, answered after the research of the same day (of
 
 
 **ADR-RUNPOD-STILLS-GATE-BILLING-ORDER — what the first live RunPod round taught (2026-10-09).** Context: the first live stills round re-rolled scene 1 three times because the global sharpness gate rejected five good frames (dark tunnel, sharp subject, soft background), never sent scenes 2-5, and booked the 28-minute cached-model download as billed time. Decision: (1) the gate scores sharpness on tiles with the strongest 5% of pixels removed, read at the 6th sharpest of 112 tiles (floor 30), with a second «fine detail kept» reading (max 48% of tile energy left after a halve-and-restore) so a blurred frame with one hard line, a letterbox or an upscale fails; thresholds measured on the five real stills and their degraded copies (numbers in still_gate.py and its tests); (2) RunPod Serverless time is booked per round as execution + one worker start (the first accepted job's delayTime capped at cold_start_seconds, plus the execution budgets of unanswered chunks before it) + the 1 s idle tail; a later chunk books only a second start it can show; (3) the stills first round carries every scene to buy; re-rolls follow; a scene a cap cut left out goes ahead of re-rolls. Rejected: lowering the global floor (passes blur); booking delayTime whole (charges unbilled downloads to the cap). Kept for his card: the Qwen-Image-Edit-2511 route still waits for scene 1's approved still. Proven on fakes and on the five real stills.
+
+## 2026-10-15 — The model thinks where the vendor keeps it; a picture that exists is not re-judged; an outage is nobody's decision
+
+Three days without a publication, and every cause was the studio talking to itself wrong, not a
+provider or a budget. **Thinking.** The adapter told every Ollama model not to think, to keep
+`num_predict` for the answer. On Cloud, `num_predict` is no longer sent at all, so the reason for
+the flag was gone — and the flag itself broke one model: glm-5.3-flash, told not to think, wrote
+its reasoning into the visible answer and never reached the JSON (tens of thousands of tokens,
+four episodes and three scripts refused). Probed on the Owner's account, every model asked
+natively put its reasoning in the separate `thinking` field and answered the object, in JSON mode
+too. Decision: Cloud is asked nothing about thinking; the local endpoint keeps the flag; a caller
+that must say so still can. Codex's note of the night («the Owner objects to further parameter
+changes») is replaced by the Owner's request of this morning: «problemele cu LLM-uri, parametri
+de rezolvat». Rejected: a per-model list of «narrating» models (the studio would learn each one
+by losing a day) and keeping the flag with a retry (two long narrations instead of one answer).
+**A picture that exists.** The motion step linted every scene's still prompt before buying
+motion, including the prompt of a still already bought and approved; a new wardrobe rule then
+blocked scene 4 of the serial on the words of a picture nobody was going to buy again, thirteen
+walks running. Decision: an approved still's words are judged when the still is bought, not again
+when motion is; a scene without an approved still is judged as before. **An outage.** When the
+provider refused every model for four minutes, the Director's model-switch probed three
+candidates, found all down, and asked the Owner to choose a model — three cards, all refused by
+him; the choice of a model is hers and an outage is nobody's decision. Decision: every probe
+failing at the provider is declined with «reîncerc la trecerea următoare» and no card. Also
+decided: an upload that raises (a row changed under the gate, a file the hash cannot read) is that
+film's SKIPPED, not the studio's safe mode; a film that passed quality control and waits unpublished
+three days stops holding the next topic; and the night's «no silent shortening» holds only if the
+schemas stop refusing what the validators no longer cut — candidates and episodes are validated
+through the relaxed schema, the same one structured answers already use. **The route it is bought on.** The night's «never cut a serial prompt to fit» holds only
+where the route allows the complete prompt: production's GPU worker does (20 000 characters),
+Runway's legacy figure does not (1 000), and a test world on the legacy figure refused every
+serial LINT_BLOCKED. Decision: the linter keeps one table of what each connected route allows,
+by model id (`prompt_lint.ALLOWANCES`, the worker's workflows seeded with its MAX_PROMPT); a
+vendor that allows more declares it there; a model nobody declared keeps the legacy figure.
+Rejected: threading a vendor attribute through the sheet, the stills step, the still redo and
+the motion state (five lint sites, a dozen signatures, for the same fact).

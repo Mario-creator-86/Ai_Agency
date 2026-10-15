@@ -41,7 +41,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Mapping, Sequence
-from datetime import date
+from datetime import UTC, date, datetime
 from typing import Any
 from uuid import uuid4
 
@@ -667,6 +667,13 @@ def _research_and_verification(
 # ------------------------------------------------------------------------- selection --
 
 
+#: How long a film that passed quality control may wait to be published before its topic
+#: stops holding the next choice (2026-10-15): a film the Publisher holds, the gate refuses
+#: or the Owner never answers for kept its topic «live» for ever, and no new topic was chosen.
+#: The film stays a candidate for publication; only the selection stops waiting for it.
+PUBLISH_WAIT_DAYS = 3
+
+
 def topics_in_production(session: Session) -> tuple[list[str], list[str]]:
     """SELECTED topics with work genuinely in flight, and the ones that have stalled.
 
@@ -745,7 +752,14 @@ def topics_in_production(session: Session) -> tuple[list[str], list[str]]:
         if last.output_asset_id in rejected:
             stalled.append(topic.id)  # the Director said no; the departments hold the notes
         elif verdict == "PASSED":
-            live.append(topic.id)  # waiting to be published
+            finished = str(last.finished_at or last.started_at or "")
+            waited_days = (
+                (datetime.now(UTC) - datetime.fromisoformat(finished)).days if finished else 0
+            )
+            if waited_days >= PUBLISH_WAIT_DAYS:
+                stalled.append(topic.id)  # held or refused this long: it no longer holds the day
+            else:
+                live.append(topic.id)  # waiting to be published
         elif verdict is None:
             live.append(topic.id)  # waiting for quality control
         else:
@@ -824,7 +838,7 @@ def _selection(engine: Engine, registry: ProviderRegistry | None = None) -> dict
             continue
         reason = f"Subiect selectat: {chosen['title']}."
         if decided_by:
-            reason += f" Ales de Director: {notes}"[:220]
+            reason += f" Ales de Director: {notes}"
         return _outcome(
             COMPLETED,
             reason,
@@ -947,7 +961,7 @@ def _director_approves(engine: Engine, script_id: str, review: dict[str, Any]) -
     if grounding is not None and not grounding["passed"]:
         logger.info(
             "script_approval_refused",
-            extra={"script_id": script_id, "reason": " ".join(grounding["reasons"])[:300]},
+            extra={"script_id": script_id, "reason": " ".join(grounding["reasons"])},
         )
         return None
     try:
@@ -1374,7 +1388,7 @@ def _release(engine: Engine, reservation_id: str | None, reason: str, correlatio
     if not reservation_id:
         return
     try:
-        release_reservation(engine, reservation_id, reason[:120], correlation_id=correlation)
+        release_reservation(engine, reservation_id, reason, correlation_id=correlation)
     except (EconomyError, ValueError):
         logger.info("reservation_not_released", extra={"reservation_id": reservation_id})
 
@@ -1731,6 +1745,7 @@ def _walk_staircase(
     correlation: str,
 ) -> dict[str, Any]:
     """`_film_staircase` inside the film's purchase lease."""
+    from app.media.factory import reference_image_adapter  # noqa: PLC0415
     from app.media.shooting_sheet import (  # noqa: PLC0415 - media imports runbook
         SHEET_STEPS,
         SheetNotFound,
@@ -1740,7 +1755,7 @@ def _walk_staircase(
         run_sheet_step,
     )
 
-    image = wiring.get("image_adapter")
+    image = reference_image_adapter(engine, storyboard_id, wiring.get("image_adapter"))
     context: dict[str, Any] = {
         "capabilities": list(wiring.get("capabilities") or []),
         "integration_id": wiring.get("integration_id"),
@@ -2001,7 +2016,7 @@ def _skip(storyboard_id: str, status: str, refusal: Any, reason: str) -> dict[st
         "storyboard_id": storyboard_id,
         "status": status,
         "refusal": refusal,
-        "reason": _no_stop(reason)[:300],
+        "reason": _no_stop(reason),
     }
 
 
@@ -2124,7 +2139,7 @@ def _test_environment_letter(
         message = post_message(
             session,
             intent="ESCALATE",
-            subject=f"Filmul «{title}» așteaptă: studioul este în mediul {environment}"[:200],
+            subject=f"Filmul «{title}» așteaptă: studioul este în mediul {environment}",
             body={
                 "kind": TEST_ENVIRONMENT_LETTER_KIND,
                 "storyboard_id": storyboard_id,
@@ -2161,7 +2176,7 @@ def _note_film_state(
         "status": status,
         "refusal": refusal,
         "step": step,
-        "reason": _no_stop(reason)[:300],
+        "reason": _no_stop(reason),
         "moved": bool(moved),
     }
     try:
@@ -2368,7 +2383,7 @@ def _retire_film(
                 "film_wait_days": limit,
                 "last_status": last.get("status"),
                 "last_refusal": last.get("refusal"),
-                "reason": reason[:300],
+                "reason": reason,
             },
         )
         bought, items = closed["bought_takes"], closed["items"]
@@ -2388,7 +2403,7 @@ def _retire_film(
         post_message(
             session,
             intent="ESCALATE",
-            subject=f"Film retras: «{title}», pe loc de {count(days, 'zi', 'zile')}"[:200],
+            subject=f"Film retras: «{title}», pe loc de {count(days, 'zi', 'zile')}",
             body={
                 "kind": FILM_RETIRED_LETTER_KIND,
                 "storyboard_id": storyboard_id,
@@ -2530,7 +2545,7 @@ def _sheet_letter(
         message = post_message(
             session,
             intent="ESCALATE",
-            subject=f"Foaia de filmare: «{title}» {headline}"[:200],
+            subject=f"Foaia de filmare: «{title}» {headline}",
             body=body,
             body_text="\n".join(line for line in lines if line),
             from_agent_id=director.id if director else None,
@@ -2806,7 +2821,7 @@ def _media_staircase(
             waiting_approvals_letter(engine, asked_correlation)
         return _outcome(
             BLOCKED,
-            f"{stop_reason_words(engine)} {said}"[:500],
+            f"{stop_reason_words(engine)} {said}",
             assets=produced,
             serial_assets=serial_assets,
             stopped_storyboard=storyboard_id,
@@ -2967,7 +2982,7 @@ def _media_staircase(
             }
         )
         # One full stop at the end of each film's reason: the day's sentence adds its own.
-        reason = _no_stop(" ".join(str(film.get("reason") or "").split())[:400])
+        reason = _no_stop(" ".join(str(film.get("reason") or "").split()))
         if factual_film:
             _note_film_state(
                 engine,
@@ -3044,7 +3059,7 @@ def _media_staircase(
     status = COMPLETED if produced or bought_steps else SKIPPED
     return _outcome(
         status,
-        reason_text[:1500],
+        reason_text,
         assets=produced,
         serial_assets=serial_assets,
         awaiting_owner=awaiting_owner,
@@ -3079,7 +3094,7 @@ def _media(
             + "; ".join(f"«{item['title']}»" for item in retired)
             + "."
         )
-        outcome["reason"] = (str(outcome.get("reason") or "").rstrip() + " " + said).strip()[:1500]
+        outcome["reason"] = (str(outcome.get("reason") or "").rstrip() + " " + said).strip()
     return outcome
 
 
@@ -3301,7 +3316,7 @@ def _media_films(
                 waiting_approvals_letter(engine, asked_correlation)
             return _outcome(
                 BLOCKED,
-                f"{stop_reason_words(engine)} Filmul următor nu a fost început."[:500],
+                f"{stop_reason_words(engine)} Filmul următor nu a fost început.",
                 assets=produced,
                 serial_assets=serial_assets,
                 stopped_storyboard=storyboard_id,
@@ -3535,7 +3550,7 @@ def _media_films(
             _release(engine, reservation_id, f"randare oprită: {error_words(exc)}", correlation)
             return _outcome(
                 BLOCKED,
-                f"{stop_reason_words(engine)} {sentence(error_words(exc))}"[:500],
+                f"{stop_reason_words(engine)} {sentence(error_words(exc))}",
                 assets=produced,
                 serial_assets=serial_assets,
                 stopped_storyboard=storyboard_id,
@@ -3654,7 +3669,7 @@ def _media_films(
         # in the runbook's own vocabulary, with the Owner's reason and the request he answers.
         return _outcome(
             SKIPPED,
-            awaiting_owner[0]["reason"][:500],
+            awaiting_owner[0]["reason"],
             awaiting_owner=awaiting_owner,
             approval_id=awaiting_owner[0]["approval_id"],
             skipped=skipped,
@@ -4963,7 +4978,7 @@ def _free_fix_defect_note(
             row = post_message(
                 session,
                 intent="STATUS",
-                subject=f"{FREE_FIX_NOTE_SUBJECT} «{title}»"[:200],
+                subject=f"{FREE_FIX_NOTE_SUBJECT} «{title}»",
                 body={
                     "kind": DEVELOPER_DEFECT_KIND,
                     "defect": FREE_FIX_DEFECT,
@@ -5011,7 +5026,7 @@ def _decisions_words(decisions: list[dict[str, Any]]) -> str:
             "refaceri în așteptarea răspunsului tău",
         ),
         "BOUGHT_WAITING": (
-            "refacere cumpărată care așteaptă aprobarea preluării noi",
+            "refacere cumpărată în curs de verificare și continuare de către studio",
             "refaceri cumpărate care așteaptă aprobarea preluărilor noi",
         ),
         "CLOSED": ("film închis", "filme închise"),
@@ -5074,17 +5089,7 @@ def _still_newer_than_film(session: Session, storyboard_id: str, scene: int, ass
     in_film = (
         director_qc.film_takes(production).get(scene, {}) if isinstance(production, dict) else {}
     )
-    approved = session.scalar(
-        select(SceneTake)
-        .where(
-            SceneTake.storyboard_id == storyboard_id,
-            SceneTake.scene_number == scene,
-            SceneTake.kind == "still",
-            SceneTake.status == "APPROVED",
-        )
-        .order_by(SceneTake.created_at.desc())
-        .limit(1)
-    )
+    approved = director_qc.current_approved_still(session, storyboard_id, scene)
     if approved is None:
         return False
     clip = session.get(SceneTake, in_film.get("motion")) if in_film.get("motion") else None
@@ -5110,7 +5115,8 @@ def _corrected_for_film(
     bought yet are the words his yes was asked on: neither her look nor his rewrite is asked
     again before it is spent (`_apply_repairs`)."""
     from app.media.assembler import SCENE_PROMPTS_REWRITTEN_EVENT  # noqa: PLC0415
-    from app.media.models import SceneTake  # noqa: PLC0415
+    from app.media.models import SceneTake, StoryboardScene  # noqa: PLC0415
+    from app.media.prompt_agent import incomplete_plan_fields  # noqa: PLC0415
     from app.media.scene_rewrite import DECIDED_BY, REWRITE_REASON, _after  # noqa: PLC0415
 
     film = session.get(MediaAsset, asset_id) if asset_id else None
@@ -5145,6 +5151,30 @@ def _corrected_for_film(
             or not _after(event.timestamp, floor)
         ):
             return None
+        row = session.scalar(
+            select(StoryboardScene).where(
+                StoryboardScene.storyboard_id == storyboard_id,
+                StoryboardScene.scene_index == scene,
+            )
+        )
+        if row is None:
+            return None
+        package = dict(row.prompt_json or {})
+        layer = str(payload.get("layer") or "")
+        review = payload.get("review")
+        if (
+            layer not in ("still", "motion")
+            or not isinstance(review, dict)
+            or review.get("verdict") != "TREATS"
+            or incomplete_plan_fields(package, layers=(layer,))
+        ):
+            return None
+        for field in ("still_prompt", "motion_prompt"):
+            actual = str(
+                package.get(field) or (row.visual_prompt if field == "still_prompt" else "")
+            )
+            if " ".join(actual.split()) != " ".join(str(payload.get(field) or "").split()):
+                return None
         return {"layer": payload.get("layer"), "event_id": str(event.event_id)}
     return None
 
@@ -5174,6 +5204,8 @@ def _correct_before_redo(
     picture: the still is rewritten and bought with its motion — unless a newer approved still
     is already waiting (`_still_newer_than_film`), and then the motion is bought from it."""
     from app.agents.reviews import _names_scene  # noqa: PLC0415 - agents read the same words
+    from app.media.models import StoryboardScene  # noqa: PLC0415
+    from app.media.prompt_agent import incomplete_plan_fields  # noqa: PLC0415
     from app.media.scene_rewrite import rewrite_for_redo  # noqa: PLC0415 - media imports runbook
 
     layer = "still" if "still" in kinds else "motion"
@@ -5204,6 +5236,15 @@ def _correct_before_redo(
         if str(verdict.get("cause") or "").strip()
     ]
     reasons += [str(reason) for reason in extra_reasons if str(reason).strip()]
+    with Session(engine) as session:
+        row = session.scalar(
+            select(StoryboardScene).where(
+                StoryboardScene.storyboard_id == storyboard_id,
+                StoryboardScene.scene_index == scene,
+            )
+        )
+        if row is not None:
+            reasons += incomplete_plan_fields(dict(row.prompt_json or {}), layers=(layer,))
     try:
         done = rewrite_for_redo(engine, registry, storyboard_id, scene, layer, reasons, correlation)
         turn = done.get("same_prompt") or done.get("layer_exhausted")
@@ -5253,7 +5294,7 @@ def _correct_before_redo(
         "reason": (
             f"promptul nu a fost corectat ({done.get('reason') or 'fără motiv'}); nu se cumpără "
             "din nou aceleași cuvinte"
-        )[:300],
+        ),
     }
 
 
@@ -5580,7 +5621,7 @@ def _overturned_entry(
         "status": SECOND_LOOK_OVERTURNED,
         "verdict": str(look.get("verdict") or ""),
         "severity": str(look.get("severity") or ""),
-        "reason": str(look.get("reason_ro") or "")[:300],
+        "reason": str(look.get("reason_ro") or ""),
         "run_id": look.get("run_id"),
         "takes": {"still": takes.get("still"), "clip": takes.get("motion")},
         "checks": families,
@@ -5602,6 +5643,33 @@ def _look_drops_redo(look: Mapping[str, Any], *, measured: bool = False) -> bool
     return severity == "none" if measured else severity in ("none", "minor")
 
 
+def _redo_ended_without_delivery(
+    engine: Engine,
+    storyboard_id: str,
+    scene: int,
+    kind: str,
+    done: dict[str, Any],
+    since: str,
+) -> bool:
+    from app.media.director_qc import bought_since  # noqa: PLC0415
+
+    if kind == "still" and str((done.get("still") or {}).get("status") or "") in (
+        "REFUSED",
+        "FAILED",
+        "CANCELLED",
+        "NOT_BOUGHT",
+        "UNSENT",
+    ):
+        return True
+    if not done.get("given_back"):
+        return False
+    with Session(engine) as session:
+        candidates = bought_since(session, storyboard_id, scene, kind, since)
+        # Keep uncertain requests and delivered pictures rejected by QC available for
+        # recovery/Sarah's look. A restored old take is excluded by bought_since.
+        return not any(row.status == "SUBMITTED" or (row.path and row.sha256) for row in candidates)
+
+
 def _apply_repairs(
     engine: Engine,
     settings: Settings,
@@ -5616,9 +5684,11 @@ def _apply_repairs(
     since: str | None = None,
 ) -> None:
     """Carry out ``reading['proposals']`` (the Director's list, `_director_repairs`): the free
-    fixes once per film, the paid redos scene by scene through `redo_scene` (unasked), within
+    fixes once per film, the paid redos prepared through `redo_scene` (unasked), within
     his limits, the film rejoined from its takes where her list says so (`director_qc.REJOIN`),
-    and the film that came of them measured once more. A paid redo whose plan would retire a
+    and the film that came of them measured once more. Compatible ready RunPod repairs share
+    a GPU batch after all corrections/reviews; images precede motion with accepted frames.
+    Every purchase keeps its own approval and budget hold. A paid redo whose plan would retire a
     take the Owner approved is refused before anything is priced (2026-10-10: babcf272's
     approved still, motion and test shot were retired by an unasked repair).
 
@@ -5650,6 +5720,7 @@ def _apply_repairs(
     already decided are not asked of her."""
     from app.media import director_qc  # noqa: PLC0415 - media imports runbook
     from app.media.assembler import (  # noqa: PLC0415 - media imports runbook
+        REDO_STEP,
         SceneRedoRefused,
         SpentStageError,
         redo_plan,
@@ -5694,7 +5765,7 @@ def _apply_repairs(
                 requester="director",
             )
         except SceneRedoRefused as exc:
-            result["refused"].append({"what": words, "reason": exc.reason_ro[:300]})
+            result["refused"].append({"what": words, "reason": exc.reason_ro})
             return
         result["applied"].append({"redo": kind, "scene_index": scene, "reason": words})
         newest(done.get("film"))
@@ -5709,7 +5780,7 @@ def _apply_repairs(
             if proposal.free and proposal.redo == "card":
                 free_redo("card", proposal.scene_index, proposal.reason)
 
-    # The paid redos, scene by scene: only through `redo_scene` (may_act inside, his rule,
+    # Every paid redo is prepared through `redo_scene` (may_act inside, his rule,
     # the budgets, the ceiling, the lease), and only within his limits — moved by what he
     # allowed this film on its card (`decisions.producers.redo_cap`, 2026-10-12).
     from app.decisions.producers.redo_cap import (  # noqa: PLC0415 - decisions import media
@@ -5733,13 +5804,16 @@ def _apply_repairs(
             if proposal.redo not in paid[int(proposal.scene_index)]:
                 paid[int(proposal.scene_index)].append(proposal.redo)
     wiring = sheet_wiring(engine, vault, settings) if paid else {}
-    image = wiring.get("image_adapter")
+    from app.media.factory import reference_image_adapter  # noqa: PLC0415
+
+    image = reference_image_adapter(engine, storyboard_id, wiring.get("image_adapter"))
     capabilities = list(wiring.get("capabilities") or []) or None
     resolution = wiring.get("resolution") or getattr(settings, "motion_resolution", None)
     # His choices on the sheet, read once: the plan and the purchase price the same scene.
     overrides = sheet_overrides(engine, storyboard_id) if paid else None
     bought_kinds: dict[int, list[str]] = {}
     next_words: dict[int, str] = {}
+    prepared: dict[int, dict[str, Any]] = {}
     for scene in sorted(paid):
         with Session(engine) as session:
             rounds = _paid_redo_rounds(session, storyboard_id)
@@ -5806,10 +5880,31 @@ def _apply_repairs(
             if uncorrected is not None:
                 result["refused"].append(uncorrected)
                 continue
-        bought_here = False
-        # When the round began: what it delivered is read from here (`_round_delivered`).
-        began = utc_now()
-        for kind in sorted(paid[scene], key=("still", "motion").index):
+        prepared[scene] = {
+            "continues": continues,
+            "rounds": rounds,
+            "began": utc_now(),
+        }
+
+    from app.media.prepared_batch import RoundWork, flow_call, run_prepared  # noqa: PLC0415
+    from app.media.shooting_sheet import (  # noqa: PLC0415
+        FilmBusy,
+        film_purchase_lease,
+        lease_seconds,
+    )
+
+    blocked: set[int] = set()
+    started: set[int] = set()
+    reserved: set[int] = set()
+    # All free reviews/corrections finish before a GPU purchase is prepared. Images go
+    # together first; motion plans are read after their new starting still is accepted.
+    for kind in ("still", "motion"):
+        flows = []
+        purchases = []
+        for scene in sorted(prepared):
+            if scene in blocked or kind not in paid[scene]:
+                continue
+            rounds = prepared[scene]["rounds"]
             try:
                 plan = redo_plan(
                     engine,
@@ -5858,8 +5953,10 @@ def _apply_repairs(
                     result.setdefault("overturned", []).append(
                         _overturned_entry(engine, reading, scene, paid[scene], accepted)
                     )
-                    break
-                done = redo_scene(
+                    blocked.add(scene)
+                    continue
+                flow = flow_call(
+                    redo_scene,
                     engine,
                     storyboard_id,
                     correlation,
@@ -5885,25 +5982,118 @@ def _apply_repairs(
                     # take he approved without marking it final (the deep guard agrees).
                     director_repair=True,
                 )
+                flows.append(flow)
+                purchases.append((scene, plan, replacing))
             except SceneRedoRefused as exc:
                 entry = {
                     "redo": kind,
                     "scene_index": scene,
                     "status": exc.status,
-                    "reason": exc.reason_ro[:300],
+                    "reason": exc.reason_ro,
                     "approval_id": exc.approval_id,
                     "cap_usd": (exc.plan or {}).get("cap_usd"),
                 }
                 (result["asked"] if exc.status == "NEEDS_APPROVAL" else result["refused"]).append(
                     {**entry, "what": f"scena {scene}: {PAID_REDO_WORDS[kind]}"}
                 )
-                break
+                blocked.add(scene)
+                continue
             except SpentStageError as exc:
-                bought_here = True
+                started.add(scene)
                 result["refused"].append(
                     {"what": f"scena {scene}: {PAID_REDO_WORDS[kind]}", "reason": exc.reason_ro}
                 )
-                break
+                blocked.add(scene)
+                continue
+        if not flows:
+            continue
+
+        def before_prepare(index: int, purchases_: Any = purchases) -> None:
+            candidate = purchases_[index][0]
+            previous = prepared[candidate]
+            if (
+                previous["continues"] is None
+                and candidate not in reserved
+                and sum(previous["rounds"].values()) + len(reserved) >= per_film
+            ):
+                result["limited"].append(
+                    {"scene_index": candidate, "per_scene": per_scene, "per_film": per_film}
+                )
+                raise SceneRedoRefused("REDO_LIMIT", "Plafonul refacerilor plătite este atins.")
+
+        def on_prepared(index: int, value: Any, purchases_: Any = purchases) -> None:
+            if isinstance(value, RoundWork) or (
+                isinstance(value, dict)
+                and (
+                    value.get("credits")
+                    or (value.get("still") or {}).get("status") == "APPROVED"
+                    or (value.get("motion") or {}).get("bought_shots")
+                )
+            ):
+                reserved.add(purchases_[index][0])
+
+        try:
+            # Keep the root lease until every nested purchase has settled its own hold.
+            with film_purchase_lease(
+                engine,
+                storyboard_id,
+                holder=correlation,
+                step=REDO_STEP,
+                ttl_seconds=lease_seconds(settings),
+            ):
+                outcomes = run_prepared(
+                    flows, before_prepare=before_prepare, on_prepared=on_prepared
+                )
+        except FilmBusy as exc:
+            outcomes = [
+                SceneRedoRefused(exc.status, exc.reason_ro, plan=plan)
+                for _scene, plan, _replacing in purchases
+            ]
+        for (scene, _plan, replacing), outcome in zip(purchases, outcomes, strict=True):
+            if isinstance(outcome, SceneRedoRefused):
+                entry = {
+                    "redo": kind,
+                    "scene_index": scene,
+                    "status": outcome.status,
+                    "reason": outcome.reason_ro,
+                    "approval_id": outcome.approval_id,
+                    "cap_usd": (outcome.plan or {}).get("cap_usd"),
+                }
+                (
+                    result["asked"] if outcome.status == "NEEDS_APPROVAL" else result["refused"]
+                ).append({**entry, "what": f"scena {scene}: {PAID_REDO_WORDS[kind]}"})
+                blocked.add(scene)
+                continue
+            if isinstance(outcome, SpentStageError):
+                started.add(scene)
+                result["refused"].append(
+                    {"what": f"scena {scene}: {PAID_REDO_WORDS[kind]}", "reason": outcome.reason_ro}
+                )
+                blocked.add(scene)
+                continue
+            if isinstance(outcome, Exception):
+                raise outcome
+            done = outcome
+            still = done.get("still") or {}
+            if _redo_ended_without_delivery(
+                engine, storyboard_id, scene, kind, done, prepared[scene]["began"]
+            ):
+                result["refused"].append(
+                    {
+                        "what": f"scena {scene}: {PAID_REDO_WORDS[kind]}",
+                        "redo": kind,
+                        "scene_index": scene,
+                        "status": str(still.get("status") or "NOT_DELIVERED"),
+                        "reason": str(
+                            done.get("next_ro")
+                            or "Cererea s-a încheiat fără imagine sau clip nou; "
+                            "refacerea nu este realizată."
+                        ),
+                        "credits": done.get("credits"),
+                    }
+                )
+                blocked.add(scene)
+                continue
             summary = done.get("motion") if kind == "motion" else None
             if isinstance(summary, dict) and not summary.get("bought_shots"):
                 # The step bought nothing for the scene (held NEEDS_OWNER, stopped, not bought):
@@ -5929,11 +6119,12 @@ def _apply_repairs(
                             held.get("reason")
                             or summary.get("stopped")
                             or "mișcarea nu a fost cumpărată"
-                        )[:300],
+                        ),
                     }
                 )
-                break
-            bought_here = True
+                blocked.add(scene)
+                continue
+            started.add(scene)
             bought_kinds.setdefault(scene, []).append(kind)
             next_words[scene] = str(done.get("next_ro") or "")
             result["bought"].append(
@@ -5970,29 +6161,30 @@ def _apply_repairs(
                         "next_ro": str(done.get("next_ro") or ""),
                     }
                 )
-                break
-        if bought_here:
-            kinds = bought_kinds.get(scene, [])
-            with Session(engine) as session, session.begin():
-                lock_for_write(session)
-                append_event(
-                    session,
-                    QC_PAID_REDO_EVENT,
-                    "storyboard",
-                    storyboard_id,
-                    1,
-                    {
-                        "scene_index": scene,
-                        "of_asset": asset_id,
-                        "kinds": kinds,
-                        # A new still without its motion yet: the motion may still follow,
-                        # in this round (a scene he chose to animate locally needs none).
-                        "open_motion": "still" in kinds and "motion" not in kinds,
-                        "continues": continues,
-                        "started_at": began,
-                    },
-                    correlation,
-                )
+                blocked.add(scene)
+                continue
+    for scene in sorted(started):
+        kinds = bought_kinds.get(scene, [])
+        with Session(engine) as session, session.begin():
+            lock_for_write(session)
+            append_event(
+                session,
+                QC_PAID_REDO_EVENT,
+                "storyboard",
+                storyboard_id,
+                1,
+                {
+                    "scene_index": scene,
+                    "of_asset": asset_id,
+                    "kinds": kinds,
+                    # A new still without its motion yet: the motion may still follow,
+                    # in this round (a scene he chose to animate locally needs none).
+                    "open_motion": "still" in kinds and "motion" not in kinds,
+                    "continues": prepared[scene]["continues"],
+                    "started_at": prepared[scene]["began"],
+                },
+                correlation,
+            )
 
     # His cap stopped what she decided and nothing else of her list could be done: the film
     # is his question now (money), as a card — once per film, never a loop of her decisions
@@ -6128,7 +6320,9 @@ def _reencode_from_takes(
 
     environment = studio_environment(engine)
     wiring = sheet_wiring(engine, vault, settings)
-    image = wiring.get("image_adapter")
+    from app.media.factory import reference_image_adapter  # noqa: PLC0415
+
+    image = reference_image_adapter(engine, storyboard_id, wiring.get("image_adapter"))
     sheet = build_sheet(
         engine,
         storyboard_id,
@@ -6283,7 +6477,7 @@ def continue_film(
     def done(status: str, reason: str, **more: Any) -> dict[str, Any]:
         outcome = {
             "status": status,
-            "reason": " ".join(str(reason).split())[:1500],
+            "reason": " ".join(str(reason).split()),
             "storyboard_id": storyboard_id,
             "cause": cause,
             "refusal": more.pop("refusal", None),
@@ -6475,7 +6669,7 @@ def _publish_passed(
     action, tier = STAGE_ACTIONS["publish"]
     refusal = mode_refusal(engine, action, tier, ask_owner=False)
     if refusal is not None:
-        return _outcome(SKIPPED, str(refusal["reason"])[:500])
+        return _outcome(SKIPPED, str(refusal["reason"]))
     return _publish(
         engine,
         vault,
@@ -6565,7 +6759,7 @@ def _publish_one(
         return {
             "status": COMPLETED,
             "reason": "Directorul a respins materialul înainte de publicare: "
-            + "; ".join(str(r) for r in editorial_reasons)[:300],
+            + "; ".join(str(r) for r in editorial_reasons),
             "rejected_asset": asset_id,
             "reasons": editorial_reasons,
         }
@@ -6612,7 +6806,7 @@ def _publish_one(
         return {
             "status": COMPLETED,
             "reason": "Publisher-ul ține materialul în așteptare: "
-            + "; ".join(hold["hold_reasons"])[:300],
+            + "; ".join(hold["hold_reasons"]),
             "held_asset": asset_id,
             "hold_message_id": hold["message_id"],
         }
@@ -6625,7 +6819,7 @@ def _publish_one(
         # metadata, so the Publisher is asked again below and her new answer is judged anew.
         with Session(engine) as session:
             refused = publication_metadata_refusals(
-                session, asset_id, channel_id, metadata["title"][:100], metadata["tags"]
+                session, asset_id, channel_id, metadata["title"], metadata["tags"]
             )
         if refused:
             metadata = None
@@ -6651,7 +6845,7 @@ def _publish_one(
             return {
                 "status": COMPLETED,
                 "reason": "Publisher-ul ține materialul în așteptare: "
-                + "; ".join(prepared.get("hold_reasons", []))[:300],
+                + "; ".join(prepared.get("hold_reasons", [])),
                 "held_asset": asset_id,
                 "hold_message_id": prepared.get("message_id"),
             }
@@ -6682,7 +6876,7 @@ def _publish_one(
         "publishing.public_publish",
         requester="publisher",
         subject=asset_id,
-        evidence=f"{metadata['title'][:80]} → {channel_name} ({resolved['release_privacy']})",
+        evidence=f"{metadata['title']} → {channel_name} ({resolved['release_privacy']})",
         context={
             "channel_id": channel_id,
             "policy_version": resolved["policy_version"],
@@ -6698,13 +6892,13 @@ def _publish_one(
             # decision expires.
             return {
                 "status": COMPLETED,
-                "reason": refusal["reason"][:500],
+                "reason": refusal["reason"],
                 "refused_by_owner": asset_id,
                 "approval_id": refusal["approval_id"],
             }
         return {
             "status": SKIPPED,
-            "reason": refusal["reason"][:500],
+            "reason": refusal["reason"],
             "awaiting_owner": asset_id,
             "approval_id": refusal["approval_id"],
         }
@@ -6714,7 +6908,7 @@ def _publish_one(
             engine,
             media_asset_id=asset_id,
             channel_id=channel_id,
-            title=metadata["title"][:100],
+            title=metadata["title"],
             description=metadata["description"],
             tags=metadata["tags"],
             privacy_status=resolved["privacy_status"],
@@ -6726,6 +6920,19 @@ def _publish_one(
         )
     except (PublishingGateError, PublisherNotConfigured) as exc:
         return {"status": SKIPPED, "reason": sentence(error_words(exc)), **error_fields(exc)}
+    except (ValueError, OSError) as exc:
+        # A row that changed under the gate, an asset gone, a file the hash could not read:
+        # this film's upload, not the studio's day. Raised, it made the stage HARD, opened
+        # safe mode and stopped autonomy until the Owner cleared both; the film is offered
+        # again tomorrow instead.
+        return {
+            "status": SKIPPED,
+            "reason": sentence(
+                f"Publicarea «{metadata['title']}» nu s-a putut face acum: "
+                f"{type(exc).__name__}: {exc}"
+            ),
+            "publish_fault": asset_id,
+        }
 
     went_out = published["status"] in OUT_ON_THE_CHANNEL
     with Session(engine) as session, session.begin():
@@ -6743,10 +6950,10 @@ def _publish_one(
                 session,
                 memory_class="HISTORICAL_EVENT",
                 content=(
-                    f"Published “{metadata['title'][:100]}” to {channel_name} "
+                    f"Published “{metadata['title']}” to {channel_name} "
                     f"({resolved['release_privacy']}): {published['status']}."
                     if went_out
-                    else f"Upload of “{metadata['title'][:100]}” to {channel_name} did not "
+                    else f"Upload of “{metadata['title']}” to {channel_name} did not "
                     f"go out: {published['status']}."
                 ),
                 source_type="event",
@@ -6762,11 +6969,11 @@ def _publish_one(
         return {
             "status": COMPLETED,
             "reason": (
-                f"Filmul «{metadata['title'][:100]}» nu a urcat pe {channel_name}: "
+                f"Filmul «{metadata['title']}» nu a urcat pe {channel_name}: "
                 f"{publication_status(published['status'])}"
                 + (f" — {detail}" if detail else "")
                 + "."
-            )[:500],
+            ),
             "asset_id": asset_id,
             "publication_id": published["id"],
             "publication_status": published["status"],
@@ -6983,7 +7190,7 @@ def _publish(
         first = published[0]
         return _outcome(
             COMPLETED,
-            reason[:500],
+            reason,
             published=published,
             not_published=not_published,
             publication_id=first["publication_id"],
@@ -7197,7 +7404,7 @@ def build_stage_runners(
             if refusal is not None:
                 outcome = _outcome(
                     SKIPPED,
-                    refusal["reason"][:500],
+                    refusal["reason"],
                     autonomy_mode=refusal["mode"],
                     risk_tier=refusal["tier"],
                     governance_status=refusal["status"],

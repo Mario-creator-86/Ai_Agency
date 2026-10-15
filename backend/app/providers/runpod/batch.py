@@ -466,7 +466,9 @@ def chunk_items(config: RunPodConfig, operation: str, count: int) -> list[range]
     return [range(start, min(count, start + per_chunk)) for start in range(0, count, per_chunk)]
 
 
-def chunk_policy(config: RunPodConfig, operation: str, items: int) -> dict[str, int]:
+def chunk_policy(
+    config: RunPodConfig, operation: str, items: int, *, ahead_seconds: int = 0
+) -> dict[str, int]:
     """RunPod's per-job policy: the execution timeout (ms) and the ttl (ms)."""
     seconds = min(
         int(config.execution_timeout_cap_seconds),
@@ -484,7 +486,7 @@ def chunk_policy(config: RunPodConfig, operation: str, items: int) -> dict[str, 
     )
     return {
         "executionTimeout": seconds * 1000,
-        "ttl": (seconds + int(config.queue_wait_seconds) + cache_wait) * 1000,
+        "ttl": (seconds + int(config.queue_wait_seconds) + cache_wait + ahead_seconds) * 1000,
     }
 
 
@@ -1547,7 +1549,12 @@ async def _land(
 
 
 async def _upload(
-    bucket: BucketConfig, content: bytes, transport: Transport, cache: dict[str, contract.InputRef]
+    bucket: BucketConfig,
+    content: bytes,
+    transport: Transport,
+    cache: dict[str, contract.InputRef],
+    *,
+    url_ttl: int = INPUT_URL_TTL,
 ) -> contract.InputRef:
     sha = hashlib.sha256(content).hexdigest()
     if sha in cache:
@@ -1556,7 +1563,7 @@ async def _upload(
     key = contract.input_key(bucket.prefix, sha, ext)
     await s3.put_bytes(bucket, key, content, mime, transport)
     ref: contract.InputRef = {
-        "url": s3.presign(bucket, "GET", key, INPUT_URL_TTL),
+        "url": s3.presign(bucket, "GET", key, url_ttl),
         "sha256": sha,
         "mime": mime,
     }
@@ -1564,23 +1571,43 @@ async def _upload(
     return ref
 
 
-def submit_round(
+@dataclass
+class PreparedBatch:
+    run: BatchRun
+    to_send: list[tuple[SubmittedItem, GenerationJob]]
+    operation: Literal["image", "video"]
+    bodies: list[dict[str, Any]]
+
+
+def discard_prepared(prepared: PreparedBatch) -> None:
+    """The GPU never opened, or STOP prevented dispatch: every NEW item is proven unsent.
+
+    Tracked older purchases are untouched. This is never called after dispatch begins.
+    """
+    store = JobStore(prepared.run.engine)
+    for _item, row in prepared.to_send:
+        if row.error_code == UNCERTAIN or row.remote_job_id:
+            continue  # a previous unanswered purchase needs its own off/queue proof
+        store.update(
+            row.id,
+            status="FAILED",
+            error_code=UNSENT,
+            finished_at=now(),
+            cost_value="0",
+            gpu_seconds_value="0",
+        )
+
+
+def prepare_round(
     config: RunPodConfig,
     engine: Engine,
     requests: Sequence[BatchRequest],
     *,
     integration_id: str | None,
     storage_root: Path,
-    session: GpuSession,
-    on_submitted: Callable[[SubmittedItem], None],
     transport: Transport | None = None,
-    should_stop: Callable[[], str | None] | None = None,
-) -> BatchRun:
-    """Reserve every item, upload the pictures, POST the round's chunks back-to-back, save
-    each job id on its items and call ``on_submitted`` per item; no poll here.
-
-    Raises `BatchRefused` when nothing of the round left (nothing queued, nothing bought).
-    ``should_stop`` (else `STEP_STOP`) is the step's stop: words when no /run may leave now."""
+) -> PreparedBatch:
+    """Reserve, upload and validate the WHOLE bundle before GPU-on or any /run."""
     if not requests:
         raise ValueError("an empty round is not submitted")
     operations = {r.operation for r in requests}
@@ -1608,7 +1635,7 @@ def submit_round(
         integration_id=integration_id,
         storage_root=storage_root,
         transport=transport,
-        session_id=getattr(session, "id", None),
+        session_id=None,
     )
     to_send: list[tuple[SubmittedItem, GenerationJob]] = []
     for request in requests:
@@ -1639,21 +1666,81 @@ def submit_round(
                 f"{JOURNAL_UNWRITABLE_RO} {_NOTHING_SENT_RO}",
                 after_purchase_ro=f"{JOURNAL_UNWRITABLE_RO} {REST_NOT_SENT_RO}",
             ) from exc
+        except MediaProviderError as exc:
+            refused = (
+                exc if isinstance(exc, BatchRefused) else BatchRefused("INPUT_INVALID", str(exc))
+            )
+            _unsent_rest(run, store, to_send, refused)
+            if refused is exc:
+                raise
+            raise refused from exc
         item = SubmittedItem(effective, row.id, row.idempotency_key, row.remote_job_id)
         run.items.append(item)
         if action == "TRACK":
             run.chunks.append(_Chunk(row.batch_remote_id, [item], {}, time.monotonic()))
             continue
         to_send.append((item, row))
-    if not to_send:
-        return run
-    if config.mock:
-        _submit_mock(run, to_send, session, on_submitted)
-    else:
-        stop = should_stop if should_stop is not None else STEP_STOP.get()
-        asyncio.run(_submit_remote(run, to_send, session, on_submitted, operation, stop))
-    _note_fresh_seeds(run, [item for item, _row in to_send])
+    # Keep compatible model work contiguous across chunks, avoiding repeated weight swaps.
+    # Creative order, source frames and idempotency still belong to each original scene.
+    to_send.sort(key=lambda pair: pair[0].request.model)
+    bodies = (
+        asyncio.run(_prepare_remote(run, to_send, operation)) if to_send and not config.mock else []
+    )
+    return PreparedBatch(run, to_send, operation, bodies)
+
+
+def submit_prepared(
+    prepared: PreparedBatch,
+    *,
+    session: GpuSession,
+    on_submitted: Callable[[SubmittedItem], None],
+    should_stop: Callable[[], str | None] | None = None,
+) -> BatchRun:
+    run, to_send = prepared.run, prepared.to_send
+    run.session_id = getattr(session, "id", None)
+    if to_send:
+        if run.config.mock:
+            _submit_mock(run, to_send, session, on_submitted)
+        else:
+            stop = should_stop if should_stop is not None else STEP_STOP.get()
+            asyncio.run(
+                _submit_remote(
+                    run,
+                    to_send,
+                    session,
+                    on_submitted,
+                    prepared.operation,
+                    stop,
+                    bodies=prepared.bodies,
+                )
+            )
+        _note_fresh_seeds(run, [item for item, _row in to_send])
     return run
+
+
+def submit_round(
+    config: RunPodConfig,
+    engine: Engine,
+    requests: Sequence[BatchRequest],
+    *,
+    integration_id: str | None,
+    storage_root: Path,
+    session: GpuSession,
+    on_submitted: Callable[[SubmittedItem], None],
+    transport: Transport | None = None,
+    should_stop: Callable[[], str | None] | None = None,
+) -> BatchRun:
+    prepared = prepare_round(
+        config,
+        engine,
+        requests,
+        integration_id=integration_id,
+        storage_root=storage_root,
+        transport=transport,
+    )
+    return submit_prepared(
+        prepared, session=session, on_submitted=on_submitted, should_stop=should_stop
+    )
 
 
 #: The event of each item RunPod took on a fresh seed instead of the one its stage asked for
@@ -2078,14 +2165,11 @@ def _unsent_rest(
         run._pending_report.append(ItemOutcome(item, "FAILED", None, None, None, UNSENT))
 
 
-async def _submit_remote(
+async def _prepare_remote(
     run: BatchRun,
     to_send: list[tuple[SubmittedItem, GenerationJob]],
-    session: GpuSession,
-    on_submitted: Callable[[SubmittedItem], None],
     operation: Literal["image", "video"],
-    should_stop: Callable[[], str | None] | None = None,
-) -> None:
+) -> list[dict[str, Any]]:
     config = run.config
     bucket = config.bucket()
     if bucket is None:  # ready_for_generation checked it; kept for the type checker
@@ -2094,10 +2178,35 @@ async def _submit_remote(
     store = JobStore(run.engine)
     cache: dict[str, contract.InputRef] = {}
     built: list[contract.BatchItem] = []
+    spans = chunk_items(config, operation, len(to_send))
+    policies = []
+    ahead = 0
+    cache_wait = int(config.model_cache_wait_seconds) if config.model_source == "cache" else 0
+    for span in spans:
+        policy = chunk_policy(config, operation, len(span), ahead_seconds=ahead)
+        policies.append(policy)
+        ahead += policy["executionTimeout"] // 1000 + cache_wait
+    # RunPod TTL and S3 signatures both have a seven-day maximum. A bundle that cannot
+    # stay valid is refused whole, never silently queued with expiring starting images.
+    url_ttl = max(
+        INPUT_URL_TTL,
+        max(p["ttl"] for p in policies) // 1000
+        + config.queue_wait_seconds
+        + config.gpu_busy_wait_seconds,
+    )
+    if url_ttl > contract.MAX_URL_TTL:
+        refused = BatchRefused(
+            "BUNDLE_TOO_LONG", "Lotul depășește durata maximă a cererilor RunPod."
+        )
+        _unsent_rest(run, store, to_send, refused)
+        raise refused
     try:
         for item, row in to_send:
             request = item.request
-            refs = [await _upload(bucket, b, transport, cache) for b in request.references]
+            refs = [
+                await _upload(bucket, b, transport, cache, url_ttl=url_ttl)
+                for b in request.references
+            ]
             entry: dict[str, Any] = {
                 "idempotency_key": row.idempotency_key,
                 "model": request.model,
@@ -2115,7 +2224,7 @@ async def _submit_remote(
                 if request.source_image is None:
                     raise BatchRefused("NO_FIRST_FRAME", "Cadrul nu are imaginea de pornire.")
                 entry["source_image"] = await _upload(
-                    bucket, request.source_image, transport, cache
+                    bucket, request.source_image, transport, cache, url_ttl=url_ttl
                 )
                 entry["duration"] = float(request.duration or 5)
                 entry["fps"] = contract.CLIP_FPS
@@ -2144,6 +2253,49 @@ async def _submit_remote(
                 f"Imaginile de pornire nu au putut fi urcate în bucket. {REST_NOT_SENT_RO}"
             ),
         ) from exc
+    bodies = []
+    try:
+        for span, policy in zip(spans, policies, strict=True):
+            items = [{**built[i], "index": n} for n, i in enumerate(span)]
+            keys = [str(it["idempotency_key"]) for it in items]
+            body = {
+                "input": {
+                    "contract": contract.CONTRACT,
+                    "operation": operation,
+                    "batch_key": contract.batch_key(keys),
+                    "items": items,
+                    "output": {"prefix": bucket.prefix, "url_ttl_seconds": bucket.url_ttl_seconds},
+                    "time_budget_seconds": max(
+                        1, policy["executionTimeout"] // 1000 - HANDLER_MARGIN_SECONDS
+                    ),
+                },
+                "policy": policy,
+            }
+            contract.validate_input(body["input"])
+            bodies.append(body)
+    except contract.ContractError as exc:
+        refused = BatchRefused(
+            "REQUEST_INVALID",
+            f"Cererea către RunPod nu respectă contractul lucrătorului ({str(exc)[:200]}). "
+            f"{_NOTHING_SENT_RO}",
+        )
+        _unsent_rest(run, store, to_send, refused)
+        raise refused from exc
+    return bodies
+
+
+async def _submit_remote(
+    run: BatchRun,
+    to_send: list[tuple[SubmittedItem, GenerationJob]],
+    session: GpuSession,
+    on_submitted: Callable[[SubmittedItem], None],
+    operation: Literal["image", "video"],
+    should_stop: Callable[[], str | None] | None = None,
+    *,
+    bodies: list[dict[str, Any]],
+) -> None:
+    config = run.config
+    store = JobStore(run.engine)
     endpoint = config.endpoint_for(operation)
     client = RunPodClient(
         config.model_copy(update={"mode": "serverless", "endpoint_id": endpoint}),
@@ -2180,38 +2332,10 @@ async def _submit_remote(
             if not sent_any and not uncertain_any:
                 raise refused
             break
-        items: list[dict[str, Any]] = [{**built[i], "index": n} for n, i in enumerate(span)]
+        body = bodies[number]
+        items = body["input"]["items"]
         keys = [str(it["idempotency_key"]) for it in items]
-        policy = chunk_policy(config, operation, len(items))
-        body = {
-            "input": {
-                "contract": contract.CONTRACT,
-                "operation": operation,
-                "batch_key": contract.batch_key(keys),
-                "items": items,
-                "output": {"prefix": bucket.prefix, "url_ttl_seconds": bucket.url_ttl_seconds},
-                "time_budget_seconds": max(
-                    1, policy["executionTimeout"] // 1000 - HANDLER_MARGIN_SECONDS
-                ),
-            },
-            "policy": policy,
-        }
-        try:
-            contract.validate_input(body["input"])
-        except contract.ContractError as exc:
-            # The studio's own request breaks the worker's contract: refused here, before any
-            # /run, so nothing of it was bought (before, it went up raw and the step booked
-            # the round as a purchase).
-            said = f"Cererea către RunPod nu respectă contractul lucrătorului ({str(exc)[:200]})."
-            refused = BatchRefused(
-                "REQUEST_INVALID",
-                f"{said} {_NOTHING_SENT_RO}",
-                after_purchase_ro=f"{said} {REST_NOT_SENT_RO}",
-            )
-            _unsent_rest(run, store, [*pairs, *rest], refused)
-            if not sent_any and not uncertain_any:
-                raise refused from exc
-            break
+        policy = body["policy"]
         chunk_items_list = [item for item, _row in pairs]
         posted = await _post_run(
             run,

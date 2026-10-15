@@ -165,7 +165,7 @@ def shot_pack(count: int) -> dict:
 def test_the_shipped_look_is_one_versioned_block_that_asks_for_no_writing():
     look = load_series_look()
 
-    assert look["status"] == "PROPOSED" and look["version"] == 2 and look["in_use"]
+    assert look["status"] == "PROPOSED" and look["version"] == 3 and look["in_use"]
     assert look["series_key"] == "office_serial"
     block = look["block"]
     assert block.startswith("Warm hand-drawn 2D animation")
@@ -177,7 +177,9 @@ def test_the_shipped_look_is_one_versioned_block_that_asks_for_no_writing():
     assert _TEXT_REQUEST.search(block) is None
     # Room for the room, the people, the action and the camera under the cap.
     assert len(block) <= look["max_prompt_chars"] // 2
-    assert look["max_prompt_chars"] == 980
+    from runpod_worker.contract import MAX_PROMPT
+
+    assert look["max_prompt_chars"] == MAX_PROMPT
 
 
 def test_a_look_switched_off_is_no_look(monkeypatch, tmp_path):
@@ -208,20 +210,20 @@ def test_every_serial_shot_opens_with_the_look_and_names_its_room(engine, staffe
     assert scenes
     for scene in scenes:
         assert scene.visual_prompt.startswith(block), scene.visual_prompt[:200]
-        assert len(scene.visual_prompt) <= 980
+        assert len(scene.visual_prompt) <= load_series_look()["max_prompt_chars"]
         assert "Location: Content, floor 2" in scene.visual_prompt
         assert _TEXT_REQUEST.search(scene.visual_prompt) is None
         # The people in frame, from their bibles, facing the viewer.
         assert "facing the viewer" in scene.visual_prompt
         assert "Kael" in scene.visual_prompt and "Sandy blonde spiky hair" in scene.visual_prompt
-        assert (scene.prompt_json or {}).get("series_look_version") == 2
+        assert (scene.prompt_json or {}).get("series_look_version") == 3
     with Session(engine) as session:
         board = session.get(Storyboard, board_id)
         bible = dict(board.visual_bible_json or {})
     # The look is the series', read from the proposal and never decided by a model.
     assert bible["source"] == "series look"
     assert bible["style"] == block
-    assert bible["version"] == 2
+    assert bible["version"] == 3
 
 
 def test_the_shot_sizes_vary_from_establishing_to_singles(engine, staffed, monkeypatch):
@@ -288,7 +290,7 @@ def test_the_prompt_agent_writes_the_serial_shots_with_the_look_and_the_room(
     assert all(shot["from_model"] for shot in result["shots"])
     for scene in scenes_of(engine, board_id):
         assert scene.visual_prompt.startswith(block)
-        assert len(scene.visual_prompt) <= 980
+        assert len(scene.visual_prompt) <= load_series_look()["max_prompt_chars"]
         assert "Location: Content, floor 2" in scene.visual_prompt
         assert "RENDER 91%" not in scene.visual_prompt
         assert _TEXT_REQUEST.search(scene.visual_prompt) is None
@@ -296,7 +298,7 @@ def test_the_prompt_agent_writes_the_serial_shots_with_the_look_and_the_room(
         # The light is the series', not the model's idea of the day.
         assert "noon sunlight" not in scene.visual_prompt
         assert scene.prompt_json["from_model"] is True
-        assert scene.prompt_json["series_look_version"] == 2
+        assert scene.prompt_json["series_look_version"] == 3
 
 
 def test_an_unreadable_answer_leaves_the_shots_the_studio_composed(engine, staffed, monkeypatch):
@@ -365,13 +367,13 @@ def test_a_new_look_version_has_the_shots_described_again(engine, staffed, monke
     describe_serial_shots(engine, models(), board_id, str(uuid4()))
     assert len(calls) == 1
 
-    use_look(monkeypatch, tmp_path, version=3, style_block="Claymation, warm light. Vertical 9:16.")
+    use_look(monkeypatch, tmp_path, version=4, style_block="Claymation, warm light. Vertical 9:16.")
     describe_serial_shots(engine, models(), board_id, str(uuid4()))
 
     assert len(calls) == 2
     for scene in scenes_of(engine, board_id):
         assert scene.visual_prompt.startswith("Claymation, warm light. Vertical 9:16.")
-        assert scene.prompt_json["series_look_version"] == 3
+        assert scene.prompt_json["series_look_version"] == 4
 
 
 def test_a_serial_still_is_one_moment_in_a_fixed_frame(engine, staffed, monkeypatch):

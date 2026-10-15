@@ -236,7 +236,7 @@ def review_narration(
         engine,
         reviewer_id,
         result["id"],
-        f"Recenzia narațiunii, blocată: {title[:80]}",
+        f"Recenzia narațiunii, blocată: {title}",
         text,
         correlation,
     )
@@ -246,9 +246,9 @@ def review_narration(
     if not isinstance(review, NarrationReview):
         raise ReviewError("Recenzia narațiunii nu respectă forma cerută; nimic nu a fost salvat")
     with Session(engine) as session, session.begin():
-        summary = f"Narration review of “{title[:80]}”: {review.verdict}"
+        summary = f"Narration review of “{title}”: {review.verdict}"
         if review.notes:
-            summary += " — " + "; ".join(review.notes[:3])
+            summary += " — " + "; ".join(review.notes)
         remember(
             session,
             memory_class="AGENT_OPINION",
@@ -260,7 +260,7 @@ def review_narration(
         message = post_message(
             session,
             intent="ESCALATE" if review.verdict == "FLAG" else "STATUS",
-            subject=summary[:200],
+            subject=summary,
             body={
                 "storyboard_id": storyboard_id,
                 "verdict": review.verdict,
@@ -485,7 +485,7 @@ def review_failed_render(
         "checks": reading["report"]["checks_json"],
         "production_purposes": reading["production"].get("purposes"),
     }
-    payload = json.dumps(facts, ensure_ascii=False, default=str)[:12000]
+    payload = json.dumps(facts, ensure_ascii=False, default=str)
     prompt = _RENDER_INSTRUCTIONS + wrap_in_inert_boundary(payload, "qc-report")
     result = _run(
         engine,
@@ -544,7 +544,7 @@ def review_failed_render(
         message = post_message(
             session,
             intent="ESCALATE",
-            subject=f"Randarea nu a trecut QC: {diagnosis.diagnosis[:150]}",
+            subject=f"Randarea nu a trecut QC: {diagnosis.diagnosis}",
             body={"report_id": report_id, "media_asset_id": media_asset_id, **verdict},
             body_text=summary_ro,
             from_agent_id=reviewer_id,
@@ -596,7 +596,7 @@ DIRECTOR_QC_TASK = "director_qc_review"
 #: settled; her second looks settle what they overturned; the small traces accepted on a take
 #: (``accepted_on_takes``) are accepted; a Motion QC fallback needs no lesson; a measured
 #: serious defect whose only fix was the free fix already made goes to his card.
-DIRECTOR_QC_TEMPLATE_VERSION = "director-qc-v10"
+DIRECTOR_QC_TEMPLATE_VERSION = "director-qc-v11"
 #: Her verdict on one finding of the report.
 QC_VERDICTS = ("REAL", "FALSE", "OWNER_CHOICE", "ACCEPTED")
 #: The longest lesson she writes for future prompts, in characters.
@@ -1347,6 +1347,10 @@ _DIRECTOR_QC_INSTRUCTIONS = (
     "still but never paid motion; a free fix (card, audio, encode) is made once per film. A "
     "scene with approved_new_take_not_in_film has a take bought for your earlier repair and "
     "approved: listing its still joins that take into the film, nothing is bought again. "
+    "Only the CURRENT approved_new_take_not_in_film list proves this reuse: its prompt, "
+    "reference and file have been verified. A take ID mentioned in old correspondence is "
+    "not permission to reuse it. When the list is empty, never say a still REPAIR is free "
+    "or already bought: it requires a new purchase under the stated financial gates. "
     "your_looks are your own looks at pictures bought for your earlier repairs that a gate "
     "refused: what you chose or rejected, and why. A "
     "REPAIR must list at least one redo that can be carried out now (or one only his limits "
@@ -1420,7 +1424,7 @@ def review_film_qc(
         raise ReviewError("Raportul nu are constatări de judecat")
     scenes = {int(item["scene_index"]) for item in context.get("scenes") or []}
     film = context.get("film") or {}
-    title = str(film.get("title") or "")[:80]
+    title = str(film.get("title") or "")
     # Nothing at all can be redone (his limits spent, his takes, his LOCAL_MOVE, the free fix
     # made): she is told before she answers, since `structured_run` asks the second time with
     # the same prompt and a refused REPAIR would only be repeated (2026-10-10 review).
@@ -1486,7 +1490,7 @@ def review_film_qc(
     if parsed is None:
         blocker = blocker_of(str(last.get("output_text") or ""))
         if blocker is not None:
-            raise ReviewError(f"Directoarea s-a oprit: {blocker.reason[:300]}")
+            raise ReviewError(f"Directoarea s-a oprit: {blocker.reason}")
         raise ReviewError(
             "Decizia Directoarei nu respectă forma cerută nici a doua oară (rularea "
             f"{stage_status(str(last.get('status')))}: "
@@ -1635,9 +1639,7 @@ def review_bought_pictures(
         what="clips" if shot else "stills",
         gate="the clip QC" if shot else "the stills gate",
         layout=_LOOK_LAYOUT["shot" if shot else "still"],
-    ) + wrap_in_inert_boundary(
-        json.dumps(shown, ensure_ascii=False, default=str)[:12000], "director-look"
-    )
+    ) + wrap_in_inert_boundary(json.dumps(shown, ensure_ascii=False, default=str), "director-look")
     try:
         parsed, first, second = structured_run(
             engine,
@@ -1665,7 +1667,7 @@ def review_bought_pictures(
     if parsed is None:
         blocker = blocker_of(str(last.get("output_text") or ""))
         if blocker is not None:
-            raise ReviewError(f"Directoarea s-a oprit: {blocker.reason[:300]}")
+            raise ReviewError(f"Directoarea s-a oprit: {blocker.reason}")
         raise ReviewError(
             "Privirea Directoarei nu respectă forma cerută nici a doua oară (rularea "
             f"{stage_status(str(last.get('status')))}: "
@@ -1680,7 +1682,7 @@ def review_bought_pictures(
                 f"{parsed.decision}"
                 + (f" candidate {parsed.candidate}" if parsed.candidate else "")
                 + f" — {parsed.reason}"
-            )[:2000],
+            ),
             source_type="run",
             source_id=last["id"],
             agent_id=director_id,
@@ -1977,7 +1979,7 @@ def prepare_publication(
             }
         if identity is not None:
             facts = {"script_title": script_title, **identity, **facts}
-    payload = json.dumps(facts, ensure_ascii=False)[:12000]
+    payload = json.dumps(facts, ensure_ascii=False)
     prompt = (
         audience_language_line(language)
         + _PUBLICATION_INSTRUCTIONS
@@ -1999,7 +2001,7 @@ def prepare_publication(
         engine,
         publisher_id,
         result["id"],
-        f"Publicarea, blocată: {script_title[:80]}",
+        f"Publicarea, blocată: {script_title}",
         text,
         correlation,
     )
@@ -2089,8 +2091,8 @@ def prepare_publication(
             session,
             memory_class="AGENT_OPINION",
             content=(
-                f"Publication of “{metadata.title[:80]}”: {metadata.verdict}"
-                + (" — " + "; ".join(metadata.hold_reasons[:3]) if metadata.hold_reasons else "")
+                f"Publication of “{metadata.title}”: {metadata.verdict}"
+                + (" — " + "; ".join(metadata.hold_reasons) if metadata.hold_reasons else "")
             ),
             source_type="run",
             source_id=result["id"],
@@ -2099,7 +2101,7 @@ def prepare_publication(
         message = post_message(
             session,
             intent="ESCALATE" if metadata.verdict == "HOLD" else "STATUS",
-            subject=(f"Publicare {publication_verdict(metadata.verdict)}: {metadata.title[:120]}"),
+            subject=(f"Publicare {publication_verdict(metadata.verdict)}: {metadata.title}"),
             body={
                 "media_asset_id": media_asset_id,
                 "channel_id": channel_id,

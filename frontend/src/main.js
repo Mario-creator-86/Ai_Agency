@@ -1537,6 +1537,7 @@ const TIMELINE_LABEL = {
 /** What a run without an answer means, in words. */
 const RUN_STATUS = {
   EMPTY_OUTPUT: 'Modelul nu a returnat text utilizabil.',
+  INCOMPLETE_OUTPUT: 'Modelul s-a oprit înainte de finalul răspunsului. Textul primit este păstrat.',
   // Runs recorded before an empty answer counted as a failure.
   SUCCEEDED: 'Niciun text în răspuns.',
   BLOCKED_POLICY: 'Blocat de politică.',

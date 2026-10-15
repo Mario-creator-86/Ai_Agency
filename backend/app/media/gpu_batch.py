@@ -196,6 +196,19 @@ def _keep_alive(session: Any) -> str | None:
     return None
 
 
+@contextmanager
+def _unsubmitted(adapter: Any, prepared: Any) -> Iterator[list[Any]]:
+    ready = [prepared]
+    try:
+        yield ready
+    finally:
+        if ready[0] is not None:
+            try:
+                adapter.discard_prepared(ready[0])
+            except Exception as exc:  # noqa: BLE001 - refusal is not hidden by journal trouble
+                logger.warning("runpod_prepared_not_discarded", extra={"error": type(exc).__name__})
+
+
 def _settle_earlier_holds(engine: Engine, session: Any) -> None:
     """A scene an earlier unanswered /run held, whose items this proof just covered (a redo
     sends the same keys): no claim and no manifest for those keys and nothing queued means
@@ -224,6 +237,7 @@ def _prove_unsent(
     price_credits: Callable[[list[BatchRequest]], float],
     overhead: float,
     on_unsent: Callable[[list[ItemOutcome], dict[str, Any]], None] | None,
+    accounting: Any = None,
 ) -> None:
     """The proof of nothing queued for the round that ended the step (`BatchRun.prove_unsent`),
     read after the session's close. Never sends anything."""
@@ -267,7 +281,10 @@ def _prove_unsent(
     if callable(mark):
         mark(proof)
         _settle_earlier_holds(engine, session)
-    meter.committed -= given_back
+    if accounting is None:
+        meter.committed -= given_back
+    else:
+        given_back = accounting.refund([o.item.request for o in proven], whole=whole)
     summary["not_queued_items"] = len(proven)
     summary["not_queued_credits"] = given_back
     if every_uncertain and summary.get("stopped") == UNCERTAIN:
@@ -294,6 +311,7 @@ def run_rounds(
     credits_for_seconds: Callable[[float], float] | None = None,
     on_unsent: Callable[[list[ItemOutcome], dict[str, Any]], None] | None = None,
     on_wait: Callable[[], None] | None = None,
+    accounting: Any = None,
 ) -> dict[str, Any]:
     """Buy the step's rounds inside one GPU session; returns what happened.
 
@@ -358,166 +376,215 @@ def run_rounds(
             return reason
         return guard.stop_reason(None) if guard is not None else None
 
-    with _gpu_for_rounds(
-        engine, adapter, purpose=purpose, permit=permit, meter=meter, refused=not_opened
-    ) as session:
-        requests = list(first_round) if session is not None else []
-        if not_opened:
-            ended_by = not_opened[0]
-        while requests:
-            reason = stop_reason()
-            if reason:
-                summary["stopped"] = reason
-                break
-            left = float(cap_left())
-            fitted = fit_round(requests, price_credits, left)
-            in_round = {request.scene_id for request in fitted}
-            # What the cap left out of this round whole (a scene none of whose requests fit)
-            # never had its turn: it goes ahead of the next round's re-rolls and retries, in
-            # `fit_round`'s order, if the cap then has room. A scene cut in half (one of its
-            # candidates sent) is decided on what it got, as before.
-            carried = [request for request in requests if request.scene_id not in in_round]
-            if len(fitted) < len(requests):
-                summary["cap_stop"] = CAP_STOP.format(price=price_credits(requests), left=left)
-            if not fitted:
-                summary["stopped"] = summary["cap_stop"]
-                break
-            price = float(price_credits(fitted))
-            meter.committed += price
-            meter.attempts += 1
-            try:
-                # The step's stop rides along: read before every wait for a paused endpoint
-                # and before every /run sent again after it (`batch.STEP_STOP`).
-                with step_stop(stop_reason):
-                    run = adapter.submit_batch(fitted, session=session, on_submitted=on_submitted)
-            except MediaProviderError as exc:
-                if not exc.unsent:
-                    raise
-                # RunPod queued nothing of the round: never sent, or refused whole (the batch
-                # raises every such answer as an unsent `BatchRefused`, `refused_unqueued`; one
-                # list, 2026-10-09). Nothing charged: the round's price goes back.
-                meter.committed -= price
-                meter.attempts -= 1
-                if summary["rounds"] == 0 and not _bought(meter):
-                    # The step bought nothing at all: it refuses, and the stage books nothing.
-                    status = _stop_status(guard, exc)
-                    if status is not None:
-                        raise BatchRefused(
-                            status, str(getattr(exc, "reason_ro", None) or exc)
-                        ) from exc
-                    raise
-                # An earlier round, or the step's per-second scenes, were bought: the step ends
-                # on what it bought (booked by the sheet), never «nothing was bought».
-                ended_by = exc
-                summary["forced_off"] = summary["forced_off"] or exc.code == "GPU_FORCED_OFF"
-                break
-            summary["rounds"] += 1
-            summary["items_sent"] += len(fitted)
-            summary["overhead_credits"] += overhead
-            summary["remote_job_ids"] += list(run.remote_job_ids)
-            outcomes: list[ItemOutcome] = []
-            halted: str | None = None
-            forced: str | None = None
-            drains = 0
-            while True:
-                for outcome in run.poll():
-                    outcomes.append(outcome)
-                    on_outcome(outcome)
-                    if halted is None and forced is None:
-                        # A judgement may take minutes: the session is renewed after each one,
-                        # so the guard never takes a judging step for a dead one.
-                        forced = _keep_alive(session)
-                if forced is not None and halted is None:
-                    summary["forced_off"] = True
-                    halted = summary["stopped"] = forced
-                    if not run.done():
-                        run.cancel(halted)
-                    continue
-                found = getattr(run, "weights_problem", None)
-                if found is not None and problem is None:
-                    # The endpoint holds other weights: nothing more is made with them.
-                    problem = found
-                    summary["weights_problem"] = found.as_dict()
-                    if halted is None:
-                        halted = summary["stopped"] = found.words_ro()
+    reason = stop_reason()
+    if reason or not first_round:
+        summary["stopped"] = reason
+        return summary
+
+    # Fit, upload and validate every chunk before opening a paid GPU session. The adapter
+    # keeps the exact reserved requests so dispatch cannot accidentally rebuild old prompts.
+    initial_fitted = fit_round(first_round, price_credits, float(cap_left()))
+    if not initial_fitted:
+        summary["cap_stop"] = summary["stopped"] = CAP_STOP.format(
+            price=price_credits(first_round), left=float(cap_left())
+        )
+        return summary
+    prepare = getattr(adapter, "prepare_batch", None)
+    prepared = prepare(initial_fitted) if callable(prepare) else None
+
+    with _unsubmitted(adapter, prepared) as ready:
+        reason = stop_reason()
+        if reason:
+            summary["stopped"] = reason
+            return summary
+        with _gpu_for_rounds(
+            engine, adapter, purpose=purpose, permit=permit, meter=meter, refused=not_opened
+        ) as session:
+            requests = list(first_round) if session is not None else []
+            if not_opened:
+                ended_by = not_opened[0]
+            while requests:
+                reason = stop_reason()
+                if reason:
+                    summary["stopped"] = reason
+                    break
+                left = float(cap_left())
+                fitted = fit_round(requests, price_credits, left)
+                in_round = {(request.project_id, request.scene_id) for request in fitted}
+                # What the cap left out of this round whole (a scene none of whose requests fit)
+                # never had its turn: it goes ahead of the next round's re-rolls and retries, in
+                # `fit_round`'s order, if the cap then has room. A scene cut in half (one of its
+                # candidates sent) is decided on what it got, as before.
+                carried = [r for r in requests if (r.project_id, r.scene_id) not in in_round]
+                if len(fitted) < len(requests):
+                    summary["cap_stop"] = CAP_STOP.format(price=price_credits(requests), left=left)
+                if not fitted:
+                    summary["stopped"] = summary["cap_stop"]
+                    break
+                price = float(price_credits(fitted))
+                if accounting is None:
+                    meter.committed += price
+                else:
+                    accounting.commit(fitted, price)
+                meter.attempts += 1
+                try:
+                    # The step's stop rides along: read before every wait for a paused endpoint
+                    # and before every /run sent again after it (`batch.STEP_STOP`).
+                    with step_stop(stop_reason):
+                        if ready[0] is not None:
+                            if fitted != initial_fitted:
+                                raise BatchRefused(
+                                    "STALE_BUNDLE",
+                                    "Plafonul lotului s-a schimbat; nu se trimite nimic.",
+                                )
+                            prepared_batch = ready[0]
+                            ready[0] = None  # after this point a failed call may have queued work
+                            run = adapter.submit_prepared(
+                                prepared_batch, session=session, on_submitted=on_submitted
+                            )
+                        else:
+                            run = adapter.submit_batch(
+                                fitted, session=session, on_submitted=on_submitted
+                            )
+                except MediaProviderError as exc:
+                    if not exc.unsent:
+                        raise
+                    # RunPod queued nothing of the round: never sent, or refused whole (the batch
+                    # raises every such answer as an unsent `BatchRefused`, `refused_unqueued`; one
+                    # list, 2026-10-09). Nothing charged: the round's price goes back.
+                    if accounting is None:
+                        meter.committed -= price
+                    else:
+                        accounting.refund(fitted, whole=True, rollback=True)
+                    meter.attempts -= 1
+                    if summary["rounds"] == 0 and not _bought(meter):
+                        # The step bought nothing at all: it refuses, and the stage books nothing.
+                        status = _stop_status(guard, exc)
+                        if status is not None:
+                            raise BatchRefused(
+                                status, str(getattr(exc, "reason_ro", None) or exc)
+                            ) from exc
+                        raise
+                    # An earlier round, or the step's per-second scenes, were bought: the step ends
+                    # on what it bought (booked by the sheet), never «nothing was bought».
+                    ended_by = exc
+                    summary["forced_off"] = summary["forced_off"] or exc.code == "GPU_FORCED_OFF"
+                    break
+                summary["rounds"] += 1
+                summary["items_sent"] += len(fitted)
+                summary["overhead_credits"] += overhead
+                summary["remote_job_ids"] += list(run.remote_job_ids)
+                outcomes: list[ItemOutcome] = []
+                halted: str | None = None
+                forced: str | None = None
+                drains = 0
+                while True:
+                    for outcome in run.poll():
+                        outcomes.append(outcome)
+                        on_outcome(outcome)
+                        if halted is None and forced is None:
+                            # A judgement may take minutes: the session is renewed after each one,
+                            # so the guard never takes a judging step for a dead one.
+                            forced = _keep_alive(session)
+                    if forced is not None and halted is None:
+                        summary["forced_off"] = True
+                        halted = summary["stopped"] = forced
                         if not run.done():
                             run.cancel(halted)
                         continue
-                if run.done():
-                    break
-                if halted is not None:
-                    # Cancelled: the remaining outcomes arrive on the next polls; the session's
-                    # close cancels and purges again whatever is still there.
-                    drains += 1
-                    if drains > 3:
+                    found = getattr(run, "weights_problem", None)
+                    if found is not None and problem is None:
+                        # The endpoint holds other weights: nothing more is made with them.
+                        problem = found
+                        summary["weights_problem"] = found.as_dict()
+                        if halted is None:
+                            halted = summary["stopped"] = found.words_ro()
+                            if not run.done():
+                                run.cancel(halted)
+                            continue
+                    if run.done():
                         break
+                    if halted is not None:
+                        # Cancelled: the remaining outcomes arrive on the next polls; the session's
+                        # close cancels and purges again whatever is still there.
+                        drains += 1
+                        if drains > 3:
+                            break
+                        sleep(poll_every)
+                        continue
+                    if run.deadline_passed():
+                        halted = TIMEOUT_STOP
+                    else:
+                        halted = stop_reason()
+                        if halted is None:
+                            try:
+                                session.renew()
+                            except GpuForcedOff as exc:
+                                summary["forced_off"] = True
+                                halted = exc.reason_ro
+                    if halted is not None:
+                        run.cancel(halted)
+                        summary["stopped"] = halted
+                        continue
+                    if on_wait is not None:
+                        on_wait()
+                        # Free Director calls may take time; renew before the next poll too.
+                        forced = _keep_alive(session)
                     sleep(poll_every)
-                    continue
-                if run.deadline_passed():
-                    halted = TIMEOUT_STOP
-                else:
-                    halted = stop_reason()
-                    if halted is None:
-                        try:
-                            session.renew()
-                        except GpuForcedOff as exc:
-                            summary["forced_off"] = True
-                            halted = exc.reason_ro
+                # Items RunPod never made are not charged: their share of the round goes back.
+                unmade = [
+                    o.item.request
+                    for o in outcomes
+                    if o.state == "CANCELLED" or (o.state == "FAILED" and o.error == UNSENT)
+                ]
+                kept = price
+                if unmade:
+                    given_back = max(0.0, price_credits(unmade) - overhead)
+                    if accounting is None:
+                        meter.committed -= given_back
+                    else:
+                        given_back = accounting.refund(unmade)
+                    kept -= given_back
+                    summary["cancelled_items"] += len(unmade)
+                settle = getattr(run, "settle", None)
+                if callable(settle):
+                    settle()  # the jobs' final times (items came from manifests)
+                measured_seconds = run.billed_seconds_estimate()
+                billed.append(measured_seconds)
+                if credits_for_seconds is not None and measured_seconds is not None:
+                    measured = float(credits_for_seconds(measured_seconds))
+                    if measured > kept + 1e-9:
+                        if accounting is None:
+                            meter.committed += measured - kept
+                        else:
+                            accounting.reconcile(measured - kept)
+                        summary["reconciled_credits"] += measured - kept
+                if any(o.error == UNCERTAIN for o in outcomes):
+                    uncertain_round = (run, outcomes, kept)
                 if halted is not None:
-                    run.cancel(halted)
-                    summary["stopped"] = halted
-                    continue
-                if on_wait is not None:
-                    on_wait()
-                    # Free Director calls may take time; renew before the next poll too.
-                    forced = _keep_alive(session)
-                sleep(poll_every)
-            # Items RunPod never made are not charged: their share of the round goes back.
-            unmade = [
-                o.item.request
-                for o in outcomes
-                if o.state == "CANCELLED" or (o.state == "FAILED" and o.error == UNSENT)
-            ]
-            kept = price
-            if unmade:
-                given_back = max(0.0, price_credits(unmade) - overhead)
-                meter.committed -= given_back
-                kept -= given_back
-                summary["cancelled_items"] += len(unmade)
-            settle = getattr(run, "settle", None)
-            if callable(settle):
-                settle()  # the jobs' final times (items came from manifests)
-            measured_seconds = run.billed_seconds_estimate()
-            billed.append(measured_seconds)
-            if credits_for_seconds is not None and measured_seconds is not None:
-                measured = float(credits_for_seconds(measured_seconds))
-                if measured > kept + 1e-9:
-                    meter.committed += measured - kept
-                    summary["reconciled_credits"] += measured - kept
-            if any(o.error == UNCERTAIN for o in outcomes):
-                uncertain_round = (run, outcomes, kept)
-            if halted is not None:
-                break
-            refused = getattr(run, "refused", None)
-            if refused is not None:
-                # The round stopped sending after an earlier chunk had left (a paused endpoint
-                # past its wait, the GPU off or the step stopped during it): what left was
-                # collected above, the rest was never sent (given back), and no further round
-                # goes out, so a re-roll never waits ~3 minutes on a paused endpoint again.
-                ended_by = refused
-                summary["forced_off"] = summary["forced_off"] or (
-                    getattr(refused, "code", None) == "GPU_FORCED_OFF"
-                )
-                break
-            if uncertain_round is not None:
-                # A round whose answer was lost: its items may have been served. Nothing more
-                # is sent in this step; the same keys go out again in a later step, where the
-                # worker's manifest makes them a free reuse.
-                summary["stopped"] = summary["stopped"] or UNCERTAIN
-                break
-            following = list(next_round(outcomes))
-            asked = {request.scene_id for request in following}
-            requests = [r for r in carried if r.scene_id not in asked] + following
+                    break
+                refused = getattr(run, "refused", None)
+                if refused is not None:
+                    # The round stopped sending after an earlier chunk had left (a paused endpoint
+                    # past its wait, the GPU off or the step stopped during it): what left was
+                    # collected above, the rest was never sent (given back), and no further round
+                    # goes out, so a re-roll never waits ~3 minutes on a paused endpoint again.
+                    ended_by = refused
+                    summary["forced_off"] = summary["forced_off"] or (
+                        getattr(refused, "code", None) == "GPU_FORCED_OFF"
+                    )
+                    break
+                if uncertain_round is not None:
+                    # A round whose answer was lost: its items may have been served. Nothing more
+                    # is sent in this step; the same keys go out again in a later step, where the
+                    # worker's manifest makes them a free reuse.
+                    summary["stopped"] = summary["stopped"] or UNCERTAIN
+                    break
+                following = list(next_round(outcomes))
+                asked = {(request.project_id, request.scene_id) for request in following}
+                requests = [
+                    r for r in carried if (r.project_id, r.scene_id) not in asked
+                ] + following
     if uncertain_round is not None:
         _prove_unsent(
             engine,
@@ -528,6 +595,7 @@ def run_rounds(
             price_credits=price_credits,
             overhead=overhead,
             on_unsent=on_unsent,
+            accounting=accounting,
         )
     if ended_by is not None:
         # After the proof: «nothing was bought» only when the step's meter holds nothing.

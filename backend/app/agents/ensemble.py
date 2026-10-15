@@ -620,23 +620,23 @@ def _critique_prompt(*, objective: str, answer: str, review_objective: str, evid
     parts = [_CRITIC_INSTRUCTIONS]
     if review_objective:
         parts.append(f"WHAT TO CHECK: {review_objective}\n")
-    parts.append(wrap_in_inert_boundary(objective[:6000], "original-task"))
+    parts.append(wrap_in_inert_boundary(objective, "original-task"))
     if evidence:
-        parts.append(wrap_in_inert_boundary(evidence[:6000], "evidence"))
-    parts.append(wrap_in_inert_boundary(answer[:6000], "answer-under-review"))
+        parts.append(wrap_in_inert_boundary(evidence, "evidence"))
+    parts.append(wrap_in_inert_boundary(answer, "answer-under-review"))
     return "\n".join(parts)
 
 
 def _judge_prompt(objective: str, evidence: str, primary: dict, peer: dict, critique: str) -> str:
     from app.factual.sanitizer import wrap_in_inert_boundary  # noqa: PLC0415
 
-    parts = [_JUDGE_INSTRUCTIONS, wrap_in_inert_boundary(objective[:6000], "question")]
+    parts = [_JUDGE_INSTRUCTIONS, wrap_in_inert_boundary(objective, "question")]
     if evidence:
-        parts.append(wrap_in_inert_boundary(evidence[:6000], "evidence"))
-    parts.append(wrap_in_inert_boundary((primary.get("output_text") or "")[:4000], "first-answer"))
-    parts.append(wrap_in_inert_boundary((peer.get("output_text") or "")[:4000], "second-answer"))
+        parts.append(wrap_in_inert_boundary(evidence, "evidence"))
+    parts.append(wrap_in_inert_boundary((primary.get("output_text") or ""), "first-answer"))
+    parts.append(wrap_in_inert_boundary((peer.get("output_text") or ""), "second-answer"))
     if critique:
-        parts.append(wrap_in_inert_boundary(critique[:4000], "critique"))
+        parts.append(wrap_in_inert_boundary(critique, "critique"))
     return "\n".join(parts)
 
 

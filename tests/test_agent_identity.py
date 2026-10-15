@@ -108,7 +108,7 @@ def test_every_employee_is_told_who_it_is_from_stored_data(engine, staffed):
             assert "NEVER LET PASS:" in identity.system and "STANDING RULES:" in identity.system
             assert f"YOUR CHARACTER: {bible.canonical_name}." in identity.system
             assert "WHAT YOU REMEMBER: nothing yet" in identity.system
-            assert identity.context["identity_version"] == "identity-v2"
+            assert identity.context["identity_version"] == "identity-v3-complete"
             assert identity.context["character_id"] == bible.id
             assert identity.context["memory_record_ids"] == []
         sarah = session.get(Agent, staffed["agents"]["Director"].id)
@@ -206,7 +206,7 @@ def test_a_run_carries_the_identity_and_records_what_the_model_was_given(
     assert model.calls[-1]["prompt"] == "Ești funcțională?"
     with Session(engine) as session:
         run = session.get(AgentRun, result["id"])
-        assert run.context_json["identity_version"] == "identity-v2"
+        assert run.context_json["identity_version"] == "identity-v3-complete"
         assert run.context_json["role_name"] == "FactChecker"
         assert run.context_json["system_sha256"]
     view = client.get(f"/api/v1/agents/{elena.id}/identity", headers=headers).json()

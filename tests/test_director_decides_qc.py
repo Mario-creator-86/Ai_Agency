@@ -142,9 +142,10 @@ def test_director_finding_keeps_the_end_of_the_actual_qc_diagnosis():
 class ScriptedModel:
     """Every agent's model: the Director answers ``director``; anyone else gets ``other``."""
 
-    def __init__(self, director, other: str = "{}"):
+    def __init__(self, director, other: str = "{}", accountant: str | None = None):
         self.director = director
         self.other = other
+        self.accountant = accountant
         self.asked: list[str] = []
 
     async def health_check(self):
@@ -154,7 +155,9 @@ class ScriptedModel:
         return []
 
     async def generate(self, model, prompt, **kwargs):
-        if "director-qc" in prompt:
+        if self.accountant is not None and 'hash="repurchase-verdict"' in prompt:
+            answer = self.accountant
+        elif "director-qc" in prompt:
             self.asked.append(prompt)
             answer = self.director(prompt) if callable(self.director) else self.director
         else:
@@ -1055,9 +1058,9 @@ def test_a_take_he_approved_without_final_is_redone_by_her_confirmed_repair_and_
 
     assert redo.calls == [
         ("still", 1, True),
+        ("still", 5, True),
         ("motion", 1, True),
         ("motion", 2, True),
-        ("still", 5, True),
         ("rejoin", None, False),
     ]
     assert redo.confirmed == [True, True, True, True]
@@ -1582,7 +1585,17 @@ def _real_film(
             model.is_available = True
         provider_id = session.scalar(select(Agent.provider_id))
     registry = ProviderRegistry()
-    registry.register(provider_id, ScriptedModel(director))
+    # Real redo path now includes Nadia's mandatory second-purchase gate. These fixtures
+    # exercise purchase policy and QC; her refusal/discussion is covered in its own tests.
+    registry.register(
+        provider_id,
+        ScriptedModel(
+            director,
+            accountant=json.dumps(
+                {"verdict": "APPROVE", "reason": "Corecția este justificată și în plafon."}
+            ),
+        ),
+    )
     return storyboard_id, asset_id, world, registry
 
 
@@ -2410,8 +2423,31 @@ def test_an_empty_round_is_not_delivered_by_the_next_rounds_still(engine):
     assert empty_id != made_id
 
 
+def _verified_current_picture(engine, take_id, tmp_path):
+    """Only tests about actual reuse need the same file/hash identity as production."""
+    import hashlib
+
+    from app.media.assembler import still_fields, take_hash
+
+    data = b"verified delivered picture " + take_id.encode()
+    path = tmp_path / f"{take_id}.png"
+    path.write_bytes(data)
+    with Session(engine) as session, session.begin():
+        take = session.get(SceneTake, take_id)
+        scene = session.scalar(
+            select(StoryboardScene).where(
+                StoryboardScene.storyboard_id == take.storyboard_id,
+                StoryboardScene.scene_index == take.scene_number,
+            )
+        )
+        take.prompt_hash = take_hash(still_fields(scene.visual_prompt, None), take.model_id)
+        take.path = str(path)
+        take.sha256 = hashlib.sha256(data).hexdigest()
+
+
 def test_a_motion_with_the_same_words_is_bought_from_a_new_still_without_turning_to_the_picture(
     engine,
+    tmp_path,
 ):
     """The cyclotron's scenes 4 and 5 (2026-10-12): their stills approved the day before and
     never animated were retired by the «same prompt» escalation and bought again (269 credits)
@@ -2429,7 +2465,8 @@ def test_a_motion_with_the_same_words_is_bought_from_a_new_still_without_turning
         # Scene 3's clip was made after its still: the still is the film's picture.
         assert stages._still_newer_than_film(session, film["board"], 3, film["asset"]) is False
     with Session(engine) as session, session.begin():
-        _take(session, film["board"], 5, "still", None)  # a new still, approved, in no film
+        take_id = _take(session, film["board"], 5, "still", None)
+    _verified_current_picture(engine, take_id, tmp_path)
     with Session(engine) as session:
         assert stages._still_newer_than_film(session, film["board"], 5, film["asset"]) is True
         # A scene the film has no still for, with no approved still either: nothing new.
@@ -2451,7 +2488,8 @@ def test_a_motion_with_the_same_words_is_bought_from_a_new_still_without_turning
         assert stages._still_newer_than_film(session, film["board"], 3, film["asset"]) is False
     time.sleep(0.01)
     with Session(engine) as session, session.begin():
-        _take(session, film["board"], 3, "still", None)  # approved after the film's clip
+        take_id = _take(session, film["board"], 3, "still", None)
+    _verified_current_picture(engine, take_id, tmp_path)
     with Session(engine) as session:
         assert stages._still_newer_than_film(session, film["board"], 3, film["asset"]) is True
 
@@ -2711,7 +2749,7 @@ def test_a_film_not_rejoined_for_days_is_hers_again(engine, settings, studio, mo
 
 
 def test_an_approved_take_bought_for_her_and_in_no_film_is_something_she_can_still_do(
-    engine, settings, studio, monkeypatch
+    engine, settings, studio, monkeypatch, tmp_path
 ):
     """Before the fix a refused rejoin left NOTHING_DONE: she was asked again with scene 5's
     one paid redo spent (its still delivered), was told REPAIR was not possible, and accepted
@@ -2732,6 +2770,7 @@ def test_an_approved_take_bought_for_her_and_in_no_film_is_something_she_can_sti
     )
     (new_still,) = redo.new_stills
     _his_look(engine, new_still, "APPROVED")
+    _verified_current_picture(engine, new_still, tmp_path)
     with Session(engine) as session, session.begin():
         # What the walk before this fix wrote after the refused rejoin.
         append_event(
@@ -3827,7 +3866,9 @@ def test_the_rewrite_before_a_redo_reads_why_her_defect_appeared(engine, monkeyp
     assert reasons[-1] == "Directoarea a privit din nou scena: turnul e acolo."
 
 
-def test_a_motion_redo_the_motion_layer_cannot_treat_turns_to_the_picture(engine, monkeypatch):
+def test_a_motion_redo_the_motion_layer_cannot_treat_turns_to_the_picture(
+    engine, monkeypatch, tmp_path
+):
     """Finding 9: a MOTION redo she picked for a finding about the picture could never be
     rewritten (every untreated finding was the picture's), and stayed PROMPT_NOT_CORRECTED."""
     from app.media import scene_rewrite
@@ -3856,7 +3897,8 @@ def test_a_motion_redo_the_motion_layer_cannot_treat_turns_to_the_picture(engine
     # A newer approved still already waits: the motion is bought from it as its words are.
     film = failed_film(engine, local_move=False)
     with Session(engine) as session, session.begin():
-        _take(session, film["board"], 5, "still", None)
+        take_id = _take(session, film["board"], 5, "still", None)
+    _verified_current_picture(engine, take_id, tmp_path)
     asked.clear()
     kinds = ["motion"]
     reading = {"findings": [], "media_asset_id": film["asset"]}

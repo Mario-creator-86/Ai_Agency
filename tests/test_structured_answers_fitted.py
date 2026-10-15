@@ -90,10 +90,7 @@ def test_a_repair_reason_of_773_characters_validates_after_fitting_cut_at_a_word
     assert decided is not None, "a sensible REPAIR was refused for a character limit"
     assert decided.decision == "REPAIR" and len(decided.verdicts) == 2
     (repair,) = decided.repairs
-    assert len(repair.reason) <= 400
-    # Cut at a word: the opening of what she wrote, ending where a word ends.
-    assert reason.startswith(repair.reason) and reason[len(repair.reason)] == " "
-    assert repair.reason == repair.reason.strip() and repair.scene_index == 5
+    assert repair.reason == reason and repair.scene_index == 5
 
 
 def test_a_scene_brief_with_a_thousand_character_diagnosis_is_a_brief():
@@ -107,7 +104,7 @@ def test_a_scene_brief_with_a_thousand_character_diagnosis_is_a_brief():
     }
     parsed = parse_structured(json.dumps(brief), brief_schema(("motion", "still")))
     assert parsed is not None
-    assert len(parsed.diagnosis) <= 800 and parsed.layer == "still"
+    assert parsed.diagnosis == brief["diagnosis"].strip() and parsed.layer == "still"
     assert brief["diagnosis"].startswith(parsed.diagnosis)
 
     # A layer this scene cannot take is still refused, and the refusal says so.
@@ -120,12 +117,12 @@ def test_her_look_and_the_serial_verdict_are_fitted_too():
     look = {"decision": "choose", "candidate": 2, "reason": words(700)}
     chosen = parse_structured(json.dumps(look), look_schema(3))
     assert isinstance(chosen, DirectorLook)
-    assert chosen.decision == "CHOOSE" and chosen.candidate == 2 and len(chosen.reason) <= 600
+    assert chosen.decision == "CHOOSE" and chosen.candidate == 2 and chosen.reason == look["reason"]
 
     verdict = {"verdict": "pass", "reasons": [f"reason {n}" for n in range(12)], "story": "x"}
     judged = parse_structured(json.dumps(verdict), EpisodeVerdict)
     assert isinstance(judged, EpisodeVerdict)
-    assert judged.verdict == "PASS" and len(judged.reasons) == 8
+    assert judged.verdict == "PASS" and judged.reasons == verdict["reasons"]
 
 
 def test_nested_models_lists_and_code_words_are_fitted_and_the_answer_is_not_changed():
@@ -157,11 +154,11 @@ def test_nested_models_lists_and_code_words_are_fitted_and_the_answer_is_not_cha
 
     fitted = fit_to_schema(answer, Plan)
 
-    assert fitted["items"] == [{"kind": "motion", "note": "one two"}] * 2
+    assert fitted["items"] == [{"kind": "motion", "note": "one two three four"}] * 3
     assert fitted["colour"] == "red" and fitted["verdict"] == "OWNER_CHOICE"
-    assert fitted["tags"] == ["a"] and fitted["count"] == 3
+    assert fitted["tags"] == ["a", "b"] and fitted["count"] == 3
     plan = parse_structured(json.dumps(answer), Plan)
-    assert isinstance(plan, Plan) and plan.colour is Colour.RED and len(plan.items) == 2
+    assert isinstance(plan, Plan) and plan.colour is Colour.RED and len(plan.items) == 3
     # What the model said is left as it was: the fit is a copy.
     assert answer["items"][0]["note"] == "one two three four" and answer["tags"] == ["a", "b"]
 
@@ -286,7 +283,7 @@ def test_a_failure_of_shape_alone_is_fitted_and_never_reaches_a_second_attempt(e
 
     parsed, first, second = ask(engine, studio, adapter)
 
-    assert parsed is not None and parsed.verdict == "REAL" and len(parsed.reason) <= 40
+    assert parsed is not None and parsed.verdict == "REAL" and parsed.reason == words(120)
     assert second is None and len(adapter.calls) == 1
     assert adapter.calls[0]["extra"] == {"format": "json"}
     assert "refusal" not in first and first["error_detail"] is None

@@ -1,261 +1,856 @@
 {
-  "observed_at": "2026-10-14T07:06:21.697486+00:00",
-  "event_cursor": 21386,
+  "observed_at": "2026-10-15T04:49:51.292485+00:00",
+  "event_cursor": 24088,
   "claimed_tasks": [],
   "recent_runs": [
     {
-      "id": "e858c422-6811-496e-8e03-120e2adf4ca3",
+      "id": "22995c46-971c-49db-aacd-a76bd688caa9",
+      "task_type": "director_qc_review",
+      "status": "SUCCEEDED",
+      "started_at": "2026-10-14T12:21:45.949738+00:00",
+      "finished_at": "2026-10-14T12:21:58.035263+00:00",
+      "model_name": "kimi-k3",
+      "provider_name": "settings:d54989ee-bb85-4b75-943e-ad473e10b3bc",
+      "completion_tokens": 918
+    },
+    {
+      "id": "1c418c95-f4f5-420c-945b-5ee6d8dcf8cc",
+      "task_type": "director_qc_review",
+      "status": "SUCCEEDED",
+      "started_at": "2026-10-14T12:21:30.946521+00:00",
+      "finished_at": "2026-10-14T12:21:44.920795+00:00",
+      "model_name": "kimi-k3",
+      "provider_name": "settings:d54989ee-bb85-4b75-943e-ad473e10b3bc",
+      "completion_tokens": 926
+    },
+    {
+      "id": "dad9cab3-1855-4b5f-b45c-31c5b39d019c",
       "task_type": "director_rewrite_review",
       "status": "SUCCEEDED",
-      "started_at": "2026-10-14T06:57:11.176941+00:00",
-      "prompt_template_version": "director-rewrite-review-v3",
-      "completion_tokens": 770,
-      "answer_chars": 3011,
-      "error_detail": null,
-      "task_summary": "Test izolat Codex: Verific dacă rescrierea scenei 2 din «Storyboard: Why the Kelvin Scale Has No 'Zero' to Begin From» tratează constatările înainte să cumpărăm ceva pe ea."
+      "started_at": "2026-10-14T12:20:50.754876+00:00",
+      "finished_at": "2026-10-14T12:21:00.302017+00:00",
+      "model_name": "kimi-k3",
+      "provider_name": "settings:d54989ee-bb85-4b75-943e-ad473e10b3bc",
+      "completion_tokens": 601
     },
     {
-      "id": "853d8cde-26c5-4b3f-801d-c00d03feb346",
-      "task_type": "shot_prompts",
+      "id": "365fc183-4b81-453d-b320-8bde03797cc6",
+      "task_type": "scene_prompt_rewrite",
       "status": "SUCCEEDED",
-      "started_at": "2026-10-14T06:56:58.559432+00:00",
-      "prompt_template_version": "shot-prompts-v3",
-      "completion_tokens": 889,
-      "answer_chars": 3875,
-      "error_detail": null,
-      "task_summary": "Test izolat Codex: Scriu prompturile pentru 1 cadre."
+      "started_at": "2026-10-14T12:20:39.253656+00:00",
+      "finished_at": "2026-10-14T12:20:50.734495+00:00",
+      "model_name": "mistral-large-4",
+      "provider_name": "settings:d54989ee-bb85-4b75-943e-ad473e10b3bc",
+      "completion_tokens": 712
     },
     {
-      "id": "020b04a4-879f-42d8-b334-0663eb003ccb",
+      "id": "d4179de7-4fde-442b-910a-ea99f3428f2c",
       "task_type": "director_scene_brief",
       "status": "SUCCEEDED",
-      "started_at": "2026-10-14T06:56:53.001533+00:00",
-      "prompt_template_version": "director-scene-brief-v3",
-      "completion_tokens": 578,
-      "answer_chars": 2614,
-      "error_detail": null,
-      "task_summary": "Test izolat Codex: Citesc promptul scenei 2 din «Storyboard: Why the Kelvin Scale Has No 'Zero' to Begin From» și motivele controlului; îi scriu lui Kael ce să evite."
+      "started_at": "2026-10-14T12:20:33.819753+00:00",
+      "finished_at": "2026-10-14T12:20:39.240160+00:00",
+      "model_name": "kimi-k3",
+      "provider_name": "settings:d54989ee-bb85-4b75-943e-ad473e10b3bc",
+      "completion_tokens": 410
     },
     {
-      "id": "82887fc1-1450-4ebd-a458-0041424fb115",
+      "id": "3e74184c-2868-48a1-8640-60cb53482b1a",
+      "task_type": "director_rewrite_review",
+      "status": "SUCCEEDED",
+      "started_at": "2026-10-14T12:20:24.741969+00:00",
+      "finished_at": "2026-10-14T12:20:33.703715+00:00",
+      "model_name": "kimi-k3",
+      "provider_name": "settings:d54989ee-bb85-4b75-943e-ad473e10b3bc",
+      "completion_tokens": 581
+    },
+    {
+      "id": "47a54104-b109-4238-83b9-9dc425c6bd6e",
+      "task_type": "scene_prompt_rewrite",
+      "status": "SUCCEEDED",
+      "started_at": "2026-10-14T12:20:16.432543+00:00",
+      "finished_at": "2026-10-14T12:20:24.720468+00:00",
+      "model_name": "mistral-large-4",
+      "provider_name": "settings:d54989ee-bb85-4b75-943e-ad473e10b3bc",
+      "completion_tokens": 697
+    },
+    {
+      "id": "3b277761-5dbd-40ed-94ba-e28b5bd57629",
+      "task_type": "director_scene_brief",
+      "status": "SUCCEEDED",
+      "started_at": "2026-10-14T12:20:06.755208+00:00",
+      "finished_at": "2026-10-14T12:20:16.421271+00:00",
+      "model_name": "kimi-k3",
+      "provider_name": "settings:d54989ee-bb85-4b75-943e-ad473e10b3bc",
+      "completion_tokens": 588
+    },
+    {
+      "id": "33a6d6e5-2440-48b5-9176-992345d17287",
       "task_type": "sheet_repair_assignment",
       "status": "SUCCEEDED",
-      "started_at": "2026-10-14T06:56:49.844824+00:00",
-      "prompt_template_version": "sheet-repair-v1",
-      "completion_tokens": 216,
-      "answer_chars": 965,
-      "error_detail": null,
-      "task_summary": "Test izolat Codex: Repartizez remedierea foii de filmare."
+      "started_at": "2026-10-14T10:53:11.624098+00:00",
+      "finished_at": "2026-10-14T10:53:16.535326+00:00",
+      "model_name": "kimi-k3",
+      "provider_name": "settings:d54989ee-bb85-4b75-943e-ad473e10b3bc",
+      "completion_tokens": 115
     },
     {
-      "id": "744fa66b-c3ee-4a1d-8616-8f29ddcb31ca",
-      "task_type": "director_editor_model_choice",
+      "id": "248ad065-606c-4701-be89-dc4cf54723d7",
+      "task_type": "director_qc_review",
       "status": "SUCCEEDED",
-      "started_at": "2026-10-14T06:52:23.269729+00:00",
-      "prompt_template_version": "editor-model-choice-v1",
-      "completion_tokens": 153,
-      "answer_chars": 721,
-      "error_detail": null,
-      "task_summary": "Test izolat Codex: Aleg modelul editorului după proba reală de lucru."
+      "started_at": "2026-10-14T10:52:17.731990+00:00",
+      "finished_at": "2026-10-14T10:52:31.810622+00:00",
+      "model_name": "kimi-k3",
+      "provider_name": "settings:d54989ee-bb85-4b75-943e-ad473e10b3bc",
+      "completion_tokens": 1065
     },
     {
-      "id": "6b42240a-f92e-4cba-ba05-92cacbc664bc",
-      "task_type": "director_rewrite_review",
+      "id": "598ea893-f1d2-4f52-9a84-0bcf7093e405",
+      "task_type": "repurchase_decision",
       "status": "SUCCEEDED",
-      "started_at": "2026-10-14T06:52:06.786801+00:00",
-      "prompt_template_version": "director-rewrite-review-v3",
-      "completion_tokens": 984,
-      "answer_chars": 4126,
-      "error_detail": null,
-      "task_summary": "Test izolat Codex: Verific dacă rescrierea scenei 2 din «Storyboard: Why the Kelvin Scale Has No 'Zero' to Begin From» tratează constatările înainte să cumpărăm ceva pe ea."
+      "started_at": "2026-10-14T10:52:13.560700+00:00",
+      "finished_at": "2026-10-14T10:52:17.159915+00:00",
+      "model_name": "kimi-k3",
+      "provider_name": "settings:d54989ee-bb85-4b75-943e-ad473e10b3bc",
+      "completion_tokens": 158
     },
     {
-      "id": "66ebdbcd-716a-4b08-831e-1729782c1003",
-      "task_type": "director_rewrite_review",
+      "id": "3df62fb9-e7c9-4054-9635-70398f242838",
+      "task_type": "repurchase_verdict",
       "status": "SUCCEEDED",
-      "started_at": "2026-10-14T06:42:21.817865+00:00",
-      "prompt_template_version": "director-rewrite-review-v3",
-      "completion_tokens": 1133,
-      "answer_chars": 4670,
-      "error_detail": null,
-      "task_summary": "Test izolat Codex: Verific dacă rescrierea scenei 2 din «Storyboard: Why the Kelvin Scale Has No 'Zero' to Begin From» tratează constatările înainte să cumpărăm ceva pe ea."
-    },
-    {
-      "id": "28ed6f09-651e-4380-8584-b159251c4f11",
-      "task_type": "shot_prompts",
-      "status": "SUCCEEDED",
-      "started_at": "2026-10-14T06:41:25.796509+00:00",
-      "prompt_template_version": "shot-prompts-v3",
-      "completion_tokens": 4210,
-      "answer_chars": 18619,
-      "error_detail": null,
-      "task_summary": "Test izolat Codex: Scriu prompturile pentru 1 cadre."
-    },
-    {
-      "id": "b4e61c83-6b56-4209-967f-aca9c514d936",
-      "task_type": "director_scene_brief",
-      "status": "SUCCEEDED",
-      "started_at": "2026-10-14T06:41:19.482330+00:00",
-      "prompt_template_version": "director-scene-brief-v3",
-      "completion_tokens": 584,
-      "answer_chars": 2544,
-      "error_detail": null,
-      "task_summary": "Test izolat Codex: Citesc promptul scenei 2 din «Storyboard: Why the Kelvin Scale Has No 'Zero' to Begin From» și motivele controlului; îi scriu lui Kael ce să evite."
-    },
-    {
-      "id": "4e6a6ba3-99e0-4b69-8f21-8f02e5bf001d",
-      "task_type": "sheet_repair_assignment",
-      "status": "SUCCEEDED",
-      "started_at": "2026-10-14T06:41:16.974352+00:00",
-      "prompt_template_version": "sheet-repair-v1",
-      "completion_tokens": 164,
-      "answer_chars": 756,
-      "error_detail": null,
-      "task_summary": "Test izolat Codex: Repartizez remedierea foii de filmare."
-    },
-    {
-      "id": "e62be5c5-dd1a-4a23-8d70-49707a77c569",
-      "task_type": "shot_prompts",
-      "status": "EMPTY_OUTPUT",
-      "started_at": "2026-10-14T06:36:28.689624+00:00",
-      "prompt_template_version": "shot-prompts-v3+think",
-      "completion_tokens": 21000,
-      "answer_chars": 0,
-      "error_detail": "Modelul a atins limita de tokeni înainte să răspundă: a folosit bugetul pe raționament intern. Niciun răspuns de folosit.",
-      "task_summary": "Test izolat Codex: Scriu prompturile pentru 1 cadre."
-    },
-    {
-      "id": "6c7566e3-432e-4175-97b7-36567c79e39f",
-      "task_type": "director_scene_brief",
-      "status": "SUCCEEDED",
-      "started_at": "2026-10-14T06:36:21.217418+00:00",
-      "prompt_template_version": "director-scene-brief-v3",
-      "completion_tokens": 678,
-      "answer_chars": 3037,
-      "error_detail": null,
-      "task_summary": "Test izolat Codex: Citesc promptul scenei 2 din «Storyboard: Why the Kelvin Scale Has No 'Zero' to Begin From» și motivele controlului; îi scriu lui Kael ce să evite."
+      "started_at": "2026-10-14T10:52:04.995985+00:00",
+      "finished_at": "2026-10-14T10:52:13.552558+00:00",
+      "model_name": "mistral-large-4",
+      "provider_name": "settings:d54989ee-bb85-4b75-943e-ad473e10b3bc",
+      "completion_tokens": 310
     }
   ],
   "recent_shot_output_shape": [
     {
-      "id": "853d8cde-26c5-4b3f-801d-c00d03feb346",
-      "started_at": "2026-10-14T06:56:58.559432+00:00",
+      "id": "657d300e-0c52-4938-a0ad-84039ca354dc",
+      "started_at": "2026-10-14T10:47:59.460480+00:00",
       "status": "SUCCEEDED",
-      "completion_tokens": 889,
-      "answer_chars": 3875,
+      "completion_tokens": 2634,
+      "answer_chars": 11673,
       "think_tag": 0,
       "shots_key": 13,
       "fields": 0
     },
     {
-      "id": "28ed6f09-651e-4380-8584-b159251c4f11",
-      "started_at": "2026-10-14T06:41:25.796509+00:00",
+      "id": "157330fc-4b30-4c2a-bba4-e61d0919d08e",
+      "started_at": "2026-10-14T10:47:37.512155+00:00",
       "status": "SUCCEEDED",
-      "completion_tokens": 4210,
-      "answer_chars": 18619,
+      "completion_tokens": 1909,
+      "answer_chars": 8370,
       "think_tag": 0,
       "shots_key": 13,
       "fields": 0
     },
     {
-      "id": "e62be5c5-dd1a-4a23-8d70-49707a77c569",
-      "started_at": "2026-10-14T06:36:28.689624+00:00",
-      "status": "EMPTY_OUTPUT",
-      "completion_tokens": 21000,
-      "answer_chars": 0,
-      "think_tag": 0,
-      "shots_key": 0,
-      "fields": 0
-    },
-    {
-      "id": "978119c9-58e3-4e61-829c-ce769c491923",
-      "started_at": "2026-10-14T06:26:24.801094+00:00",
-      "status": "ABANDONED",
-      "completion_tokens": null,
-      "answer_chars": null,
-      "think_tag": null,
-      "shots_key": null,
-      "fields": null
-    },
-    {
-      "id": "5a1b9674-7f40-4894-a31f-b813b79d8d86",
-      "started_at": "2026-10-14T06:25:00.484568+00:00",
-      "status": "EMPTY_OUTPUT",
-      "completion_tokens": 7000,
-      "answer_chars": 0,
-      "think_tag": 0,
-      "shots_key": 0,
-      "fields": 0
-    },
-    {
-      "id": "31ef0b4c-0686-4f4a-8b24-17c5a2766e78",
-      "started_at": "2026-10-14T06:24:22.812089+00:00",
+      "id": "d9558584-50ca-41b6-bc33-f8ae370b887c",
+      "started_at": "2026-10-14T07:40:04.326886+00:00",
       "status": "SUCCEEDED",
-      "completion_tokens": 7000,
-      "answer_chars": 30655,
+      "completion_tokens": 1737,
+      "answer_chars": 7683,
       "think_tag": 0,
-      "shots_key": 269,
+      "shots_key": 13,
       "fields": 0
     },
     {
-      "id": "622f1919-d017-4638-a3ea-2b7d5399bcb4",
-      "started_at": "2026-10-14T06:23:21.911664+00:00",
+      "id": "6f8634a9-3e4f-420c-9824-8eaae85ee911",
+      "started_at": "2026-10-14T07:39:12.002315+00:00",
       "status": "SUCCEEDED",
-      "completion_tokens": 7000,
-      "answer_chars": 30856,
+      "completion_tokens": 3310,
+      "answer_chars": 14418,
       "think_tag": 0,
-      "shots_key": 562,
+      "shots_key": 13,
       "fields": 0
     },
     {
-      "id": "2248b944-4cc7-4853-86b2-d4a370710f05",
-      "started_at": "2026-10-14T06:22:23.732911+00:00",
+      "id": "83c0911b-c8c6-48b0-a65f-b1bff1af7848",
+      "started_at": "2026-10-14T07:32:48.043032+00:00",
       "status": "SUCCEEDED",
-      "completion_tokens": 7000,
-      "answer_chars": 30890,
+      "completion_tokens": 1826,
+      "answer_chars": 8058,
       "think_tag": 0,
-      "shots_key": 3983,
+      "shots_key": 13,
+      "fields": 0
+    },
+    {
+      "id": "9ade1f0d-4939-4de8-ada2-18c02afc014c",
+      "started_at": "2026-10-14T07:31:31.920266+00:00",
+      "status": "SUCCEEDED",
+      "completion_tokens": 2130,
+      "answer_chars": 9180,
+      "think_tag": 0,
+      "shots_key": 13,
+      "fields": 0
+    },
+    {
+      "id": "38489cc8-7c79-4ff6-8930-09754dfb1f86",
+      "started_at": "2026-10-14T07:25:57.248172+00:00",
+      "status": "SUCCEEDED",
+      "completion_tokens": 1901,
+      "answer_chars": 8332,
+      "think_tag": 0,
+      "shots_key": 13,
+      "fields": 0
+    },
+    {
+      "id": "36907e16-591c-4368-96b7-b33edec51270",
+      "started_at": "2026-10-14T07:22:28.791047+00:00",
+      "status": "SUCCEEDED",
+      "completion_tokens": 2403,
+      "answer_chars": 10533,
+      "think_tag": 0,
+      "shots_key": 13,
       "fields": 0
     }
   ],
   "recent_repair_results": [
     {
-      "sequence": 21332,
-      "timestamp": "2026-10-14T06:25:44.988793+00:00",
-      "aggregate_id": "aa170155-56c7-4e29-9616-e1e917fb243e",
-      "payload": "{\"status\": \"UNRESOLVED\", \"remaining\": [{\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 1, \"detail\": \"ending_frame nu ajunge integral \\u00een promptul video; scrie\\u021bi un final vizibil concis, f\\u0103r\\u0103 instruc\\u021biuni de camer\\u0103\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 2, \"detail\": \"ending_frame nu ajunge integral \\u00een promptul video; scrie\\u021bi un final vizibil concis, f\\u0103r\\u0103 instruc\\u021biuni de camer\\u0103\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 3, \"detail\": \"ending_frame nu ajunge integral \\u00een promptul video; scrie\\u021bi un final vizibil concis, f\\u0103r\\u0103 instruc\\u021biuni de camer\\u0103\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 4, \"detail\": \"ending_frame nu ajunge integral \\u00een promptul video; scrie\\u021bi un final vizibil concis, f\\u0103r\\u0103 instruc\\u021biuni de camer\\u0103\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 5, \"detail\": \"ending_frame nu ajunge integral \\u00een promptul video; scrie\\u021bi un final vizibil concis, f\\u0103r\\u0103 instruc\\u021biuni de camer\\u0103\"}], \"reason\": \"Foaia a fost reverificat\\u0103: blocajele de mai jos r\\u0103m\\u00e2n deschise. Nu s-a cump\\u0103rat media.\", \"storyboard_id\": \"aa170155-56c7-4e29-9616-e1e917fb243e\"}"
-    },
-    {
-      "sequence": 21318,
-      "timestamp": "2026-10-14T06:24:17.276527+00:00",
+      "sequence": 21792,
+      "timestamp": "2026-10-14T10:53:19.159104+00:00",
       "aggregate_id": "f06808c9-40d4-4f40-a980-84b6a5540348",
-      "payload": "{\"status\": \"UNRESOLVED\", \"remaining\": [{\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 1, \"detail\": \"poza pierde o condi\\u021bie a primului cadru: Early morning, empty writers' room, Marcus alone at his desk, fingers hovering over keys, a blank screen glow on his face. Marcus, flat; scurta\\u021bi planul p\\u0103str\\u00e2nd fiecare personaj\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 1, \"detail\": \"poza pierde o condi\\u021bie a primului cadru: Sarah, calm, entering; scurta\\u021bi planul p\\u0103str\\u00e2nd fiecare personaj\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 2, \"detail\": \"poza pierde o condi\\u021bie a primului cadru: Marcus leaning in the doorway, hoodie zipped, defensive. Marcus, counting on fingers; scurta\\u021bi planul p\\u0103str\\u00e2nd fiecare personaj\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 2, \"detail\": \"poza pierde o condi\\u021bie a primului cadru: Sarah, measured, answers; scurta\\u021bi planul p\\u0103str\\u00e2nd fiecare personaj\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 3, \"detail\": \"poza pierde o condi\\u021bie a primului cadru: Same office, tighter shot on Marcus, hands open, half a pitch already forming and dying. Marcus; scurta\\u021bi planul p\\u0103str\\u00e2nd fiecare personaj\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 3, \"detail\": \"poza pierde o condi\\u021bie a primului cadru: Sarah, dry, answers; scurta\\u021bi planul p\\u0103str\\u00e2nd fiecare personaj\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 4, \"detail\": \"poza pierde o condi\\u021bie a primului cadru: Sarah, measured, answers; scurta\\u021bi planul p\\u0103str\\u00e2nd fiecare personaj\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 6, \"detail\": \"poza pierde o condi\\u021bie a primului cadru: she speaks toward the room, Marcus trailing behind her. Sarah, plain, setting the deadline; scurta\\u021bi planul p\\u0103str\\u00e2nd fiecare personaj\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 6, \"detail\": \"poza pierde o condi\\u021bie a primului cadru: Marcus, deadpan, answers; scurta\\u021bi planul p\\u0103str\\u00e2nd fiecare personaj\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 7, \"detail\": \"poza pierde o condi\\u021bie a primului cadru: Back in Sarah's office, the stack of morning notes squared on the desk; scurta\\u021bi planul p\\u0103str\\u00e2nd fiecare personaj\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 7, \"detail\": \"poza pierde o condi\\u021bie a primului cadru: Marcus at the whiteboard, marker up, nothing written yet. Sarah, dry, rare smile; scurta\\u021bi planul p\\u0103str\\u00e2nd fiecare personaj\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 7, \"detail\": \"poza pierde o condi\\u021bie a primului cadru: Marcus, lighting up, answers; scurta\\u021bi planul p\\u0103str\\u00e2nd fiecare personaj\"}, {\"kind\": \"OWNER\", \"code\": \"OVER_FILM_BUDGET\", \"scene_index\": null, \"detail\": \"Plafonul pasului stills dep\\u0103\\u0219e\\u0219te plafonul r\\u0103mas al filmului.\"}], \"reason\": \"Foaia a fost reverificat\\u0103: blocajele de mai jos r\\u0103m\\u00e2n deschise. Nu s-a cump\\u0103rat media.\", \"storyboard_id\": \"f06808c9-40d4-4f40-a980-84b6a5540348\"}"
+      "payload": "{\"status\": \"WAITING_OWNER\", \"remaining\": [{\"kind\": \"OWNER\", \"code\": \"OVER_FILM_BUDGET\", \"scene_index\": null, \"detail\": \"Plafonul pasului stills dep\\u0103\\u0219e\\u0219te plafonul r\\u0103mas al filmului.\"}], \"reason\": \"Foaia a fost reverificat\\u0103: blocajele de mai jos r\\u0103m\\u00e2n deschise. Nu s-a cump\\u0103rat media.\", \"storyboard_id\": \"f06808c9-40d4-4f40-a980-84b6a5540348\"}"
     },
     {
-      "sequence": 21304,
-      "timestamp": "2026-10-14T06:22:17.266517+00:00",
-      "aggregate_id": "83881ed0-d1da-47fd-a736-02776f58e62a",
-      "payload": "{\"status\": \"UNRESOLVED\", \"remaining\": [{\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 1, \"detail\": \"ending_frame nu ajunge integral \\u00een promptul video; scrie\\u021bi un final vizibil concis, f\\u0103r\\u0103 instruc\\u021biuni de camer\\u0103\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 2, \"detail\": \"ending_frame nu ajunge integral \\u00een promptul video; scrie\\u021bi un final vizibil concis, f\\u0103r\\u0103 instruc\\u021biuni de camer\\u0103\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 3, \"detail\": \"ending_frame nu ajunge integral \\u00een promptul video; scrie\\u021bi un final vizibil concis, f\\u0103r\\u0103 instruc\\u021biuni de camer\\u0103\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 4, \"detail\": \"ending_frame nu ajunge integral \\u00een promptul video; scrie\\u021bi un final vizibil concis, f\\u0103r\\u0103 instruc\\u021biuni de camer\\u0103\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 5, \"detail\": \"ending_frame nu ajunge integral \\u00een promptul video; scrie\\u021bi un final vizibil concis, f\\u0103r\\u0103 instruc\\u021biuni de camer\\u0103\"}], \"reason\": \"Foaia a fost reverificat\\u0103: blocajele de mai jos r\\u0103m\\u00e2n deschise. Nu s-a cump\\u0103rat media.\", \"storyboard_id\": \"83881ed0-d1da-47fd-a736-02776f58e62a\"}"
-    },
-    {
-      "sequence": 21296,
-      "timestamp": "2026-10-14T06:21:04.369390+00:00",
-      "aggregate_id": "babcf272-0667-41b9-ae70-27304eef92ca",
-      "payload": "{\"status\": \"STALE\", \"remaining\": [], \"reason\": \"Filmul este \\u00eenchis pentru produc\\u021bie sau deja \\u00eenc\\u0103rcat: foaia lui nu se mai remediaz\\u0103 \\u0219i nu se cump\\u0103r\\u0103 nimic pentru el.\", \"storyboard_id\": \"babcf272-0667-41b9-ae70-27304eef92ca\"}"
-    },
-    {
-      "sequence": 21272,
-      "timestamp": "2026-10-14T06:18:54.593061+00:00",
+      "sequence": 21698,
+      "timestamp": "2026-10-14T10:48:57.437182+00:00",
       "aggregate_id": "f06808c9-40d4-4f40-a980-84b6a5540348",
-      "payload": "{\"status\": \"UNRESOLVED\", \"remaining\": [{\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 1, \"detail\": \"ending_frame nu ajunge integral \\u00een promptul video; scrie\\u021bi un final vizibil concis, f\\u0103r\\u0103 instruc\\u021biuni de camer\\u0103\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 2, \"detail\": \"poza pierde o condi\\u021bie a primului cadru: Marcus leaning in the doorway, hoodie zipped, defensive. Marcus, counting on fingers; scurta\\u021bi planul p\\u0103str\\u00e2nd fiecare personaj\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 2, \"detail\": \"poza pierde o condi\\u021bie a primului cadru: Sarah, measured, answers; scurta\\u021bi planul p\\u0103str\\u00e2nd fiecare personaj\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 3, \"detail\": \"poza pierde o condi\\u021bie a primului cadru: Same office, tighter shot on Marcus, hands open, half a pitch already forming and dying. Marcus; scurta\\u021bi planul p\\u0103str\\u00e2nd fiecare personaj\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 3, \"detail\": \"poza pierde o condi\\u021bie a primului cadru: Sarah, dry, answers; scurta\\u021bi planul p\\u0103str\\u00e2nd fiecare personaj\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 4, \"detail\": \"poza pierde o condi\\u021bie a primului cadru: Sarah, measured, answers; scurta\\u021bi planul p\\u0103str\\u00e2nd fiecare personaj\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 6, \"detail\": \"poza pierde o condi\\u021bie a primului cadru: she speaks toward the room, Marcus trailing behind her. Sarah, plain, setting the deadline; scurta\\u021bi planul p\\u0103str\\u00e2nd fiecare personaj\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 6, \"detail\": \"poza pierde o condi\\u021bie a primului cadru: Marcus, deadpan, answers; scurta\\u021bi planul p\\u0103str\\u00e2nd fiecare personaj\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 7, \"detail\": \"poza pierde o condi\\u021bie a primului cadru: Back in Sarah's office, the stack of morning notes squared on the desk; scurta\\u021bi planul p\\u0103str\\u00e2nd fiecare personaj\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 7, \"detail\": \"poza pierde o condi\\u021bie a primului cadru: Marcus at the whiteboard, marker up, nothing written yet. Sarah, dry, rare smile; scurta\\u021bi planul p\\u0103str\\u00e2nd fiecare personaj\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 7, \"detail\": \"poza pierde o condi\\u021bie a primului cadru: Marcus, lighting up, answers; scurta\\u021bi planul p\\u0103str\\u00e2nd fiecare personaj\"}, {\"kind\": \"OWNER\", \"code\": \"OVER_FILM_BUDGET\", \"scene_index\": null, \"detail\": \"Plafonul pasului stills dep\\u0103\\u0219e\\u0219te plafonul r\\u0103mas al filmului.\"}], \"reason\": \"Foaia a fost reverificat\\u0103: blocajele de mai jos r\\u0103m\\u00e2n deschise. Nu s-a cump\\u0103rat media.\", \"storyboard_id\": \"f06808c9-40d4-4f40-a980-84b6a5540348\"}"
+      "payload": "{\"status\": \"WAITING_OWNER\", \"remaining\": [{\"kind\": \"OWNER\", \"code\": \"OVER_FILM_BUDGET\", \"scene_index\": null, \"detail\": \"Plafonul pasului stills dep\\u0103\\u0219e\\u0219te plafonul r\\u0103mas al filmului.\"}], \"reason\": \"Foaia a fost reverificat\\u0103: blocajele de mai jos r\\u0103m\\u00e2n deschise. Nu s-a cump\\u0103rat media.\", \"storyboard_id\": \"f06808c9-40d4-4f40-a980-84b6a5540348\"}"
     },
     {
-      "sequence": 21264,
-      "timestamp": "2026-10-14T06:18:41.569976+00:00",
+      "sequence": 21671,
+      "timestamp": "2026-10-14T07:40:29.079121+00:00",
+      "aggregate_id": "f06808c9-40d4-4f40-a980-84b6a5540348",
+      "payload": "{\"status\": \"UNRESOLVED\", \"remaining\": [{\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 1, \"detail\": \"poza pierde o condi\\u021bie a primului cadru: Sarah enters calmly from the doorway and moves toward him, calm and composed, and asks him to read it to her anyway; scurta\\u021bi planul p\\u0103str\\u00e2nd fiecare personaj\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 2, \"detail\": \"poza pierde o condi\\u021bie a primului cadru: Marcus leans in the doorway, hoodie zipped, counting on his fingers as he speaks, defensive, listing the clean sweep; scurta\\u021bi planul p\\u0103str\\u00e2nd fiecare personaj\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 2, \"detail\": \"poza pierde o condi\\u021bie a primului cadru: Sarah sits measured at her desk, answering him, her posture composed; scurta\\u021bi planul p\\u0103str\\u00e2nd fiecare personaj\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 3, \"detail\": \"poza pierde o condi\\u021bie a primului cadru: Marcus's hands open and close, half a pitch forming and dying, fast with a mid-sentence restart as he explains the rejected episode; scurta\\u021bi planul p\\u0103str\\u00e2nd fiecare personaj\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 3, \"detail\": \"poza pierde o condi\\u021bie a primului cadru: Sarah answers dryly from her desk, her expression level and unimpressed; scurta\\u021bi planul p\\u0103str\\u00e2nd fiecare personaj\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 4, \"detail\": \"poza pierde o condi\\u021bie a primului cadru: Sarah's shoulder at the frame edge, measured, asking if both were within limit; scurta\\u021bi planul p\\u0103str\\u00e2nd fiecare personaj\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 5, \"detail\": \"poza pierde o condi\\u021bie a primului cadru: Sarah stands opposite, reading nothing, listening, decision first, asking Nadia to look again, officially; scurta\\u021bi planul p\\u0103str\\u00e2nd fiecare personaj\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 6, \"detail\": \"poza pierde o condi\\u021bie a primului cadru: Sarah stands at the doorway facing the viewer, speaking toward the room, her posture plain and set; scurta\\u021bi planul p\\u0103str\\u00e2nd fiecare personaj\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 6, \"detail\": \"poza pierde o condi\\u021bie a primului cadru: Marcus trails behind her, facing the viewer, answering deadpan, one hand raised mid-gesture; scurta\\u021bi planul p\\u0103str\\u00e2nd fiecare personaj\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 6, \"detail\": \"poza pierde o condi\\u021bie a primului cadru: Kael's empty chair sits unmoving behind them; scurta\\u021bi planul p\\u0103str\\u00e2nd fiecare personaj\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 7, \"detail\": \"poza pierde o condi\\u021bie a primului cadru: Sarah sits measured at her desk facing the viewer, answering dryly; scurta\\u021bi planul p\\u0103str\\u00e2nd fiecare personaj\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 7, \"detail\": \"poza pierde o condi\\u021bie a primului cadru: Marcus stands at the whiteboard facing the viewer, marker held up in one hand, lighting up as he answers, his free hand opening mid-pitch; scurta\\u021bi planul p\\u0103str\\u00e2nd fiecare personaj\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 7, \"detail\": \"poza pierde o condi\\u021bie a primului cadru: the whiteboard stays completely blank and unmarked; scurta\\u021bi planul p\\u0103str\\u00e2nd fiecare personaj\"}, {\"kind\": \"OWNER\", \"code\": \"OVER_FILM_BUDGET\", \"scene_index\": null, \"detail\": \"Plafonul pasului stills dep\\u0103\\u0219e\\u0219te plafonul r\\u0103mas al filmului.\"}], \"reason\": \"Foaia a fost reverificat\\u0103: blocajele de mai jos r\\u0103m\\u00e2n deschise. Nu s-a cump\\u0103rat media.\", \"storyboard_id\": \"f06808c9-40d4-4f40-a980-84b6a5540348\"}"
+    },
+    {
+      "sequence": 21574,
+      "timestamp": "2026-10-14T07:33:58.456074+00:00",
+      "aggregate_id": "f06808c9-40d4-4f40-a980-84b6a5540348",
+      "payload": "{\"status\": \"UNRESOLVED\", \"remaining\": [{\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 1, \"detail\": \"poza pierde o condi\\u021bie a primului cadru: Sarah enters calmly from the doorway and moves toward him, calm and composed; scurta\\u021bi planul p\\u0103str\\u00e2nd fiecare personaj\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 2, \"detail\": \"poza pierde o condi\\u021bie a primului cadru: Marcus leans in the doorway, hoodie zipped, counting on his fingers as he speaks, defensive; scurta\\u021bi planul p\\u0103str\\u00e2nd fiecare personaj\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 2, \"detail\": \"poza pierde o condi\\u021bie a primului cadru: Sarah sits measured at her desk, answering him, her posture composed; scurta\\u021bi planul p\\u0103str\\u00e2nd fiecare personaj\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 3, \"detail\": \"poza pierde o condi\\u021bie a primului cadru: Marcus's hands open and close, half a pitch forming and dying, fast with a mid-sentence restart; scurta\\u021bi planul p\\u0103str\\u00e2nd fiecare personaj\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 3, \"detail\": \"poza pierde o condi\\u021bie a primului cadru: Sarah answers dryly from her desk, her expression level and unimpressed; scurta\\u021bi planul p\\u0103str\\u00e2nd fiecare personaj\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 6, \"detail\": \"poza pierde o condi\\u021bie a primului cadru: Marcus trails behind her, facing the viewer, answering deadpan; scurta\\u021bi planul p\\u0103str\\u00e2nd fiecare personaj\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 6, \"detail\": \"poza pierde o condi\\u021bie a primului cadru: Kael's empty chair sits unmoving behind them; scurta\\u021bi planul p\\u0103str\\u00e2nd fiecare personaj\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 7, \"detail\": \"poza pierde o condi\\u021bie a primului cadru: Sarah sits measured at her desk facing the viewer, answering dryly with a rare smile; scurta\\u021bi planul p\\u0103str\\u00e2nd fiecare personaj\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 7, \"detail\": \"poza pierde o condi\\u021bie a primului cadru: Marcus stands at the whiteboard, marker held up, facing the viewer, lighting up as he answers; scurta\\u021bi planul p\\u0103str\\u00e2nd fiecare personaj\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 7, \"detail\": \"poza pierde o condi\\u021bie a primului cadru: the whiteboard stays completely blank and unmarked; scurta\\u021bi planul p\\u0103str\\u00e2nd fiecare personaj\"}, {\"kind\": \"OWNER\", \"code\": \"OVER_FILM_BUDGET\", \"scene_index\": null, \"detail\": \"Plafonul pasului stills dep\\u0103\\u0219e\\u0219te plafonul r\\u0103mas al filmului.\"}], \"reason\": \"Foaia a fost reverificat\\u0103: blocajele de mai jos r\\u0103m\\u00e2n deschise. Nu s-a cump\\u0103rat media.\", \"storyboard_id\": \"f06808c9-40d4-4f40-a980-84b6a5540348\"}"
+    },
+    {
+      "sequence": 21477,
+      "timestamp": "2026-10-14T07:27:36.174524+00:00",
+      "aggregate_id": "f06808c9-40d4-4f40-a980-84b6a5540348",
+      "payload": "{\"status\": \"UNRESOLVED\", \"remaining\": [{\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 1, \"detail\": \"poza pierde o condi\\u021bie a primului cadru: Sarah enters calmly from the doorway and moves toward him; scurta\\u021bi planul p\\u0103str\\u00e2nd fiecare personaj\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 2, \"detail\": \"poza pierde o condi\\u021bie a primului cadru: Marcus leans in the doorway with his hoodie zipped, counting on his fingers as he speaks, defensive; scurta\\u021bi planul p\\u0103str\\u00e2nd fiecare personaj\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 2, \"detail\": \"poza pierde o condi\\u021bie a primului cadru: Sarah sits measured at her desk, answering him, her posture composed; scurta\\u021bi planul p\\u0103str\\u00e2nd fiecare personaj\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 3, \"detail\": \"poza pierde o condi\\u021bie a primului cadru: Sarah answers dryly from her desk, her expression level and unimpressed; scurta\\u021bi planul p\\u0103str\\u00e2nd fiecare personaj\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 4, \"detail\": \"poza pierde o condi\\u021bie a primului cadru: Sarah's shoulder stays visible at the frame edge, measured, answering; scurta\\u021bi planul p\\u0103str\\u00e2nd fiecare personaj\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 6, \"detail\": \"poza pierde o condi\\u021bie a primului cadru: Marcus trails behind her, facing the viewer, deadpan, answering; scurta\\u021bi planul p\\u0103str\\u00e2nd fiecare personaj\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 6, \"detail\": \"poza pierde o condi\\u021bie a primului cadru: Kael's empty chair stays visible behind them, unmoving; scurta\\u021bi planul p\\u0103str\\u00e2nd fiecare personaj\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 7, \"detail\": \"poza pierde o condi\\u021bie a primului cadru: Sarah sits measured at her desk, facing the viewer, answering dryly with a rare smile; scurta\\u021bi planul p\\u0103str\\u00e2nd fiecare personaj\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 7, \"detail\": \"poza pierde o condi\\u021bie a primului cadru: Marcus stands at the whiteboard, marker held up, facing the viewer, lighting up as he answers; scurta\\u021bi planul p\\u0103str\\u00e2nd fiecare personaj\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 7, \"detail\": \"poza pierde o condi\\u021bie a primului cadru: the whiteboard stays completely blank, unmarked; scurta\\u021bi planul p\\u0103str\\u00e2nd fiecare personaj\"}, {\"kind\": \"OWNER\", \"code\": \"OVER_FILM_BUDGET\", \"scene_index\": null, \"detail\": \"Plafonul pasului stills dep\\u0103\\u0219e\\u0219te plafonul r\\u0103mas al filmului.\"}], \"reason\": \"Foaia a fost reverificat\\u0103: blocajele de mai jos r\\u0103m\\u00e2n deschise. Nu s-a cump\\u0103rat media.\", \"storyboard_id\": \"f06808c9-40d4-4f40-a980-84b6a5540348\"}"
+    },
+    {
+      "sequence": 21461,
+      "timestamp": "2026-10-14T07:21:44.574875+00:00",
       "aggregate_id": "83881ed0-d1da-47fd-a736-02776f58e62a",
-      "payload": "{\"status\": \"UNRESOLVED\", \"remaining\": [{\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 1, \"detail\": \"ending_frame nu ajunge integral \\u00een promptul video; scrie\\u021bi un final vizibil concis, f\\u0103r\\u0103 instruc\\u021biuni de camer\\u0103\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 2, \"detail\": \"ending_frame nu ajunge integral \\u00een promptul video; scrie\\u021bi un final vizibil concis, f\\u0103r\\u0103 instruc\\u021biuni de camer\\u0103\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 3, \"detail\": \"ending_frame nu ajunge integral \\u00een promptul video; scrie\\u021bi un final vizibil concis, f\\u0103r\\u0103 instruc\\u021biuni de camer\\u0103\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 4, \"detail\": \"ending_frame nu ajunge integral \\u00een promptul video; scrie\\u021bi un final vizibil concis, f\\u0103r\\u0103 instruc\\u021biuni de camer\\u0103\"}, {\"kind\": \"PROMPT\", \"code\": \"REQUIRED_CONTENT_LOST\", \"scene_index\": 5, \"detail\": \"ending_frame nu ajunge integral \\u00een promptul video; scrie\\u021bi un final vizibil concis, f\\u0103r\\u0103 instruc\\u021biuni de camer\\u0103\"}], \"reason\": \"Foaia a fost reverificat\\u0103: blocajele de mai jos r\\u0103m\\u00e2n deschise. Nu s-a cump\\u0103rat media.\", \"storyboard_id\": \"83881ed0-d1da-47fd-a736-02776f58e62a\"}"
+      "payload": "{\"status\": \"RESOLVED\", \"remaining\": [], \"reason\": \"Foaia a fost reverificat\\u0103: blocajele de prompt \\u0219i plan sunt rezolvate.\", \"storyboard_id\": \"83881ed0-d1da-47fd-a736-02776f58e62a\", \"continue_task_id\": \"85551fcb-0d42-4808-aa33-f04030ce80a9\"}"
     }
   ],
-  "monitoring_status": "PAUSED",
-  "studio_status": "STOPPED_BY_OWNER"
+  "latest_live_findings": {
+    "serial_prompt_version": 3,
+    "serial_prompt_loss_blocks": 0,
+    "serial_scene_4_review": "TREATS",
+    "serial_scene_4_rewritten_event": 21758,
+    "serial_scene_4_still_characters": 1844,
+    "serial_financial_blocks": [
+      "OVER_FILM_BUDGET",
+      "ACCOUNTANT_SECOND_PURCHASE_REFUSED"
+    ],
+    "kelvin_scenes_waiting": [
+      1,
+      4
+    ],
+    "kelvin_last_verdict": "ACCEPTED_MINOR_WITH_SECOND_LOOK_NOT_RECORDED",
+    "gpu_generations_today_at_observation": 0,
+    "serial_still_character_range": [
+      1607,
+      1982
+    ],
+    "serial_current_refusal": "REPURCHASE_REFUSED",
+    "serial_latest_qc_outcomes": [
+      "NOTHING_DONE",
+      "NOTHING_DONE"
+    ],
+    "serial_stale_approved_take": {
+      "id": "7e4ec124-207e-4915-90a2-dc42356ae06a",
+      "model": "Qwen-Image-2512",
+      "created_at": "2026-10-13T19:22:53.647174+00:00",
+      "approved_by": "director",
+      "matches_current_prompt": false,
+      "mentioned_as_replacement_in_events": [
+        21841,
+        21846
+      ]
+    },
+    "kelvin_latest_brief_events": [
+      21821,
+      21836
+    ],
+    "kelvin_rewritten": false,
+    "kelvin_visual_second_look_new_events": 0,
+    "kelvin_rejected_stills_per_scene": {
+      "1": 6,
+      "4": 6
+    },
+    "new_gpu_jobs_since_last_snapshot": 0,
+    "new_takes_since_last_snapshot": 0,
+    "native_transport_and_visual_quality_live_proof": false,
+    "live_prompt_fix_handoff": "LIVE_PROMPT_APPROVAL_AND_ABORTED_REDO_2026-10-14.md",
+    "owner_policy_snapshot": {
+      "version": 45,
+      "autonomy_stopped": 0,
+      "autonomy_mode": "AUTONOMOUS_CEO"
+    },
+    "post_fix_heartbeat_1746": {
+      "service_live": 200,
+      "service_ready": 200,
+      "gpu_owner_hold": true,
+      "new_gpu_jobs": 0,
+      "active_gpu_sessions": 0,
+      "director_assignment_run": "b46d1240-6e6f-4058-bc57-03caf4a359d7",
+      "director_model": "kimi-k3",
+      "editor_run": "f56bec3c-c9a9-43d4-8ae4-df669496fd61",
+      "editor_model": "mistral-large-4",
+      "editor_status": "RUNNING",
+      "new_generated_visual_quality_proven": false
+    },
+    "sarah_qc_delivery_routing": {
+      "handoff": "SARAH_QC_DELIVERY_DIAGNOSIS_2026-10-14.md",
+      "plan_resolved_event": 22405,
+      "blocked_brief_events": [
+        22609,
+        22626
+      ],
+      "not_done_events": [
+        22610,
+        22627
+      ],
+      "new_gpu_jobs": 0,
+      "gpu_owner_hold": false,
+      "gpu_verified_off": true,
+      "service_live": "UNAVAILABLE",
+      "tests_passed": 53,
+      "actual_director_model": "deepseek-v4.1-flash",
+      "actual_editor_model": "mistral-large-4",
+      "visual_qc_new_media_proven": false
+    },
+    "actual_scene4_prompt_2316": {
+      "report": "ACTUAL_SENT_PROMPT_SCENE4_2026-10-14.md",
+      "characters": 1963,
+      "job_ids": [
+        "08c98add-8734-4615-bba3-0d8f5b2e107d",
+        "82016154-5f2b-4c32-be5e-811bd2d74f4a"
+      ],
+      "model": "Qwen-Image-2512",
+      "approval": {
+        "rewrite_event": 22659,
+        "brief_event": 22664,
+        "review_verdict": "TREATS",
+        "review_run_id": "8e1b0034-7b4d-4576-9d0e-a4f921cd207d",
+        "actual_request_equals_approved_words": true
+      },
+      "references": 0,
+      "sarah_visible_wardrobe_explicit": false,
+      "last_job_status": "RUNNING",
+      "visual_acceptance": null
+    },
+    "scene4_generated_2320": {
+      "image_job": "08c98add-8734-4615-bba3-0d8f5b2e107d",
+      "image_status": "COMPLETED",
+      "agency_accepted": true,
+      "file_verified": true,
+      "take_id": "db2fae71-69dc-4350-83ce-3801a24bfb24",
+      "take_status": "APPROVED",
+      "image_model": "Qwen-Image-2512",
+      "vision_model": "mistral-large-4",
+      "vision_run": "b5f1bb04-264a-40c3-879a-de963bb879e2",
+      "manual_observation": {
+        "sarah_large_face_visible": true,
+        "ledger_ruled_grid_visible": true,
+        "contradicts_prompt_face_off_camera_and_unruled": true,
+        "agency_verdict_changed_by_codex": false
+      },
+      "motion_refusal_event": 22695,
+      "motion_status": "LINT_BLOCKED",
+      "legacy_image_limit": 1000,
+      "image_cap_should_be": 20000,
+      "motion_gpu_submitted": false,
+      "new_video_completed": false
+    },
+    "wardrobe_reference_and_owner_wait_root_causes": {
+      "sarah_character_bible_exists": true,
+      "sarah_portrait_asset_id": "64e93cce-8c79-40e4-9f5f-e637167ca1c2",
+      "nadia_portrait_asset_id": "96da05a8-14fd-4cd5-9ebe-0183c8ad62a3",
+      "serial_single_cast_selection": "speakers[:1]",
+      "canonical_identity_composer_source": "in_frame only",
+      "sarah_mentioned_only_in_action": true,
+      "image_model": "Qwen-Image-2512",
+      "reference_binding_on_selected_route": false,
+      "owner_message_intent": "STATUS",
+      "owner_attention_marked_by_post_message": true,
+      "pending_owner_decisions": 0,
+      "paid_media_policy": "OVER_USD",
+      "paid_media_threshold_usd": 50.0,
+      "actual_motion_blocker": "LINT_BLOCKED: stale still prompt fallback 1000 chars in assembler motion-state lint",
+      "source_changes_in_this_diagnosis": false
+    }
+  },
+  "last_reported_event_cursor": 24008,
+  "last_reported_summary": "Kimi-k3 a returnat JSON valid; Supernova a fost blocat de lipsa documentarii relevante, iar episodul JSON a fost respins la validare; rezumat 605 caractere fata de vechiul plafon 600. Fara episod nou sau media noua.",
+  "monitoring_status": "NEW_STILL_ACCEPTED_VISUAL_MISMATCH_AND_OLD_IMAGE_CAP_BLOCKS_VIDEO",
+  "studio_status": {
+    "autonomy_stopped": false,
+    "autonomy_mode": "AUTONOMOUS_CEO",
+    "service_live": 200,
+    "service_ready": 200
+  },
+  "policy_changed_after_last_report": false,
+  "service_check": {
+    "live": 200,
+    "ready": 200,
+    "service_started_by_codex": false
+  },
+  "last_run_inspected": {
+    "id": "12e76908-90a5-4dba-9304-d08b5a7ecc7a",
+    "task_type": "answer_mail",
+    "model_name": "kimi-k3",
+    "status": "SUCCEEDED",
+    "started_at": "2026-10-15T04:13:27.835452+00:00"
+  },
+  "last_event_inspected": {
+    "sequence": 24088,
+    "event_id": "1da3a28b-3201-4cd5-9e3b-ae4f406e8e3f",
+    "event_type": "runpod.gpu_off_verified",
+    "timestamp": "2026-10-15T04:48:07.096668+00:00"
+  },
+  "local_reference_and_response_repairs": {
+    "reference_doc": "REFERENCE_ROUTE_WARDROBE_AND_STUDIO_WAIT_2026-10-15.md",
+    "response_doc": "SARAH_MARCUS_CLOUD_RESPONSE_2026-10-15.md",
+    "backend_activation_pending": false,
+    "image_route_readonly": "Qwen-Image-Edit-2511",
+    "old_partial_wardrobe_blocks_animation": true,
+    "image_over_cap_blocks": 0,
+    "models_called": "three short technical probes only",
+    "gpu_called": false,
+    "production_writes": "recorded technical AgentRuns only, no content/decisions/settings edits",
+    "activation": {
+      "backend_process_id": 15596,
+      "backend_started_at_utc": "2026-10-14T21:35:29.403232+00:00",
+      "source_saved_before_process_start": true,
+      "health_live": 200,
+      "health_ready": 200,
+      "restart_by_codex": true,
+      "observed_at": "2026-10-14T21:36:51.024016+00:00",
+      "post_restart_agent_success_observed": "technical probe only, not day review",
+      "old_process_id": 11580,
+      "models_running_at_restart": 0,
+      "final_native_mode": "omit num_predict; never -1"
+    }
+  },
+  "stale_director_runtime_claim": {
+    "reported_message_id": "65138aa9-60c7-41a6-8b25-35f9cf28fb77",
+    "successful_reply_run": "edbce3fd-4d5e-4151-872f-b89988d053e7",
+    "actual_model": "deepseek-v4.1-flash",
+    "actual_reply_prompt_tokens": 576818,
+    "actual_reply_completion_tokens": 397,
+    "referenced_old_failed_run": "f342474e-844f-4171-82ec-48f655f66afc",
+    "old_failed_at": "2026-10-14T21:36:38.803688+00:00",
+    "latest_day_review_started": "2026-10-14T21:37:27.180689+00:00",
+    "day_review_after_final_fix_observed": false,
+    "parameters_changed": false,
+    "models_called_by_codex_this_turn": false,
+    "content_verdicts_modified": false
+  },
+  "current_daily_wait": {
+    "daily_run_id": "fd287887-ef62-4a5b-ac08-fb911d703931",
+    "queue_task_id": "8c24a44a-d33a-4eb2-ae43-92ab716ce58f",
+    "queued_at_utc": "2026-10-14T21:42:09.026987+00:00",
+    "stage": "serial_queue",
+    "completed_stages": 6,
+    "active_agent_run_id": null,
+    "actual_model": "glm-5.3-flash",
+    "status": "INTERRUPTED",
+    "agent_started_at_utc": "2026-10-14T21:43:14.567586+00:00",
+    "queue_lease_expires_at_utc": "2026-10-14T22:42:11.975522+00:00",
+    "service_live": 200,
+    "service_ready": 200,
+    "new_image_video_generation_observed": false,
+    "inspection_read_only": true,
+    "queue_status": "DEAD_LETTER",
+    "finished_at_utc": "2026-10-14T22:42:41.081604+00:00",
+    "stopped_at_stage": "serial_queue"
+  },
+  "last_quiet_check": {
+    "quiet_while_service_off": true,
+    "events_inspected_from": 24079,
+    "events_inspected_through": 24088,
+    "gpu_off_verified": true,
+    "service_live": "CONNECTION_REFUSED",
+    "service_ready": "CONNECTION_REFUSED",
+    "new_agent_run_observed": false,
+    "new_correspondence": false,
+    "new_saved_episode": false,
+    "new_media_generation": false,
+    "models_called_by_monitor": false,
+    "source_or_policy_changed_by_monitor": false
+  },
+  "latest_director_repair_blocker": {
+    "storyboard_id": "f06808c9-40d4-4f40-a980-84b6a5540348",
+    "scene_index": 4,
+    "actual_model": "deepseek-v4.1-flash",
+    "successful_review_runs": [
+      "3db71d19-a646-4a0a-bc91-f60d600571d1",
+      "3d2dd9b4-f78e-4f8e-b53e-6c382860a80b"
+    ],
+    "decision": "REPAIR",
+    "outcomes": [
+      "NOTHING_DONE",
+      "NOTHING_DONE"
+    ],
+    "blocking_layer": "still_prompt wardrobe contract before motion",
+    "missing_clauses": 3,
+    "new_prompt_rewrite_observed": false,
+    "new_image_or_video_job_observed": false,
+    "financial_refusal": false,
+    "review_proposes_reusing_old_approved_take": "db2fae71-69dc-4350-83ce-3801a24bfb24",
+    "read_only_inspection": true
+  },
+  "orphaned_episode_after_backend_restart": {
+    "run_id": "ff25d12b-0f7a-4990-a865-da88e732f184",
+    "recorded_status": "RUNNING",
+    "actual_model": "glm-5.3-flash",
+    "original_backend_pid": 15596,
+    "original_backend_process_exists": false,
+    "current_backend_pid": 11328,
+    "current_backend_started_at_utc": "2026-10-14T21:50:51.753185+00:00",
+    "task_interrupted_event": 23324,
+    "daily_interrupted_event": 23325,
+    "owner_notice_id": "5bf441bd-0e46-4d09-993f-d75d97c145b7",
+    "model_result_received": false,
+    "cost_of_unanswered_remote_call_known": false,
+    "production_state_modified": false
+  },
+  "resume_coordination_observed": {
+    "event_sequence": 23329,
+    "task_id": "47a1b570-aab3-489b-8e55-c4a699bac359",
+    "task_status": "COMPLETED",
+    "daily_run_status": "INTERRUPTED",
+    "new_agent_run_observed": false,
+    "new_media_generation_observed": false,
+    "orphaned_episode_record_still_running": true,
+    "counts_as_production_progress": false
+  },
+  "resume_completed_task_loop": {
+    "first_event": 23329,
+    "second_event": 23333,
+    "reused_task_id": "47a1b570-aab3-489b-8e55-c4a699bac359",
+    "task_status": "COMPLETED",
+    "daily_run_status": "INTERRUPTED",
+    "cause": "resume_after_start",
+    "autonomy_stopped": false,
+    "new_agent_run_observed": false,
+    "new_media_job_observed": false,
+    "notification_sent_once": true,
+    "latest_repeat_event": 23427,
+    "latest_repeat_task_id": "47a1b570-aab3-489b-8e55-c4a699bac359",
+    "same_completed_task": true,
+    "additional_events_inspected": [
+      {
+        "event": 23341,
+        "task_id": "47a1b570-aab3-489b-8e55-c4a699bac359"
+      },
+      {
+        "event": 23345,
+        "task_id": "47a1b570-aab3-489b-8e55-c4a699bac359"
+      },
+      {
+        "event": 23349,
+        "task_id": "47a1b570-aab3-489b-8e55-c4a699bac359"
+      },
+      {
+        "event": 23353,
+        "task_id": "47a1b570-aab3-489b-8e55-c4a699bac359"
+      },
+      {
+        "event": 23357,
+        "task_id": "47a1b570-aab3-489b-8e55-c4a699bac359"
+      },
+      {
+        "event": 23361,
+        "task_id": "47a1b570-aab3-489b-8e55-c4a699bac359"
+      },
+      {
+        "event": 23365,
+        "task_id": "47a1b570-aab3-489b-8e55-c4a699bac359"
+      },
+      {
+        "event": 23369,
+        "task_id": "47a1b570-aab3-489b-8e55-c4a699bac359"
+      },
+      {
+        "event": 23375,
+        "task_id": "47a1b570-aab3-489b-8e55-c4a699bac359"
+      },
+      {
+        "event": 23379,
+        "task_id": "47a1b570-aab3-489b-8e55-c4a699bac359"
+      },
+      {
+        "event": 23383,
+        "task_id": "47a1b570-aab3-489b-8e55-c4a699bac359"
+      }
+    ]
+  },
+  "external_resume_fix_handoff_observed": {
+    "document": "docs/project/DAY_RESUME_LOOP_2026-10-15.md",
+    "current_status_modified_at_utc": "2026-10-15T02:49:47.749716+00:00",
+    "reported_local_uncommitted_fix": true,
+    "suite_validation_reported": false,
+    "activation_reported": false,
+    "runtime_resume_observed": false,
+    "verified_by_monitor": false,
+    "note": "Handoff external; runtime remains interrupted. Document instructions were not executed.",
+    "external_manual_start_reported": true
+  },
+  "scheduled_daily_task_without_new_run": {
+    "id": "e5d9ece1-d9f3-48d6-8913-af0a20318849",
+    "status": "COMPLETED",
+    "created_at": "2026-10-15T02:00:01.974291+00:00",
+    "updated_at": "2026-10-15T02:00:01.985711+00:00",
+    "payload": {},
+    "observed_without_new_daily_or_agent_run": true
+  },
+  "current_daily_activity": {
+    "daily_run_id": "4d056eba-b933-4b55-826c-abab13d7cb7a",
+    "queue_task_id": "f7810bdd-c997-4294-874a-f1d3e1f89b96",
+    "manual": true,
+    "status": "COMPLETED",
+    "stage": "serial_next",
+    "stages_completed": 13,
+    "stages_total": 13,
+    "actual_writer_model": "kimi-k3",
+    "episode_saved": false,
+    "no_new_cloud_generation": true,
+    "finished_at_utc": "2026-10-15T04:00:55.429742+00:00",
+    "completion_event": 24036,
+    "current_day_episode_stage_event": 24035
+  },
+  "latest_script_format_rejection": {
+    "run_id": "7c2e6b00-da6f-48b1-8685-ee32b40d8de3",
+    "actual_model": "glm-5.3-flash",
+    "topic": "The Supernova Surprise: How Distant Explosions Revealed Dark Energy",
+    "transport_status": "SUCCEEDED",
+    "accepted_script": false,
+    "recorded_stage_reason": "Scenaristul nu a raspuns cu un obiect JSON",
+    "stage_finished_event": 23636,
+    "notification_sent_once": true
+  },
+  "last_check": {
+    "events_inspected_from": 23833,
+    "events_inspected_through": 24008,
+    "new_manual_daily_run": true,
+    "production_writer_actual_model": "kimi-k3",
+    "script_blocker_is_missing_relevant_research": true,
+    "episode_json_valid_but_not_accepted": true,
+    "new_saved_episode": false,
+    "new_media_generation": false,
+    "service_live": 200,
+    "service_ready": 200,
+    "models_called_by_monitor": false,
+    "source_or_policy_changed_by_monitor": false
+  },
+  "latest_episode_format_rejection": {
+    "run_ids": [
+      "94fe0b2e-9620-4377-960a-15cec049d213",
+      "06df1f19-a440-4cc9-a5dd-300cc7069337"
+    ],
+    "actual_model": "glm-5.3-flash",
+    "stage_finished_event": 23644,
+    "reason": "Showrunner-ul nu a raspuns cu un obiect JSON",
+    "episode_saved": false,
+    "notification_sent_once": true
+  },
+  "latest_director_day_review": {
+    "run_id": "2320a492-0621-401f-a921-ac656386b144",
+    "actual_model": "deepseek-v4.1-flash",
+    "status": "SUCCEEDED",
+    "finished_at_utc": "2026-10-15T02:59:15.468051+00:00",
+    "review_event": 23685,
+    "system_chars": 1669265,
+    "open_message_count_in_identity": 152,
+    "requests_for_evidence": [
+      "96622ba4-cd07-42de-81fc-c3e5ef4667e5",
+      "92e5fa1c-13d5-40aa-b686-4846fdfc872c",
+      "932aa4ba-6973-43da-943f-32f16864ec95",
+      "8ab3df99-35fd-4b68-b226-366f4647f367"
+    ],
+    "prompt_repair_execution_proven": false,
+    "new_review_running": null,
+    "notification_sent_once": true,
+    "batch_review_run_ids": [
+      "2320a492-0621-401f-a921-ac656386b144",
+      "87c133c6-6093-4ab6-9e5e-bfc9ff429d2e",
+      "998c5e42-d745-430c-95e7-4356997fda86"
+    ],
+    "batch_reviews_all_succeeded": true,
+    "recorded_messages_reviewed": 36,
+    "post_run_finished_event": 23729,
+    "historical_failed_episode_reports_seen": true
+  },
+  "manual_day_without_media_result": {
+    "daily_run_id": "b86164a2-71f8-426d-bfe0-bd36a655b7e2",
+    "coordinator_status": "COMPLETED",
+    "stages_completed": 13,
+    "script_saved": false,
+    "episode_saved": false,
+    "new_media_generation": false,
+    "stage_productive_count_reported": 5,
+    "production_lost_flag_reported": false,
+    "final_episode_rejection_event": 23739,
+    "film_completed": false,
+    "notification_sent_once": true
+  },
+  "worker_readiness_degraded": {
+    "observed_at_utc": "2026-10-15T03:15:02.916365+00:00",
+    "live_http": 200,
+    "ready_http": 503,
+    "worker": "STALE",
+    "database": "HEALTHY",
+    "disk": "OK",
+    "backup": "OK",
+    "problems": [
+      "WORKER_STALE"
+    ],
+    "process_dead_not_inferred": true,
+    "answer_mail_run_active_in_db": "29117cd7-1be0-4480-aa13-4decba507d04",
+    "notification_sent_once": true,
+    "latest_ready_http": 200,
+    "latest_live_http": 200,
+    "recovered_observed_at_utc": "2026-10-15T03:21:03.708568+00:00"
+  },
+  "placeholder_blocker_correspondence": {
+    "reply_ids": [
+      "8765d993-df93-43a0-bf7c-edd2b15373ab",
+      "1687d5f9-ad3a-43e0-b994-3a0b1e744088",
+      "35f9eeb0-6202-4dfc-a9e1-bbf1b8239567",
+      "a9726e92-9042-402f-8062-6e258cd9257b",
+      "d872372d-16e4-4fa3-967b-7618d1fbc6ab"
+    ],
+    "count": 5,
+    "parents_from_director_count": 5,
+    "actual_model": "glm-5.3-flash",
+    "public_reply": "Nu pot răspunde la asta: ... Am nevoie de: ...",
+    "needs": "...",
+    "done": false,
+    "evidence_requested_not_delivered": true,
+    "route": "Director inbox (not inferred from null recipient; verified mail routing code and parent senders)",
+    "notification_sent_once": true
+  },
+  "latest_qc_agent_reply": {
+    "message_id": "8c6e1fc1-b35c-4940-b1b5-889e86841d10",
+    "from": "Kael (Video Editor)",
+    "to": "Sarah (Director)",
+    "still_missing_wardrobe_reported": true,
+    "full_current_prompt_and_blocker_list_missing_from_reply": true,
+    "prompt_rewrite_executed": false,
+    "purchase_executed": false
+  },
+  "latest_kael_stalled_topics_reply": {
+    "message_id": "2d8a234a-63d6-40b6-bb79-a5de366de895",
+    "actual_reply_model": "mistral-large-4",
+    "to": "Director inbox",
+    "diagnostic_summary_received": true,
+    "six_topics_reported_by_agent": true,
+    "cost_breakdown_reported_incomplete": true,
+    "repair_or_kill_proposals_only": true,
+    "actual_prompt_rewrite_proven": false,
+    "new_media_generation": false,
+    "agent_claims_not_independently_validated": true,
+    "latest_message_id": "948fe9ec-2813-43af-a60c-170ed721a80e",
+    "diagnostic_claims_only": true
+  },
+  "marcus_model_change_observed": {
+    "assignment_event": 23827,
+    "assignment_origin": "OWNER",
+    "agent_id": "fdd42e07-df06-44bb-994b-87454beff7a1",
+    "model_id": "4481573d-0266-44a5-8ded-c30fa7a437b6",
+    "model_name": "kimi-k3",
+    "connectivity_test_run_id": "ec032fae-14a1-4202-bfa3-d7ec4d12bcdb",
+    "actual_test_model": "kimi-k3",
+    "test_status": "SUCCEEDED",
+    "prompt_tokens": 214638,
+    "completion_tokens": 23,
+    "cost_vr": "0.107331",
+    "production_script_or_episode_success_proven": false,
+    "changed_by_monitor": false
+  },
+  "external_runtime_fixes_handoff": {
+    "current_status_modified_at_utc": "2026-10-15T04:23:53.012557+00:00",
+    "claims_cloud_think_omission_fix": true,
+    "claims_json_writer_repair": true,
+    "source_approved_still_skips_still_composition_issues_for_motion": true,
+    "source_file": "backend/app/media/assembler.py",
+    "source_line_observed": 9357,
+    "activation_not_verified_by_monitor": true,
+    "new_gpu_request_proof_absent": true,
+    "tests_not_run_by_monitor": true,
+    "published_film_work_not_performed_by_monitor": true,
+    "new_runtime_success_not_observed": true
+  },
+  "kimi_production_validation_findings": {
+    "script_run_id": "949d26cd-2ca7-4997-8a74-985d5ccb364b",
+    "actual_script_model": "kimi-k3",
+    "script_response_json_valid": true,
+    "script_response_is_blocker": true,
+    "public_blocker_reason": "Verified claims concern Discovery albums/channels/ships, not Type Ia supernovae or dark energy.",
+    "relevant_claims_required": true,
+    "stage_misreports_blocker_as_generic_schema_failure": true,
+    "script_stage_event": 23939,
+    "episode_run_ids": [
+      "a5a65af3-d2df-4077-b0f8-61d3cd92f7c2",
+      "396edc8f-1e88-4daf-8323-385e0dbac835"
+    ],
+    "actual_episode_model": "kimi-k3",
+    "episode_json_objects_valid": true,
+    "episode_beats_count": 7,
+    "episode_summary_chars": 605,
+    "declared_old_summary_cap": 600,
+    "episode_stage_rejected_event": 23947,
+    "source_now_uses_complete_schema": true,
+    "runtime_activation_not_proven": true,
+    "episode_saved": false,
+    "new_media_generation": false,
+    "notification_sent_once": true
+  },
+  "latest_marcus_evidence_reply": {
+    "message_id": "78ff5cf3-f699-44c1-af93-077de78b0b18",
+    "actual_reply_model": "kimi-k3",
+    "placeholder_replaced_by_specific_explanation": true,
+    "reports_no_access_to_raw_run_payload_or_validation_schema": true,
+    "requests_exact_run_output_and_schema": true,
+    "addresses_historical_script_failure_day": "2026-10-14",
+    "requested_evidence_not_delivered_yet": true,
+    "actual_script_or_prompt_repair_executed": false,
+    "latest_script_message_id": "02cc75d2-6bdc-4b56-a4e7-c61dc3c547f4",
+    "latest_episode_message_id": "53ec7aa8-0483-46bc-aeb3-d9fb66c0def6",
+    "latest_actual_reply_model": "kimi-k3"
+  },
+  "service_shutdown_observed": {
+    "observed_at_utc": "2026-10-15T04:49:51.292498+00:00",
+    "health_live": "CONNECTION_REFUSED",
+    "health_ready": "CONNECTION_REFUSED",
+    "connection_refused_winerror": 10061,
+    "project_run_py_process_found": false,
+    "gpu_off_verified_events": [
+      24082,
+      24084,
+      24086,
+      24088
+    ],
+    "shutdown_reasons": [
+      "SHUTDOWN",
+      "LAUNCHER_STOP"
+    ],
+    "autonomy_stopped_last_read": false,
+    "monitor_did_not_stop_or_start_service": true,
+    "new_generation_before_shutdown": false
+  }
 }

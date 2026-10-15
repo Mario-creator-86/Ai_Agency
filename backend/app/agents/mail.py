@@ -395,7 +395,7 @@ def _hold_repeated_request(
             told = post_message(
                 session,
                 intent="STATUS",
-                subject=f"Re: {letter.subject}"[:200],
+                subject=f"Re: {letter.subject}",
                 body={
                     "blocked_on": needs,
                     "repeats_message_id": previous.id,
@@ -490,6 +490,7 @@ def answer_mail(
     prompt += wrap_in_inert_boundary(transcript, "mail-thread")
     if books is not None:
         prompt += "\n" + wrap_in_inert_boundary(books, "books")
+    from app.agents.identity import complete_schema  # noqa: PLC0415
     from app.agents.structured import structured_run  # noqa: PLC0415
 
     answer, result, second = structured_run(
@@ -520,13 +521,13 @@ def answer_mail(
     if blocker is not None:
         # An employee who cannot do what the letter asks says so in words, not in a JSON
         # blob pasted into a letter: what stops them and what they need.
-        parsed = MailReply(
+        parsed = complete_schema(MailReply)(
             reply=(
                 f"Nu pot răspunde la asta: {blocker.reason}"
                 + (f" Am nevoie de: {blocker.needs}" if blocker.needs else "")
-            )[:4000],
+            ),
             done=False,
-            needs=blocker.needs[:600],
+            needs=blocker.needs,
         )
         intent_out = "ESCALATE"
     else:
@@ -535,7 +536,7 @@ def answer_mail(
         parsed = (
             answer
             if isinstance(answer, MailReply)
-            else MailReply(reply=" ".join(text.split())[:4000], done=False)
+            else complete_schema(MailReply)(reply=text.strip(), done=False)
         )
     # The Owner's own letter is always answered, even with what he was told before.
     if previous is not None and not owner_wrote and _repeats(previous, parsed):
@@ -554,7 +555,7 @@ def answer_mail(
         sent = post_message(
             session,
             intent=intent_out,
-            subject=f"Re: {subject}"[:200],
+            subject=f"Re: {subject}",
             body={"done": parsed.done, "needs": parsed.needs, "about_message_id": message_id},
             body_text=parsed.reply,
             from_agent_id=agent_id,
@@ -840,7 +841,7 @@ def note_failed_answer(
             "model_id": model_id,
             "last_failed_at": failed_at or moment.isoformat(),
             "retry_after": (moment + timedelta(seconds=wait)).isoformat(),
-            "error": " ".join(reason.split())[:200],
+            "error": " ".join(reason.split()),
             "run_status": run_status,
             "run_id": run_id,
         }

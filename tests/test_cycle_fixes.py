@@ -12,7 +12,7 @@ import json
 from uuid import uuid4
 
 from app.agents.director import DirectorReview
-from app.agents.identity import clipped, parse_structured
+from app.agents.identity import clipped, complete_schema, parse_structured
 from app.factual.models import ScriptDraft, TopicIdea
 from app.media.models import MediaAsset, QualityControlReport, Storyboard, VideoRenderJob
 from app.research.agent import TopicCandidate
@@ -44,16 +44,18 @@ def test_an_answer_cut_off_before_its_json_is_still_refused():
     assert parse_structured("", DirectorReview) is None
 
 
-def test_a_field_longer_than_the_schema_allows_is_clipped_not_refused():
+def test_a_field_longer_than_the_schema_allows_is_kept_whole_not_refused():
     class Note(BaseModel):
         model_config = ConfigDict(extra="ignore")
         text: str = Field(max_length=10)
         _clip = field_validator("text", mode="before")(clipped(10))
 
     note = parse_structured(json.dumps({"text": "x" * 40}), Note)
-    assert isinstance(note, Note) and note.text == "x" * 10
+    # 2026-10-14 (the Owner: complete messages, no silent shortening): the field is kept
+    # whole; the schema's limit no longer cuts what the model said, and nothing is refused.
+    assert isinstance(note, Note) and note.text == "x" * 40
 
-    candidate = TopicCandidate.model_validate(
+    candidate = complete_schema(TopicCandidate).model_validate(
         {
             "title": "How the James Webb Space Telescope found water vapour",
             "topic": "T" * 900,
@@ -77,8 +79,8 @@ def test_a_field_longer_than_the_schema_allows_is_clipped_not_refused():
             },
         }
     )
-    assert len(candidate.topic) == 600 and len(candidate.angle) == 2000
-    assert len(candidate.target_audience) == 300
+    assert len(candidate.topic) == 900 and len(candidate.angle) == 3000
+    assert len(candidate.target_audience) == len("Space enthusiasts " * 30)
     assert candidate.scores.hook_potential == 0.9, "interest still names the hook"
     assert candidate.scores.production_feasibility == 0.3, "cost still names the feasibility"
 

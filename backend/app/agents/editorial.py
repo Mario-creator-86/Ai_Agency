@@ -256,9 +256,7 @@ def gather_facts(session: Session, media_asset_id: str, language: str) -> dict[s
     # file some other way. A factual film it could not measure is not waved through either.
     grounding = script_grounding(session, script) if script and not serial else None
     if grounding is not None and not grounding["passed"] and claims:
-        hard.append(
-            "narațiunea nu spune ce spun afirmațiile ei: " + " ".join(grounding["reasons"][:2])
-        )
+        hard.append("narațiunea nu spune ce spun afirmațiile ei: " + " ".join(grounding["reasons"]))
     qc = session.scalar(
         select(QualityControlReport)
         .where(QualityControlReport.media_asset_id == media_asset_id)
@@ -469,7 +467,7 @@ def editorial_review(
                     )
                 ),
             )
-            + wrap_in_inert_boundary(json.dumps(shown, ensure_ascii=False)[:14000], "the-film")
+            + wrap_in_inert_boundary(json.dumps(shown, ensure_ascii=False), "the-film")
         )
         parsed, first, second = structured_run(
             engine,
@@ -511,9 +509,9 @@ def editorial_review(
             {
                 "verdict": verdict.verdict,
                 "story": verdict.story[:200],
-                "reasons": verdict.reasons[:4],
+                "reasons": verdict.reasons,
                 "frames_seen": len(frames),
-                "title": facts["title"][:120],
+                "title": facts["title"],
             },
             correlation,
         )
@@ -546,7 +544,7 @@ def editorial_review(
                 .where(Agent.lifecycle == "ACTIVE")
             ).all()
         }
-        subject = f"Vizionare: {viewing_verdict(verdict.verdict)} — {facts['title'][:120]}"
+        subject = f"Vizionare: {viewing_verdict(verdict.verdict)} — {facts['title']}"
         summary_text = (
             f"{'Aprobat' if verdict.verdict == 'APPROVE' else 'Respins'}: {facts['title']}. "
             + (f"Despre: {verdict.story} " if verdict.story else "")
@@ -555,9 +553,9 @@ def editorial_review(
         post_message(
             session,
             intent="STATUS" if verdict.verdict == "APPROVE" else "ESCALATE",
-            subject=subject[:200],
+            subject=subject,
             body={"media_asset_id": media_asset_id, "verdict": verdict.verdict},
-            body_text=summary_text[:4000] + f" — {director_name}",
+            body_text=summary_text + f" — {director_name}",
             from_agent_id=director_id,
             to_agent_id=None,
             run_id=run_id,
@@ -587,7 +585,7 @@ def editorial_review(
                 post_message(
                     session,
                     intent="HANDOFF",
-                    subject=f"Refăcut: {facts['title'][:110]}"[:200],
+                    subject=f"Refăcut: {facts['title']}",
                     body={
                         "media_asset_id": media_asset_id,
                         "storyboard_id": facts["storyboard_id"],
@@ -602,7 +600,7 @@ def editorial_review(
         remember(
             session,
             memory_class="AGENT_OPINION",
-            content=summary_text[:600],
+            content=summary_text,
             source_type="run" if run_id else "system",
             source_id=run_id or review_id,
             agent_id=director_id,

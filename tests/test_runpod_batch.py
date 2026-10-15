@@ -936,7 +936,7 @@ def test_a_stop_mid_round_cancels_and_gives_back_what_was_not_made(engine, tmp_p
 
     def stopped():
         reads.append(1)
-        return "Proprietarul a oprit autonomia." if len(reads) > 1 else None
+        return "Proprietarul a oprit autonomia." if cloud.jobs else None
 
     summary, meter, seen = rounds(engine, made, [request("1", 0), request("1", 1)], stopped=stopped)
     assert summary["stopped"] == "Proprietarul a oprit autonomia."
@@ -1595,6 +1595,144 @@ def test_a_request_the_worker_contract_refuses_is_never_booked(
     refused, meter = refused_round(engine, made, [request("1", 0)])
     assert refused.code == "REQUEST_INVALID" and meter.committed == 0 and meter.attempts == 0
     assert not cloud.posts() and only_row(engine).error_code == "UNSENT"
+
+
+def test_a_bad_late_chunk_refuses_the_whole_bundle_before_any_run(engine, tmp_path):
+    cloud = Cloud()
+    made = adapter(engine, tmp_path, cloud, execution_timeout_cap_seconds=300)
+    # One item per chunk; the later invalid prompt previously failed after job 1 was sent.
+    with pytest.raises(batch_module.BatchRefused) as refused:
+        made.submit_batch(
+            [request("1"), request("2", prompt="x" * (contract.MAX_PROMPT + 1))],
+            session=Session_(),
+            on_submitted=lambda item: None,
+        )
+    assert refused.value.code == "REQUEST_INVALID"
+    assert not cloud.posts()
+
+
+def test_later_chunks_and_source_urls_include_the_work_ahead(engine, tmp_path):
+    from urllib.parse import parse_qs
+
+    cloud = Cloud()
+    made = adapter(
+        engine,
+        tmp_path,
+        cloud,
+        cls=RunPodVideoAdapter,
+        execution_timeout_cap_seconds=2400,
+        model_source="cache",
+        model_cache_wait_seconds=3600,
+    )
+    made.submit_batch(
+        [request(str(n), operation="video") for n in range(1, 7)],
+        session=Session_(),
+        on_submitted=lambda item: None,
+    )
+    bodies = list(cloud.jobs.values())
+    assert len(bodies) == 3
+    assert bodies[1]["policy"]["ttl"] >= (
+        bodies[0]["policy"]["executionTimeout"] + bodies[0]["policy"]["ttl"]
+    )
+    assert bodies[2]["policy"]["ttl"] > bodies[1]["policy"]["ttl"]
+    url = bodies[-1]["input"]["items"][-1]["source_image"]["url"]
+    ttl = int(parse_qs(urlsplit(url).query)["X-Amz-Expires"][0])
+    assert ttl * 1000 >= bodies[-1]["policy"]["ttl"]
+
+
+def test_bundle_is_uploaded_and_validated_before_gpu_on(engine, tmp_path, fake_session):
+    cloud = Cloud()
+    made = adapter(engine, tmp_path, cloud, cls=RunPodVideoAdapter)
+    made.core.transport = made.core.client.transport = finishing_video(cloud)
+    # If the first frame is unusable, opening a GPU would only waste its cold start.
+    with pytest.raises(batch_module.BatchRefused):
+        rounds(engine, made, [request(operation="video", source_image=b"not a picture")])
+    assert not fake_session
+    assert not cloud.posts()
+
+
+def test_prepared_rows_are_proven_unsent_when_gpu_cannot_open(engine, tmp_path, monkeypatch):
+    from contextlib import contextmanager
+
+    from app.media import gpu_batch
+    from app.providers.runpod.gpu_session import GpuSessionRefused
+
+    @contextmanager
+    def cannot_open(*args, **kwargs):
+        raise GpuSessionRefused("OFF", "GPU nu poate porni.")
+        yield
+
+    monkeypatch.setattr(gpu_batch, "gpu_session", cannot_open)
+    cloud = Cloud()
+    made = adapter(engine, tmp_path, cloud)
+    with pytest.raises(GpuSessionRefused):
+        rounds(engine, made, [request()])
+    row = only_row(engine)
+    assert row.status == "FAILED" and row.error_code == "UNSENT" and row.cost_value == "0"
+    assert not cloud.posts()
+    # An edited prompt can now use the next attempt; no fake open purchase blocks it.
+    made.submit_batch(
+        [request(prompt="the corrected picture")],
+        session=Session_(),
+        on_submitted=lambda item: None,
+    )
+    assert len(cloud.posts()) == 1
+
+
+def test_a_stop_during_preparation_keeps_gpu_off_and_releases_new_rows(
+    engine, tmp_path, fake_session, monkeypatch
+):
+    cloud = Cloud()
+    made = adapter(engine, tmp_path, cloud)
+    prepare = made.prepare_batch
+    stopped = []
+
+    def prepare_then_stop(requests):
+        ready = prepare(requests)
+        stopped.append(True)
+        return ready
+
+    monkeypatch.setattr(made, "prepare_batch", prepare_then_stop)
+    summary, meter, _seen = rounds(
+        engine, made, [request()], stopped=lambda: "STOP" if stopped else None
+    )
+    assert summary["stopped"] == "STOP" and meter.committed == 0
+    assert not fake_session and not cloud.posts()
+    assert only_row(engine).error_code == "UNSENT"
+
+
+def test_discarding_prepared_work_never_clears_a_previous_uncertain_purchase(engine, tmp_path):
+    cloud = Cloud()
+    cloud.run_answers = [MediaProviderError("lost", unanswered=True)]
+    made = adapter(engine, tmp_path, cloud)
+    made.submit_batch([request()], session=Session_(), on_submitted=lambda item: None)
+    assert only_row(engine).error_code == batch_module.UNCERTAIN
+    ready = made.prepare_batch([request()])
+    made.discard_prepared(ready)
+    assert only_row(engine).error_code == batch_module.UNCERTAIN
+    assert only_row(engine).cost_value != "0"
+
+
+def test_ready_work_is_contiguous_by_model_and_callbacks_keep_their_scene(engine, tmp_path):
+    cloud = Cloud()
+    made = adapter(engine, tmp_path, cloud)
+    sent = []
+    made.submit_batch(
+        [
+            request("1"),
+            request("2", model="Qwen-Image-Edit-2511", references=(png(),)),
+            request("3"),
+        ],
+        session=Session_(),
+        on_submitted=lambda item: sent.append(item.request.scene_id),
+    )
+    items = cloud.jobs["job-1"]["input"]["items"]
+    assert [i["model"] for i in items] == [
+        "Qwen-Image-2512",
+        "Qwen-Image-2512",
+        "Qwen-Image-Edit-2511",
+    ]
+    assert [i["scene_id"] for i in items] == sent == ["1", "3", "2"]
 
 
 def test_a_lone_pod_submit_answered_429_keeps_its_key_reusable(engine):

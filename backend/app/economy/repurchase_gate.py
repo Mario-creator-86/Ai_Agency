@@ -63,7 +63,7 @@ from app.economy.budget import budget_status, may_spend
 from app.economy.services import to_micros
 from app.factual.sanitizer import wrap_in_inert_boundary
 from app.media.models import SceneTake, Storyboard, StoryboardScene
-from app.models import DomainEvent
+from app.models import DomainEvent, OwnerPolicy
 from app.services import append_event, utc_now
 from app.wording import decimal, error_words
 
@@ -76,7 +76,7 @@ GATE_EVENT = "economy.repurchase_gate"
 #: The Accountant's reading and the Director's decision, as runs.
 ACCOUNTANT_TASK = "repurchase_verdict"
 DIRECTOR_TASK = "repurchase_decision"
-TEMPLATE_VERSION = "repurchase-gate-v1"
+TEMPLATE_VERSION = "repurchase-gate-v2"
 ACCOUNTANT_ROLE = "Accountant"
 DIRECTOR_ROLE = "Director"
 #: The letter from the Accountant to the Director when she refuses (``body_json['kind']``).
@@ -84,9 +84,6 @@ HANDOFF_KIND = "repurchase_refused"
 #: The layers money is spent on again; a card or the sound costs 0 credits and never comes here.
 LAYERS = ("still", "motion")
 LAYER_RO = {"still": "imaginea", "motion": "mișcarea"}
-#: How much of the figures each run is given.
-MAX_DATA_CHARS = 12000
-
 #: Outcomes. The first two buy; the next two do not and stand for the same plan; HELD is no
 #: verdict at all (an answer nobody could read, no accountant, no model, a serious defect she
 #: wanted to accept as minor) and is asked again on the next walk.
@@ -229,7 +226,13 @@ def paid_takes(
 
 
 def decided_before(
-    session: Session, storyboard_id: str, scene: int, layer: str, plan_hash: str
+    session: Session,
+    storyboard_id: str,
+    scene: int,
+    layer: str,
+    plan_hash: str,
+    *,
+    budget_context: Mapping[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """What the gate decided for this very plan of ``layer`` of ``scene`` before (`GATE_EVENT`,
     newest first), when that was a verdict: AGREED or INSISTED (it buys), ACCEPTED_MINOR or
@@ -249,10 +252,78 @@ def decided_before(
             or str(payload.get("plan_hash") or "") != plan_hash
         ):
             continue
+        if (
+            payload.get("outcome") != ACCEPTED_MINOR
+            and budget_context is not None
+            and _budget_changed(session, event, payload, budget_context)
+        ):
+            return None
         if payload.get("outcome") in DECISIVE:
             return {**payload, "event_id": str(event.event_id)}
         return None
     return None
+
+
+def _budget_context(engine: Engine, settings: Any) -> dict[str, Any]:
+    """Only financial policy/period identity; per-call spend must not cause another loop."""
+    from app.media.shooting_sheet import film_ceiling_micros  # noqa: PLC0415
+
+    status = budget_status(engine)
+    limit, source = film_ceiling_micros(settings, engine=engine)
+    with Session(engine) as session:
+        policy = session.get(OwnerPolicy, 1)
+        approval = {
+            "rule": getattr(policy, "paid_media_approval", None),
+            "over_usd": getattr(policy, "paid_media_approval_over_usd", None),
+        }
+    return {
+        "version": 1,
+        "film_limit_usd_micros": limit,
+        "film_limit_source": source,
+        "budget_versions": status["versions"],
+        "periods": [
+            {"period": p["period"], "limit_usd_micros": p["limit_usd_micros"], "since": p["since"]}
+            for p in sorted(status["budgets"], key=lambda p: p["period"])
+        ],
+        "paid_media_approval": approval,
+    }
+
+
+def _budget_changed(
+    session: Session,
+    event: DomainEvent,
+    payload: Mapping[str, Any],
+    current: Mapping[str, Any],
+) -> bool:
+    saved = payload.get("budget_context")
+    if isinstance(saved, Mapping):
+        return dict(saved) != dict(current)
+    # Older outcomes remain auditable. A budget/approval change after their event, a new
+    # spending period or a changed film ceiling makes them obsolete, without deleting them.
+    books = payload.get("film_books")
+    previous = books.get("ceiling_usd") if isinstance(books, Mapping) else None
+    if isinstance(previous, int | float):
+        if round(float(previous) * 1_000_000) != current["film_limit_usd_micros"]:
+            return True
+    if any(str(event.timestamp) < str(p["since"]) for p in current["periods"]):
+        return True
+    return (
+        session.scalar(
+            select(DomainEvent.sequence)
+            .where(
+                DomainEvent.sequence > event.sequence,
+                DomainEvent.event_type.in_(
+                    (
+                        "economy.budget_set",
+                        "economy.budget_retired",
+                        "owner.paid_media_approval_changed",
+                    )
+                ),
+            )
+            .limit(1)
+        )
+        is not None
+    )
 
 
 # ------------------------------------------------------------------------------ the gate
@@ -297,18 +368,25 @@ def before_paid_redo(
         paid = paid_takes(session, storyboard_id, scene, layer)
         if not paid:
             return None  # the layer's first purchase: his rule alone, as before
-        earlier = decided_before(session, storyboard_id, scene, layer, plan_hash)
+    context = _budget_context(engine, settings)
+    with Session(engine) as session:
+        earlier = decided_before(
+            session, storyboard_id, scene, layer, plan_hash, budget_context=context
+        )
+    if earlier is not None and earlier.get("outcome") == ACCEPTED_MINOR:
+        return _stand_by(earlier, plan)  # keeping the take costs nothing
+    if _theirs_to_refuse(engine, settings, storyboard_id, plan, environment, correlation):
+        return None  # current hard budgets are checked before a paid historical opinion
     if earlier is not None:
         logger.info(
             "repurchase_gate_stands",
             extra={"storyboard_id": storyboard_id, "scene_index": scene, "layer": layer},
         )
         return _stand_by(earlier, plan)
-    if _theirs_to_refuse(engine, settings, storyboard_id, plan, environment, correlation):
-        return None  # over his ceiling or the day's budget: refused by the purchase, as before
     reads = _what_nadia_reads(
         engine, settings, reading, proposals, scene, layer, plan, paid, rounds, per_scene, per_film
     )
+    reads["budget_context"] = context
     reads["defect_measured_serious"] = bool(measured)
     decided = _decide(engine, registry, reads, measured, correlation)
     _record(engine, reads, decided, asset_id, plan_hash, measured, correlation)
@@ -320,7 +398,7 @@ def _stand_by(decided: Mapping[str, Any], plan: Mapping[str, Any]) -> dict[str, 
     from app.media.assembler import SceneRedoRefused  # noqa: PLC0415 - media imports economy
 
     outcome = str(decided.get("outcome") or HELD)
-    reason = str(decided.get("reason") or "")[:300]
+    reason = str(decided.get("reason") or "")
     if outcome in (AGREED, INSISTED):
         return None
     if outcome == ACCEPTED_MINOR:
@@ -409,7 +487,7 @@ def _reasons(reading: Mapping[str, Any], proposals: Sequence[Any], scene: int) -
     def add(text: Any) -> None:
         said = " ".join(str(text or "").split())
         if said and said not in reasons:
-            reasons.append(said[:400])
+            reasons.append(said)
 
     for proposal in proposals:
         if getattr(proposal, "scene_index", None) == scene and not getattr(proposal, "free", False):
@@ -427,7 +505,7 @@ def _reasons(reading: Mapping[str, Any], proposals: Sequence[Any], scene: int) -
             add(verdict.get("text"))
             if str(verdict.get("cause") or "").strip():
                 add(f"cauza: {verdict['cause']}")
-    return reasons[:12]
+    return reasons
 
 
 def _correction_of(
@@ -461,10 +539,10 @@ def _correction_of(
             "event_id": str(event.event_id),
             "rewritten_at": str(event.timestamp),
             "layer_rewritten": payload.get("layer"),
-            "diagnosis": str(brief.get("diagnosis") or "")[:600],
-            "change": [str(item)[:200] for item in list(brief.get("change") or [])[:6]],
-            "old_prompt": str(payload.get(old_key) or "")[:1500],
-            "new_prompt": str(payload.get(new_key) or "")[:1500],
+            "diagnosis": str(brief.get("diagnosis") or ""),
+            "change": [str(item) for item in list(brief.get("change") or [])],
+            "old_prompt": str(payload.get(old_key) or ""),
+            "new_prompt": str(payload.get(new_key) or ""),
         }
     return None
 
@@ -524,7 +602,7 @@ def _what_nadia_reads(
     storyboard_id = str(reading.get("storyboard_id") or plan.get("storyboard_id") or "")
     with Session(engine) as session:
         board = session.get(Storyboard, storyboard_id)
-        title = " ".join(str(getattr(board, "title", "") or "").split())[:120] or storyboard_id[:8]
+        title = " ".join(str(getattr(board, "title", "") or "").split()) or storyboard_id[:8]
         correction = _correction_of(session, storyboard_id, scene, layer)
         stored = _scene_words(session, storyboard_id, scene, layer)
     try:
@@ -534,7 +612,7 @@ def _what_nadia_reads(
         view = {"limit_usd_micros": 0, "spent_usd_micros": 0, "remaining_usd_micros": 0}
     cap_micros = _cap_micros(plan)
     plan_words = plan.get("still_prompt" if layer == "still" else "motion_prompt")
-    corrected = str(plan_words or (correction or {}).get("new_prompt") or stored or "")[:1500]
+    corrected = str(plan_words or (correction or {}).get("new_prompt") or stored or "")
     cap_usd = plan.get("cap_usd")
     return {
         "film": {"storyboard_id": storyboard_id, "title": title},
@@ -542,7 +620,7 @@ def _what_nadia_reads(
         "scene_index": scene,
         "layer": layer,
         "layer_ro": LAYER_RO.get(layer, layer),
-        "what_is_bought": str(plan.get("reason_ro") or "")[:600],
+        "what_is_bought": str(plan.get("reason_ro") or ""),
         "what_was_wrong": {
             "quality_control_and_director": _reasons(reading, proposals, scene),
             "director_brief": correction,
@@ -582,9 +660,7 @@ def _what_nadia_reads(
 
 def _data(reads: Mapping[str, Any], mark: str, **more: Any) -> str:
     shown = {**reads, **more}
-    return wrap_in_inert_boundary(
-        json.dumps(shown, ensure_ascii=False, default=str)[:MAX_DATA_CHARS], mark
-    )
+    return wrap_in_inert_boundary(json.dumps(shown, ensure_ascii=False, default=str), mark)
 
 
 def _ask(
@@ -619,16 +695,16 @@ def _ask(
         )
     except Exception as exc:  # noqa: BLE001 - no answer is no approval
         logger.warning("repurchase_gate_run_failed", extra={"task_type": task_type})
-        return None, None, error_words(exc)[:300]
+        return None, None, error_words(exc)
     last = second or first
     run_id = str(last.get("id") or "") or None
     text = str(last.get("output_text") or "")
     blocker = blocker_of(text) if text.strip() else None
     if blocker is not None:
-        return None, run_id, f"blocaj declarat: {blocker.reason}"[:300]
+        return None, run_id, f"blocaj declarat: {blocker.reason}"
     if parsed is None:
         why = str(last.get("error_detail") or last.get("refusal") or last.get("status") or "")
-        return None, run_id, (why or "răspuns fără forma cerută")[:300]
+        return None, run_id, (why or "răspuns fără forma cerută")
     return parsed, run_id, ""
 
 
@@ -636,7 +712,7 @@ def _held(reason: str, **views: Any) -> dict[str, Any]:
     return {
         "outcome": HELD,
         "buys": False,
-        "reason": reason[:300],
+        "reason": reason,
         "accountant": views.get("accountant"),
         "director": views.get("director"),
         "letter_id": views.get("letter_id"),
@@ -707,7 +783,7 @@ def _decide(
         ACCOUNTANT_TASK,
         _ACCOUNTANT_INSTRUCTIONS.format(layer=reads["layer"]) + _data(reads, "repurchase-verdict"),
         AccountantVerdict,
-        f"Citesc refacerea scenei {scene} ({layer_ro}) din «{title[:60]}»: până la {cap_ro} USD "
+        f"Citesc refacerea scenei {scene} ({layer_ro}) din «{title}»: până la {cap_ro} USD "
         "din nou pe același strat; spun dacă merită.",
         correlation,
     )
@@ -725,8 +801,8 @@ def _decide(
         "cheaper_alternative": verdict.cheaper_alternative,
     }
     opinion = (
-        f"Refacere {layer_ro} scena {scene} «{title[:60]}», până la {cap_ro} USD: "
-        f"{verdict.verdict} — {verdict.reason[:220]}"
+        f"Refacere {layer_ro} scena {scene} «{title}», până la {cap_ro} USD: "
+        f"{verdict.verdict} — {verdict.reason}"
     )
     if verdict.verdict == "APPROVE":
         with Session(engine) as session, session.begin():
@@ -735,7 +811,7 @@ def _decide(
         return {
             "outcome": AGREED,
             "buys": True,
-            "reason": f"Contabila a fost de acord: {verdict.reason}"[:300],
+            "reason": f"Contabila a fost de acord: {verdict.reason}",
             "accountant": accountant_view,
             "director": None,
             "letter_id": None,
@@ -747,7 +823,7 @@ def _decide(
             f"{refused}; nu există o Directoare activă care să hotărască; scena așteaptă",
             accountant=accountant_view,
         )
-    subject = (f"Refacerea scenei {scene} din «{title[:80]}»: contabilitatea nu e de acord")[:200]
+    subject = f"Refacerea scenei {scene} din «{title}»: contabilitatea nu e de acord"
     lines = [
         *_figures_ro(reads),
         f"Nu sunt de acord: {verdict.reason}",
@@ -791,7 +867,7 @@ def _decide(
         )
         + _data(reads, "repurchase-decision", accountant_verdict=verdict.model_dump()),
         DirectorDecision,
-        f"Nadia a refuzat refacerea scenei {scene} ({layer_ro}) din «{title[:60]}»; hotărăsc: "
+        f"Nadia a refuzat refacerea scenei {scene} ({layer_ro}) din «{title}»; hotărăsc: "
         "insist, accept defectul ca minor, sau nu mai cumpăr scena.",
         correlation,
     )
@@ -818,7 +894,7 @@ def _decide(
         reply = post_message(
             session,
             intent="STATUS",
-            subject=f"Re: {subject}"[:200],
+            subject=f"Re: {subject}",
             body={
                 "kind": HANDOFF_KIND,
                 "storyboard_id": reads["film"]["storyboard_id"],
@@ -839,8 +915,8 @@ def _decide(
             session,
             director,
             sarah_run,
-            f"Refacere {layer_ro} scena {scene} «{title[:60]}»: Nadia a refuzat ({cap_ro} USD); "
-            f"{decision.decision} — {decision.reason[:220]}",
+            f"Refacere {layer_ro} scena {scene} «{title}»: Nadia a refuzat ({cap_ro} USD); "
+            f"{decision.decision} — {decision.reason}",
             correlation,
         )
     views = {"accountant": accountant_view, "director": director_view, "letter_id": letter_id}
@@ -848,7 +924,7 @@ def _decide(
         return {
             "outcome": INSISTED,
             "buys": True,
-            "reason": f"{refused}; Directoarea a insistat: {decision.reason}"[:300],
+            "reason": f"{refused}; Directoarea a insistat: {decision.reason}",
             **views,
         }
     if decision.decision == "CLOSE_SCENE":
@@ -857,7 +933,7 @@ def _decide(
             "buys": False,
             "reason": (
                 f"{refused}; Directoarea nu mai cumpără scena pe aceste cuvinte: {decision.reason}"
-            )[:300],
+            ),
             **views,
         }
     if measured:
@@ -871,7 +947,7 @@ def _decide(
     return {
         "outcome": ACCEPTED_MINOR,
         "buys": False,
-        "reason": f"{refused}; Directoarea a acceptat defectul ca minor: {decision.reason}"[:300],
+        "reason": f"{refused}; Directoarea a acceptat defectul ca minor: {decision.reason}",
         **views,
     }
 
@@ -911,12 +987,13 @@ def _record(
         "plan_hash": plan_hash,
         "outcome": decided["outcome"],
         "buys": bool(decided.get("buys")),
-        "reason": str(decided.get("reason") or "")[:300],
+        "reason": str(decided.get("reason") or ""),
         "accountant": decided.get("accountant"),
         "director": decided.get("director"),
         "letter_id": decided.get("letter_id"),
         "price": reads["this_redo"],
         "film_books": reads["film_books"],
+        "budget_context": reads["budget_context"],
         "rounds": reads["redos_bought"],
         "paid_before": [str(take["take_id"]) for take in reads["paid_before_for_this_layer"]],
         "measured_serious": bool(measured),
