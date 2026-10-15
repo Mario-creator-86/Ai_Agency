@@ -2111,4 +2111,12 @@ No provider was called, no run was queued, no credit was spent, and
   whose article says it), so the thesis claims of «The Supernova Surprise» stayed UNCERTAIN
   through three research passes; give the verifier the passage found by the claim's own words
   (`evidence_text` quote search over the whole snapshot) before judging.
+- 2026-10-15 19:30Z — next (the Owner checked his alerts): of 15 open letters to him, 14 are the
+  studio's own matter under the letters rule and were misrouted: `day_interrupted` (×3, the day
+  now resumes by itself), `owner_shooting_sheet` for a refusal outside OWNER_DECIDES (×2),
+  `runpod_gpu_guard_off`, `film_continue_interrupted`, `film_purchase_abandoned`, and the
+  informative `owner_director_qc` / `owner_director_look` / `factual_short` judgement notes.
+  Route each producer to the Director (body.to = Director, her inbox) and keep for him only
+  accounts, authorisations, security and money cards; the «Decizii» count then shows his real
+  cards (today: one, Marcus's failing model).
 
