@@ -1101,6 +1101,7 @@ def test_the_director_audits_a_scenes_words_before_the_first_purchase(
     # hold the scene for the Owner: the words are bought under the cap. Scene 1's words
     # change, so she is asked again and this time refuses them.
     def refusing_run(engine_, registry, agent_id, task_type, prompt, *a, **kw):
+        asked.append({"task": task_type, "prompt": prompt})
         answer = prompt_audit.PromptAudit(
             scenes=[
                 prompt_audit.AuditedScene(
@@ -1138,6 +1139,12 @@ def test_the_director_audits_a_scenes_words_before_the_first_purchase(
     )
     assert fourth["held"] == [] and fourth["approved"] == [1], fourth
     assert fourth["under_cap"] == [1] and fourth["asked"] is True, fourth
+    # Her second round, in the same walk: the same words, her earlier brief and why the
+    # rewrite could not answer it (16:10Z: clips bought on refused words after one miss).
+    assert "previous_round" in asked[-1]["prompt"] and "stratul still" in asked[-1]["prompt"]
+    assert "say the wall is bare" in asked[-1]["prompt"]
+    with Session(engine) as session:
+        assert prompt_audit.briefs_given(session, board, 1, "still") == prompt_audit.AUDIT_ROUNDS
     with Session(engine) as session:
         scene_rows = session.scalars(
             select(StoryboardScene).where(StoryboardScene.storyboard_id == board)

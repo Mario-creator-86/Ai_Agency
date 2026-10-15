@@ -68,7 +68,10 @@ _INSTRUCTIONS = (
     "a name, a label or a screen full of content (a «blank nameplate» invites a name: leave the "
     "object out). Judge ONLY words_to_send: that is the whole text the model receives. The "
     "plan, the bible and the look are context — an object named there and absent from "
-    "words_to_send is NOT sent and is no reason to refuse. A doubt is not an approval. When "
+    "words_to_send is NOT sent and is no reason to refuse. A doubt is not an approval. A scene "
+    "with previous_round shows your earlier brief and why the Video Editor's rewrite could not "
+    "answer it: judge the same words again knowing that, and a brief he can act on names the "
+    "exact words to write in change. When "
     "you do not approve, give the brief the "
     "Video Editor rewrites from: diagnosis (what in these words would make the defect), the "
     "layer, avoid (the words or objects to take out), keep (what must stay), change (what to "
@@ -232,6 +235,7 @@ def _ask(
     contexts: dict[int, dict[str, Any]],
     lessons: list[str],
     correlation_id: str,
+    previous: dict[int, dict[str, Any]] | None = None,
 ) -> tuple[PromptAudit | None, dict[str, Any]]:
     from app.agents.structured import structured_run  # noqa: PLC0415 - it imports services
     from app.factual.sanitizer import wrap_in_inert_boundary  # noqa: PLC0415
@@ -258,6 +262,9 @@ def _ask(
                     context["package"], "motion" if layer == "still" else "still"
                 ),
                 "planned_markings": list(context.get("markings") or []),
+                **(
+                    {"previous_round": (previous or {})[index]} if index in (previous or {}) else {}
+                ),
             }
             for index, context in sorted(contexts.items())
         ],
@@ -290,6 +297,25 @@ def _ask(
         temperature=0.1,
     )
     return (parsed if isinstance(parsed, PromptAudit) else None), first
+
+
+def _brief_of(item: AuditedScene, layer: str) -> dict[str, Any]:
+    """Her brief for the Editor's rewrite, on this layer; a refusal without one is a brief
+    of its reason."""
+    brief = item.brief.model_dump() if item.brief is not None else None
+    if brief is None:
+        brief = {
+            "action": "rewrite",
+            "diagnosis": item.reason or "Cuvintele nu spun tot ce trebuie să respecte poza.",
+            "layer": layer,
+            "avoid": [],
+            "keep": [],
+            "change": [item.reason or "spune explicit ce trebuie să respecte poza"],
+            "summary_ro": item.reason or "Promptul se rescrie înainte de cumpărare.",
+        }
+    brief["layer"] = layer
+    brief["action"] = "rewrite"
+    return brief
 
 
 def audit_before_purchase(
@@ -426,44 +452,93 @@ def audit_before_purchase(
             )
             result["approved"].append(scene)
             continue
-        brief = item.brief.model_dump() if item.brief is not None else None
-        if brief is None:
-            brief = {
-                "action": "rewrite",
-                "diagnosis": item.reason or "Cuvintele nu spun tot ce trebuie să respecte poza.",
-                "layer": layer,
-                "avoid": [],
-                "keep": [],
-                "change": [item.reason or "spune explicit ce trebuie să respecte poza"],
-                "summary_ro": item.reason or "Promptul se rescrie înainte de cumpărare.",
-            }
-        brief["layer"] = layer
-        brief["action"] = "rewrite"
-        try:
-            done = rewrite_scene(engine, registry, context, brief, correlation_id)
-        except Exception as exc:  # noqa: BLE001 - a fault buys nothing
-            logger.warning("prompt_audit_rewrite_failed", extra={"error": type(exc).__name__})
-            done = {"rewritten": False, "reason": f"rescrierea a căzut ({type(exc).__name__})"}
-        _record(
-            engine,
-            storyboard_id=storyboard_id,
-            scene=scene,
-            layer=layer,
-            digest=digests[scene],
-            verdict=REWRITE,
-            reason=item.reason or str(brief.get("diagnosis") or ""),
-            run_id=run.get("id"),
-            correlation_id=correlation_id,
-            rewritten=bool(done.get("rewritten")),
-        )
-        if done.get("rewritten"):
-            result["rewritten"].append(scene)
-        else:
-            # Her brief could not move these words (locked on the other layer, a fault, a
-            # rewrite that changed nothing): the words stand and are bought under the Owner's
-            # cap — never a film that «așteaptă Proprietarul» on words nobody can change
-            # (15:41Z, a4ecf40a: the motion audit of scene 1 objected to the still's own
-            # words, bought and approved by her look a minute before).
+        brief = _brief_of(item, layer)
+        while True:
+            try:
+                done = rewrite_scene(engine, registry, context, brief, correlation_id)
+            except Exception as exc:  # noqa: BLE001 - a fault buys nothing
+                logger.warning("prompt_audit_rewrite_failed", extra={"error": type(exc).__name__})
+                done = {"rewritten": False, "reason": f"rescrierea a căzut ({type(exc).__name__})"}
+            _record(
+                engine,
+                storyboard_id=storyboard_id,
+                scene=scene,
+                layer=layer,
+                digest=digests[scene],
+                verdict=REWRITE,
+                reason=item.reason or str(brief.get("diagnosis") or ""),
+                run_id=run.get("id"),
+                correlation_id=correlation_id,
+                rewritten=bool(done.get("rewritten")),
+            )
+            if done.get("rewritten"):
+                result["rewritten"].append(scene)
+                break
+            with Session(engine) as session:
+                given = briefs_given(session, storyboard_id, scene, layer)
+            # A rewrite the layer cannot make (the findings are in the picture's words the
+            # motion keeps, or in the composer's own sentences) is not helped by another brief.
+            helpless = bool(done.get("composer_locked") or done.get("layer_exhausted"))
+            if given < AUDIT_ROUNDS and not helpless:
+                # Her second look at the same words, told what his rewrite could not do: the
+                # Owner's rule is that she approves the words before anything is bought, and
+                # the clips of a4ecf40a scenes 6-8 (16:10Z) were bought on words she had
+                # refused after one rewrite that missed her brief — and failed QC on it.
+                again, run = _ask(
+                    engine,
+                    registry,
+                    director_id=director_id,
+                    layer=layer,
+                    contexts={scene: context},
+                    lessons=lessons,
+                    correlation_id=correlation_id,
+                    previous={
+                        scene: {
+                            "brief": brief,
+                            "rewrite_failed": str(done.get("reason") or "fără motiv")[:600],
+                        }
+                    },
+                )
+                item = next(
+                    (
+                        each
+                        for each in (again.scenes if again is not None else [])
+                        if int(each.scene_index) == scene
+                    ),
+                    None,
+                )
+                if item is None:
+                    # Nobody could audit the second round: refused words are not bought.
+                    result["held"].append(
+                        {
+                            "scene_index": scene,
+                            "reason": (
+                                f"Scena {scene}: Directoarea nu a putut relua verificarea "
+                                f"({run.get('error_detail') or run.get('status')}); nu se cumpără."
+                            ),
+                        }
+                    )
+                    break
+                if item.approved:
+                    _record(
+                        engine,
+                        storyboard_id=storyboard_id,
+                        scene=scene,
+                        layer=layer,
+                        digest=digests[scene],
+                        verdict=APPROVED,
+                        reason=item.reason,
+                        run_id=run.get("id"),
+                        correlation_id=correlation_id,
+                    )
+                    result["approved"].append(scene)
+                    break
+                brief = _brief_of(item, layer)
+                continue
+            # Her rounds are spent on these words, or no rewrite of this layer can answer
+            # her: the words stand and are bought under the Owner's cap — never a film that
+            # «așteaptă Proprietarul» on words nobody can change (15:41Z, a4ecf40a: the
+            # motion audit of scene 1 objected to the still's own words).
             _record(
                 engine,
                 storyboard_id=storyboard_id,
@@ -472,8 +547,8 @@ def audit_before_purchase(
                 digest=digests[scene],
                 verdict=APPROVED_UNDER_CAP,
                 reason=(
-                    f"Scena {scene}: briefului Directoarei nu i s-a putut răspunde printr-o "
-                    f"rescriere ({done.get('reason') or 'fără motiv'}); cuvintele se cumpără "
+                    f"Scena {scene}: după {given} briefuri ale Directoarei rescrierea nu a "
+                    f"răspuns ({done.get('reason') or 'fără motiv'}); cuvintele se cumpără "
                     "așa cum sunt, sub plafonul Proprietarului (2026-10-15)."
                 ),
                 run_id=run.get("id"),
@@ -481,4 +556,5 @@ def audit_before_purchase(
             )
             result["approved"].append(scene)
             result.setdefault("under_cap", []).append(scene)
+            break
     return result
