@@ -215,6 +215,11 @@ SKIPPED = "SKIPPED"
 #: How many drafts of one story a single run will work through — the same number the review
 #: counts to, so the room and the reading agree about when the conversation is over.
 MAX_SCRIPT_EXCHANGES = MAX_EXCHANGES
+#: How many times a draft its form refused (a chart without its figures, a citation that was
+#: not supplied) is asked for again with the refusal in the writer's notes, per topic and day
+#: (2026-10-15, 14:43Z: the first script with the right facts was dropped whole for one
+#: DATA_CARD scene without its numbers). Text is free; the room is not endless.
+SCRIPT_FORM_RETRIES = 2
 
 BATCH = 5
 #: Claims verified in one day. Verification is one short call per claim; extraction from
@@ -1090,6 +1095,7 @@ def _script_and_storyboard(
         return _outcome(SKIPPED, "Niciun model de limbaj disponibil; agenții nu pot rula.")
 
     drafted, rejected = 0, []
+    form_retries = 0
     with Session(engine) as session:
         selected = [
             topic.id
@@ -1106,6 +1112,7 @@ def _script_and_storyboard(
         # cheapest thing the studio produces — a render is where the money is — so the
         # conversation happens now, in full, and the film reaches the camera in the same day.
         notes = list(carried_notes or [])
+        form_refusals = 0  # refusals of the draft's form this topic had (`SCRIPT_FORM_RETRIES`)
         for attempt in range(1, MAX_SCRIPT_EXCHANGES + 1):
             try:
                 written = agent_write_script(
@@ -1165,12 +1172,29 @@ def _script_and_storyboard(
                 )
                 _topic_back_to_research(engine, topic_id, exc.blocker)
                 break
-            except (ScriptRejected, NoVerifiedClaims) as exc:
-                # The draft was refused and nothing was stored — which is the pipeline working,
-                # not the day breaking. A model that writes narration it cannot attribute to a
-                # verified claim is a content problem; letting it stop the run would also stop
-                # the day's log and every stage after it, over an outcome the studio handled
-                # correctly. The room closes for this topic; the day goes on.
+            except ScriptRejected as exc:
+                # The draft was refused by its form and nothing was stored (a chart without
+                # its figures, a citation that was not supplied). Until 2026-10-15 the room
+                # closed on it; 14:43Z, d7d80450: the first script a writer with the right
+                # facts wrote was dropped whole for one DATA_CARD scene without its numbers.
+                # Text is free: the writer is asked again with the refusal, within the
+                # exchanges the room allows (the Owner: «publicăm ce avem»).
+                logger.info("script_rejected", extra={"topic_id": topic_id, "reason": str(exc)})
+                form_refusals += 1
+                if form_refusals <= SCRIPT_FORM_RETRIES and attempt < MAX_SCRIPT_EXCHANGES:
+                    form_retries += 1
+                    notes = [
+                        *notes,
+                        f"Forma a refuzat ciorna: {str(exc)[:400]} Dă fiecărei bare a unui "
+                        "grafic valoarea, unitatea și afirmația verificată din care vine, sau "
+                        "fă scena una filmată (LIVE) fără grafic.",
+                    ]
+                    continue
+                rejected.append(str(exc)[:300])
+                break
+            except NoVerifiedClaims as exc:
+                # No SUPPORTED claim at all: nothing truthful to write from; the room closes
+                # for this topic and the day goes on.
                 logger.info("script_rejected", extra={"topic_id": topic_id, "reason": str(exc)})
                 rejected.append(error_words(exc))
                 break
@@ -1288,6 +1312,7 @@ def _script_and_storyboard(
         shots_described=prompted,
         story_reviews=reviews,
         rejected=rejected,
+        form_retries=form_retries,
         awaiting_approval=bool(awaiting),
         waiting_shot_plan=waiting_plan,
         storyboards_gated=gated,

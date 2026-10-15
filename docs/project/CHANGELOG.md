@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-15 — A script its form refused is asked for again with the refusal, twice at most
+
+- `runbook/stages.py`: a draft `ScriptRejected` by its form (a DATA_CARD without its figures, a citation not supplied) is asked for again with the refusal in the writer's notes, up to `SCRIPT_FORM_RETRIES` (2) per topic and day, instead of closing the room on the topic (14:43Z, d7d80450: the first script a writer with the right facts wrote was dropped whole for one chart scene). `form_retries` on the stage's artefacts; a topic with no supported claim still closes at once. Test in `test_daily_run_stages` (82 passed with `test_script_writing`).
+
 ## 2026-10-15 — A day already at its drafts cap ships its newest draft from the evening script
 
 - `story/serial_stage.py`: the evening script that finds today told, every draft refused by the Director's reading and the day at `MAX_DRAFTS_PER_DAY`, ships the newest draft under the cap (`approve_under_drafts_cap`), readies it and queues its filming — episode 3 of 15.10, left «la altă zi» at 14:19Z, ships at the next run. A day the computed checks refused stays refused. Test in `test_serial_self_recovery` (164 passed with the serial suites).

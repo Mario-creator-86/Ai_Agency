@@ -332,6 +332,44 @@ def test_a_rejected_script_does_not_take_the_day_down_with_it(engine, settings, 
     assert "1 respins:" in outcome["reason"]
 
 
+def test_a_script_refused_by_its_form_is_asked_again_with_the_refusal(
+    engine, settings, monkeypatch
+):
+    """14:43Z, d7d80450: the first script a writer with the right facts wrote was dropped whole
+    for one DATA_CARD scene without its numbers, and the room closed on the topic. Text is
+    free: the writer is asked again with the refusal in his notes, within the exchanges the
+    room allows; a topic with no supported claim at all still closes at once."""
+    from pathlib import Path as _Path
+
+    from app.factual.agent_pipeline import ScriptRejected
+    from app.integrations.vault import CredentialVault
+
+    topic_id = _topic(engine, status="SELECTED")
+    _claim(engine, topic_id, status="SUPPORTED")
+    registry = ProviderRegistry()
+    registry.register("any", object())
+    asked: list[list[str] | None] = []
+
+    def refuse(*args: Any, **kwargs: Any) -> None:
+        asked.append(kwargs.get("notes"))
+        raise ScriptRejected("Scena 3 este un grafic (DATA_CARD), dar nu dă cifrele lui.")
+
+    monkeypatch.setattr("app.runbook.stages.agent_write_script", refuse)
+    vault = CredentialVault(_Path(str(engine.url.database)).with_suffix(".credentials.key"))
+    outcome = build_stage_runners(engine, settings, vault, registry)["script_and_storyboard"]()
+
+    from app.runbook.stages import SCRIPT_FORM_RETRIES
+
+    assert outcome["status"] == "COMPLETED"
+    assert len(asked) == SCRIPT_FORM_RETRIES + 1  # the draft, then the bounded retries
+    assert asked[0] is None
+    assert any("Forma a refuzat ciorna" in note for note in asked[1] or [])
+    assert any("DATA_CARD" in note for note in asked[1] or [])
+    assert len(outcome["artefacts"]["rejected"]) == 1  # one topic refused, once
+    assert outcome["artefacts"]["form_retries"] == SCRIPT_FORM_RETRIES
+    assert "1 respins:" in outcome["reason"]
+
+
 def test_quality_control_selects_files_by_what_they_are_not_by_their_label(
     engine, settings, tmp_path
 ):
