@@ -30,9 +30,63 @@ def callback(engine, monkeypatch, *, fails=False):
         object(),
         settings=Settings(worker_enabled=True, director_check_interval_seconds=30),
         clock=lambda: moment[0],
+        background=False,
     )
     assert check is not None
     return check, calls, moment
+
+
+def test_the_free_work_runs_beside_the_poll_and_a_long_round_is_not_queued_twice(
+    engine, monkeypatch
+):
+    """2026-10-15 16:49Z, a4ecf40a: the Director's company call ran past ten minutes inside
+    the motion step's wait; the poll could not collect scene 8 nor renew the GPU session, and
+    the guard turned the idle worker off. The free work runs on its own thread: the poll's
+    check returns at once, and while a round is still running the next interval starts
+    nothing new."""
+    import threading
+
+    calls = []
+    gate = threading.Event()
+    moment = [0.0]
+    with Session(engine) as session, session.begin():
+        session.get(OwnerPolicy, 1).autonomy_stopped = False
+
+    def manage(*args, **kwargs):
+        calls.append("management")
+        gate.wait(timeout=10)  # the model's long answer
+        return {"status": "COMPLETED"}
+
+    monkeypatch.setattr("app.agents.command.direct_company", manage)
+    monkeypatch.setattr(
+        "app.agents.mail.correspondence_round", lambda *a, **k: calls.append("mail")
+    )
+    check = director_wait_work(
+        engine,
+        object(),
+        settings=Settings(worker_enabled=True, director_check_interval_seconds=30),
+        clock=lambda: moment[0],
+    )
+    assert check is not None
+    moment[0] = 30
+    check()  # returns at once, the round runs beside it
+    assert check.running()
+    moment[0] = 60
+    check()  # the round is still at the model: nothing new starts
+    assert calls == ["management"]
+    gate.set()
+    for _ in range(100):
+        if not check.running():
+            break
+        threading.Event().wait(0.05)
+    assert not check.running() and calls == ["management", "mail"]
+    moment[0] = 90
+    check()
+    for _ in range(100):
+        if not check.running():
+            break
+        threading.Event().wait(0.05)
+    assert calls == ["management", "mail"] * 2
 
 
 def test_wait_work_checks_the_backlog_at_its_configured_interval(engine, monkeypatch):
