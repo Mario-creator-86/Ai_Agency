@@ -79,6 +79,14 @@ _INSTRUCTIONS = (
     '"..."}}}}]}}.\n'
 )
 _WHAT = {"still": "picture", "motion": "clip"}
+#: Said in the motion audit: the picture exists, bought and approved; only the clip's movement
+#: is hers to refuse here (15:41Z, a4ecf40a: she refused the motion words for the still's
+#: objects, and no rewrite of the motion layer could touch them).
+_MOTION_NOTE = (
+    "The picture of each scene is already bought and approved: judge only what the clip's "
+    "words make it DO — the camera move, the people's movement, where the shot ends — never "
+    "what the picture shows or which objects are in it; those are settled.\n"
+)
 #: The stored shot plan's fields she reads beside the words (`prompt_agent` packages).
 PLAN_FIELDS = (
     "subject",
@@ -203,14 +211,15 @@ def _plan_without_props(plan: dict[str, Any]) -> dict[str, Any]:
     """The beat as she reads it, each character without its bible ``props``: what the
     model receives is ``words_to_send``, and the composer says no props."""
     shown = dict(plan)
-    people = shown.get("characters")
-    if isinstance(people, list):
-        shown["characters"] = [
-            {k: v for k, v in person.items() if k != "props"}
-            if isinstance(person, dict)
-            else person
-            for person in people
-        ]
+    for key in ("characters", "in_frame"):
+        people = shown.get(key)
+        if isinstance(people, list):
+            shown[key] = [
+                {k: v for k, v in person.items() if k != "props"}
+                if isinstance(person, dict)
+                else person
+                for person in people
+            ]
     return shown
 
 
@@ -237,11 +246,13 @@ def _ask(
                 # unless the plan put it there, and she refused eight scenes for a nameplate
                 # and post-its that were in the bible only (2026-10-15 14:57Z).
                 "plan": _plan_without_props(context.get("scene") or {}),
-                "shot_plan": {
-                    key: context["package"].get(key)
-                    for key in PLAN_FIELDS
-                    if context["package"].get(key) not in (None, "", [], {})
-                },
+                "shot_plan": _plan_without_props(
+                    {
+                        key: context["package"].get(key)
+                        for key in PLAN_FIELDS
+                        if context["package"].get(key) not in (None, "", [], {})
+                    }
+                ),
                 "words_to_send": prompt_text(context["package"], layer),
                 "other_layer": prompt_text(
                     context["package"], "motion" if layer == "still" else "still"
@@ -260,6 +271,7 @@ def _ask(
     }
     prompt = (
         _INSTRUCTIONS.format(what=_WHAT[layer], layer=layer)
+        + (_MOTION_NOTE if layer == "motion" else "")
         + lessons_rule(lessons)
         + wrap_in_inert_boundary(json.dumps(data, ensure_ascii=False, default=str), "prompt-audit")
     )
@@ -447,14 +459,26 @@ def audit_before_purchase(
         if done.get("rewritten"):
             result["rewritten"].append(scene)
         else:
-            result["held"].append(
-                {
-                    "scene_index": scene,
-                    "reason": (
-                        f"Scena {scene}: Directoarea nu a aprobat cuvintele "
-                        f"({item.reason or brief.get('diagnosis')}), iar rescrierea nu s-a "
-                        f"făcut ({done.get('reason') or 'fără motiv'}); nu se cumpără."
-                    ),
-                }
+            # Her brief could not move these words (locked on the other layer, a fault, a
+            # rewrite that changed nothing): the words stand and are bought under the Owner's
+            # cap — never a film that «așteaptă Proprietarul» on words nobody can change
+            # (15:41Z, a4ecf40a: the motion audit of scene 1 objected to the still's own
+            # words, bought and approved by her look a minute before).
+            _record(
+                engine,
+                storyboard_id=storyboard_id,
+                scene=scene,
+                layer=layer,
+                digest=digests[scene],
+                verdict=APPROVED_UNDER_CAP,
+                reason=(
+                    f"Scena {scene}: briefului Directoarei nu i s-a putut răspunde printr-o "
+                    f"rescriere ({done.get('reason') or 'fără motiv'}); cuvintele se cumpără "
+                    "așa cum sunt, sub plafonul Proprietarului (2026-10-15)."
+                ),
+                run_id=run.get("id"),
+                correlation_id=correlation_id,
             )
+            result["approved"].append(scene)
+            result.setdefault("under_cap", []).append(scene)
     return result

@@ -1087,8 +1087,57 @@ def test_the_director_audits_a_scenes_words_before_the_first_purchase(
     assert third["held"] == [] and third["under_cap"] == [2] and third["asked"] is False
     assert "Judge ONLY words_to_send" in prompt_audit._INSTRUCTIONS
     assert prompt_audit._plan_without_props(
-        {"characters": [{"name": "Sarah", "props": "gold nameplate"}], "part": "hook"}
-    ) == {"characters": [{"name": "Sarah"}], "part": "hook"}
+        {
+            "characters": [{"name": "Sarah", "props": "gold nameplate"}],
+            "in_frame": [{"name": "Nadia", "props": "a cork wall of index cards"}],
+            "part": "hook",
+        }
+    ) == {"characters": [{"name": "Sarah"}], "in_frame": [{"name": "Nadia"}], "part": "hook"}
+    # The motion audit is told the picture is settled (15:41Z: she refused the clip's words
+    # for the still's own objects, which no motion rewrite could touch).
+    assert "already bought and approved" in prompt_audit._MOTION_NOTE
+
+    # A brief whose rewrite could not land (findings locked on the other layer) does not
+    # hold the scene for the Owner: the words are bought under the cap. Scene 1's words
+    # change, so she is asked again and this time refuses them.
+    def refusing_run(engine_, registry, agent_id, task_type, prompt, *a, **kw):
+        answer = prompt_audit.PromptAudit(
+            scenes=[
+                prompt_audit.AuditedScene(
+                    scene_index=1,
+                    approved=False,
+                    reason="the cork wall carries index cards",
+                    brief=prompt_audit.AuditBrief(
+                        diagnosis="the still's objects",
+                        layer="still",
+                        avoid=["index cards"],
+                        keep=["the desk"],
+                        change=["say the wall is bare"],
+                        summary_ro="Peretele trebuie spus gol.",
+                    ),
+                ),
+            ]
+        )
+        return answer, {"id": "run-4", "status": "SUCCEEDED"}, None
+
+    monkeypatch.setattr("app.agents.structured.structured_run", refusing_run)
+    monkeypatch.setattr(
+        "app.media.scene_rewrite.rewrite_scene",
+        lambda *a, **k: {"rewritten": False, "reason": "constatările sunt pe stratul still"},
+    )
+    with Session(engine) as session, session.begin():
+        for row in session.scalars(
+            select(StoryboardScene).where(StoryboardScene.storyboard_id == board)
+        ):
+            row.prompt_json = {
+                **dict(row.prompt_json or {}),
+                "still_prompt": "A fresh desk by a cork wall; a hand lifts a cup.",
+            }
+    fourth = prompt_audit.audit_before_purchase(
+        engine, object(), storyboard_id=board, step="stills", scenes=[1], correlation_id="c"
+    )
+    assert fourth["held"] == [] and fourth["approved"] == [1], fourth
+    assert fourth["under_cap"] == [1] and fourth["asked"] is True, fourth
     with Session(engine) as session:
         scene_rows = session.scalars(
             select(StoryboardScene).where(StoryboardScene.storyboard_id == board)

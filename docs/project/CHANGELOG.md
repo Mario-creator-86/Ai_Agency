@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-15 — Auditul mișcării judecă doar mișcarea; un brief fără rescriere aprobă sub plafon
+
+**Auditul mișcării judecă doar mișcarea, iar un brief fără rescriere nu mai ține filmul pentru Proprietar** (`backend/app/media/prompt_audit.py`, test în `tests/test_publishes_alone.py`). Trăit 15:41Z pe a4ecf40a: imaginile cumpărate și aprobate de privirea Directoarei, iar auditul cuvintelor de mișcare al scenei 1 a refuzat obiectele pozei (peretele de plută cu fișe, laptopul) — constatări pe stratul still, blocat; rescrierea nu s-a putut face și filmul a stat NEEDS_PROMPT_APPROVAL. Acum: (1) `_MOTION_NOTE` — la stratul de mișcare i se spune că poza e cumpărată și aprobată și judecă doar ce FACE clipul; (2) `_plan_without_props` scoate recuzita și din `in_frame`, nu doar din `characters`; (3) când `rewrite_scene` nu rescrie (constatări pe alt strat, cădere, nimic schimbat), scena se înregistrează APPROVED_UNDER_CAP și intră în `under_cap`, nu în `held` (regula «publicăm ce avem»). Testate: test_publishes_alone + test_live_prompt_approval 46 passed; test_director_decides_qc verde.
+
 ## 2026-10-15 — Intonation: the line's direction is played by the voice
 
 - `story/services.py`, `factual/agent_pipeline.py`: the briefs ask for performable lines and a direction on every line (the Owner, 2026-10-15 15:35Z).
