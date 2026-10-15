@@ -633,3 +633,37 @@ def test_a_retold_day_is_readied_but_its_days_media_stage_waits_for_it_to_be_ove
     with Session(engine) as session:
         boards = list(session.scalars(select(Storyboard)))
         assert serial_films_due(session, boards, business_date(TZ)) == []
+
+
+def test_a_day_already_at_the_cap_ships_its_newest_draft_once_she_may_approve(
+    engine, staffed, settings, monkeypatch
+):
+    """15.10, 14:19Z: episode 3 had used the day's three drafts on the Director's reading and
+    «serialul trece la altă zi». The evening script of a later run finds the day at its cap,
+    every draft refused by her reading, and ships the newest draft under the cap (the Owner,
+    2026-10-15: «publicăm ce avem»): approved, readied, its filming queued. A writer whose
+    drafts the computed checks refused (``unruly``) never ships — the test above keeps that."""
+    a_crowded_day(engine)
+    writer = hire(monkeypatch, Writer(unruly=0))
+    fake_director(monkeypatch, "FAIL", notes="Rebuild around one situation that changes.")
+    for _ in range(3):
+        run_serial_next_stage(engine, registry(), settings)
+    rows = episode_rows(engine)
+    assert len(rows) == MAX_DRAFTS_PER_DAY
+    assert all(row.status == "REJECTED" and row.reviewed_by == "director" for row in rows)
+    # Her approval alone is not in the channel's policy yet: nothing ships.
+    spent = run_serial_next_stage(engine, registry(), settings)
+    assert spent["artefacts"]["approved"] == 0
+    assert f"ziua și-a folosit cele {MAX_DRAFTS_PER_DAY} ciorne" in spent["reason"]
+
+    allow_director_approval(engine)
+    prompts_before = len(writer.prompts)
+    shipped = run_serial_next_stage(engine, registry(), settings)
+
+    artefacts = shipped["artefacts"]
+    assert artefacts["approved"] == 1 and artefacts.get("cap_shipped") is True, shipped
+    assert artefacts["resumed"] == "cap" and artefacts["storyboard_id"], shipped
+    assert "se expediază sub plafonul ciornelor" in shipped["reason"]
+    assert len(writer.prompts) == prompts_before  # nothing written again
+    rows = episode_rows(engine)
+    assert [row.status for row in rows] == ["REJECTED", "REJECTED", "APPROVED"]

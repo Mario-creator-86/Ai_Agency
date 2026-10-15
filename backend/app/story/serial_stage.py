@@ -863,6 +863,32 @@ def run_serial_next_stage(
                         + _filming_words(_queue_filming(engine, counts, episode_id)),
                         **counts,
                     )
+            if status == "REJECTED" and refused:
+                # The day's drafts are spent on the Director's reading alone (2026-10-15,
+                # episode 3 refused three times): its newest draft ships, approved under the
+                # cap, readied and queued for filming tonight — «publicăm ce avem».
+                shipped = approve_under_drafts_cap(
+                    engine, episode_id, str(last_notes or ""), correlation
+                )
+                if shipped is not None:
+                    counts["approved"] += 1
+                    counts["cap_shipped"] = True
+                    counts["resumed"] = "cap"
+                    if _ready_for_filming(engine, episode_id, counts, correlation, registry):
+                        return _outcome(
+                            COMPLETED,
+                            f"Episodul zilei {today}, „{title}”, refuzat de "
+                            f"{MAX_DRAFTS_PER_DAY} ori de citirea Directoarei, se expediază sub "
+                            "plafonul ciornelor (Proprietarul, 2026-10-15: «publicăm ce avem»); "
+                            "pregătit de filmare, "
+                            + _filming_words(_queue_filming(engine, counts, episode_id)),
+                            **counts,
+                        )
+                    return _outcome(
+                        COMPLETED,
+                        f"Episodul aprobat sub plafon nu a devenit storyboard: {counts['refusal']}",
+                        **counts,
+                    )
             state = {"APPROVED": "aprobat", "DRAFT": "ciornă", "REJECTED": "respins"}
             spent = f"; ziua și-a folosit cele {MAX_DRAFTS_PER_DAY} ciorne" if refused else ""
             not_readied = (

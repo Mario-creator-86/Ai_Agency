@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-15 — A day already at its drafts cap ships its newest draft from the evening script
+
+- `story/serial_stage.py`: the evening script that finds today told, every draft refused by the Director's reading and the day at `MAX_DRAFTS_PER_DAY`, ships the newest draft under the cap (`approve_under_drafts_cap`), readies it and queues its filming — episode 3 of 15.10, left «la altă zi» at 14:19Z, ships at the next run. A day the computed checks refused stays refused. Test in `test_serial_self_recovery` (164 passed with the serial suites).
+
 ## 2026-10-15 — The serial ships its newest draft under the drafts cap; research reads the topic itself
 
 - `story/review.py` `approve_under_drafts_cap` + `story/serial_stage.py`: a day whose drafts the Director's reading alone spent ships its newest draft, approved under the cap with her notes as the lesson (the Owner, 2026-10-15: «publicăm ce avem»); a draft the computed checks refused never ships.
