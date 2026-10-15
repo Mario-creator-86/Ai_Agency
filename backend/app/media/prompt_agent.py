@@ -2211,8 +2211,42 @@ def _serial_camera_move(package: dict[str, Any], previous: list[str]) -> str:
     return move
 
 
-#: What keeps the serial's people themselves while they move (2026-10-11, 45dc313).
+#: What keeps the serial's people themselves while they move (2026-10-11, 45dc313; the
+#: features named since 2026-10-15 16:41Z, a4ecf40a scene 6: «the model let the face slip
+#: from one frame to the next» — her cause: the face was never fixed as its own clause).
 SERIAL_FACES_SENTENCE = "Their faces stay expressive and the same people throughout."
+#: Who is in a serial clip, and nobody else: said with the shot's names (`_cast_names`),
+#: the tail fixed so a lock on it is the composer's (`scene_rewrite._composer_sentences`).
+#: 2026-10-15 16:46Z, a4ecf40a scene 7: a single on Sarah, and «a second man appears behind
+#: her from the middle frame onward» — her cause: the words never said one person, nobody
+#: entering, from the first frame to the last.
+SERIAL_CAST_TAIL = "nobody else enters or appears behind."
+SERIAL_CAST_SENTENCE = (
+    "Only {names} in the frame from first to last, the same {faces} and features throughout; "
+    + SERIAL_CAST_TAIL
+)
+
+
+def _cast_names(package: dict[str, Any]) -> list[str]:
+    """The shot's people as the clip names them, in the plan's order, each once."""
+    names: list[str] = []
+    for key in ("in_frame", "characters"):
+        for person in package.get(key) or []:
+            short = _short_name(person.get("name")) if isinstance(person, dict) else ""
+            if short and short not in names:
+                names.append(short)
+    return names
+
+
+def serial_cast_sentence(package: dict[str, Any]) -> str:
+    """`SERIAL_CAST_SENTENCE` for this shot's people; empty when the plan names none."""
+    names = _cast_names(package)
+    if not names:
+        return ""
+    said = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+    return SERIAL_CAST_SENTENCE.format(names=said, faces="face" if len(names) == 1 else "faces")
+
+
 #: The life of a serial shot beyond its lines: the people's bodies move as they speak, and
 #: the room — the office picture's lamps and plants, in every room of the studio's house —
 #: moves with them («Mișcare v2», 2026-10-11: the first board's clips held their people
@@ -2390,10 +2424,11 @@ def serial_motion(package: dict[str, Any], look: dict[str, Any]) -> tuple[str, b
         (0, 0, move_sentence),
         (1, 1, action),
         (2, 2, ending_sentence),
-        (3, 3, SERIAL_FACES_SENTENCE),
-        (4, 4, SERIAL_LIFE_SENTENCE),
-        (6, 5, _sentence(feeling) if feeling else ""),
-        (5, 6, END_BEAT if two_beats else ""),
+        (2, 3, serial_cast_sentence(package)),
+        (3, 4, SERIAL_FACES_SENTENCE),
+        (4, 5, SERIAL_LIFE_SENTENCE),
+        (6, 6, _sentence(feeling) if feeling else ""),
+        (5, 7, END_BEAT if two_beats else ""),
         (0, 9, lint.MOTION_CLOSING),
     ]
     required = " ".join([move_sentence, action, ending_sentence, lint.MOTION_CLOSING])

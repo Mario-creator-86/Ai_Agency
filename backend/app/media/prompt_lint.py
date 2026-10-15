@@ -50,8 +50,11 @@ STILL_WORDS = (60, 120)
 # of camera on a clip of seven seconds or more, the subject's own action and the world in
 # motion do not fit in seventy words, and the live prompts of film aa170155 that did fit
 # («Slow push-in toward the subject. A slow drift of dust motes ... barely moving.») were
-# what the Owner saw as «doar un zoom, și mișcări mici».
-MOTION_WORDS = (25, 95)
+# what the Owner saw as «doar un zoom, și mișcări mici». 25-110 since 2026-10-15 16:50Z
+# (a4ecf40a scenes 6 and 7): the serial clip also names who is in the frame and nobody
+# else, and that the faces keep their features — the two causes of the day's paid refusals —
+# and those did not fit beside the ending and the room's life in ninety-five.
+MOTION_WORDS = (25, 110)
 MAX_INLINE_EXCLUSIONS = 2
 EVIDENCE_CHARS = 120
 

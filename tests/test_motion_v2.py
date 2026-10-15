@@ -371,6 +371,26 @@ def test_a_measured_amplitude_is_one_step_down():
 # -------------------------------------------------------------- 3. the serial beat
 
 
+def test_the_serial_motion_locks_its_cast_and_their_features():
+    """2026-10-15, a4ecf40a: scene 6's clip let Marcus's face slip between frames and scene
+    7's single on Sarah grew a second man behind her — the Director's cause both times: the
+    words never fixed the face as its own clause, nor one person and nobody entering. The
+    composer says both, with the shot's names, before the life of the room."""
+    from app.media.prompt_agent import SERIAL_CAST_TAIL, serial_cast_sentence
+
+    single = {**BEAT, "shot_size": "medium_close_up", "in_frame": [{"name": "Sarah Director"}]}
+    prompt = compose_serial_motion(single, {})
+    assert (
+        "Only Sarah in the frame from first to last, the same face and features throughout; "
+        in prompt
+    ), prompt
+    assert SERIAL_CAST_TAIL in prompt
+    assert prompt.index(SERIAL_CAST_TAIL) < prompt.index(SERIAL_LIFE_SENTENCE)
+    two = {**BEAT, "characters": [{"name": "Nadia"}, {"name": "Sarah"}]}
+    assert serial_cast_sentence(two).startswith("Only Nadia and Sarah in the frame")
+    assert serial_cast_sentence(BEAT) == ""  # a plan that names nobody says nothing
+
+
 def test_the_serial_motion_moves_its_people_and_keeps_its_faces_and_closing():
     prompt = compose_serial_motion(BEAT, {})
     assert prompt.startswith(MOVE_SENTENCES["tracking left"]), prompt
@@ -626,7 +646,7 @@ def test_the_video_editor_is_asked_for_ample_specific_movement():
 
 
 def test_the_word_band_is_wider_and_every_rule_that_reads_it_follows():
-    assert MOTION_WORDS == (25, 95)
+    assert MOTION_WORDS == (25, 110)
     assert (prompt_agent.MOTION_MIN_WORDS, prompt_agent.MOTION_MAX_WORDS) == MOTION_WORDS
     base = "Steady dolly in from a wide view to the subject while cloud drifts."
     fixed = len(base.split()) + len(MOTION_CLOSING.split())

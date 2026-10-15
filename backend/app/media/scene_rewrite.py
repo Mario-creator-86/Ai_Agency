@@ -1418,7 +1418,11 @@ def _motion_sentences(context: dict[str, Any], motion: str) -> tuple[list[str], 
     serial = bool(context.get("serial"))
     constants = [words.MEASURED_SENTENCE, words.FACES_CONSTRAINT, lint.MOTION_CLOSING]
     if serial:
-        constants[1:1] = [words.SERIAL_FACES_SENTENCE, words.SERIAL_LIFE_SENTENCE]
+        constants[1:1] = [
+            words.SERIAL_CAST_TAIL,
+            words.SERIAL_FACES_SENTENCE,
+            words.SERIAL_LIFE_SENTENCE,
+        ]
     fixed = _present(constants, motion)
     if lint.MOTION_CLOSING not in fixed:
         fixed += _present([lint.VEO_MOTION_CLOSING], motion)
@@ -3119,6 +3123,7 @@ def _composer_sentences() -> tuple[str, ...]:
     return (
         words.MEASURED_SENTENCE,
         words.FACES_CONSTRAINT,
+        words.SERIAL_CAST_TAIL,
         words.SERIAL_FACES_SENTENCE,
         words.SERIAL_LIFE_SENTENCE,
         words.SERIAL_FRAME_SENTENCE,
