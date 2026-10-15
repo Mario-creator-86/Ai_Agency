@@ -423,8 +423,12 @@ _PANEL_LABEL_IN_PROMPT = re.compile(
 #: The head of a broken sentence: a clause that ends in an article, a preposition, a
 #: conjunction or "is" ("The film exists in two interconnected spaces: the", babcf272).
 #: Lower-case "a" only, so "Plan A" stays whole. Read it through dangling().
+#: A hyphenated compound that ends in one of these words is a whole word («straight-on»,
+#: «head-on», «switched-on», «close-up», «drive-in»): 2026-10-15 19:03Z, 7c26a7ce scene 3,
+#: «facing the viewer straight-on» was read as a clause breaking off at «on», and the Editor
+#: was told to rewrite a whole sentence three rounds running.
 DANGLING_END = re.compile(
-    r"(?:\b(?i:the|an|of|in|on|at|to|and|or|with|from|by|for|is|are)|\ba)\s*$"
+    r"(?<!-)(?:\b(?i:the|an|of|in|on|at|to|and|or|with|from|by|for|is|are)|\ba)\s*$"
 )
 #: "In", "on" and "by" after a verb of motion are adverbs, and the clause is whole: "fog
 #: rolling in", "clouds drift by", "the lamps switched on" are the world motion a clip wants.

@@ -417,3 +417,16 @@ def test_a_pointer_at_another_scene_leaves_no_broken_words() -> None:
     assert _clauses_of(own) == [own]
     codes = {f.code for f in lint_still_prompt(f"{own}.", scene=1)}
     assert "SCENE_REFERENCE" not in codes, codes
+
+
+def test_a_hyphenated_compound_ending_in_a_particle_is_a_whole_word():
+    """2026-10-15 19:03Z, 7c26a7ce scene 3: «facing the viewer straight-on» was read as a
+    clause breaking off at «on» (REQUIRED_CONTENT_LOST), and the Editor was told to rewrite
+    the whole sentence three rounds running though his words were whole."""
+    from app.media.prompt_lint import dangling
+
+    assert not dangling("The constants card rests on the bench, facing the viewer straight-on")
+    assert not dangling("the collision seen head-on")
+    assert not dangling("a lamp switched-on")
+    assert dangling("the card resting on")
+    assert dangling("the card seen straight on")

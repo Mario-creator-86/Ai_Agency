@@ -308,6 +308,40 @@ def _ask(
     return (parsed if isinstance(parsed, PromptAudit) else None), first
 
 
+def _learn_from_brief(
+    engine: Any,
+    *,
+    brief: dict[str, Any],
+    scope: str,
+    storyboard_id: str,
+    run_id: str | None,
+) -> bool:
+    """Her refusal of the words, kept as a provisional prompt lesson for the Editor's next
+    prompts (`prompt_agent.record_prompt_lesson`: read by the shot writer, every rewrite and
+    every brief). The Owner, 2026-10-15 19:05Z: «Kael trebuie să învețe din ce face! O
+    îmbunătățire de la prompt la prompt» — until now only a review that PASSED a rewrite
+    taught anything (`scene_rewrite.learn_from_review`); the refusals, where the learning is,
+    taught nothing, and scene 2 of 7c26a7ce was refused eight times for the same clause."""
+    from app.media.prompt_agent import record_prompt_lesson  # noqa: PLC0415
+
+    diagnosis = " ".join(str(brief.get("diagnosis") or "").split())
+    change = "; ".join(
+        " ".join(str(c).split()) for c in brief.get("change") or [] if str(c).strip()
+    )
+    if not diagnosis and not change:
+        return False
+    lesson = (diagnosis + (" — " + change if change else "")).strip(" —")
+    with Session(engine) as session, session.begin():
+        return record_prompt_lesson(
+            session,
+            lesson[:400],
+            source_id=run_id,
+            scope=scope,
+            provisional=True,
+            storyboard_id=storyboard_id,
+        )
+
+
 def _brief_of(item: AuditedScene, layer: str) -> dict[str, Any]:
     """Her brief for the Editor's rewrite, on this layer; a refusal without one is a brief
     of its reason."""
@@ -456,6 +490,16 @@ def audit_before_purchase(
                 correlation_id=correlation_id,
                 rewritten=bool(done.get("rewritten")),
             )
+            try:
+                _learn_from_brief(
+                    engine,
+                    brief=brief,
+                    scope=lesson_scope(context),
+                    storyboard_id=storyboard_id,
+                    run_id=run.get("id"),
+                )
+            except Exception:  # noqa: BLE001 - a lesson not kept never stops the audit
+                logger.exception("prompt_audit_lesson_failed")
             if done.get("rewritten"):
                 result["rewritten"].append(scene)
                 break

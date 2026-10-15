@@ -1062,6 +1062,13 @@ def test_the_director_audits_a_scenes_words_before_the_first_purchase(
         engine, object(), storyboard_id=board, step="stills", scenes=[1, 2], correlation_id="c"
     )
     assert first["approved"] == [1] and first["rewritten"] == [2] and first["held"] == [], first
+    # Her refusal teaches: the brief's diagnosis and change are a provisional lesson the
+    # Editor reads on his next prompts (the Owner, 19:05Z: «Kael trebuie să învețe»).
+    from app.media.prompt_agent import prompt_lessons
+
+    with Session(engine) as session:
+        taught = " ".join(prompt_lessons(session, scope="factual"))
+    assert "say the papers are blank and unmarked" in taught, taught
     assert asked[0]["task"] == prompt_audit.AUDIT_TASK and "PAY" in asked[0]["prompt"]
     assert rewrites[0]["scene"] == 2 and rewrites[0]["brief"]["avoid"] == ["ruled paper"]
 
