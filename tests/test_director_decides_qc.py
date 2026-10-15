@@ -4799,3 +4799,43 @@ def test_a_report_whose_repair_was_bought_twice_ships_as_it_stands(
     assert done["outcome"] == "ACCEPTED" and done["passed_asset"] == film["asset"]
     (repair,) = done["repairs"]
     assert repair["limited"][0]["report_rounds"] == stages.REPAIR_ROUNDS_PER_REPORT
+
+
+def test_a_verdict_without_a_reason_takes_it_from_the_cause_and_overlong_words_are_cut():
+    """12:38Z, 2d276038: her second answer wrote a cause and a lesson for every REAL finding
+    and no reason — «verdicts.N.reason: Field required» seven times — so her decision was
+    refused twice and the film waited while the Owner asked for the publication. What she
+    found is in the cause: the form takes the reason from it, and cuts an overlong reason,
+    cause or lesson to its room instead of refusing the whole decision."""
+    from app.agents.reviews import LESSON_MAX_CHARS, FindingVerdict
+
+    verdict = FindingVerdict.model_validate(
+        {
+            "finding": 2,
+            "verdict": "REAL",
+            "severity": "serious",
+            "cause": "Promptul still păstrează lista casei de studio.",
+            "lesson": "Numește doar obiectele camerei cerute.",
+        }
+    )
+    assert verdict.reason == "Promptul still păstrează lista casei de studio."
+    from_lesson = FindingVerdict.model_validate(
+        {"finding": 3, "verdict": "REAL", "lesson": "Scrie postura prima."}
+    )
+    assert from_lesson.reason == "Scrie postura prima."
+    long = FindingVerdict.model_validate(
+        {
+            "finding": 4,
+            "verdict": "REAL",
+            "reason": "r" * 900,
+            "cause": "c" * 900,
+            "lesson": "l" * (LESSON_MAX_CHARS + 50),
+        }
+    )
+    assert len(long.reason) == 400 and len(long.cause) == 400
+    assert len(long.lesson) == LESSON_MAX_CHARS
+    # No reason anywhere: still refused, as the form always did.
+    import pytest
+
+    with pytest.raises(ValueError):
+        FindingVerdict.model_validate({"finding": 5, "verdict": "REAL"})

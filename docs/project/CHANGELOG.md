@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-15 — A verdict without a reason takes it from the cause
+
+- `agents/reviews.py`: `FindingVerdict` takes a missing or blank `reason` from the verdict's `cause` (then its `lesson`) and cuts an overlong reason, cause or lesson to its room instead of refusing the whole decision: at 12:38Z the Director's second answer on 2d276038 wrote a cause and a lesson for every REAL finding and no reason, her decision was refused twice (`verdicts.N.reason: Field required`) and the film waited while the Owner asked for the publication. Test in `test_director_decides_qc` (130 passed with the look and repair-review suites).
+
 ## 2026-10-15 — Three renders a layer a scene, then the film ships as it stands
 
 The Owner, 12:20Z: three renders at most per image or motion per scene; past that the Director looks at what there is, chooses the closest to the plan, and the film is published as it stands — «publicăm ce avem».

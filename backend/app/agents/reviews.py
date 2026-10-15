@@ -831,6 +831,31 @@ class FindingVerdict(BaseModel):
     #: finding a picture or motion prompt can act on (`decision_schema`, `prompt_actionable`).
     lesson: str = Field(default="", max_length=LESSON_MAX_CHARS)
 
+    @model_validator(mode="before")
+    @classmethod
+    def _reason_from_cause(cls, data: Any) -> Any:
+        """A verdict whose ``reason`` is missing or blank takes it from its ``cause`` (then its
+        ``lesson``), and an overlong reason, cause or lesson is cut to its room. 2026-10-15
+        12:38Z (2d276038): the Director's second answer wrote a cause and a lesson for every
+        REAL finding and no reason — «verdicts.N.reason: Field required» seven times — so her
+        decision was refused twice and the film waited, with the Owner asking for the
+        publication. What she found is in the cause; the form does not refuse it."""
+        if not isinstance(data, dict):
+            return data
+        cleaned = dict(data)
+        for key, room in (("reason", 400), ("cause", 400), ("lesson", LESSON_MAX_CHARS)):
+            value = cleaned.get(key)
+            if isinstance(value, str) and len(value) > room:
+                cleaned[key] = value[:room].rstrip()
+        reason = cleaned.get("reason")
+        if not (isinstance(reason, str) and reason.strip()):
+            for key in ("cause", "lesson"):
+                value = cleaned.get(key)
+                if isinstance(value, str) and value.strip():
+                    cleaned["reason"] = value.strip()[:400]
+                    break
+        return cleaned
+
     @field_validator("verdict", mode="before")
     @classmethod
     def _upper(cls, value: Any) -> Any:
