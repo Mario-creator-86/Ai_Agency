@@ -391,6 +391,44 @@ def claim_task(
         return TaskQueueItemView.model_validate(eligible).model_dump()
 
 
+def release_orphaned_claims(engine: Engine, *, correlation_id: str | None = None) -> int:
+    """At the worker's start, every task still CLAIMED or RUNNING was left by a worker that
+    died with it (one worker per database, `acquire_worker_lock`): it goes back to QUEUED with
+    its lease cleared and its attempts untouched, so the work goes on at once instead of
+    waiting for the hour-long lease to lapse and then dying as INTERRUPTED. 2026-10-15
+    20:08Z: two FILM_CONTINUE tasks of 7c26a7ce, claimed by processes the Owner had stopped
+    by hand, stood CLAIMED until 20:54 and 21:04; the day-goal pass read «a film at work»
+    and queued nothing, and the walk's own key was spent on a FILM_BUSY. Returns how many."""
+    now_str = utc_now()
+    released = 0
+    with Session(engine) as session, session.begin():
+        for task in session.scalars(
+            select(TaskQueueItem).where(TaskQueueItem.status.in_(LEASED_STATES))
+        ):
+            previous_token = task.lease_token
+            task.status = "QUEUED"
+            task.lease_token = None
+            task.lease_expires_at = None
+            task.next_attempt_at = now_str
+            task.updated_at = now_str
+            append_event_with_outbox(
+                session,
+                "workflow.task_released",
+                "task_queue",
+                task.id,
+                1,
+                {
+                    "task_type": task.task_type,
+                    "attempts": task.attempts,
+                    "previous_lease_token": previous_token,
+                    "reason": "procesul care o rula s-a oprit; lucrătorul nou o reia",
+                },
+                correlation_id or str(uuid4()),
+            )
+            released += 1
+    return released
+
+
 def new_lease_token(worker_id: str) -> str:
     """A token no other claim has: the worker's id (cut to fit the column) and a uuid."""
     return f"{worker_id[:27]}:{uuid4().hex}"

@@ -469,3 +469,27 @@ def test_a_studio_started_beside_a_running_worker_runs_no_worker_of_its_own(
     again = acquire_worker_lock(path)
     assert again is not None
     again.release()
+
+
+def test_a_task_a_dead_worker_left_claimed_is_queued_again_at_the_next_start(engine):
+    """2026-10-15 20:08Z: two FILM_CONTINUE tasks of one film, claimed by processes the Owner
+    had stopped by hand, stood CLAIMED for an hour; the day-goal pass read «a film at work»
+    and queued nothing. One worker per database: at its start every claimed task is an
+    orphan and goes back to the queue, attempts untouched."""
+    from app.workflows.services import new_lease_token, release_orphaned_claims
+    from sqlalchemy.orm import Session
+
+    task_id = enqueue_task(
+        engine, FILM_CONTINUE_TASK, {"storyboard_id": "x"}, priority=5, max_attempts=1
+    )["id"]
+    with Session(engine) as session, session.begin():
+        task = session.get(TaskQueueItem, task_id)
+        task.status = "CLAIMED"
+        task.attempts = 1
+        task.lease_token = new_lease_token("worker_main")
+        task.lease_expires_at = "2099-01-01T00:00:00+00:00"
+    assert release_orphaned_claims(engine) == 1
+    with Session(engine) as session:
+        task = session.get(TaskQueueItem, task_id)
+        assert task.status == "QUEUED" and task.lease_token is None and task.attempts == 1
+    assert release_orphaned_claims(engine) == 0  # nothing claimed: nothing to release

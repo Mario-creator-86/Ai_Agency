@@ -414,10 +414,21 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
             # Only the exclusive queue owner may clear its predecessor's interrupted calls.
             # A previous editor call otherwise blocks fresh work for the 45-minute fallback.
             from app.agents.recovery import recover_interrupted_sheet_runs  # noqa: PLC0415
+            from app.workflows.services import release_orphaned_claims  # noqa: PLC0415
 
             await asyncio.to_thread(
                 recover_interrupted_sheet_runs, engine, started_at=process_started
             )
+            # The tasks a dead worker left CLAIMED go back to the queue now, not when their
+            # hour-long lease lapses (2026-10-15 20:08Z, two walks of 7c26a7ce).
+            try:
+                released = await asyncio.to_thread(release_orphaned_claims, engine)
+                if released:
+                    logger.info("orphaned_claims_released", extra={"count": released})
+            except Exception as exc:  # noqa: BLE001 - logged; the studio still starts
+                logger.warning(
+                    "orphaned_claims_release_failed", extra={"error": type(exc).__name__}
+                )
             # The one process that runs the worker takes back the film purchase leases that
             # earlier processes left (2026-10-03: a redo whose process had been stopped held
             # the Owner's film «în lucru» for hours). A lease another live process renews is
