@@ -141,6 +141,17 @@ _INSTRUCTIONS = (
     '"done" is true only when nothing more is owed on this thread.\n'
 )
 
+#: The stage whose report opens a thread the studio's measurements belong to.
+PERFORMANCE_STAGE = "performance_intake"
+_RECORDS_INSTRUCTIONS = (
+    "\nAfter the thread are the studio's own measurements of the published films, read from "
+    "the channels' YouTube Analytics this minute: per film its title, when it was measured, "
+    "views, the average percentage viewed (retention), engagement, the Director's editorial "
+    "scores, and the sample size. Answer from them: name the figures and the sample size; do "
+    "not ask anyone for a dashboard, an export or a file the studio already read. Impressions "
+    "and click-through are not reported by this source: say so where they are asked for, and "
+    "give what is measured instead.\n"
+)
 _BOOKS_INSTRUCTIONS = (
     "\nAfter the thread are your books, computed by the studio this minute: today's and this "
     "month's spend per provider, the budgets, the usage no price covered per model with "
@@ -229,6 +240,57 @@ def _books_for(engine: Engine, role: str | None) -> str | None:
         logger.warning("mail_books_unreadable", exc_info=True)
         return None
     return json.dumps(figures, ensure_ascii=False, default=str)
+
+
+def _records_for(engine: Engine, thread: list[AgentMessage]) -> str | None:
+    """The studio's measurements, when the thread is about them: a thread opened by the
+    performance intake's report (its stage in the letter's body) carries every published
+    film's measured audience (`analytics.services.story_performance`).
+
+    Dr. Aris was asked by the Director for per-film click-through and retention and answered
+    that he needed «access to the analytics dashboard or a CSV» (2026-10-15 21:39Z): the
+    figures were in the studio's own table, read from YouTube Analytics a minute before, and
+    his letter task held only the thread. Computed, never asked for; a fault leaves the letter
+    answered from the thread alone."""
+    if not any((m.body_json or {}).get("stage") == PERFORMANCE_STAGE for m in thread):
+        return None
+    from app.analytics.services import story_performance  # noqa: PLC0415
+
+    try:
+        performance = story_performance(engine)
+    except (SQLAlchemyError, ValueError, KeyError, TypeError):
+        logger.warning("mail_records_unreadable", exc_info=True)
+        return None
+    films = [
+        {
+            key: row.get(key)
+            for key in (
+                "title",
+                "measured_at",
+                "seconds",
+                "views",
+                "measured_view_percentage",
+                "measured_engagement_percentage",
+                "editorial_scores",
+                "editorial_total",
+                "story_review",
+            )
+        }
+        for row in performance.get("videos") or []
+    ]
+    records = {
+        "source": (
+            "YouTube Analytics API, read by the studio's performance intake: views, watch "
+            "time, average percentage viewed, likes, comments, shares, subscribers. It does "
+            "not report impressions or click-through."
+        ),
+        "sample_size": performance.get("sample_size"),
+        "measured_view_percentage_mean": performance.get("measured_view_percentage"),
+        "measured_engagement_percentage_mean": performance.get("measured_engagement_percentage"),
+        "films": films,
+        "note": performance.get("note"),
+    }
+    return json.dumps(records, ensure_ascii=False, default=str)
 
 
 def _answered_letter(reply: AgentMessage, letters: dict[str, AgentMessage]) -> AgentMessage | None:
@@ -485,11 +547,16 @@ def answer_mail(
         )
     prompt = _INSTRUCTIONS
     books = _books_for(engine, role_name)
+    records = _records_for(engine, thread)
     if books is not None:
         prompt += _BOOKS_INSTRUCTIONS
+    if records is not None:
+        prompt += _RECORDS_INSTRUCTIONS
     prompt += wrap_in_inert_boundary(transcript, "mail-thread")
     if books is not None:
         prompt += "\n" + wrap_in_inert_boundary(books, "books")
+    if records is not None:
+        prompt += "\n" + wrap_in_inert_boundary(records, "studio-records")
     from app.agents.identity import complete_schema  # noqa: PLC0415
     from app.agents.structured import structured_run  # noqa: PLC0415
 

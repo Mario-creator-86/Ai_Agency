@@ -5,6 +5,14 @@ AGENT_SCENARIO_ACCEPTANCE later used actual Ollama Cloud calls, with normal seri
 acceptance and real GPU/media/upload still pending. Current local UI evidence is reported
 separately below and does not prove those external workflows.
 
+## Letters about the performance intake carry the studio's measurements (Dr. Aris has the data) (2026-10-15)
+
+**Claim:** Dr. Aris, asked by the Director on the performance intake's report for per-film click-through and retention (21:38Z), answered that he needed «access to the analytics dashboard or a CSV» (21:39Z). The Owner, 22:04Z: «Are acces la informațiile cerute?» — no: the figures stood in the studio's own `analytics_snapshot` table (YouTube Analytics API, read at 21:37Z: views, watch time, average percentage viewed, likes, comments, shares), and the letter task (`agents/mail.py::answer_mail`) gave him the thread alone, as it did the Accountant before her books (2026-10-11).
+
+**Fix:** `mail._records_for`: a thread opened by the performance intake's report (`body.stage == "performance_intake"`) carries the studio's measurements (`analytics.services.story_performance`: per film title, measured_at, seconds, views, average percentage viewed, engagement, the Director's editorial scores and total, the review verdict; the sample size and the means), inside a `studio-records` boundary, with `_RECORDS_INSTRUCTIONS`: answer from them, name the figures and the sample size, ask nobody for a dashboard or export; impressions and click-through are not reported by this source — say so and give what is measured. A fault in the table leaves the letter answered from the thread as before.
+
+**Tested:** `tests/test_mail.py::test_a_letter_about_the_performance_intake_carries_the_studios_measurements` (the records and their limits in the prompt of the intake thread; absent from another thread); test_mail 31 passed, the two known `think`-flag failures unchanged; ruff, mypy clean. Live: the open thread 15738901 is answered again by Aris only when the Director writes back on it; new intake reports carry the records from the next restart.
+
 ## The audit's brief is reviewed against its own diagnosis, not a refused candidate's findings (2026-10-15)
 
 **Claim:** the Director's review of a rewrite her prompt audit asked was judged against quality control's findings on a refused still candidate instead of her audit's diagnosis (7c26a7ce scene 1, 21:48:10-21:48:15Z: Kael's motion rewrite was «clean on its own terms» by her own observations, yet refused as «locked to the picture» for «a bright window with daylight» — the still gate's refusal of candidate f171687f, beside candidate 6039267a which it approved; the studio declared a tool defect and she took over the remediation). The Owner, 21:50Z: «ce face Sarah?».

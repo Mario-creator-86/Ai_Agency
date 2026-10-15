@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-15 — Letters about the performance intake carry the measurements
+
+- `agents/mail.py`: a letter in a thread opened by the performance intake's report carries the studio's measured audience per film (`story_performance`: views, average percentage viewed, engagement, editorial scores, sample size) and says the source reports no impressions or click-through — Dr. Aris answered the Director that he needed «access to the analytics dashboard» while the figures stood in the studio's table. Test in `test_mail.py`.
+
 ## 2026-10-15 — An audit brief is answered by its diagnosis
 
 - `media/scene_rewrite.py`, `media/prompt_audit.py`: a rewrite the Director's prompt audit asked is reviewed against her audit's diagnosis (`AUDIT_BRIEF`), never against quality control's findings on another still candidate the gate refused (7c26a7ce scene 1: a clean motion rewrite refused for «a bright window with daylight» of the candidate beside the approved one). Test in `test_rewrite_learns.py`.

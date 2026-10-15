@@ -224,6 +224,86 @@ def test_an_employee_answers_a_question_in_its_thread_and_the_question_closes(en
         assert run.context_json["task_summary"].startswith("Răspund la «Ce sursă are cifra")
 
 
+def test_a_letter_about_the_performance_intake_carries_the_studios_measurements(
+    engine, staffed, monkeypatch
+):
+    """2026-10-15 21:39Z: the Director asked Dr. Aris for per-film click-through and retention
+    on the intake's report, and he answered that he needed «access to the analytics dashboard
+    or a CSV» — the figures stood in the studio's own table, read from YouTube Analytics a
+    minute before. A thread opened by the intake's report carries them; the source's limits
+    (no impressions, no click-through) are said; another thread carries nothing."""
+    from app.analytics import services as analytics
+
+    sarah, aris = staffed["agents"]["Director"], staffed["agents"]["LeadResearcher"]
+    monkeypatch.setattr(
+        analytics,
+        "story_performance",
+        lambda engine, channel_id=None: {
+            "videos": [
+                {
+                    "title": "Why the Speed of Light Is Exactly 299,792,458 m/s",
+                    "measured_at": "2026-10-15T21:37:00+00:00",
+                    "seconds": 48.0,
+                    "views": 90,
+                    "measured_view_percentage": 81.32,
+                    "measured_ctr": 0.0,
+                    "measured_engagement_percentage": 1.11,
+                    "editorial_scores": {"hook": 8},
+                    "editorial_total": 38,
+                    "story_review": "APPROVED",
+                }
+            ],
+            "sample_size": 1,
+            "measured_view_percentage": 81.32,
+            "measured_engagement_percentage": 1.11,
+            "note": "means over every measured film",
+        },
+    )
+    with Session(engine) as session, session.begin():
+        report = post_message(
+            session,
+            intent="STATUS",
+            subject="Preluarea performanței: încheiată — 7 publicări măsurate pe 2 canale.",
+            body={"stage": "performance_intake", "status": "COMPLETED"},
+            body_text="7 publicări măsurate pe 2 canale.",
+            from_agent_id=sarah.id,
+            to_agent_id=None,
+        )
+        asked = post_message(
+            session,
+            intent="REQUEST_INFO",
+            subject="De investigat: Preluarea performanței: încheiată.",
+            body_text="Dr. Aris must pull per-film click-through and retention.",
+            from_agent_id=sarah.id,
+            to_agent_id=aris.id,
+            in_reply_to=report.id,
+        )
+        asked_id = asked.id
+        elsewhere = post_message(
+            session,
+            intent="REQUEST_INFO",
+            subject="Ce sursă are cifra de 40%?",
+            body_text="Aris, pe ce stă 40%? Sarah",
+            from_agent_id=sarah.id,
+            to_agent_id=aris.id,
+        )
+        elsewhere_id = elsewhere.id
+    registry, model = registry_with(
+        staffed, letter_json("Sarah, retenția medie e 81,32% pe un eșantion de 1 film.", done=True)
+    )
+
+    answer_mail(engine, registry, asked_id)
+
+    prompt = model.calls[-1]["prompt"]
+    assert "studio-records" in prompt and "mail-thread" in prompt
+    assert "Why the Speed of Light" in prompt and "81.32" in prompt and '"sample_size": 1' in prompt
+    assert "does not report impressions or click-through" in prompt
+    assert "do not ask anyone for a dashboard" in prompt
+
+    answer_mail(engine, registry, elsewhere_id)
+    assert "studio-records" not in model.calls[-1]["prompt"]
+
+
 def test_an_instruction_stays_open_until_the_employee_says_the_work_is_done(engine, staffed):
     sarah, lyra = staffed["agents"]["Director"], staffed["agents"]["VoiceArtist"]
     with Session(engine) as session, session.begin():
