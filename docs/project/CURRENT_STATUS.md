@@ -5,6 +5,10 @@ AGENT_SCENARIO_ACCEPTANCE later used actual Ollama Cloud calls, with normal seri
 acceptance and real GPU/media/upload still pending. Current local UI evidence is reported
 separately below and does not prove those external workflows.
 
+## Un film acceptat de Directoare după QC se publică; vizionarea scrie note (2026-10-15)
+
+**Un film acceptat de Directoare după QC se publică; vizionarea scrie note, nu veto** (`backend/app/agents/editorial.py` `accepted_under_cap` — acum orice decizie ACCEPTED a ei, nu doar cea sub plafon). Trăit 17:36Z pe a4ecf40a: filmul a picat QC cu nouă constatări, Directoarea le-a judecat pe toate minore și a acceptat filmul fără să cumpere nimic (regula lui: «publicăm ce avem»), apoi vizionarea editorială l-a respins pentru poveste («no turn and no payoff», o poveste pe care plafonul de ciorne o expediase la 14:43) și episodul zilei a rămas nepublicat cu banii cheltuiți. Lecțiile de poveste merg la scenariul următor (vizionarea le scrie în note), filmul se publică. Testate: test_editorial (2 picate dinainte), test_editorial_judgement, test_publishes_alone, test_director_decides_qc, test_daily_run_stages — 236 passed. Procesul repornit la 17:40Z a încărcat deja această schimbare (arborele de lucru).
+
 ## O zi tăiată se reia oricâte tăieri a avut (2026-10-15)
 
 **O zi tăiată se reia oricâte tăieri a avut** (`backend/app/workflows/worker.py`, test în `tests/test_resume_after_finished_runs.py`). Trăit 17:17Z: a cincea tăiere a zilei (repornirea mea de la 17:08, după cele patru de azi-noapte/dimineață) a primit la reluare «Ziua a fost întreruptă de 5 ori, peste cele 3 reluări; reluarea ei este decizia Owner-ului» și ziua a stat pe loc — o oprire ascunsă sub regula «ziua se termină la țintă». Reluarea e cerută o singură dată la fiecare pornire a studioului (`resume_interrupted_day`), deci o buclă de căderi e mărginită de pornirile însele; numărul tăierilor se scrie în jurnal, nu mai oprește. (Rularea manuală a `day_goal` nu era afectată: ramura `attempt > daily_max_attempts` e doar pentru rulările programate.)

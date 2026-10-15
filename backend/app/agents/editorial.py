@@ -409,9 +409,14 @@ def frames_for(
 
 
 def accepted_under_cap(session: Session, media_asset_id: str) -> dict[str, Any] | None:
-    """The Director's newest QC decision on this film when it accepted the film under the
-    Owner's cap (`runbook.stages.RENDERS_PER_LAYER`, 2026-10-15: «publicăm ce avem»), else
-    None: such a film is published as it stands, and her viewing writes notes, not a veto."""
+    """The Director's newest QC decision on this film when it ACCEPTED the film — under the
+    Owner's cap (`runbook.stages.RENDERS_PER_LAYER`) or on her own judgement of the
+    findings — else None: such a film is published as it stands, and her viewing writes
+    notes, not a veto. 2026-10-15 12:20Z, the Owner: «orice iese, chiar dacă pică, Directorul
+    se uită peste ce avem, și publică!»; 17:36Z, a4ecf40a: she accepted the film after QC
+    (nine minor findings, nothing bought), her viewing then refused it for its story — a
+    story the drafts cap had shipped — and the day's episode stood unpublished with its
+    money spent. The story's lessons belong to the next script, not to this film."""
     from app.media.director_qc import DECISION_EVENT  # noqa: PLC0415 - media imports agents
     from app.models import DomainEvent  # noqa: PLC0415
 
@@ -423,7 +428,7 @@ def accepted_under_cap(session: Session, media_asset_id: str) -> dict[str, Any] 
         payload = event.payload if isinstance(event.payload, dict) else {}
         if str(payload.get("media_asset_id") or "") != media_asset_id:
             continue
-        if payload.get("outcome") == "ACCEPTED" and payload.get("accepted_under_cap"):
+        if payload.get("outcome") == "ACCEPTED":
             return dict(payload)
         return None
     return None
