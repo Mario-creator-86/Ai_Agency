@@ -5,6 +5,10 @@ AGENT_SCENARIO_ACCEPTANCE later used actual Ollama Cloud calls, with normal seri
 acceptance and real GPU/media/upload still pending. Current local UI evidence is reported
 separately below and does not prove those external workflows.
 
+## Published: episode 2 on Channel B at 13:52Z, by the studio alone under the Owner's cap (2026-10-15)
+
+**Verificat live (13:52Z, pe cee751c).** La primul pas al supraveghetorului după repornire plimbarea filmului 2 a pornit singură; vizionarea Directoarei a scris APPROVE sub plafon cu motivele ei ca note (`under_cap: true`, 13:52:19Z), storyboard-ul a revenit RENDERED, intenția de publicare s-a validat și filmul a urcat pe Channel B — Office Serial: `publication_record` PUBLISHED, public, `rwNbI9x5cx0` (https://youtube.com/shorts/rwNbI9x5cx0), 13:52:45Z. Nimic cumpărat de la 11:29Z; RunPod azi 6,97 USD. Prima publicare din 12 octombrie. Lecțiile ei (camera numită doar prin obiectele ei, postura într-o clauză scurtă, fără ecrane în cadru) sunt înregistrate pentru următorul episod.
+
 ## Cycle 7f: the viewing cannot withhold a film accepted under the cap; the studio's captions are not writing (2026-10-15)
 
 **Verificat live (12:49Z, pe ea51f27 + a50c680).** Regula plafonului a mers: la prima citire
