@@ -4903,6 +4903,8 @@ def test_a_film_accepted_under_the_cap_and_refused_by_her_viewing_is_walked_agai
                     event_id=None,
                 )
             )
+            if verdict == "REJECT":  # as the viewing leaves the storyboard (13:10Z live)
+                session.get(Storyboard, film["board"]).status = "REJECTED"
 
     viewed("REJECT")
     assert _pass(engine, settings) == {"queued": [film["board"]]}

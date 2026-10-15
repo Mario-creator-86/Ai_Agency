@@ -180,8 +180,13 @@ def queue_director_reviews(context: WatchdogContext) -> dict[str, Any]:
             if storyboard_id in busy:
                 continue
             board = session.get(Storyboard, storyboard_id)
-            if board is None or board.status == "REJECTED":
-                continue  # closed (by her, or a viewing refused): nothing to decide
+            if board is None:
+                continue
+            if board.status == "REJECTED" and accepted_under_cap(session, asset_id) is None:
+                # Closed by her, or a viewing refused it: nothing to decide. A film accepted
+                # under the Owner's cap that a viewing refused is not closed (2026-10-15,
+                # 13:10Z: the pass skipped 2d276038 on that status and nothing moved).
+                continue
             if _his_card_open(session, storyboard_id):
                 # His cap stopped her repair and his card asks what becomes of the film
                 # (`decisions.producers.redo_cap`): she is not asked again until he answers.

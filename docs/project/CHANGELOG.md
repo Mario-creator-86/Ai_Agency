@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-15 — A film accepted under the cap that a viewing refused is not a closed film
+
+- `workflows/passes/director_qc_review.py`: a storyboard on REJECTED is skipped only when the film was not accepted under the Owner's cap (13:10Z: the pass skipped 2d276038 on the status its refused viewing left, and nothing moved). Test updated.
+
 ## 2026-10-15 — The viewing is notes, not a veto, on a film accepted under the cap
 
 After her ACCEPT under the cap (12:49Z), the Director's viewing refused episode 2 on the publish path — first for the studio's own captions read as «burned-in writing» — put the storyboard on REJECTED and told four departments to remake it.
