@@ -2732,6 +2732,14 @@ STILL_EXCLUSIONS = "No text, no logo."
 PEOPLE_SENTENCE = (
     "Any people appear only as small distant figures seen from behind, faces turned away."
 )
+#: The same rule for a close or detail frame of a person — hands, a back, a shoulder —
+#: where «small distant figures» contradicts the shot's own scale. 2026-10-15 18:45Z,
+#: 7c26a7ce scene 2 (the scientist's hands lifting the bar, a detail shot): the Director
+#: refused the wide-frame clause six rounds running, and the Editor's rewrite could not
+#: remove a sentence the composer always says — a tool defect, not his.
+CLOSE_PEOPLE_SENTENCE = (
+    "The person is seen only from behind, the face turned away from the camera and never shown."
+)
 #: The bible's face rule said for a scene that shows nobody: it never asks for figures, and
 #: the linter reads it as the rule kept (`prompt_lint.NO_FACE_STATED`). Said positively, with
 #: no word for a person in it: until 2026-10-12 it was «There are no people in the frame.»,
@@ -3644,7 +3652,17 @@ def compile_prompts(
         # to be empty of people instead. The first, said in a scene of objects, asked the model
         # for figures (2026-10-11, cyclotron scene 4: two objects on a desk came back with
         # people, and the clip turned their faces to the camera; the Director's brief named it).
-        (0, 6, (PEOPLE_SENTENCE if people else NO_PEOPLE_SENTENCE) if faces_banned else ""),
+        (
+            0,
+            6,
+            (
+                (CLOSE_PEOPLE_SENTENCE if size in ("close", "detail") else PEOPLE_SENTENCE)
+                if people
+                else NO_PEOPLE_SENTENCE
+            )
+            if faces_banned
+            else "",
+        ),
         (5, 7, COMPOSITION_SENTENCE),
         (2, 8, _sentence(light)),
         # The plan's own exclusions are never said here as "no ...": an image model reads the

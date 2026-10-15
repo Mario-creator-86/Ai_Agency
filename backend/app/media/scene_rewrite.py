@@ -1482,7 +1482,9 @@ def _still_sentences(
         still_exclusions(marked),
         markings_kept(marked),
     ]
-    people = _present([words.PEOPLE_SENTENCE, words.NO_PEOPLE_SENTENCE], still)
+    people = _present(
+        [words.PEOPLE_SENTENCE, words.CLOSE_PEOPLE_SENTENCE, words.NO_PEOPLE_SENTENCE], still
+    )
     return _present(candidates, still), ({"subject": people} if people else {})
 
 

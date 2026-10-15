@@ -11,6 +11,7 @@ from __future__ import annotations
 import pytest
 from app.media.prompt_agent import (
     _SHOTS_INSTRUCTIONS,
+    CLOSE_PEOPLE_SENTENCE,
     COMPOSITION_SENTENCE,
     NO_PEOPLE_SENTENCE,
     PEOPLE_SENTENCE,
@@ -151,3 +152,32 @@ def test_the_writers_are_told_the_still_is_one_frozen_moment():
         _REWRITE_INSTRUCTIONS
     )
     assert "never a camera move, a speed or a span of the clip's seconds" in _SHOTS_INSTRUCTIONS
+
+
+def test_a_detail_shot_of_a_person_keeps_the_face_rule_at_its_own_scale():
+    """2026-10-15 18:45Z, 7c26a7ce scene 2: a detail shot of the scientist's hands lifting
+    the bar carried «Any people appear only as small distant figures seen from behind» — the
+    Director refused it six rounds running and the Editor could not remove a composer
+    sentence. A close or detail frame of a person says the rule at its own scale; a wide one
+    says it as before; a scene of objects says the frame holds only the things named."""
+    from app.media.prompt_agent import compile_prompts
+    from app.media.prompt_lint import NO_FACE_STATED
+
+    base = {
+        "subject": "The scientist's hands gripping and lifting the platinum-iridium bar",
+        "environment": "a windowless charcoal laboratory",
+        "lighting": "one warm-red laser line raking the dark floor",
+        "camera": "Detail shot, 85mm lens",
+    }
+    bible = {"continuity_rules": ["No human faces appear"]}
+    detail = compile_prompts(base, bible)["still_prompt"]
+    assert CLOSE_PEOPLE_SENTENCE in detail and PEOPLE_SENTENCE not in detail, detail
+    assert NO_FACE_STATED.search(CLOSE_PEOPLE_SENTENCE)
+    wide = compile_prompts({**base, "camera": "Wide establishing shot, 24mm lens"}, bible)[
+        "still_prompt"
+    ]
+    assert PEOPLE_SENTENCE in wide and CLOSE_PEOPLE_SENTENCE not in wide, wide
+    objects = compile_prompts(
+        {**base, "subject": "The platinum-iridium bar in its open glass case"}, bible
+    )["still_prompt"]
+    assert NO_PEOPLE_SENTENCE in objects and CLOSE_PEOPLE_SENTENCE not in objects, objects
