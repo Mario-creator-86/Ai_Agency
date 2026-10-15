@@ -2119,4 +2119,11 @@ No provider was called, no run was queued, no credit was spent, and
   Route each producer to the Director (body.to = Director, her inbox) and keep for him only
   accounts, authorisations, security and money cards; the «Decizii» count then shows his real
   cards (today: one, Marcus's failing model).
+- 2026-10-15 19:55Z — next: a studio started while another still holds the worker lock serves
+  the page and never runs a worker (`main.py` «worker_refused_second_instance», by design for
+  the scheduled task beside a manual start). Today the Owner launched `start.cmd` at 19:46Z
+  while the restart's graceful stop still waited on the old worker; the old one died at 19:49Z
+  and the new one stayed worker-less (`/health/ready` worker ELSEWHERE) until a second restart
+  at 19:54Z. The second instance should retry the lock every 30 s and start its worker once the
+  holder is gone; the page should say «lucrătorul rulează în alt proces» meanwhile.
 

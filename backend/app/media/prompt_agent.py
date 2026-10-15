@@ -3034,6 +3034,19 @@ def _phrase(clauses: list[str], max_words: int) -> str:
     return ", ".join(fitted)
 
 
+def _shorter_subject(subject: str) -> list[str]:
+    """The subject said with fewer of its later clauses, longest first, down to its first
+    clause: «A, B; C: D» → «A, B; C», «A, B», «A». Each is a whole sentence."""
+    said = " ".join(str(subject or "").split()).rstrip(". ")
+    parts = [part for part in re.split(r"\s*[;:]\s*|\s*,\s*", said) if part]
+    found: list[str] = []
+    for count in range(len(parts) - 1, 0, -1):
+        shorter = _sentence(", ".join(parts[:count]))
+        if shorter and shorter not in found:
+            found.append(shorter)
+    return found
+
+
 def _sentence(text: str) -> str:
     said = " ".join(str(text or "").split()).strip(" ,;:")
     if not said:
@@ -3648,7 +3661,10 @@ def compile_prompts(
         (0, 1, frame),
         (0, 2, subject),
         (0, 3, cast),
-        (3, 4, action),
+        # The one moment of the picture ranks with the room, above the light (2026-10-15
+        # 19:56Z: the Director refused the words for the missing action while the light's
+        # sentence stood in its place).
+        (1, 4, action),
         (1, 5, environment),
         # How people are kept faceless where the scene shows them; a scene of objects is said
         # to be empty of people instead. The first, said in a scene of objects, asked the model
@@ -3674,6 +3690,19 @@ def compile_prompts(
         (0, 9, still_exclusions(marked) if still_family != "gen4" else markings_kept(marked)),
     ]
     still = _fit_sentences(items, lint.prompt_cap(contract, "still"), STILL_MAX_WORDS)
+    # The room is never given up for a long subject (2026-10-15 19:56Z, 7c26a7ce scene 2: a
+    # 51-word subject left the laboratory, the light and the composition out of the 120-word
+    # budget, and the Director refused the words four rounds running for the missing room —
+    # the Editor's fields were right). When the environment did not fit, the subject is said
+    # shorter — its later clauses taken off one at a time — until the room and the action are in.
+    needed = [text for text in (environment, action) if text]
+    if any(text not in still for text in needed):
+        for shorter in _shorter_subject(subject):
+            retry = [(rank, order, shorter if order == 2 else text) for rank, order, text in items]
+            candidate = _fit_sentences(retry, lint.prompt_cap(contract, "still"), STILL_MAX_WORDS)
+            if all(text in candidate for text in needed):
+                still, subject = candidate, shorter
+                break
     # People kept faceless are shown from behind: an orbit around them turns their faces to
     # the camera, so it is never the compiler's choice for such a scene (a plan may ask).
     move = choose_camera_move(

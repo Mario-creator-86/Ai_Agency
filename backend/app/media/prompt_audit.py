@@ -91,6 +91,20 @@ _INSTRUCTIONS = (
     '"..."}}}}]}}.\n'
 )
 _WHAT = {"still": "picture", "motion": "clip"}
+#: Said in the still audit: what the composer does with the plan's words, so a refusal names
+#: what the MODEL would draw wrong — not what the composer's own rules leave out. 2026-10-15
+#: 19:56Z, 7c26a7ce scene 2: she refused the still four rounds for «the action stops at
+#: 'raise it a little' and never says she lowers her arm» (a still is one moment; the chain
+#: is the clip's) and for the missing room (a budget matter: the subject was too long).
+_STILL_NOTE = (
+    "The picture is ONE frozen moment, the first of the plan: the plan's later moments "
+    "(«then…», «lowers», «points») belong to the clip's words and are never in a picture's — "
+    "do not refuse a picture for lacking them. The studio composes the picture's words from "
+    "the plan's fields within a budget of about 120 words, the room, the light and the "
+    "composition after the subject: when one of them is missing, the subject or the action "
+    "is too long — brief the Video Editor to SHORTEN that field (fewer clauses), never to add "
+    "more.\n"
+)
 #: Said in the motion audit: the picture exists, bought and approved; only the clip's movement
 #: is hers to refuse here (15:41Z, a4ecf40a: she refused the motion words for the still's
 #: objects, and no rewrite of the motion layer could touch them).
@@ -287,7 +301,7 @@ def _ask(
     }
     prompt = (
         _INSTRUCTIONS.format(what=_WHAT[layer], layer=layer)
-        + (_MOTION_NOTE if layer == "motion" else "")
+        + (_MOTION_NOTE if layer == "motion" else _STILL_NOTE)
         + lessons_rule(lessons)
         + wrap_in_inert_boundary(json.dumps(data, ensure_ascii=False, default=str), "prompt-audit")
     )

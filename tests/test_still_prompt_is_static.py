@@ -183,3 +183,39 @@ def test_a_detail_shot_of_a_person_keeps_the_face_rule_at_its_own_scale():
         {**base, "subject": "The platinum-iridium bar in its open glass case"}, bible
     )["still_prompt"]
     assert NO_PEOPLE_SENTENCE in objects and CLOSE_PEOPLE_SENTENCE not in objects, objects
+
+
+def test_the_room_is_kept_before_a_long_subject():
+    """2026-10-15 19:56Z, 7c26a7ce scene 2: a 51-word subject pushed the laboratory, the
+    light and the composition out of the 120-word budget, and the Director refused the words
+    four rounds running for the missing room — the Editor's fields were right. The subject is
+    said shorter, its later clauses taken off, until the room is in."""
+    from app.media.prompt_agent import _shorter_subject, compile_prompts
+
+    subject = (
+        "The scientist's hands and forearms, seen from behind and below the shoulders: only "
+        "her hands, forearms, shoulders and back are in frame, seen from behind; her face is "
+        "never shown and is turned away from the camera, her right hand gripping the end of "
+        "the silvery platinum-white rectangular platinum-iridium bar, her left hand under it"
+    )
+    environment = (
+        "The windowless measurement laboratory: charcoal and slate blue walls, the steel "
+        "workbench, the glass display case in the same spot, the warm-red laser line on the "
+        "dark floor"
+    )
+    package = {
+        "subject": subject,
+        "action": "Her hands lift the bar clear of its glass case, raise it a little",
+        "environment": environment,
+        "lighting": "The thin bright warm-red laser line on the floor, the only light that moves",
+        "camera": "Medium shot, 50mm lens",
+    }
+    still = compile_prompts(package, {"continuity_rules": ["No human faces appear"]})[
+        "still_prompt"
+    ]
+    assert "windowless measurement laboratory" in still, still
+    assert "Her hands lift the bar clear of its glass case" in still, still
+    assert still.startswith("Documentary") and "The scientist's hands and forearms" in still
+    assert len(still.split()) <= 120
+    shorter = _shorter_subject("A, B; C: D")
+    assert shorter == ["A, B, C.", "A, B.", "A."]
