@@ -2134,4 +2134,12 @@ No provider was called, no run was queued, no credit was spent, and
   test_the_days_staircase_has_her_rewrite_the_refused_scene_and_walks_on` fails since the
   no-cap audit rounds («Scena 1: auditul nu a spus nimic de ea» — the test's Director fake
   answers the brief, not the audit's rounds): teach the fake the audit's answer.
+- 2026-10-15 23:08Z — next: a graceful stop sent while a DAILY_RUN is claimed takes the page
+  down («shutdown_waiting_for_worker») and waits for the whole day run — the serial's writing
+  rounds, 12-25 min each, up to ten — so `scripts/restart.py` gave up after 600 s with the
+  page dark and the worker still writing; the tree had to be killed (23:17Z) and the day
+  resumed by itself after the fresh start. Either the worker abandons an LLM-only task on
+  shutdown (the resume pass re-runs the stage; nothing paid is in flight) or `restart.py`
+  refuses to stop while a DAILY_RUN is claimed and says so; the boundary scripts must treat a
+  claimed day run as blocking, not only a writer's run in flight.
 
