@@ -42,7 +42,11 @@ from app.models import DomainEvent
 logger = logging.getLogger("studio.prompt_audit")
 
 AUDIT_TASK = "director_prompt_audit"
-AUDIT_TEMPLATE = "director_prompt_audit-v1"
+#: Bumped whenever the audit's instructions change: the refusals counted toward a tool
+#: defect are those made under the same instructions (20:54Z, 7c26a7ce scene 2: the guard
+#: fired at once on seven refusals made under instructions that let her ask a picture for a
+#: static frame and read a duplication off the plan — the corrected audit never judged).
+AUDIT_TEMPLATE = "director_prompt_audit-v2"
 AUDIT_EVENT = "media.prompt_audited"
 #: Her rounds on one scene's layer inside ONE walk before the scene waits for her next walk:
 #: a bound on the walk's LLM time, not on her rounds (the Owner, 2026-10-15 18:15Z: no cap
@@ -243,8 +247,8 @@ def same_finding_streak(
     streak = 1
     in_a_row = 1
     for audit in reversed(_audits(session, storyboard_id, scene, layer)):
-        if audit.get("verdict") != REWRITE:
-            break
+        if audit.get("verdict") != REWRITE or audit.get("instructions") != AUDIT_TEMPLATE:
+            break  # a refusal under other instructions is another conversation
         in_a_row += 1
         if in_a_row >= REFUSALS_IN_A_ROW:
             return in_a_row  # however worded: this many in a row is the tool's, not his
@@ -267,6 +271,7 @@ def tool_defect_on(
             audit.get("verdict") == TOOL_DEFECT
             and audit.get("digest") == digest
             and audit.get("guard") == GUARD_VERSION
+            and audit.get("instructions") == AUDIT_TEMPLATE
         ):
             return audit
     return None
@@ -355,6 +360,7 @@ def _record(
                 "reason": reason[:600],
                 "finding": (finding or "")[:400] or None,
                 "guard": GUARD_VERSION if verdict == TOOL_DEFECT else None,
+                "instructions": AUDIT_TEMPLATE,
                 "run_id": run_id,
                 "rewritten": rewritten,
             },
@@ -574,7 +580,7 @@ def audit_before_purchase(
     rebuilds the sheet and audits again. ``held`` scenes wait for her: not bought.
     """
     from app.agents.memory import agent_for_role  # noqa: PLC0415
-    from app.media.prompt_agent import prompt_lessons  # noqa: PLC0415
+    from app.media.prompt_agent import UNVERIFIED_SUFFIX, prompt_lessons  # noqa: PLC0415
     from app.media.scene_rewrite import (  # noqa: PLC0415 - it imports runbook
         lesson_scope,
         rewrite_scene,
@@ -635,7 +641,15 @@ def audit_before_purchase(
         return result
 
     with Session(engine) as session:
-        lessons = prompt_lessons(session, scope=lesson_scope(next(iter(to_ask.values()))))
+        # She reads the proven lessons only: the provisional ones are her own refusals
+        # (`_learn_from_brief`), and shown back to her she found them in words that no longer
+        # carried them (20:44-20:54Z, 7c26a7ce scene 2: «the subject sentence names the bar»
+        # eight rounds after it stopped doing so). The Editor still reads them all.
+        lessons = [
+            lesson
+            for lesson in prompt_lessons(session, scope=lesson_scope(next(iter(to_ask.values()))))
+            if not lesson.endswith(UNVERIFIED_SUFFIX)
+        ]
     result["asked"] = True
     audit, run = _ask(
         engine,
