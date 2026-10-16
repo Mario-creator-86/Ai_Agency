@@ -1,5 +1,9 @@
 # Architectural / Product Decision Log v5
 
+## The format: 180 s, narrator, story first, no punch-in (2026-10-16)
+
+**The format (2026-10-16).** The Owner, after reading «Zero Scripts, Blocked Log» and watching the shorts: the viewer must understand what he is watching; the 4-5-word lines and the cut shots were our limits, not the generators'. Decided by card: shorts 60-180 s aiming at 160 (YouTube's Shorts limit stays the wall: «mergem atunci ca maxim 180»); serial episodes 90-180 s with 250-450 spoken words, a narrator opening (where, who, what is at stake) and closing, a story the showrunner invents with the studio's real day as backdrop, not as plot; no punch-in, every shot breathes 0.4 s after its words. The channels' `shorts_max_seconds` goes to 180 by migration 0058 (11_DATA_MODEL's 60/70 are superseded). The serial's writer and review rules change in the next increment.
+
 ## Montage shots are scenes; interrupted continuations resumed (2026-10-16)
 
 **Montage: shots are scenes.** The Owner (2026-10-16, after a Seedance fan film of 150 shots) asked for the same complexity of montage in the shorts and the serial and decided by card: shots made with the studio's RunPod models; dialogue heard in off with reaction shots instead of lip-synced speech; the serial keeps its 2D look; the design «cadrele devin scene obișnuite tăiate la construirea storyboard-ului». A writer's scene (a beat) becomes N storyboard scenes tagged `prompt_json["beat"]`; every rule that counts per scene — one still per scene (2026-10-15), the renders cap of three a layer a scene (2026-10-15), the paid redos per scene, «one camera move per clip» (Mișcare v2) — now counts per shot, by the same code. The review's «one beat = one scene = one clip» (`story/review._filmable`) stays as the beat's length limit before the cut. The script and the episode's beats are never rewritten by the montage.

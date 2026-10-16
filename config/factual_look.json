@@ -53,9 +53,10 @@
       "grain": 0
     },
     "second_framing": {
-      "enabled": true,
+      "enabled": false,
       "min_spoken_seconds": 3.2,
-      "zoom": 1.15
+      "zoom": 1.15,
+      "note": "Off since 2026-10-16 (the Owner: «de ce se taie cadrul?»): the cuts come from the montage's own shots now, never from a 15% crop in the middle of a scene."
     },
     "cover": {
       "compose": true

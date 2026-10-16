@@ -1234,11 +1234,11 @@ def _qc_duration(engine, tmp_path, monkeypatch, seconds: float, *, serial: bool 
 @pytest.mark.parametrize(
     ("seconds", "serial", "passes"),
     [
-        (60.0, False, True),  # the factual default, exactly
-        (60.9, False, True),  # the container's own rounding and the last breath
-        (61.5, False, False),
-        (69.9, True, True),  # the serial keeps its 45-70 s window
-        (71.5, True, False),
+        (180.0, False, True),  # YouTube's Shorts limit, exactly (the Owner, 2026-10-16)
+        (180.9, False, True),  # the container's own rounding and the last breath
+        (181.5, False, False),
+        (179.9, True, True),  # the serial's 90-180 s window
+        (181.5, True, False),
         (9.5, False, False),  # the floor is unchanged
     ],
 )
@@ -1246,7 +1246,7 @@ def test_the_shorts_length_is_read_per_channel(
     engine, tmp_path, monkeypatch, seconds, serial, passes
 ):
     technical, reasons = _qc_duration(engine, tmp_path, monkeypatch, seconds, serial=serial)
-    assert technical["max_duration_seconds"] == (70 if serial else 60)
+    assert technical["max_duration_seconds"] == 180
     assert technical["duration_valid"] is passes
     assert any("durata" in reason.lower() for reason in reasons) is not passes
 

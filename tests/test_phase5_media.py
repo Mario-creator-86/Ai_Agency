@@ -812,8 +812,9 @@ def test_a_scene_lasts_its_words_and_its_full_breath_and_a_silent_card_one_beat(
     from app.media.assembler import SPOKEN_TAIL_SECONDS, TIMELINE_FPS, scene_spans
     from app.media.qc import MAX_SILENT_CARD_SECONDS
 
-    # 0.12 s since 2026-10-02, after each take's own silence is trimmed (audit Q4).
-    assert SPOKEN_TAIL_SECONDS == 0.12
+    # 0.12 s since 2026-10-02, after each take's own silence is trimmed (audit Q4); 0.4 s
+    # since 2026-10-16 (the Owner: the movement must finish before the cut).
+    assert SPOKEN_TAIL_SECONDS == 0.4
     assert not hasattr(assembler, "FILM_OVER_NARRATION_SECONDS")
 
     def whole_frames(spans: list[float]) -> bool:
@@ -822,14 +823,15 @@ def test_a_scene_lasts_its_words_and_its_full_breath_and_a_silent_card_one_beat(
     def up(seconds: float) -> float:
         return math.ceil(seconds * TIMELINE_FPS - 1e-6) / TIMELINE_FPS
 
-    # Two scenes: the full breath after each, never past the plan, on whole frames.
+    # Two scenes: the full breath after each, whatever the plan said, on whole frames.
     two = scene_spans([5.0, 5.0], [4.0, 4.6])
-    assert two == pytest.approx([99 / 24, 114 / 24])
+    assert two == pytest.approx([up(4.4), up(5.0)])
     assert whole_frames(two)
-    # Words longer than the plan are never cut: the scene lasts its words.
-    assert scene_spans([4.0], [5.2]) == pytest.approx([125 / 24])
-    # A breath never runs past the plan: 4.9 s of words under a 5 s plan keep 0.1 s.
-    assert scene_spans([5.0], [4.9]) == pytest.approx([up(5.0)])
+    # Words longer than the plan are never cut: the scene lasts its words and its breath.
+    assert scene_spans([4.0], [5.2]) == pytest.approx([up(5.6)])
+    # The breath is the shot's even past the plan: 4.9 s of words under a 5 s plan keep it
+    # whole (2026-10-16; the clip is bought for it).
+    assert scene_spans([5.0], [4.9]) == pytest.approx([up(5.3)])
     # A scene with no words keeps its planned length.
     assert scene_spans([3.0], [0.0]) == pytest.approx([3.0])
     # Six scenes with a second of slack each: every one keeps its full breath.
@@ -857,7 +859,7 @@ def test_a_scene_lasts_its_words_and_its_full_breath_and_a_silent_card_one_beat(
     )
     assert whole_frames(spans)
     # A card with words is narration: its words and a breath, like any scene.
-    assert scene_spans([6.0], [2.0], kinds=["DATA_CARD"]) == pytest.approx([up(2.12)])
+    assert scene_spans([6.0], [2.0], kinds=["DATA_CARD"]) == pytest.approx([up(2.4)])
 
 
 class AlignedVoice:
@@ -1005,7 +1007,7 @@ def test_a_real_film_is_24_fps_within_a_second_of_its_words_with_captions_in_the
     # Within a second of the narration: the planned six seconds are not padded with silence.
     narration = sum(scene["audio_seconds"] for scene in production["scenes"])
     breaths = 2 * production["timeline"]["spoken_tail_seconds"]
-    assert breaths == pytest.approx(0.24)
+    assert breaths == pytest.approx(0.8)
     assert probe["duration_seconds"] <= narration + breaths + 1.0, (
         probe["duration_seconds"],
         narration,

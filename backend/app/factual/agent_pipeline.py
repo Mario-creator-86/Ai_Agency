@@ -507,6 +507,14 @@ un cârlig care pune ceva în joc în primele două secunde, o progresie care o 
 o răsplată care răspunde exact la ce a promis cârligul, un final și un îndemn care aparține
 acestei povești. Un film care e doar "fapt, fapt, fapt, abonează-te" nu se uită nimeni la el.
 
+Spectatorul e un străin: în primele 8-10 secunde (primele două-trei propoziții, după cârlig
+sau chiar în el) trebuie să știe UNDE suntem, LA CE se uită și CE E ÎN JOC — spuse ca o
+scenă (un loc, un om văzut de departe, un moment, o întrebare), nu ca un anunț. Povestea are
+un arc: un punct de plecare, o întrebare care ține, obstacole sau răsturnări legate cauzal,
+o dezvăluire care răspunde la întrebare și un final care închide bucla. Propozițiile sunt
+întregi și spuse pe îndelete, nu fragmente telegrafice; o scenă poate avea două-trei
+propoziții care își duc gândul până la capăt.
+
 FOLOSEȘTE EXCLUSIV afirmațiile verificate de mai jos. Nu adăuga niciun fapt, cifră, dată,
 nume sau context care nu apare în ele. Dacă o tranziție are nevoie de o informație pe care nu
 o ai, rescrie propoziția ca să nu mai aibă nevoie de ea. Nu transforma o speculație în

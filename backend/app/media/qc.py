@@ -937,7 +937,7 @@ SHORTS_LENGTH_SLACK_SECONDS = 1.0
 #: The longest a channel may set: YouTube's own limit for vertical Shorts since 2024-10-15.
 SHORTS_MAX_LIMIT_SECONDS = 180
 #: Per channel type, when the film's channel row carries no value of its own.
-SHORTS_MAX_BY_CHANNEL_TYPE = {"MAIN_FACTUAL": 60, "OFFICE_SERIAL": 70}
+SHORTS_MAX_BY_CHANNEL_TYPE = {"MAIN_FACTUAL": 180, "OFFICE_SERIAL": 180}
 
 
 def shorts_max_seconds(session: Session, media_asset_id: str) -> int:

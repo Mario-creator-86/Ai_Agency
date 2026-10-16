@@ -5,6 +5,22 @@ AGENT_SCENARIO_ACCEPTANCE later used actual Ollama Cloud calls, with normal seri
 acceptance and real GPU/media/upload still pending. Current local UI evidence is reported
 separately below and does not prove those external workflows.
 
+## The format: shorts 60-180 s, no punch-in, a 0.4 s breath (2026-10-16)
+
+Claim: the Owner read «Zero Scripts, Blocked Log» and the shorts (07:05Z): «Eu nu înțeleg nimic… Dialogul de ce este compus din 4-5 cuvinte?… se vede că se taie cadrul, de ce facem asta?». The limits were ours, not the generators': 30-second shorts, serial episodes of 115-170 words, a beat held to one 10-second clip, a 15 % punch-in halfway through long scenes, and the clip cut 0.12 s after the last word. His decisions: shorts 60-180 s aiming at 160 («mergem atunci ca maxim 180»); episodes 90-180 s with 250-450 words, a narrator opening and closing, a story the showrunner invents on the real day's backdrop; no punch-in and a 0.4 s breath per shot.
+
+Done, the first increment (the shots and the short's length):
+- `config/factual_look.json` finish.second_framing.enabled = false (the cuts are the montage's); `assembler.SPOKEN_TAIL_SECONDS` 0.12 → 0.4 and `scene_spans` keeps the breath whole whatever the plan said (the clip is bought for it: `_voiced_clip_seconds`).
+- `Settings.target_video_seconds` 30 → 160; `editorial.MAX_SHORT_SECONDS` 60 → 180; `MAX_STORY_SCENES` 12 → 30; `ShotPrompt.scene_index` ≤ 120 (the montage's rows).
+- The channels' cap: `DEFAULT_CHANNELS` 180/180, `qc.SHORTS_MAX_BY_CHANNEL_TYPE` 180/180, migration 0058 raises the rows still at the old 60/70 to 180 (a value the Owner set by hand is kept).
+- The writer's brief: the stranger must know in the first 8-10 seconds where we are, what we look at and what is at stake, told as a scene; a story arc; whole sentences, no telegraphic fragments.
+
+Cost: a 160 s short with montage ≈ 7-8 USD on RunPod; with an episode, a day reaches the 20 USD budget.
+
+Open, next increment (the serial, mapped 07:20Z): EPISODE_WORDS 250-450 with a hard estimate under 175 s, WORDS_PER_BEAT re-based, MAX_BEATS 12, `_Line.speaker` None for the narrator and a narration check (2-3 opening sentences, one closing), `_Beat.event_ids` optional and the grounding/concentration/cast checks loosened to «cited ids exist», the brief rewritten (story first, events as backdrop, no «never an introduction»), an empty day still told, `_filmable` measured per montage shot, `serial_storyboard` target 90-180 s, the montage treating a narrator run as an establishing shot; ~19 test files share the 120-word `beats_for` fixture.
+
+Tested: test_editorial_quality, test_writer_brief, test_publish_policy, test_phase6_publishing, test_assembler_concat, test_grade, test_second_look, test_phase5_media, test_clip_qc (tests pinned on 60/70 s, 0.12 s and the punch-in rewritten).
+
 ## Refused stills judged again by today's gate (2026-10-16)
 
 Claim: «Avem o problemă» (the Owner, 06:50Z): the episode «Zero Scripts, Blocked Log» (87c05891) could not start — «Directoarea nu a putut încă rescrie scena 8» on fourteen walks. Scene 8's two stills were refused by the gate's local panels check (a flat band at the bottom: the desk front, grey 6-7, textured 7-8), the Director's brief of 05:10Z pinned the band to the composer's fixed framing sentences (`composer_locked`), and `scene_rewrite.scene_waits` then stopped the ladder from asking her again. The band rule was fixed at 05:04Z (1940bca: a textured dark band is a surface) and both files read «surface» today — but the refusal stood on the takes and nothing ever judged them again.

@@ -1111,7 +1111,8 @@ def test_a_short_may_never_outgrow_the_format(engine):
     """However long the target, the outer wall is the format itself."""
     from app.factual.editorial import MAX_SHORT_SECONDS, narration_budget
 
-    assert narration_budget(45)["max_seconds"] == MAX_SHORT_SECONDS
+    assert narration_budget(45)["max_seconds"] == 67.5  # under the wall: its own tolerance
+    assert narration_budget(200)["max_seconds"] == MAX_SHORT_SECONDS
     assert narration_budget(300)["max_seconds"] == MAX_SHORT_SECONDS
 
 

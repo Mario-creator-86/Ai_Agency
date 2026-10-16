@@ -169,8 +169,11 @@ DISSOLVE_WORDS: tuple[str, ...] = ("DISSOLVE", "CROSSFADE", "CROSS_DISSOLVE", "M
 #: It was 0.35 s on top of the vendor's own trailing silence, never trimmed: the rehearsal film
 #: measured 0.28-0.61 s of digital silence at every cut (audit Q4). Since 2026-10-02 each take's
 #: silent edges are cut first (`_trimmed_take`, -45 dB, keeping EDGE_KEEP_SECONDS either side)
-#: and the breath is 0.12 s, so a cut carries at most about 0.22 s with the frame rounding.
-SPOKEN_TAIL_SECONDS = 0.12
+#: and the breath was 0.12 s, so a cut carried at most about 0.22 s with the frame rounding.
+#: 2026-10-16, the Owner («de ce se taie cadrul? de ce nu-l lăsăm complet?»): every shot
+#: breathes 0.4 s after its words, so its movement ends before the cut; the clip is bought
+#: for it (`_voiced_clip_seconds`) and quality control counts it (`qc.film_length_budget`).
+SPOKEN_TAIL_SECONDS = 0.4
 
 #: How long one scene's motion may take, and how often the task is asked about.
 MOTION_DEADLINE_SECONDS = 600
@@ -1820,13 +1823,15 @@ def scene_spans(
 ) -> list[float]:
     """How long each scene lasts on the timeline, on whole frames.
 
-    A scene with words lasts min(planned, spoken + SPOKEN_TAIL_SECONDS), and never less than
-    its words: a word is never cut, so words longer than the plan set the length. Every
-    speaking scene keeps its whole breath, rounded up to a frame: quality control counts the
-    breaths (qc.film_length_budget), and the planned lengths used to pad the Nepal film with
-    silence. A scene with no words keeps its plan, except a silent composed scene (``kinds``:
-    BLACK, TITLE_CARD, DATA_CARD), which lasts at most what quality control allows its kind
-    (qc.MAX_SILENT_CARD_SECONDS): one beat of black, a title read, a chart's animation.
+    A scene with words lasts spoken + SPOKEN_TAIL_SECONDS, whatever its plan said: a word
+    is never cut, and the breath after the last word is the shot's (2026-10-16, the Owner:
+    the clip used to be cut the moment the words ended, when the plan ran short, and the
+    movement never finished). Every speaking scene keeps its whole breath, rounded up to a
+    frame: quality control counts the breaths (qc.film_length_budget), and the clip was
+    bought for it (`_voiced_clip_seconds`). A scene with no words keeps its plan, except a
+    silent composed scene (``kinds``: BLACK, TITLE_CARD, DATA_CARD), which lasts at most what
+    quality control allows its kind (qc.MAX_SILENT_CARD_SECONDS): one beat of black, a title
+    read, a chart's animation.
     """
     from app.media.qc import MAX_SILENT_CARD_SECONDS  # noqa: PLC0415 - qc reads the models
 
@@ -1834,12 +1839,7 @@ def scene_spans(
     spans: list[float] = []
     for plan, said, kind in zip(planned, spoken, kinds, strict=True):
         if isinstance(said, int | float) and float(said) > 0:
-            tail = (
-                min(SPOKEN_TAIL_SECONDS, max(0.0, float(plan) - float(said)))
-                if float(plan) > 0
-                else SPOKEN_TAIL_SECONDS
-            )
-            spans.append(whole_frames(float(said) + tail, fps, up=True))
+            spans.append(whole_frames(float(said) + SPOKEN_TAIL_SECONDS, fps, up=True))
         elif kind in MAX_SILENT_CARD_SECONDS:
             spans.append(whole_frames(min(float(plan), MAX_SILENT_CARD_SECONDS[kind]), fps))
         else:

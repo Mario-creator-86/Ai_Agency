@@ -338,7 +338,7 @@ class ShotPrompt(BaseModel):
     """One shot, described the way a director would brief a camera crew."""
 
     model_config = ConfigDict(extra="ignore")
-    scene_index: int = Field(ge=1, le=60)
+    scene_index: int = Field(ge=1, le=120)
     story_purpose: str = Field(default="", max_length=20)
     subject: str = Field(default="", max_length=400)
     action: str = Field(default="", max_length=500)

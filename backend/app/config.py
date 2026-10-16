@@ -329,10 +329,11 @@ class Settings(BaseSettings):
     montage_shot_seconds: float = Field(default=4.0, ge=2.0, le=9.0)
     montage_max_shots_per_scene: int = Field(default=3, ge=1, le=4)
 
-    #: How long a short should be. The Owner's answer: about thirty seconds, and the story
-    #: decides — twenty-four when that is the film, thirty-four when a premium story needs it.
-    #: The writer is briefed with it, and the story review measures the narration against it.
-    target_video_seconds: int = 30
+    #: How long a short should be. The Owner, 2026-10-16: a short carries a small story a
+    #: stranger can follow — 60 to 180 seconds (YouTube's Shorts limit), aiming at 160 —
+    #: after a month of 30-second films that read as a list of facts. The writer is briefed
+    #: with it, and the story review measures the narration against it.
+    target_video_seconds: int = 160
 
     #: How many scenes of a render may be generated as motion. None means every scene; a
     #: small number is what a test render uses, so seeing how a film reads costs one shot

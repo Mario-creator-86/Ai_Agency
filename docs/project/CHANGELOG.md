@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-16 — The Owner's format, first increment
+
+- The Owner's format (2026-10-16): shorts 60-180 s aiming at 160 (`target_video_seconds`, `MAX_SHORT_SECONDS`, `MAX_STORY_SCENES` 30), the channels' cap 180 s (migration 0058), no punch-in (`second_framing.enabled` false), a 0.4 s breath after every shot's words kept whatever the plan said; the writer's brief asks for a story a stranger can follow from its first seconds.
+
 ## 2026-10-16 — Refused stills judged again
 
 - A refused still the gate's local checks stopped is judged again by today's gate, free, at the Director's ladder (`stills_stage.rejudge_refused_stills`; `media.still_rejudged`): 87c05891 scene 8 stood refused on a band rule fixed hours before, the ladder locked on the composer's sentences.

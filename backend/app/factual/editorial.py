@@ -139,9 +139,10 @@ SCENE_BEAT_SECONDS = 0.35
 #: narration inside a thirty-second film — not to shave sentences.
 DURATION_TOLERANCE = 0.5
 
-#: The longest a short may be, whatever its target. Past this the format itself is gone, which
-#: is a refusal no tolerance should reach over.
-MAX_SHORT_SECONDS = 60.0
+#: The longest a short may be, whatever its target: YouTube's Shorts limit (the Owner,
+#: 2026-10-16: «mergem atunci ca maxim 180»). Past this the format itself is gone, which is a
+#: refusal no tolerance should reach over.
+MAX_SHORT_SECONDS = 180.0
 
 #: What one beat of narration weighs. A scene under this is not a beat of its own; a scene far
 #: over it is two beats wearing one number, and the film runs long while every scene looks
@@ -150,8 +151,10 @@ MAX_SHORT_SECONDS = 60.0
 WORDS_PER_SCENE = 15
 
 #: The most scenes a short may carry, wherever the number is needed: the writer's schema
-#: rejects a draft with more, and the budget never asks for more.
-MAX_STORY_SCENES = 12
+#: rejects a draft with more, and the budget never asks for more. 30 since 2026-10-16: a
+#: 160-second short at 15 words a scene is about 28 scenes (the montage then cuts each
+#: scene into shots of its own).
+MAX_STORY_SCENES = 30
 
 #: The shape of a short, as fractions of its own length. At 30 seconds this is the table the
 #: studio has always used — 0-3s hook, 3-8s setup, 8-18s development, 18-26s payoff, 26-30s
