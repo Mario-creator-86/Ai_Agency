@@ -5994,6 +5994,7 @@ def film_mix(
         correlation_id=correlation,
         mood_text=_mood_text(engine, storyboard_id, title, scenes),
         seed=storyboard_id,
+        storyboard_id=storyboard_id,
     )
     plan = sound_design.plan_record(outcome, _scene_spans(scenes))
     record["plan"] = plan
@@ -7988,6 +7989,7 @@ def _replan_sound(
         seed=storyboard_id,
         previous=previous,
         refusal=refusal,
+        storyboard_id=storyboard_id,
     )
     # The scenes' places in the film are the film's: read from the plan it was mixed with.
     spans = {

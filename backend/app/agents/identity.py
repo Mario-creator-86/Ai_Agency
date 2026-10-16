@@ -37,7 +37,12 @@ from sqlalchemy.orm import Session
 
 from app.agents.memory import (
     OWNER_POLICY,
-    owner_policies,
+    POLICY_DECISION,
+    POLICY_IN_FORCE,
+    POLICY_SUPERSEDED,
+    PolicyRow,
+    own_review,
+    owner_policy_rows,
     readable_classes,
     recent_memory,
     tied_memory,
@@ -204,22 +209,27 @@ def contract_view(role: Role) -> dict[str, Any]:
 # were pushed out of the Director's prompt by seven hours of opinions.
 #
 # Now the task decides. Every call is told who the employee is (name, role, mission, what it may
-# and must never do, whom it reports to, a short persona), the Owner's policies (all of them,
-# pinned) and the standing rules. Beyond that, a task gets only what it needs and its own data
-# does not carry, named per task in `TASK_CONTEXT`:
+# and must never do, whom it reports to, a short persona), the Owner's policies in force (his
+# current rule on each matter, pinned, with the minute he set it: `memory.owner_policy_rows`)
+# and the standing rules. Beyond that, a task gets only what it needs and its own data does not
+# carry, named per task in `TASK_CONTEXT`:
 #
 # - BARE: nothing more. Judges and narrow tasks, whose data carries what they judge, and every
 #   task nobody classified.
 # - CRAFT: the contract sections its work needs; the memory tied to its subject (the film, the
-#   episode, the topic the caller names), then the classes its need names, newest first; the
-#   Director's standing weekly direction to the employee's department — within fixed budgets,
-#   whole records only.
+#   episode, the topic the caller names; his decision on that thing among them), then the
+#   classes its need names, newest first, within a fixed budget, whole records only; the
+#   Director's standing direction to the employee's department (her weekly letter and her
+#   decisions assigned to it while open), told whole; for her management work, her last daily
+#   review with its priorities.
 # - INBOX: the mail tasks. The letter and its thread, or a page of the inbox, are the task's
-#   data (`agents.mail`, `agents.director`); the identity adds no other letter.
+#   data (`agents.mail`, `agents.director`); the identity adds no other letter. A letter from the
+#   Owner also gets the memory tied to what it names.
 #
-# Nothing is cut: a record that does not fit what is left of a budget is left out whole, and the
-# Owner's policies are told whole even past their budget (the size is logged). The run's context
-# manifest records the profile, the sizes and every id told.
+# Nothing is cut: a record that does not fit what is left of the memory budget is left out
+# whole; the Owner's policies and the standing direction are told whole even past their budget
+# (the size is logged). The run's context manifest records the profile, the sizes and every id
+# told, and the ids of his rows not told (superseded, or decisions).
 
 PROFILE_BARE = "BARE"
 PROFILE_CRAFT = "CRAFT"
@@ -234,12 +244,17 @@ ALL_SECTIONS = tuple(key for key, _label in CONTRACT_SECTIONS)
 #: audit asked for, under 2% of the 109,000-token Director call they replace, and far inside the
 #: smallest model window the studio uses.
 MEMORY_BUDGET_CHARS = 8_000
-#: The Owner's policies are pinned whole, whatever their size. Past this their size is logged
-#: and the run's manifest says so: 16 live rows were 2,284 characters on 2026-10-16.
+#: The Owner's policies in force are pinned whole, whatever their size. Past this their size is
+#: logged and the run's manifest says so: the 4 rules in force of his 16 live rows were 622
+#: characters on the 2026-10-16 copy.
 OWNER_POLICY_BUDGET_CHARS = 6_000
-#: The Director's standing weekly direction: each field of her weekly answer is at most 2,000
-#: characters (`runbook.weekly.WeeklyReviewAnswer`), and a department gets at most two (the
-#: writer: what to write about, and how).
+#: The Director's standing direction to a department — the newest weekly letter per department
+#: and her decisions assigned to it while their letter is open — is told whole, whatever its
+#: size, like his policies: a department never works without it. Past this its size is logged
+#: and the run's manifest says so. Nothing bounds a weekly field (the weekly answer is read by
+#: `parse_structured`, whose `complete_schema` lifts every text limit, and her instructions
+#: name none); on the 2026-10-16 copy the weekly letters were 256-767 characters, and Kael's
+#: direction (one weekly letter, five open decisions) 3,892 characters.
 DIRECTION_BUDGET_CHARS = 4_500
 #: How many candidate rows one memory read looks at before fitting them to the budget.
 MEMORY_SCAN = 200
@@ -261,10 +276,16 @@ class TaskContext:
     recall: tuple[str, ...] = ()
     #: The memory tied to the call's subject, first.
     subject_memory: bool = False
-    #: The Director's standing weekly direction to the employee's department.
+    #: The Director's standing direction to the employee's department: her weekly letter and
+    #: her decisions assigned to it (`standing_direction`, `standing_decisions`).
     direction: bool = False
     #: The whole persona (habits, typical phrases): the answer is prose in the character's voice.
     voice: bool = False
+    #: The employee's own last daily review, with the priorities it set (`memory.own_review`).
+    own_review: bool = False
+    #: A mail task answering a letter from the Owner: the memory tied to what the letter and
+    #: its thread name, whole, within the memory budget (he may ask about past work).
+    owner_letter_memory: bool = False
 
 
 def _bare(why: str) -> TaskContext:
@@ -273,13 +294,14 @@ def _bare(why: str) -> TaskContext:
 
 _WRITER_NEED = (
     "his own record of what shipped and the Director's last editorial note (AGENT_OPINION rows "
-    "the editorial loop writes for him), the memory of this {what}, and her standing weekly "
-    "direction for writing: the brief carries the {carries}, none of these"
+    "the editorial loop writes for him), the memory of this {what}, and her standing direction "
+    "for writing (her weekly letter and her decisions assigned to him): the brief carries the "
+    "{carries}, none of these"
 )
 _PICTURE_NEED = (
-    "the Director's standing weekly direction for video and his own diagnoses of this film's "
-    "failed renders (rows tied to the storyboard): the brief carries the film, the bible and "
-    "the lessons, not these"
+    "the Director's standing direction for video (her weekly letter and her decisions assigned "
+    "to him) and his own diagnoses of this film's failed renders (rows tied to the "
+    "storyboard): the brief carries the film, the bible and the lessons, not these"
 )
 
 #: Every task type the studio runs (`run_agent_task` call sites, 2026-10-16), and its context.
@@ -298,8 +320,13 @@ TASK_CONTEXT: dict[str, TaskContext] = {
     ),
     "director_take_look": _bare("judges the refused candidates whose pictures its data carries"),
     "director_film_reasons_read": _bare("reads the film's refusal reasons its data carries"),
-    "director_qc_review": _bare(
-        "decides a failed film from the report, earlier reviews, looks and money state in its data"
+    "director_qc_review": TaskContext(
+        PROFILE_CRAFT,
+        "her own earlier reviews and looks on this film (rows tied to the storyboard): its data "
+        "carries the report, the scenes' exact prompts and the money state whole, but omits "
+        "the earlier reviews and looks past DIRECTOR_QC_PAYLOAD_CHARS (77% of her 142 runs on "
+        "the 2026-10-16 copy)",
+        subject_memory=True,
     ),
     "director_scene_brief": _bare(
         "briefs one scene from its refusals, earlier briefs, QC findings and lessons in its data"
@@ -344,8 +371,9 @@ TASK_CONTEXT: dict[str, TaskContext] = {
     ),
     "write_episode": TaskContext(
         PROFILE_CRAFT,
-        _WRITER_NEED.format(what="episode", carries="day, PREVIOUSLY, the plan and the bibles"),
-        contract=("never_let_pass",),
+        _WRITER_NEED.format(what="episode", carries="day, PREVIOUSLY, the plan and the bibles")
+        + "; and what he watches for (the platform a Short plays on, what a LIVE scene costs)",
+        contract=("watch_for", "never_let_pass"),
         recall=("AGENT_OPINION",),
         subject_memory=True,
         direction=True,
@@ -354,7 +382,9 @@ TASK_CONTEXT: dict[str, TaskContext] = {
     "visual_bible": TaskContext(PROFILE_CRAFT, _PICTURE_NEED, subject_memory=True, direction=True),
     "sound_design": TaskContext(
         PROFILE_CRAFT,
-        "the Director's standing weekly direction for sound, which the film's data does not carry",
+        "the Director's standing direction for sound (her weekly letter and her decisions "
+        "assigned to her) and her own earlier plans for this film (rows tied to the "
+        "storyboard), which the film's data does not carry",
         subject_memory=True,
         direction=True,
     ),
@@ -369,15 +399,19 @@ TASK_CONTEXT: dict[str, TaskContext] = {
     "choose_topic": TaskContext(
         PROFILE_CRAFT,
         "her own channel direction and company decisions (STRATEGY), which the instruction asks "
-        "her to weigh and the candidate list does not carry",
+        "her to weigh and the candidate list does not carry, and the priorities her last daily "
+        "review set, which nothing else carries to the next day",
         recall=("STRATEGY",),
+        own_review=True,
     ),
     "direct_company": TaskContext(
         PROFILE_CRAFT,
         "her earlier channel and company decisions (STRATEGY), of which the company state "
-        "carries only the open ones, and how she directs (the contract's CORRECT section)",
+        "carries only the open ones, how she directs (the contract's CORRECT section), and the "
+        "priorities her last daily review set, which the company state does not carry",
         contract=("correct",),
         recall=("STRATEGY",),
+        own_review=True,
     ),
     "WEEKLY_REVIEW": TaskContext(
         PROFILE_CRAFT,
@@ -397,9 +431,11 @@ TASK_CONTEXT: dict[str, TaskContext] = {
     "answer_mail": TaskContext(
         PROFILE_INBOX,
         "one letter with its whole thread is its data; the identity adds no other letter, and "
-        "what the role delivers (DELIVERABLES), which a letter may ask about",
+        "what the role delivers (DELIVERABLES), which a letter may ask about; a letter from the "
+        "Owner, who may ask about past work, also gets the memory tied to what it names",
         contract=("deliverables",),
         voice=True,
+        owner_letter_memory=True,
     ),
     "director_review": TaskContext(
         PROFILE_INBOX,
@@ -545,8 +581,15 @@ def _memory_line(row: MemoryRecord) -> str:
     return f"- [{row.memory_class} {row.id[:8]} {str(row.created_at)[:10]}] {row.content}"
 
 
-def _policy_line(row: MemoryRecord) -> str:
-    return f"- [{str(row.created_at)[:10]}] {row.content}"
+def _minute(value: Any) -> str:
+    """A stored UTC moment to the minute: «2026-10-13 17:59 UTC». Two of his rules set the same
+    day (50 and 10 USD on 2026-10-14) differ by the hour, not the date."""
+    text = str(value or "")
+    return f"{text[:16].replace('T', ' ')} UTC" if len(text) >= 16 else text
+
+
+def _policy_line(policy: PolicyRow) -> str:
+    return f"- [{_minute(policy.set_at)}] {policy.row.content}"
 
 
 @dataclass
@@ -575,16 +618,26 @@ def _craft_memory(
     role: Role | None,
     ctx: TaskContext,
     ids: list[str],
+    decisions: frozenset[str] = frozenset(),
 ) -> tuple[_Fitted, list[str]]:
     """The CRAFT memory: rows tied to the subject first, then the classes the need names,
-    newest first, whole rows within `MEMORY_BUDGET_CHARS`. The Owner's policies are pinned
-    apart. Returns (the fit, the ids of the subject's rows told)."""
-    readable = [c for c in readable_classes(role) if c != OWNER_POLICY]
+    newest first, whole rows within `MEMORY_BUDGET_CHARS`. The Owner's policies in force are
+    pinned apart and the ones a newer command replaced are never told; of his OWNER_POLICY rows
+    only his decisions on one thing (``decisions``) come here, where they are tied to the
+    subject or the need recalls the class. Returns (the fit, the ids of the subject's rows
+    told)."""
+    readable = readable_classes(role)
     fitted = _Fitted(MEMORY_BUDGET_CHARS)
     seen: set[str] = set()
     tied: list[str] = []
+
+    def told_here(row: MemoryRecord) -> bool:
+        return row.memory_class != OWNER_POLICY or row.id in decisions
+
     if ctx.subject_memory and ids:
         for row in tied_memory(session, agent, readable, ids, limit=MEMORY_SCAN):
+            if not told_here(row):
+                continue
             seen.add(row.id)
             before = len(fitted.rows)
             fitted.offer(row, _memory_line(row))
@@ -592,7 +645,7 @@ def _craft_memory(
                 tied.append(row.id)
     classes = [c for c in ctx.recall if c in readable]
     for row in recent_memory(session, agent, classes, limit=MEMORY_SCAN):
-        if row.id not in seen:
+        if row.id not in seen and told_here(row):
             seen.add(row.id)
             fitted.offer(row, _memory_line(row))
     return fitted, tied
@@ -620,10 +673,94 @@ def standing_direction(session: Session, agent: Agent) -> list[AgentMessage]:
     return list(newest.values())
 
 
+def standing_decisions(session: Session, agent: Agent) -> list[AgentMessage]:
+    """The Director's company decisions assigned to this employee's department, while their
+    letter is open: the HANDOFF `agents.command._assign` files (body «kind» direction, its
+    «matter_key», «DE FĂCUT: …» in its words), the newest per matter, unless the decision it
+    carries was since reviewed or closed. Not the inbox: an instruction the department's work
+    acts on — the writer's next script, the editor's next shot prompts, the voice's next mix —
+    and the decision's review after N films measures exactly that."""
+    from app.analytics.models import DirectorDecision  # noqa: PLC0415 - analytics imports agents
+
+    letters = [
+        row
+        for row in session.scalars(
+            select(AgentMessage)
+            .where(
+                AgentMessage.to_agent_id == agent.id,
+                AgentMessage.status == "OPEN",
+                AgentMessage.intent == "HANDOFF",
+            )
+            .order_by(AgentMessage.created_at.desc())
+        )
+        if isinstance(row.body_json, dict)
+        and row.body_json.get("kind") == "direction"
+        and row.body_json.get("matter_key")
+    ]
+    if not letters:
+        return []
+    states: dict[str, str] = {
+        str(message_id): str(state)
+        for message_id, state in session.execute(
+            select(DirectorDecision.message_id, DirectorDecision.state).where(
+                DirectorDecision.message_id.in_([row.id for row in letters])
+            )
+        ).all()
+    }
+    newest: dict[str, AgentMessage] = {}
+    for row in letters:
+        if states.get(row.id, "OPEN") != "OPEN":
+            continue  # its decision was reviewed or closed: the letter only lingers
+        newest.setdefault(str(row.body_json["matter_key"]), row)
+    return list(newest.values())
+
+
 def _direction_line(row: AgentMessage) -> str:
     body = row.body_json if isinstance(row.body_json, dict) else {}
     instructions = " ".join(str(body.get("instructions") or "").split())
     return f"- [{row.subject}] {instructions}"
+
+
+def _decision_line(row: AgentMessage) -> str:
+    """Her decision's letter, whole: observation, reading, confidence, decision, what to do and
+    when it is reviewed — each of its lines, in order, on one line."""
+    words = " ".join(str(row.body_text or "").split())
+    return f"- [decizia Directorului, {_minute(row.created_at)}] {words}"
+
+
+def _owner_letter_ids(session: Session, subject: Subject | None) -> list[str] | None:
+    """For a mail call on letters from the Owner: the ids they and their thread name (the
+    thread, the letters, and each film, episode, topic, script or report their bodies name).
+    None when the letters the call answers are not his."""
+    letter_ids = [str(i) for i in (subject or {}).get("message_ids") or [] if i]
+    if not letter_ids:
+        return None
+    letters = list(session.scalars(select(AgentMessage).where(AgentMessage.id.in_(letter_ids))))
+    if not letters or any(
+        row.from_agent_id is not None
+        or (isinstance(row.body_json, dict) and row.body_json.get("executed_by_worker"))
+        for row in letters
+    ):
+        return None  # not his: a colleague's, or a worker's report filed without a sender
+    thread_id = str((subject or {}).get("thread_id") or "")
+    thread = (
+        list(
+            session.scalars(
+                select(AgentMessage).where(
+                    (AgentMessage.thread_id == thread_id) | (AgentMessage.id == thread_id)
+                )
+            )
+        )
+        if thread_id
+        else letters
+    )
+    named: dict[str, list[Any]] = {"thread_ids": [thread_id], "message_ids": letter_ids}
+    for row in thread:
+        body = row.body_json if isinstance(row.body_json, dict) else {}
+        for key in ("storyboard_id", "episode_id", "topic_id", "script_id", "report_id"):
+            if body.get(key):
+                named.setdefault(f"{key}s", []).append(body[key])
+    return subject_ids(named)
 
 
 def compose_identity(
@@ -660,13 +797,18 @@ def compose_identity(
     lines.extend(contract_lines)
     lines.extend(_persona_section(bible, full=ctx.voice))
 
-    policies = owner_policies(session, agent, role)
-    policy_lines = [_policy_line(row) for row in policies]
+    # His rules: the current one on each matter, pinned whole; the ones a newer command
+    # replaced are not told, and his decisions on one thing go where that thing is the work.
+    classified = owner_policy_rows(session, agent, role)
+    in_force = [p for p in classified if p.use == POLICY_IN_FORCE]
+    decisions = frozenset(p.row.id for p in classified if p.use == POLICY_DECISION)
+    policies = [p.row for p in in_force]
+    policy_lines = [_policy_line(p) for p in in_force]
     policy_chars = sum(len(line) + 1 for line in policy_lines)
     if policies:
         lines.append(
-            f"THE OWNER'S POLICIES (all {len(policies)} in force, newest first; a newer one on "
-            "the same matter replaces an older one):"
+            f"THE OWNER'S POLICIES (the {len(policies)} in force now: his current rule on each "
+            "matter, with when he set it, newest first):"
         )
         lines.extend(policy_lines)
     if policy_chars > OWNER_POLICY_BUDGET_CHARS:
@@ -676,21 +818,55 @@ def compose_identity(
             extra={"chars": policy_chars, "budget": OWNER_POLICY_BUDGET_CHARS},
         )
 
-    direction = _Fitted(DIRECTION_BUDGET_CHARS)
+    weekly: list[AgentMessage] = []
+    assigned: list[AgentMessage] = []
     if ctx.direction:
-        for row in standing_direction(session, agent):
-            direction.offer(row, _direction_line(row))
-    if direction.lines:
+        weekly = standing_direction(session, agent)
+        assigned = standing_decisions(session, agent)
+    direction_lines = [_direction_line(row) for row in weekly] + [
+        _decision_line(row) for row in assigned
+    ]
+    direction_chars = sum(len(line) + 1 for line in direction_lines)
+    if direction_lines:
         lines.append(
-            "THE DIRECTOR'S STANDING DIRECTION FOR YOUR DEPARTMENT (her weekly review, newest "
-            "week per department; follow it within your contract and the channel policies):"
+            "THE DIRECTOR'S STANDING DIRECTION FOR YOUR DEPARTMENT (her weekly review, the "
+            "newest week per department, and her decisions assigned to you while their letter "
+            "is open; follow it within your contract and the channel policies):"
         )
-        lines.extend(direction.lines)
+        lines.extend(direction_lines)
+    if direction_chars > DIRECTION_BUDGET_CHARS:
+        # Never left out, never cut: a department does not work without its direction. Its
+        # size is said, for the Owner to see.
+        logger.warning(
+            "direction_over_budget",
+            extra={
+                "chars": direction_chars,
+                "budget": DIRECTION_BUDGET_CHARS,
+                "agent_id": agent.id,
+                "task_type": task_type,
+            },
+        )
+
+    review = own_review(session, agent) if ctx.own_review else None
+    if review is not None:
+        lines.append(
+            "YOUR LAST DAILY REVIEW, WITH THE PRIORITIES YOU SET FOR THE NEXT DAY (weigh them "
+            "in this decision):"
+        )
+        lines.append(_memory_line(review))
 
     memory = _Fitted(MEMORY_BUDGET_CHARS)
     tied: list[str] = []
-    if ctx.profile == PROFILE_CRAFT:
-        memory, tied = _craft_memory(session, agent, role, ctx, ids)
+    owner_letter = (
+        _owner_letter_ids(session, subject)
+        if ctx.profile == PROFILE_INBOX and ctx.owner_letter_memory
+        else None
+    )
+    remembers = ctx.profile == PROFILE_CRAFT or owner_letter is not None
+    if remembers:
+        need = ctx if owner_letter is None else replace(ctx, subject_memory=True, recall=())
+        memory_ids = ids if owner_letter is None else owner_letter
+        memory, tied = _craft_memory(session, agent, role, need, memory_ids, decisions)
         if memory.lines:
             lines.append(
                 f"WHAT YOU REMEMBER ({len(memory.rows)} records: those about this work first, "
@@ -702,7 +878,11 @@ def compose_identity(
     lines.append("STANDING RULES:")
     lines.extend(f"- {rule}" for rule in STANDING_RULES)
     system = "\n".join(lines)
-    told: list[MemoryRecord] = [*policies, *memory.rows]
+    told: list[MemoryRecord] = [
+        *policies,
+        *([review] if review is not None else []),
+        *memory.rows,
+    ]
     letters = [str(i) for i in (subject or {}).get("message_ids") or [] if i]
     context = {
         "identity_version": IDENTITY_VERSION,
@@ -722,12 +902,21 @@ def compose_identity(
         "owner_policy_ids": [row.id for row in policies],
         "owner_policy_chars": policy_chars,
         "owner_policy_over_budget": policy_chars > OWNER_POLICY_BUDGET_CHARS,
+        # His rows a newer command on the same matter replaced, and his decisions on one
+        # thing: read, not pinned (selection only; nothing of his is changed).
+        "owner_policy_superseded_ids": [p.row.id for p in classified if p.use == POLICY_SUPERSEDED],
+        "owner_decision_ids": sorted(decisions),
         "memory_record_ids": [row.id for row in told],
         "memory_tied_ids": tied,
         "memory_chars": memory.used,
-        "memory_budget": MEMORY_BUDGET_CHARS if ctx.profile == PROFILE_CRAFT else 0,
+        "memory_budget": MEMORY_BUDGET_CHARS if remembers else 0,
         "memory_left_out": memory.skipped,
-        "direction_message_ids": [row.id for row in direction.rows],
+        "owner_letter_memory": owner_letter is not None,
+        "own_review_id": review.id if review is not None else None,
+        "direction_message_ids": [row.id for row in weekly],
+        "decision_message_ids": [row.id for row in assigned],
+        "direction_chars": direction_chars,
+        "direction_over_budget": direction_chars > DIRECTION_BUDGET_CHARS,
         "open_message_ids": letters if ctx.profile == PROFILE_INBOX else [],
         "system_sha256": hashlib.sha256(system.encode("utf-8")).hexdigest(),
         "system_chars": len(system),

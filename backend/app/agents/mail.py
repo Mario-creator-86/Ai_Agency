@@ -50,7 +50,7 @@ from sqlalchemy.orm import Session
 from app.agents.director import DirectorError, director_review, threads_decided_since
 from app.agents.ensemble import agreement
 from app.agents.identity import blocker_of
-from app.agents.inbox import expire_stale_asks
+from app.agents.inbox import sweep_stale_asks
 from app.agents.memory import agent_for_role
 from app.agents.messages import (
     open_messages,
@@ -363,8 +363,12 @@ def _close_earlier(
     to the same employee in the thread. Another sender's letter is not answered by a reply
     that does not reach them — a reply to the Owner closed the Director's open question while
     her inbox got nothing. A question is answered by the answer; a HANDOFF is an instruction
-    that follows the employee into every run until the work is done, so it closes only on the
-    employee's word — and a new reply lifts a block set on an earlier, repeated one."""
+    that stays open until the work is done, so it closes only on the employee's word — and a
+    new reply lifts a block set on an earlier, repeated one. Since 2026-10-16 («Context pe
+    sarcină») an open HANDOFF rides no identity by itself: her weekly direction and her
+    decisions assigned to the department ride its work tasks while open
+    (`identity.standing_direction`, `identity.standing_decisions`); any other HANDOFF is this
+    mail round's to answer."""
     closed: list[str] = []
     for row in thread_messages(session, thread_id):
         if (
@@ -969,10 +973,17 @@ def correspondence_round(
     with Session(engine) as session:
         policy = session.get(OwnerPolicy, 1)
         if policy is not None and policy.autonomy_stopped:
-            return {"answered": [], "refused": [], "review": None, "reason": "autonomy stopped"}
+            return {
+                "answered": [],
+                "refused": [],
+                "review": None,
+                "reason": "autonomy stopped",
+                "expired": [],
+            }
     # The asks whose film is over, repeated or stale are closed first, each with its reason
-    # (`agents.inbox`): nobody is asked to answer a letter about a published film.
-    expired = expire_stale_asks(engine, now=moment)
+    # (`agents.inbox`): nobody is asked to answer a letter about a published film. A sweep that
+    # fails is logged and the round goes on (`sweep_stale_asks`).
+    expired = sweep_stale_asks(engine, now=moment)
     with Session(engine) as session:
         waiting = letters_awaiting_answer(session, limit=max(1, limit), now=moment)
     answered: list[dict[str, Any]] = []

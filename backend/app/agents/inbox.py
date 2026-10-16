@@ -18,11 +18,15 @@ Two things live here:
   its film is over (`media.shooting_sheet.film_is_closed`: uploaded, or closed unrendered), its
   episode was replaced by a rewrite or its film is over, or its topic was refused; when a newer
   letter repeats it word for word (the Director's weekly direction to a department: when a
-  newer week's replaces it); and when it is older than `STALE_ASK_DAYS` and nothing above
-  keeps it. The Owner's own letters are never touched (he is always answered), nor are the
-  letters of her decisions (`agents.repairs.stale_decisions` closes those with the decision),
-  a matter flagged for his attention, or a budget request. A letter a worker task executes is
-  closed when its film is over or it is repeated, never by age: its task owns its time.
+  newer week's replaces it, whichever format either was filed in); and when it is older than
+  `STALE_ASK_DAYS` and nothing above keeps it — an ask about a film, an episode or a topic
+  still in work is kept however long the work takes. The Owner's own letters are never
+  touched (he is always answered), nor are the letters of her decisions
+  (`agents.repairs.stale_decisions` closes those with the decision), a matter flagged for his
+  attention, or a budget request. A letter a worker task executes is closed when its film is
+  over or it is repeated, never by age: its task owns its time. Nothing is closed while the
+  Owner's autonomy stop is set, and the mail round and her review sweep through
+  `sweep_stale_asks`, which logs a failed sweep and lets them go on.
 
 An expired ask is marked ANSWERED, not RESOLVED: code that later resolves a letter it wrote
 (`media.blocker_repair` resolves its report when the repair ends) may still do so, while every
@@ -58,6 +62,8 @@ ASK_INTENTS = ("HANDOFF", "REQUEST_INFO", "REQUEST_REVIEW", "CHALLENGE")
 #: weekly direction and her decisions' letters, which live a week by design
 #: (`agents.repairs.threads`), are not closed by age.
 STALE_ASK_DAYS = 3
+#: A topic in these is chosen for a film: an ask about it is about the work in hand.
+LIVE_TOPIC_STATUSES = frozenset({"SELECTED", "SERIAL"})
 #: Characters of whole letters one page of the inbox carries (about 6,000 tokens): a dozen
 #: letters of the usual size, the most her review decides in one answer (`REVIEW_BATCH`).
 INBOX_PAGE_CHARS = 24_000
@@ -114,18 +120,26 @@ def _plain(text: Any) -> str:
     return " ".join(str(text or "").casefold().split())
 
 
+#: How `runbook.weekly` begins a weekly letter's subject, before the department's name.
+WEEKLY_SUBJECT_HEAD = "indicațiile directorului pentru departamentul de "
+
+
 def weekly_department(row: AgentMessage) -> str | None:
     """The department a letter of the Director's standing weekly direction is for, or None
     when the letter is not one (`runbook.weekly`: a HANDOFF with «instructions» and «week»).
     Letters filed before 2026-10-13 carry no «department»; their subject names it
-    («Indicațiile Directorului pentru departamentul de video — 2026-S41»)."""
+    («Indicațiile Directorului pentru departamentul de video — 2026-S41»), and the bare name
+    («video») is the key, the one a newer letter's «department» carries — so S42 replaces S41
+    across the change of format instead of riding beside it for good."""
     body = _body(row)
     if row.intent != "HANDOFF" or not body.get("week") or not str(body.get("instructions") or ""):
         return None
-    named = str(body.get("department") or "").strip()
+    named = _plain(body.get("department"))
     if not named:
-        named = str(row.subject or "").rsplit(" — ", 1)[0]
-    return _plain(named) or None
+        named = _plain(str(row.subject or "").rsplit(" — ", 1)[0])
+        if named.startswith(WEEKLY_SUBJECT_HEAD):
+            named = named[len(WEEKLY_SUBJECT_HEAD) :].strip()
+    return named or None
 
 
 def _worker(body: dict[str, Any]) -> bool:
@@ -161,9 +175,10 @@ class _Subjects:
 
     def __init__(self, session: Session) -> None:
         self.session = session
-        self.films: dict[str, tuple[bool, str]] = {}
+        self.films: dict[str, tuple[bool, bool, str]] = {}
 
-    def film(self, storyboard_id: str) -> tuple[bool, str]:
+    def _board(self, storyboard_id: str) -> tuple[bool, bool, str]:
+        """(the film exists, it is over, its title)."""
         if storyboard_id not in self.films:
             from app.media.models import Storyboard  # noqa: PLC0415 - media imports agents
             from app.media.shooting_sheet import film_is_closed  # noqa: PLC0415 - a large module
@@ -171,8 +186,38 @@ class _Subjects:
             board = self.session.get(Storyboard, storyboard_id)
             closed = board is not None and film_is_closed(self.session, storyboard_id)
             title = str(board.title) if board is not None else storyboard_id[:8]
-            self.films[storyboard_id] = (closed, title)
+            self.films[storyboard_id] = (board is not None, closed, title)
         return self.films[storyboard_id]
+
+    def film(self, storyboard_id: str) -> tuple[bool, str]:
+        _exists, closed, title = self._board(storyboard_id)
+        return closed, title
+
+    def live(self, body: dict[str, Any]) -> bool:
+        """Whether the letter names a film still in work: a storyboard that exists and is not
+        over, an episode not refused, or a topic chosen for a film. Such an ask is about the
+        work in hand and is kept however long that takes (a film can wait days on a card);
+        `closed` has already closed the ones whose film, episode or topic is over."""
+        storyboard_id = str(body.get("storyboard_id") or "")
+        if storyboard_id:
+            exists, closed, _title = self._board(storyboard_id)
+            if exists and not closed:
+                return True
+        episode_id = str(body.get("episode_id") or "")
+        if episode_id:
+            from app.story.models import StoryEpisode  # noqa: PLC0415 - story imports agents
+
+            episode = self.session.get(StoryEpisode, episode_id)
+            if episode is not None and episode.status != "REJECTED":
+                return True
+        topic_id = str(body.get("topic_id") or "")
+        if topic_id:
+            from app.factual.models import TopicIdea  # noqa: PLC0415 - factual imports agents
+
+            topic = self.session.get(TopicIdea, topic_id)
+            if topic is not None and topic.status in LIVE_TOPIC_STATUSES:
+                return True
+        return False
 
     def closed(self, body: dict[str, Any]) -> tuple[str, str, dict[str, Any]] | None:
         """(reason, the words, detail) when the letter's film, episode or topic is over."""
@@ -272,6 +317,8 @@ def stale_asks(session: Session, now: datetime | None = None) -> list[StaleAsk]:
         newer[key] = row
         if weekly_department(row) is not None or _worker(body):
             continue  # a week by design; a worker task's own time
+        if subjects.live(body):
+            continue  # about a film still in work: kept however long the film takes
         if str(row.created_at) < cutoff:
             out.append(
                 StaleAsk(
@@ -290,14 +337,20 @@ def expire_stale_asks(
 ) -> dict[str, Any]:
     """Close the stale asks (`stale_asks`), each with an ``agent.ask_expired`` event saying
     why. Reads first and takes the write lock only when something is to be closed; what is
-    closed is read again under the lock. Returns {"expired": [ids], "by_reason": {...}}."""
+    closed is read again under the lock. Nothing is written while the Owner's autonomy stop
+    is set: the sweep is the studio's own work. Returns {"expired": [ids], "by_reason": {...}}
+    (and «stopped» when the stop held it)."""
     with Session(engine) as session:
+        if _stopped(session):
+            return {"expired": [], "by_reason": {}, "stopped": True}
         if not stale_asks(session, now):
             return {"expired": [], "by_reason": {}}
     correlation = correlation_id or str(uuid4())
     closed: list[StaleAsk] = []
     with Session(engine) as session, session.begin():
         lock_for_write(session)
+        if _stopped(session):  # set between the read and the lock
+            return {"expired": [], "by_reason": {}, "stopped": True}
         for ask in stale_asks(session, now):
             resolve_message(
                 session,
@@ -321,3 +374,27 @@ def expire_stale_asks(
     if closed:
         logger.info("asks_expired", extra={"count": len(closed), "by_reason": by_reason})
     return {"expired": [ask.message_id for ask in closed], "by_reason": by_reason}
+
+
+def _stopped(session: Session) -> bool:
+    from app.models import OwnerPolicy  # noqa: PLC0415 - app.models imports every model
+
+    policy = session.get(OwnerPolicy, 1)
+    return bool(policy is not None and policy.autonomy_stopped)
+
+
+def sweep_stale_asks(
+    engine: Engine, now: datetime | None = None, correlation_id: str | None = None
+) -> dict[str, Any]:
+    """`expire_stale_asks` for the callers whose own work must go on whatever the sweep does —
+    the mail round and the Director's review: a sweep that fails (a lock timeout, a film it
+    could not read) is logged and skipped, and the round or the review proceeds; the asks are
+    swept on the next pass."""
+    try:
+        return expire_stale_asks(engine, now=now, correlation_id=correlation_id)
+    except Exception as exc:  # noqa: BLE001 - the sweep is bookkeeping; never the round's end
+        logger.warning(
+            "stale_ask_sweep_failed",
+            extra={"error": type(exc).__name__, "detail": " ".join(str(exc).split())[:300]},
+        )
+        return {"expired": [], "by_reason": {}, "error": type(exc).__name__}

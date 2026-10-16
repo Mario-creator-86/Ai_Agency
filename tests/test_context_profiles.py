@@ -12,6 +12,7 @@ Local tests with a scripted model; nothing is sent to a provider.
 from __future__ import annotations
 
 import ast
+import hashlib
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -175,7 +176,6 @@ def test_each_task_gets_its_profile_and_every_craft_task_names_its_need():
         "director_rewrite_review",
         "director_second_look",
         "director_scene_brief",
-        "director_qc_review",
         "prompt_lesson_reading",
         "still_qc",
         "clip_qc",
@@ -199,6 +199,7 @@ def test_each_task_gets_its_profile_and_every_craft_task_names_its_need():
         "choose_topic",
         "propose_topics",
         "owner_chat",
+        "director_qc_review",
     ):
         assert task_context(task).profile == PROFILE_CRAFT, task
     assert INBOX_TASKS == {"answer_mail", "director_review"}
@@ -818,6 +819,22 @@ def test_the_offline_measurement_reads_a_copy_and_never_builds_a_registry(
         return measured(*args, **kwargs)
 
     module.measure = measure_without_registry
+    opened: list[str] = []
+    real_engine = module.create_engine
+
+    def recording_engine(url, *args, **kwargs):
+        opened.append(str(url))
+        return real_engine(url, *args, **kwargs)
+
+    module.create_engine = recording_engine
+
+    def folder_digest(folder: Path) -> dict[str, str]:
+        return {
+            path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in sorted(folder.iterdir())
+        }
+
+    before = folder_digest(backups)
     out = tmp_path / "result.json"
     work = tmp_path / "work"
     assert module.main(["--backups", str(backups), "--work", str(work), "--json", str(out)]) == 0
@@ -826,5 +843,11 @@ def test_the_offline_measurement_reads_a_copy_and_never_builds_a_registry(
     data = json.loads(out.read_text(encoding="utf-8"))
     row = data["per_task"]["director_prompt_audit"]
     assert row["old"] > row["new"] > 0
-    assert (work / "studio-20261016T000000Z.db").exists(), "the copy is what was opened"
+    # The copy is what was opened, read-only; the backups folder is byte for byte as it was;
+    # the copy is gone afterwards; the asks are counted at the backup's own time.
+    copy = (work / "studio-20261016T000000Z.db").as_posix()
+    assert opened == [f"sqlite:///file:{copy}?mode=ro&uri=true"]
+    assert folder_digest(backups) == before
+    assert not list(work.iterdir()), "the work copy is cleaned"
+    assert data["stale_asks_at"] == "2026-10-16T00:00:00+00:00"
     ProviderRegistry()  # put back as it was

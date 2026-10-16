@@ -5,9 +5,10 @@ acolo unde este necesar») made the identity depend on the task (`app.agents.ide
 script measures what that changes, with no model asked anything:
 
 1. It copies the newest nightly backup (``studio-*.db`` under ``--backups``, or the file named)
-   into a folder of its own under ``--work`` and opens only the COPY. The backup itself is only
-   read, by `shutil.copyfile`, never opened as a database; the live ``data/studio.db`` is never
-   touched.
+   into a folder of its own under ``--work`` and opens only the COPY, read-only. The backup
+   itself is only read, by `shutil.copyfile`, never opened as a database; the live
+   ``data/studio.db`` is never touched. The copy is deleted when the measurement ends (the
+   whole folder when the script made it), unless ``--keep``.
 2. For the last ``--runs`` agent runs of the copy it composes the system prompt twice, on the
    copy's state: as identity-v3 composed it (the whole contract and persona, the 120 newest
    readable memory rows, the open letters with their threads — `compose_v3` below, the code of
@@ -16,8 +17,10 @@ script measures what that changes, with no model asked anything:
    episode, a topic or a day's log whose id appears in the prompt).
 3. It prints, per task type, the runs, the characters of the identity before and after, the
    reduction, and the same for the whole prompt (identity and task text together); the total;
-   and how many open asks the stale-ask rule (`app.agents.inbox.stale_asks`) would close, by
-   reason (read only: nothing is closed on the copy either).
+   how many open asks the stale-ask rule (`app.agents.inbox.stale_asks`) would close, by
+   reason, at the backup's own time (read only: nothing is closed on the copy either); and the
+   Owner's OWNER_POLICY rows, each with its use (`app.agents.memory.classify_owner_policies`:
+   in force and pinned, superseded, or a decision on one thing).
 
 No model registry is built: `ProviderRegistry` refuses to be constructed while this runs.
 
@@ -69,6 +72,28 @@ def _refuse_registry() -> Callable[[], None]:
         registry.ProviderRegistry.__init__ = original  # type: ignore[method-assign]
 
     return restore
+
+
+BACKUP_NAME = re.compile(r"studio-(\d{8}T\d{6}Z)\.db$")
+
+
+def backup_time(source: Path) -> datetime | None:
+    """The moment the backup was taken, from its name (``studio-20261016T015919Z.db``)."""
+    found = BACKUP_NAME.search(source.name)
+    if found is None:
+        return None
+    return datetime.strptime(found.group(1), "%Y%m%dT%H%M%SZ").replace(tzinfo=UTC)
+
+
+def read_only_url(copy: Path) -> str:
+    """The copy, opened read-only: nothing this script does may write, even to the copy."""
+    return f"sqlite:///file:{copy.as_posix()}?mode=ro&uri=true"
+
+
+def remove_copy(copy: Path) -> None:
+    """The copy and its WAL/SHM, deleted."""
+    for suffix in DB_SUFFIXES:
+        Path(str(copy) + suffix).unlink(missing_ok=True)
 
 
 def newest_backup(path: Path) -> Path:
@@ -228,7 +253,37 @@ def subject_of(objective: str, known: dict[str, str]) -> dict[str, Any]:
     return subject
 
 
-def measure(engine: Any, runs: int) -> dict[str, Any]:
+def policy_table(session: Session) -> list[dict[str, Any]]:
+    """Every live OWNER_POLICY row of the copy with its use, as the identity reads them."""
+    from app.agents.memory import classify_owner_policies  # noqa: PLC0415
+    from app.agents.models import MemoryRecord  # noqa: PLC0415
+
+    live = [
+        row
+        for row in session.scalars(
+            select(MemoryRecord)
+            .where(MemoryRecord.memory_class == "OWNER_POLICY")
+            .order_by(MemoryRecord.created_at.desc())
+        )
+        if row.invalidated_at is None
+    ]
+    return [
+        {
+            "id": item.row.id,
+            "agent_id": item.row.agent_id,
+            "created_at": str(item.row.created_at),
+            "set_at": item.set_at,
+            "use": item.use,
+            "matter": item.matter,
+            "why": item.why,
+            "content": item.row.content,
+        }
+        for item in classify_owner_policies(session, live)
+    ]
+
+
+def measure(engine: Any, runs: int, now: datetime | None = None) -> dict[str, Any]:
+    """``now``: the backup's own time, for the asks the stale-ask rule would close then."""
     from app.agents.identity import compose_identity, task_context  # noqa: PLC0415
     from app.agents.inbox import stale_asks  # noqa: PLC0415
     from app.agents.models import Agent, AgentRun  # noqa: PLC0415
@@ -291,11 +346,19 @@ def measure(engine: Any, runs: int) -> dict[str, Any]:
             if isinstance(recorded, int):
                 item["recorded"] += recorded
                 item["recorded_runs"] += 1
-        stale: dict[str, int] = defaultdict(int)
-        for ask in stale_asks(session):
-            stale[ask.reason] += 1
         window = (rows[-1][4], rows[0][4]) if rows else (None, None)
-    return {"per_task": dict(per_task), "stale_asks": dict(stale), "window": window}
+        moment = now or (datetime.fromisoformat(str(window[1])) if window[1] else datetime.now(UTC))
+        stale: dict[str, int] = defaultdict(int)
+        for ask in stale_asks(session, now=moment):
+            stale[ask.reason] += 1
+        policies = policy_table(session)
+    return {
+        "per_task": dict(per_task),
+        "stale_asks": dict(stale),
+        "stale_asks_at": moment.isoformat(),
+        "window": window,
+        "owner_policies": policies,
+    }
 
 
 def _pct(old: int, new: int) -> str:
@@ -336,10 +399,26 @@ def report(result: dict[str, Any], source: Path) -> list[str]:
     )
     stale = result["stale_asks"]
     lines.append(
-        "Open asks the stale-ask rule would close on the copy: "
+        f"Open asks the stale-ask rule would close on the copy at {result['stale_asks_at']}: "
         + (", ".join(f"{k} {v}" for k, v in sorted(stale.items())) or "none")
         + f" (total {sum(stale.values())})."
     )
+    policies = result.get("owner_policies") or []
+    if policies:
+        lines.append("")
+        lines.append(
+            "The Owner's OWNER_POLICY rows on the copy (none is changed; IN_FORCE is pinned in "
+            "every identity, SUPERSEDED is never told, DECISION goes where its subject is):"
+        )
+        lines.append("")
+        lines.append("| Use | Matter | Set (UTC) | Row written (UTC) | Id | Why | Text |")
+        lines.append("|---|---|---|---|---|---|---|")
+        for item in policies:
+            text = " ".join(str(item["content"]).split()).replace("|", "/")
+            lines.append(
+                f"| {item['use']} | {item['matter'] or '-'} | {str(item['set_at'])[:19]} | "
+                f"{str(item['created_at'])[:19]} | {item['id'][:8]} | {item['why']} | {text} |"
+            )
     return lines
 
 
@@ -349,23 +428,31 @@ def main(argv: Iterable[str] | None = None) -> int:
     parser.add_argument("--runs", type=int, default=400)
     parser.add_argument("--work", type=Path, default=None)
     parser.add_argument("--json", type=Path, default=None)
+    parser.add_argument("--keep", action="store_true", help="keep the copy after measuring")
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     restore = _refuse_registry()
+    made = args.work is None
+    work = args.work or Path(tempfile.mkdtemp(prefix="identity-size-"))
+    copy: Path | None = None
     try:
         source = newest_backup(args.backups)
-        work = args.work or Path(tempfile.mkdtemp(prefix="identity-size-"))
-        copy = copy_backup(source, work)
-        if copy.resolve() == source.resolve():
+        if (work / source.name).resolve() == source.resolve():
             raise SystemExit("--work must not be the backups folder: the copy is what is opened")
+        copy = copy_backup(source, work)
         digest = hashlib.sha256(copy.read_bytes()).hexdigest()[:16]
-        engine = create_engine(f"sqlite:///{copy.as_posix()}")
+        engine = create_engine(read_only_url(copy))
         try:
-            result = measure(engine, args.runs)
+            result = measure(engine, args.runs, now=backup_time(source))
         finally:
             engine.dispose()
     finally:
         restore()
+        if not args.keep:
+            if made:
+                shutil.rmtree(work, ignore_errors=True)
+            elif copy is not None:
+                remove_copy(copy)
     lines = report(result, source)
     print("\n".join(lines))
     if args.json:

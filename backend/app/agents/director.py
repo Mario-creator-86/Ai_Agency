@@ -24,8 +24,8 @@ from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
 from app.agents.identity import blocker_of, clipped, parse_structured
-from app.agents.inbox import expire_stale_asks, inbox_page
-from app.agents.memory import agent_for_role, remember
+from app.agents.inbox import inbox_page, sweep_stale_asks
+from app.agents.memory import DAILY_REVIEW_MARKER, agent_for_role, remember
 from app.agents.messages import message_view, open_messages, post_message, resolve_message
 from app.agents.models import Agent, AgentMessage, Role
 from app.agents.services import run_agent_task
@@ -503,7 +503,9 @@ def director_review(
     rest waits for the next review. Her identity adds no other letter (the Owner's decision of
     2026-10-16: the inbox is read by the mail tasks, a page at a time)."""
     correlation = correlation_id or str(uuid4())
-    expire_stale_asks(engine, correlation_id=correlation)
+    # A failed sweep is logged and her review goes on; nothing is swept while the Owner's
+    # autonomy stop is set (`agents.inbox.sweep_stale_asks`).
+    sweep_stale_asks(engine, correlation_id=correlation)
     with Session(engine) as session:
         director = agent_for_role(session, "Director")
         if director is None:
@@ -613,7 +615,7 @@ def director_review(
         remember(
             session,
             memory_class="AGENT_OPINION",
-            content="Daily review: "
+            content=f"{DAILY_REVIEW_MARKER} "
             + review.summary
             + (" Priorities: " + "; ".join(review.priorities) if review.priorities else ""),
             source_type="run",

@@ -15,6 +15,7 @@ travel on a channel of their own (`LESSON_MARKER`).
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
@@ -23,7 +24,7 @@ from sqlalchemy import ColumnElement, Engine, and_, func, literal, or_, select
 from sqlalchemy.orm import Session, aliased
 
 from app.agents.models import MEMORY_CLASSES, Agent, AgentRun, MemoryRecord, Role
-from app.models import DomainEvent
+from app.models import DomainEvent, OwnerPolicy
 from app.services import utc_now
 
 #: How many records `recall()` returns. Memory is a briefing, not an archive; the archive is the
@@ -181,19 +182,190 @@ def recent_memory(
     )
 
 
-def owner_policies(session: Session, agent: Agent, role: Role | None) -> list[MemoryRecord]:
-    """Every live OWNER_POLICY row this role may read, newest first, all of them.
+#: The Owner's standing policies, one matter each, by the event his command writes beside the
+#: row (`app.services`: the environment, the autonomy stop, the autonomy mode, when a paid step
+#: asks him). A newer command on a matter replaces the older rule on it.
+POLICY_MATTERS: dict[str, str] = {
+    "owner.environment_changed": "environment",
+    "autonomy.stopped": "autonomy_stop",
+    "autonomy.stop_cleared": "autonomy_stop",
+    "owner.autonomy_mode_changed": "autonomy_mode",
+    "owner.paid_media_approval_changed": "paid_media_approval",
+}
+#: The Owner's decisions on one thing — an episode (`story.services`), a character's identity
+#: (`media.production_policy`), a workforce proposal (`workforce.services`) — by their event.
+#: They are decisions, not standing rules: they reach the calls whose subject they are about
+#: (`tied_memory`) and the Owner's own chat, never every call.
+DECISION_EVENT_PREFIXES = ("story.episode_", "character.identity_change_", "workforce.change_")
 
-    Pinned whole in every identity (the Owner, 2026-10-16: «his rules, always»): chosen by
-    recency among a role's other memory they were pushed out by a few hours of opinions."""
+#: How an OWNER_POLICY row is used (`owner_policy_rows`).
+POLICY_IN_FORCE = "IN_FORCE"  # the current rule on its matter: pinned in every identity
+POLICY_SUPERSEDED = "SUPERSEDED"  # a rule a newer command on its matter replaced: never told
+POLICY_DECISION = "DECISION"  # a decision on one thing: told where its subject is
+
+
+@dataclass(frozen=True)
+class PolicyRow:
+    """One live OWNER_POLICY row and how it is used.
+
+    ``set_at`` is when the Owner last set what the row says: the newest command on its matter
+    that set this state. `remember` keeps one live row per text, so when he switches back to an
+    earlier rule no new row is written and the old row keeps its old time; its command's time
+    is the true one. A row with no command behind it keeps its own time."""
+
+    row: MemoryRecord
+    use: str
+    matter: str | None
+    set_at: str
+    why: str
+
+
+def _event_state(event_type: str, payload: Any) -> Any:
+    """What a policy command set on its matter, in the shape `_policy_state` reads it."""
+    data = payload if isinstance(payload, dict) else {}
+    matter = POLICY_MATTERS.get(event_type)
+    if matter == "environment":
+        return data.get("environment")
+    if matter == "autonomy_stop":
+        return event_type == "autonomy.stopped"
+    if matter == "autonomy_mode":
+        return data.get("autonomy_mode")
+    if matter == "paid_media_approval":
+        kind = data.get("paid_media_approval")
+        usd = data.get("over_usd")
+        return (kind, float(usd) if kind == "OVER_USD" and usd is not None else None)
+    return None
+
+
+def _policy_state(policy: OwnerPolicy) -> dict[str, Any]:
+    """The studio's policy now (`owner_policy`, the row the gates read), per matter."""
+    usd = policy.paid_media_approval_over_usd
+    return {
+        "environment": policy.environment,
+        "autonomy_stop": bool(policy.autonomy_stopped),
+        "autonomy_mode": policy.autonomy_mode,
+        "paid_media_approval": (
+            policy.paid_media_approval,
+            float(usd) if policy.paid_media_approval == "OVER_USD" and usd is not None else None,
+        ),
+    }
+
+
+def classify_owner_policies(session: Session, rows: Sequence[MemoryRecord]) -> list[PolicyRow]:
+    """Each OWNER_POLICY row with its use: the current rule on each matter IN_FORCE, the rules a
+    newer command replaced SUPERSEDED, the Owner's decisions on one thing DECISION. Selection
+    only: no row is changed, invalidated or deleted (they are his).
+
+    The current rule on a matter is what the `owner_policy` row says now — the state every gate
+    reads — or, without that row, what the newest command on the matter set. Of the rows that
+    say it, the newest is in force. A row no known command wrote is his rule all the same, and
+    is in force. Returns the rows in force first (newest set first), then the others."""
+    rows = list(rows)
+    events = {
+        event.event_id: event
+        for event in session.scalars(
+            select(DomainEvent).where(
+                DomainEvent.event_id.in_([r.event_id for r in rows if r.event_id])
+            )
+        )
+    }
+    commands = list(
+        session.scalars(
+            select(DomainEvent)
+            .where(DomainEvent.event_type.in_(list(POLICY_MATTERS)))
+            .order_by(DomainEvent.sequence.desc())
+        )
+    )
+    policy = session.get(OwnerPolicy, 1)
+    current: dict[str, Any] = _policy_state(policy) if policy is not None else {}
+    for command in commands:  # newest first: without the row, the newest command decides
+        current.setdefault(
+            POLICY_MATTERS[command.event_type], _event_state(command.event_type, command.payload)
+        )
+    set_at: dict[str, str] = {}
+    for command in commands:
+        name = POLICY_MATTERS[command.event_type]
+        state = _event_state(command.event_type, command.payload)
+        if name not in set_at and state == current.get(name):
+            set_at[name] = str(command.timestamp)
+    out: list[PolicyRow] = []
+    chosen: set[str] = set()
+    for row in sorted(rows, key=lambda r: str(r.created_at), reverse=True):
+        event = events.get(str(row.event_id or ""))
+        kind = str(event.event_type) if event is not None else ""
+        when = str(row.created_at)
+        matter = POLICY_MATTERS.get(kind)
+        if matter is None or event is None:
+            if kind.startswith(DECISION_EVENT_PREFIXES):
+                out.append(PolicyRow(row, POLICY_DECISION, None, when, kind))
+            else:
+                out.append(
+                    PolicyRow(row, POLICY_IN_FORCE, None, when, "no command names its matter")
+                )
+            continue
+        now = current.get(matter)
+        if _event_state(kind, event.payload) != now:
+            out.append(PolicyRow(row, POLICY_SUPERSEDED, matter, when, f"{matter} is now {now!r}"))
+        elif matter in chosen:
+            out.append(
+                PolicyRow(row, POLICY_SUPERSEDED, matter, when, "a newer row says the same rule")
+            )
+        else:
+            chosen.add(matter)
+            out.append(
+                PolicyRow(row, POLICY_IN_FORCE, matter, set_at.get(matter, when), f"the {matter}")
+            )
+    in_force = sorted(
+        (p for p in out if p.use == POLICY_IN_FORCE), key=lambda p: p.set_at, reverse=True
+    )
+    return in_force + [p for p in out if p.use != POLICY_IN_FORCE]
+
+
+def owner_policy_rows(session: Session, agent: Agent, role: Role | None) -> list[PolicyRow]:
+    """Every live OWNER_POLICY row this role may read, classified (`classify_owner_policies`)."""
     if OWNER_POLICY not in readable_classes(role):
         return []
-    return list(
+    return classify_owner_policies(
+        session,
         session.scalars(
             select(MemoryRecord)
             .where(*_readable(agent, [OWNER_POLICY]))
             .order_by(MemoryRecord.created_at.desc())
-        ).all()
+        ).all(),
+    )
+
+
+def owner_policies(session: Session, agent: Agent, role: Role | None) -> list[MemoryRecord]:
+    """The Owner's policies in force that this role may read: the current rule on each matter,
+    newest set first, all of them.
+
+    Pinned whole in every identity (the Owner, 2026-10-16: «his rules, always»): chosen by
+    recency among a role's other memory they were pushed out by a few hours of opinions. A
+    rule a newer command replaced is not told — told as «in force» beside the newer one, the
+    stop he cleared and the TEST he left were read as the studio's state (2026-10-16) — and a
+    decision on one thing is told only where that thing is the work (`owner_policy_rows`)."""
+    return [p.row for p in owner_policy_rows(session, agent, role) if p.use == POLICY_IN_FORCE]
+
+
+#: The head of the AGENT_OPINION row the Director's daily review writes on her own memory
+#: (`agents.director.director_review`): her summary and her priorities for the next day.
+DAILY_REVIEW_MARKER = "Daily review:"
+
+
+def own_review(session: Session, agent: Agent) -> MemoryRecord | None:
+    """The employee's own newest live daily review row («Daily review: … Priorities: …»), or
+    None. Its priorities for the next day are written for her next decisions; read by recency
+    among her other memory they were left to chance, and by her decisions' memory class
+    (STRATEGY) never (2026-10-16)."""
+    return session.scalar(
+        select(MemoryRecord)
+        .where(
+            *_readable(agent, ["AGENT_OPINION"]),
+            MemoryRecord.agent_id == agent.id,
+            MemoryRecord.content.like(f"{DAILY_REVIEW_MARKER}%"),
+        )
+        .order_by(MemoryRecord.created_at.desc())
+        .limit(1)
     )
 
 
