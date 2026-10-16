@@ -10,7 +10,7 @@ the establishing framing «Sarah small in the middle distance» said beside an a
 both hands, which built a medium close-up around her. Now the people's gestures are said only
 when the plan leaves them free, the room's flicker only when nothing asks for a steady room,
 the plan's expression is named and held, and an establishing still leads with the room and
-says its people as small figures, with no hand-by-hand detail.
+says its people as small figures, with no hand-by-hand detail (what a hand rests on stays).
 
 The packages below are the live rows of 87c05891 (read-only, 2026-10-16 19:21Z), trimmed to
 the fields the composer reads.
@@ -33,10 +33,17 @@ from app.media.prompt_agent import (
     compose_serial_motion,
     compose_serial_prompt,
     composition_issues,
+    serial_holds_pose,
     serial_life_sentence,
+    serial_people_free,
     serial_still_moment,
 )
-from app.media.prompt_lint import MOTION_CLOSING
+from app.media.prompt_lint import (
+    DEFAULT_PROMPT_MAX_UTF16,
+    MOTION_CLOSING,
+    lint_motion_prompt,
+    utf16_units,
+)
 from app.media.scene_rewrite import (
     MOTION,
     STILL,
@@ -160,6 +167,58 @@ DIALOGUE = {
     "characters": [NADIA, SARAH],
     "avoid": LOOK_AVOID,
 }
+MARCUS = {
+    "id": "aaf139ea-6ee1-41f7-9291-33efedb00c9a",
+    "name": "Marcus Scriptwriter",
+    "face_hair": "Tousled wavy dark hair; creative focused gaze, slight 5 o clock shadow.",
+    "outfit": "Comfortable royal purple fleece hoodie over grey crew tee.",
+}
+#: f06808c9 scene 3, a free-moving two-shot near the clip's cap, as stored (read-only,
+#: 2026-10-16): the base composer said its whole life sentence; b7d2ef9 named the expression
+#: first and the cap took the life sentence (review of b7d2ef9).
+FREE_NEAR_THE_CAP = {
+    "action": (
+        "Marcus speaks fast, restarting mid-sentence, hands opening and closing; Sarah listens "
+        "dry, facing the viewer. The camera holds the two-shot, both speakers facing the viewer."
+    ),
+    "emotion": "Marcus fast and restless, mid-sentence restart; Sarah dry, unimpressed.",
+    "ending_frame": (
+        "Marcus with hands open, mid-gesture, facing the viewer; Sarah seated at her desk behind "
+        "him, facing the viewer with a dry expression; the stack of notes and blank screens "
+        "unchanged."
+    ),
+    "background": (
+        "Same executive penthouse office: mahogany desk, post-it note array, steaming espresso "
+        "cup, warm lamps and big windows; background life stays soft and does not compete with "
+        "the speakers; every paper and screen is blank, unruled and unmarked."
+    ),
+    "continuity": (
+        "Same room and desk as scene 2; Marcus's open hands and Sarah's seated position carry "
+        "from the previous shot; the camera does not move, zoom or reframe at any point, and "
+        "both speakers stay visible at their frame edges from first frame to last."
+    ),
+    "environment": "the AMN-AI headquarters, the studio's own building",
+    "motion": (
+        "the subject carries on with its action; shadows drift and the light shifts around it"
+    ),
+    "lighting": "the series look",
+    "location": "Executive Penthouse (Director / CEO), floor 4",
+    "shot_size": "two_shot",
+    "camera_move": "static",
+    "seconds": 8.8,
+    "in_frame": [MARCUS, SARAH],
+    "characters": [MARCUS, SARAH],
+    "avoid": [
+        *LOOK_AVOID,
+        "chibi or toy proportions",
+        "watermarks or logos",
+        "on-screen text or captions",
+        "plastic or waxy skin",
+        "cartoon or 3D-render look when realism is asked for",
+        "clothing, hair or weather changing without reason",
+    ],
+    "series_look_version": 3,
+}
 OLD_FACES = "Their faces stay expressive and the same people throughout."
 
 
@@ -193,7 +252,7 @@ def test_scene_one_establishing_still_leads_with_the_room_and_a_small_figure(loo
     room = "The Executive Penthouse at the top of the studio house"
     framing = "Establishing wide shot at eye level from across the room: the whole room in view"
     small = "Sarah a small full figure in the middle distance"
-    pose = "Sarah sits centred at the desk facing the viewer."
+    pose = "Sarah sits centred at the desk facing the viewer, the closed storyboard folder"
     assert room in still and framing in still and small in still and pose in still, still
     assert (
         still.index(room)
@@ -205,13 +264,21 @@ def test_scene_one_establishing_still_leads_with_the_room_and_a_small_figure(loo
     # The framing she locked on is gone, and no sentence builds the picture around a hand.
     assert "Sarah small in the middle distance" not in still
     assert "right hand" not in still and "left hand" not in still and "hands" not in still
+    # The object the clip's first frame rests her hand on stays in the picture, placed before
+    # her: the clip is made from this still (review of b7d2ef9: the folder was said nowhere).
+    folder = "the closed storyboard folder in front of her"
+    assert f"Sarah sits centred at the desk facing the viewer, {folder}." in still
+    assert f"in the penthouse, {folder}, the night sky behind her; scene 2" in still
+    motion = compose_serial_motion(SCENE_ONE, look)
+    assert "her right hand resting on the closed storyboard folder" in motion
     # The rest of the plan's still words stay: the expression, the room's life, the continuity.
     assert "Brows slightly drawn, lips pressed together" in still
     assert "the brass lamp's warm glow on the mahogany desk" in still
-    assert "establishes Sarah seated at the mahogany desk in the penthouse, the night sky" in still
+    assert "establishes Sarah seated at the mahogany desk in the penthouse" in still
     # The sheet's check reads the still's first moment as the still says it, the clip's whole.
-    motion = compose_serial_motion(SCENE_ONE, look)
-    assert serial_still_moment(SCENE_ONE) == "Sarah sits centred at the desk facing the viewer"
+    assert serial_still_moment(SCENE_ONE) == (
+        f"Sarah sits centred at the desk facing the viewer, {folder}"
+    )
     assert composition_issues(SCENE_ONE, still, motion) == []
 
 
@@ -244,6 +311,83 @@ def test_a_free_moving_dialogue_shot_still_moves_its_people_and_its_room(look):
     turning = {**DIALOGUE, "emotion": "Nadia composed, then quietly amused"}
     said = compose_serial_motion(turning, look)
     assert SERIAL_FEELING_LEAD + "Nadia composed, quietly amused." in said, said
+
+
+def test_a_free_shot_near_the_cap_keeps_its_life_before_its_expression(look):
+    """«Mișcare v2» (2026-10-11): people the plan leaves free move as they speak. Near the
+    clip's cap the life sentence is kept before the expression is named; the feeling is then
+    said plainly, once, while there is room (review of b7d2ef9: f06808c9 scenes 3, 6, 7,
+    2d276038 scenes 3, 6 and a4ecf40a scene 7 had lost their whole life sentence)."""
+    assert serial_people_free(FREE_NEAR_THE_CAP)
+    motion = compose_serial_motion(FREE_NEAR_THE_CAP, look)
+    assert SERIAL_LIFE_SENTENCE in motion, motion
+    assert utf16_units(motion) <= DEFAULT_PROMPT_MAX_UTF16
+    assert motion.count("Marcus fast and restless") == 1
+    assert SERIAL_FACES_SENTENCE in motion and "expressive" not in motion
+    assert motion.endswith(MOTION_CLOSING)
+    codes = [finding.code for finding in lint_motion_prompt(motion, scene=3)]
+    assert "MOTION_ENVIRONMENT" not in codes, codes
+    # With room to spare the expression is named too, after the faces, the life kept.
+    roomy = {**FREE_NEAR_THE_CAP, "ending_frame": "Marcus with hands open, Sarah seated behind him"}
+    said = compose_serial_motion(roomy, look)
+    assert SERIAL_LIFE_SENTENCE in said and SERIAL_EXPRESSIONS_LEAD in said, said
+
+
+def test_a_held_pose_is_a_hand_that_holds_never_a_thing_in_hand():
+    """The hand is the held pose's own subject, and «held» counts only held still (review of
+    b7d2ef9, on the live rows of f06808c9): a pen resting in a hand, or a laugh barely held
+    in, leaves the speaker free to gesture."""
+    # f06808c9 scene 4: «brass pen on its chain resting in her hand».
+    nadia = {
+        "action": (
+            "Nadia seated at her ledger desk facing the viewer, brass pen on its chain resting "
+            "in her hand over the blank green ledger"
+        ),
+        "ending_frame": "Nadia at her desk facing the viewer, brass pen in hand over the ledger",
+        "shot_size": "single",
+    }
+    assert not serial_holds_pose(nadia) and serial_people_free(nadia)
+    # f06808c9 scene 8: «grinning with the laugh barely held in».
+    marcus = {
+        "action": "Marcus types the first line, reads it back to himself, and grins",
+        "ending_frame": (
+            "Marcus at his desk facing the viewer, grinning with the laugh barely held in, "
+            "fingers on the keys"
+        ),
+        "shot_size": "close",
+    }
+    assert not serial_holds_pose(marcus)
+    # Held: the hands themselves, a thing in hand held still, «holds,», nothing changed.
+    for held in (
+        SCENE_ONE["action"],
+        "Nadia holds her pen still, quietly firm",
+        "Nadia facing the viewer, pen held still over the blank green ledger",
+        "he rests both hands on the desk",
+        "she holds, the question landing",
+    ):
+        assert serial_holds_pose({"action": held}), held
+    for free in ("Marcus speaks fast, hands opening and closing", "a slow smile held"):
+        assert not serial_holds_pose({"action": free}), free
+
+
+def test_a_room_said_calm_and_still_does_not_flicker(look):
+    """2d276038 scene 3's ending: «the room behind him calm and still». The speaker gestures;
+    the room's flicker is not said."""
+    kael = {
+        **FREE_NEAR_THE_CAP,
+        "action": (
+            "Kael leans back in his chair, arms crossed over his chest, his headset pushed up off "
+            "one ear, head facing the viewer throughout; he exhales dry disbelief."
+        ),
+        "ending_frame": (
+            "Kael still leaning back with his arms crossed, a wry half-smile on his face, facing "
+            "the viewer; the room behind him calm and still."
+        ),
+        "shot_size": "single",
+    }
+    assert serial_life_sentence(kael) == SERIAL_PEOPLE_LIFE_SENTENCE
+    motion = compose_serial_motion(kael, look)
+    assert SERIAL_PEOPLE_LIFE_SENTENCE in motion and "flickers" not in motion
 
 
 def test_the_reaction_and_the_narrator_shots_keep_their_intent(look):
@@ -341,16 +485,54 @@ def test_a_lock_on_the_old_sentences_no_longer_waits():
 
 
 def test_hand_detail_leaves_only_the_wide_still():
+    """Only the hands' own words go: the object a hand rests on or holds stays, placed before
+    its owner, unless it is the room's furniture or already said; a tail without a hand stays
+    (review of b7d2ef9, 2026-10-16, on the live rows of 87c05891, 2d276038 and a4ecf40a)."""
+    folder = "the closed storyboard folder in front of her"
     assert _without_hand_detail(SCENE_ONE["action"]) == (
-        "Sarah sits centred at the desk facing the viewer."
+        f"Sarah sits centred at the desk facing the viewer, {folder}."
     )
     assert _without_hand_detail(
         "Sarah sits centred at the desk facing the viewer; her right hand rests on the closed "
         "storyboard folder; her left hand lies flat on the desk."
-    ) == ("Sarah sits centred at the desk facing the viewer.")
+    ) == (f"Sarah sits centred at the desk facing the viewer; {folder}.")
+    # 87c05891 scene 1's continuity: the folder the hand placed stays, before her.
+    assert _without_hand_detail(SCENE_ONE["continuity"]).startswith(
+        "Opening shot: establishes Sarah seated at the mahogany desk in the penthouse, "
+        f"{folder}, the night sky behind her; scene 2 must hold the same desk, the same folder"
+    )
+    # 2d276038 scene 1: the eyes on the monitor stay, and the mouse the hand hovers over.
+    assert _without_hand_detail(
+        "Kael sits frozen mid-scroll with one hand hovering over the mouse and his eyes on the "
+        "dark monitor; his lips move counting, his body unmoving."
+    ) == (
+        "Kael sits frozen mid-scroll with his eyes on the dark monitor, the mouse in front of "
+        "him; his lips move counting, his body unmoving."
+    )
+    # a4ecf40a scene 1's emotion: the shoulders stay, only «as the hands fall» goes.
+    assert _without_hand_detail(
+        "The weight of a stalled day: a tired, resigned look in his eyes, the mouth flat and "
+        "closed, the shoulders sagging as the hands fall, slow and heavy."
+    ) == (
+        "The weight of a stalled day: a tired, resigned look in his eyes, the mouth flat and "
+        "closed, the shoulders sagging, slow and heavy."
+    )
+    # A held object keeps its own placement; a hand on a body part says nothing.
+    assert _without_hand_detail(
+        "Nadia sits facing the viewer, her right hand holding the small brass pen above the "
+        "desk, her left hand resting on the closed green ledger"
+    ) == (
+        "Nadia sits facing the viewer, the small brass pen above the desk, the closed green "
+        "ledger in front of her"
+    )
     assert _without_hand_detail("Kael leans back with both hands behind his head") == (
         "Kael leans back"
     )
+    # A clause about a hand and nothing a still places goes with the words that placed it.
+    assert _without_hand_detail(
+        "Sarah sits very upright; her folded hands rest one over the other on the desk, below "
+        "the bottom edge of the frame, out of shot"
+    ) == ("Sarah sits very upright")
     # Two people's own clauses both stay; nothing without a hand is touched.
     assert _without_hand_detail("Sarah sits at the desk; Marcus leans on the doorframe") == (
         "Sarah sits at the desk; Marcus leans on the doorframe"

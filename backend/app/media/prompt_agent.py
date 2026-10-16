@@ -2060,48 +2060,172 @@ def _still_moment(action: str) -> str:
     return "; ".join(kept)
 
 
-#: Hand-by-hand detail of a pose: a hand, a palm, a finger…
-_HAND_WORDS = re.compile(
-    r"\b(?:hands?|palms?|fingers?|fingertips?|fists?|thumbs?|wrists?|knuckles?)\b", re.IGNORECASE
+#: A hand, a palm, a finger…: the words of a pose's hand-by-hand detail.
+_HAND_NOUN = r"(?:hands?|palms?|fingers?|fingertips?|fists?|thumbs?|wrists?|knuckles?)"
+_HAND_WORDS = re.compile(rf"\b{_HAND_NOUN}\b", re.IGNORECASE)
+#: A hand as the words name it: «her right hand», «both hands», «one hand», «fingers».
+_HAND_NP = (
+    r"(?:(?:her|his|their|both|one|the|a|each|either)\s+)*"
+    r"(?:(?:left|right|other|free|open|folded|clasped|empty)\s+){0,2}" + _HAND_NOUN + r"\b"
 )
-#: A clause that opens on a hand («her right hand rests on the folder»): the pose's detail,
-#: never a person's own clause, which opens on the person.
+#: A piece that opens on a hand, the pose's detail («her right hand resting on the folder»,
+#: «Sarah's hands flat on the desk»); its owner, when the words name one.
 _HAND_LEAD = re.compile(
-    r"^(?:(?:her|his|their|both|one|the|a)\s+)*(?:(?:left|right|other|free)\s+)?"
-    r"(?:hands?|palms?|fingers?|fingertips?|fists?|thumbs?|wrists?)\b",
-    re.IGNORECASE,
+    rf"^(?:(?P<name>[A-Z][\w.]*)['’]s\s+)?(?P<hand>{_HAND_NP})(?P<tail>.*)$", re.IGNORECASE
 )
-#: «… with her hands on the desk» closing a person's own clause.
+#: «… with one hand hovering over the mouse», up to « and …» or the piece's end: only the
+#: hand's own words go, «… and his eyes on the dark monitor» stays.
 _WITH_HANDS = re.compile(
-    r"\s+with\s+(?:(?:her|his|their|both|one|a)\s+)*(?:(?:left|right|other)\s+)?"
-    r"(?:hands?|palms?|fingers?|fists?)\b.*$",
+    rf"\s+with\s+(?P<hand>{_HAND_NP})(?P<tail>.*?)(?:\s+and\s+(?P<rest>.*))?$", re.IGNORECASE
+)
+#: «… the shoulders sagging as the hands fall»: a hand's own moment closing a piece.
+_AS_HANDS = re.compile(rf"\s+(?:as|while|when|until)\s+{_HAND_NP}.*$", re.IGNORECASE)
+#: «the closed storyboard folder under her right hand», «the pen in her hand», «counts on his
+#: fingers»: a hand that only places what the piece is about.
+_AT_HAND = re.compile(
+    r"\s+(?P<prep>under|beneath|beside|near|by|next\s+to|in|on|from|between|into|at)\s+"
+    rf"(?P<hand>{_HAND_NP})",
     re.IGNORECASE,
 )
+#: What a hand rests on, holds or hovers over: the object a still keeps in the picture
+#: («on the closed storyboard folder», «holding the small brass pen above the desk»).
+_HAND_OBJECT = re.compile(
+    r"\b(?:holding|holds|gripping|grips|clutching|clutches|cradling|cradles|carrying|carries"
+    r"|grasping|grasps|pressing|presses|touching|touches|tapping|taps|on|onto|over|above"
+    r"|against|across|upon|along|near|beside)\s+(?P<object>(?:the|a|an|its|his|her|their)\s+.+)$",
+    re.IGNORECASE,
+)
+#: Where an object said with its own placement ends and the placement begins.
+_PLACEMENT = re.compile(
+    r"\s+(?:on|onto|over|above|under|beneath|beside|near|by|in|at|against|across|along|behind"
+    r"|before|inside|next\s+to|in\s+front\s+of)\s+",
+    re.IGNORECASE,
+)
+#: An object a still does not place: a part of the body or of something else, a person's
+#: («Sarah's shoulder»), or the furniture the room already says («the desk surface»).
+_NOT_AN_OBJECT = re.compile(
+    r"\b(?:head|chest|lap|face|chin|cheeks?|neck|shoulders?|hips?|knees?|thighs?|sides?|back"
+    r"|arms?|elbows?|waist|mouth|temples?|forehead|stomach|belly|heart|height|edges?|corners?"
+    r"|tops?|bottoms?|ends?|rims?|other|desks?|tables?|surfaces?|desktop|counter|worktop|floor"
+    r"|walls?|chairs?|armrests?|doorframe|door|windows?|sill|railing)\b"
+    r"|['’]s\b",
+    re.IGNORECASE,
+)
+_OBJECT_OWNER = {"her": "her", "his": "him", "their": "them"}
+#: A piece that only places what came before it («below the bottom edge of the frame»).
+_PLACE_LEAD = re.compile(
+    r"(?:below|above|under|beneath|over|on|in|at|beside|near|out|off|inside|outside|behind"
+    r"|across|against|along|toward|towards|into|onto|from|by)\b",
+    re.IGNORECASE,
+)
+
+
+def _owner_place(hand: str, name: str, sentence: str, prep: str = "") -> str:
+    """Where a still says an object a hand held or rested on: before the hand's owner («in
+    front of her»; «beside her» when the words placed it beside the hand), the owner named
+    by the hand's own words, else by the sentence's first possessive; «within reach» when
+    nothing names one."""
+    found = re.match(r"(her|his|their)\b", hand.strip(), re.IGNORECASE)
+    found = found or re.search(r"\b(her|his|their)\b", sentence, re.IGNORECASE)
+    owner = name or (_OBJECT_OWNER[found.group(1).lower()] if found else "")
+    if not owner:
+        return "within reach"
+    side = prep.strip().lower() in ("beside", "near", "by", "next to")
+    return f"{'beside' if side else 'in front of'} {owner}"
+
+
+def _placed_object(tail: str, said_elsewhere: str) -> str:
+    """The object a hand's words rest on or hold (`_HAND_OBJECT`), said with its own
+    placement when the words give one («the small brass pen above the desk»); empty when the
+    words name none, when it is a part of a body or of a thing, a person's, the room's own
+    furniture (`_NOT_AN_OBJECT`), or already said elsewhere in the text."""
+    found = _HAND_OBJECT.search(tail.strip())
+    if not found:
+        return ""
+    said = found.group("object").strip(" ,;.")
+    thing = _PLACEMENT.split(said, maxsplit=1)[0]
+    if _HAND_WORDS.search(said) or _NOT_AN_OBJECT.search(thing):
+        return ""
+    words = re.findall(r"[\w'’-]+", thing)
+    if words and re.search(rf"\b{re.escape(words[-1])}\b", said_elsewhere, re.IGNORECASE):
+        return ""
+    return said
+
+
+def _hand_piece(piece: str, head: bool, sentence: str) -> str:
+    """One comma piece of a clause without its hand-by-hand detail; empty when nothing of it
+    stays. A piece that opens on a hand becomes the object the hand rested on or held, placed
+    before its owner (`_placed_object`); «with one hand …» goes up to its «and …»; «as the
+    hands fall» goes; «under her right hand» placing an object becomes «in front of her», and
+    on a verb («counts on his fingers») goes. A later piece that still names a hand goes; a
+    clause's own head (the person and the pose) stays."""
+    elsewhere = sentence.replace(piece, " ")
+    lead = _HAND_LEAD.match(piece.strip())
+    if lead:
+        thing = _placed_object(lead.group("tail"), elsewhere)
+        if not thing:
+            return ""
+        if _PLACEMENT.search(thing):
+            return thing
+        return f"{thing} {_owner_place(lead.group('hand'), lead.group('name') or '', sentence)}"
+    with_hands = _WITH_HANDS.search(piece)
+    if with_hands:
+        thing = _placed_object(with_hands.group("tail"), elsewhere)
+        rest = with_hands.group("rest")
+        piece = piece[: with_hands.start()] + (f" with {rest}" if rest else "")
+        if thing:
+            place = (
+                "" if _PLACEMENT.search(thing) else _owner_place(with_hands["hand"], "", sentence)
+            )
+            piece = f"{piece}, {thing} {place}".rstrip()
+    piece = _AS_HANDS.sub("", piece)
+    at_hand = _AT_HAND.search(piece)
+    if at_hand:
+        tail = piece[at_hand.end() :]
+        if re.match(r"(?:the|a|an|its)\b", piece.strip(), re.IGNORECASE) and not tail.strip():
+            # The piece is the object itself: the hand only placed it.
+            place = _owner_place(at_hand["hand"], "", sentence, at_hand["prep"])
+            piece = f"{piece[: at_hand.start()]} {place}"
+        else:
+            piece = piece[: at_hand.start()] + tail
+    piece = " ".join(piece.split()).strip(" ,")
+    if not head and _HAND_WORDS.search(piece):
+        return ""
+    return piece
 
 
 def _without_hand_detail(text: str) -> str:
-    """``text`` without the hand-by-hand detail of its poses: a later piece of a clause that
-    names a hand («…, her right hand resting on the folder»), a later clause that opens on one
-    («…; her left hand lies flat on the desk») and a closing «with her hands …» are left out;
-    each clause's own head (the person and the pose) stays. For an establishing or wide still,
-    whose people are small figures in the room (2026-10-16 19:16Z, 87c05891 scene 1: «the
-    action clause that names Sarah's pose and both hands as the frame's content build the
-    picture around her», a medium close-up where the plan fixes the establishing wide)."""
+    """``text`` without the hand-by-hand detail of its poses, and nothing else: a piece that
+    opens on a hand («…, her right hand resting on the closed storyboard folder») says the
+    object it rested on, placed before its owner («the closed storyboard folder in front of
+    her»), and goes when that object is the room's furniture or already said; «with one hand
+    hovering over the mouse and his eyes on the dark monitor» keeps «with his eyes on the dark
+    monitor» and the mouse; «the shoulders sagging as the hands fall» keeps the shoulders
+    (`_hand_piece`). For an establishing or wide still, whose people are small figures in the
+    room (2026-10-16 19:16Z, 87c05891 scene 1: «the action clause that names Sarah's pose and
+    both hands as the frame's content build the picture around her», a medium close-up where
+    the plan fixes the establishing wide). The clip is made from the still: the objects its
+    first frame names (the folder under her right hand) stay in the picture (review of b7d2ef9,
+    2026-10-16)."""
     said = " ".join(str(text or "").split())
     sentences: list[str] = []
     for sentence in re.split(r"(?<=[.!?])\s+", said):
         end = sentence[-1] if sentence[-1:] in (".", "!", "?") else ""
         body = sentence[: len(sentence) - len(end)]
         clauses: list[str] = []
-        for index, clause in enumerate(re.split(r"\s*;\s*", body)):
-            head, *rest = re.split(r",\s+", clause)
-            if index and _HAND_LEAD.match(head.strip()):
-                continue
-            head = _WITH_HANDS.sub("", head)
-            kept = ", ".join([head, *(piece for piece in rest if not _HAND_WORDS.search(piece))])
-            kept = kept.strip(" ,")
-            if kept:
-                clauses.append(kept)
+        for clause in re.split(r"\s*;\s*", body):
+            pieces: list[str] = []
+            placed_a_hand = False
+            for index, piece in enumerate(re.split(r",\s+", clause)):
+                if placed_a_hand and _PLACE_LEAD.match(piece):
+                    continue  # «…, below the bottom edge of the frame» placed the hand left out
+                kept = _hand_piece(piece, index == 0, body)
+                placed_a_hand = not kept and bool(_HAND_WORDS.search(piece))
+                if kept:
+                    pieces.append(kept)
+            joined = ", ".join(pieces).strip(" ,")
+            if joined:
+                clauses.append(joined)
         if clauses:
             sentences.append("; ".join(clauses) + end)
     return " ".join(sentences)
@@ -2338,7 +2462,7 @@ def _serial_camera_move(package: dict[str, Any], previous: list[str]) -> str:
 #: Never «expressive» since 2026-10-16 19:18Z (87c05891 scene 6: the clip opened the mouth and
 #: smiled, and her review blamed «Their faces stay expressive» — a word no rewrite could take
 #: out, while the plan held «lips pressed together, mouth closed»). The plan's own expression
-#: is named after it (`serial_faces_sentence`). No longer than the old words: the clip's cap
+#: is named after it (`serial_expression_sentence`). No longer than the old words: the clip's cap
 #: (1000 UTF-16 units) is full on a held plan's long ending (87c05891 scene 7).
 SERIAL_FACES_SENTENCE = "Each face keeps its features, the same people throughout."
 #: How the plan's expression (``motion_emotion``, else ``emotion``) is named in the clip, held
@@ -2398,11 +2522,18 @@ def serial_feeling(package: Mapping[str, Any]) -> str:
 
 def serial_expression_sentence(package: dict[str, Any]) -> str:
     """The plan's expression named in the clip, held from the first frame to the last
-    (`SERIAL_EXPRESSION_LEAD`); empty when the plan names none. A plan that already says it
-    holds, or whose feeling changes over the shot, is named as it says it (`SERIAL_FEELING_LEAD`);
-    its chain words are taken out (`_continuous`), the chain kept."""
+    (`SERIAL_EXPRESSION_LEAD`), said right after the faces sentence; empty when the plan names
+    none. A plan that already says it holds, or whose feeling changes over the shot, is named
+    as it says it (`SERIAL_FEELING_LEAD`); its chain words are taken out (`_continuous`), the
+    chain kept.
+
+    2026-10-16 19:18Z, 87c05891 scene 6: «The motion prompt still says only 'Their faces stay
+    expressive and the same people throughout' and never names the plan's expression — brows
+    slightly drawn, lips pressed together…» — the plan's feeling was said last, and the cap
+    always left it out. A reaction shot keeps its listener's face as its listen sentence says
+    it (lips closed, a breath and a small nod as the words go on): no expression is held."""
     feeling = serial_feeling(package)
-    if not feeling:
+    if not feeling or serial_listen_sentence(package):
         return ""
     changes = bool(lint.STILL_THEN.search(feeling) or lint.LATER_MOMENT.search(feeling))
     # Said in the plan's own casing after the colon: a name the plan does not list in frame
@@ -2416,21 +2547,6 @@ def serial_expression_sentence(package: dict[str, Any]) -> str:
     else:
         lead = SERIAL_EXPRESSIONS_LEAD if len(names) > 1 else SERIAL_EXPRESSION_LEAD
     return _sentence(lead + said)
-
-
-def serial_faces_sentence(package: dict[str, Any]) -> str:
-    """The clip's faces: who they are (`SERIAL_FACES_SENTENCE`), then the plan's expression
-    held from the first frame to the last (`serial_expression_sentence`) when it names one.
-
-    2026-10-16 19:18Z, 87c05891 scene 6: «The motion prompt still says only 'Their faces stay
-    expressive and the same people throughout' and never names the plan's expression — brows
-    slightly drawn, lips pressed together…» — the plan's feeling was said last, and the cap
-    always left it out. A reaction shot keeps its listener's face as its listen sentence says
-    it (lips closed, a breath and a small nod as the words go on): no expression is held."""
-    if serial_listen_sentence(package):
-        return SERIAL_FACES_SENTENCE
-    expression = serial_expression_sentence(package)
-    return f"{SERIAL_FACES_SENTENCE} {expression}" if expression else SERIAL_FACES_SENTENCE
 
 
 #: The life of a serial shot beyond its lines: the people's bodies move as they speak, and
@@ -2455,18 +2571,26 @@ SERIAL_LIFE_SENTENCES = (
     SERIAL_PEOPLE_LIFE_SENTENCE,
     SERIAL_ROOM_LIFE_SENTENCE,
 )
-#: A plan that holds its people's pose in its action or its ending: hands resting, flat,
-#: folded or held; «she holds,»; a pose held still or static; nothing changed. Then the
-#: people's gestures are not said: the plan's own later moments, said whole in the action,
-#: are the life of the clip.
+#: A plan that holds its people's pose in its action or its ending: the hands themselves
+#: resting, flat, folded or held; «she holds,»; a pose or a thing in hand held still; static;
+#: nothing changed. Then the people's gestures are not said: the plan's own later moments,
+#: said whole in the action, are the life of the clip. The hand is the pose's own subject
+#: («her right hand resting on the folder», «palms flat», «rests both hands»), never an object
+#: resting in a hand, and «held» counts only held still (review of b7d2ef9, 2026-10-16:
+#: f06808c9 scene 4's «brass pen … resting in her hand» and scene 8's «the laugh barely held
+#: in» lost their speakers' gestures).
 _HELD_POSE = re.compile(
-    r"\b(?:hands?|palms?|fingers?|arms?|elbows?)\b[^.;]{0,48}?\b(?:rest(?:s|ing)?|lie|lies"
-    r"|lying|flat|folded|clasped|held|in\s+(?:her|his|their)\s+lap)\b"
-    r"|\b(?:rest(?:s|ing)?|lays?|laid|lie|lies|lying)\s+(?:\w+\s+){0,2}?(?:hands?|palms?)\b"
+    r"\b(?:hands?|palms?|fingers?|arms?|elbows?)\s+(?:[\w'’-]+\s+){0,3}?(?:rest(?:s|ing)?|lie"
+    r"|lies|lying|flat|folded|clasped|held|in\s+(?:her|his|their)\s+lap)\b"
+    r"|\b(?:rest(?:s|ing)?|lays?|laid)\s+(?:(?:her|his|their|both|one|the)\s+)*"
+    r"(?:(?:left|right|other)\s+)?(?:hands?|palms?)\b"
     r"|\bat\s+(?:her|his|their)\s+sides?\b"
     r"|\bholds?\b(?=\s*(?:[,.;:—–]|$|(?:still|steady|there|in\s+place|(?:her|his|their|the)"
     r"\s+(?:pose|position|stance|gaze))\b))"
-    r"|\bheld\b|\bstatic\b|\bmotionless\b|\bunmoving\b|\bfrozen\b"
+    r"|\bheld\s+(?:still|steady|motionless|in\s+place)\b"
+    r"|\bholds?\s+(?:(?:her|his|their|the|a|an)\s+)?(?:[\w'’-]+\s+){0,2}?(?:still|steady"
+    r"|motionless)\b"
+    r"|\bstatic\b|\bmotionless\b|\bunmoving\b|\bfrozen\b"
     r"|\b(?:sits?|stands?|stays?|keeps?|remains?)\s+(?:\w+\s+)?still\b"
     r"|\bnothing\s+(?:has\s+|is\s+)?chang(?:ed|es|ing)\b"
     r"|\b(?:pose|position|expression)\s+(?:\w+\s+){0,2}?unchanged\b",
@@ -2483,13 +2607,15 @@ _STEADY_LIGHT = re.compile(
     re.IGNORECASE,
 )
 #: A plan that asks for a still room: «hold exactly as they are», «nothing has changed»,
-#: «every object in its place», «the room stays still», «the glow unchanged».
+#: «every object in its place», «the room stays still», «the room behind him calm and still»
+#: (2d276038 scene 3), «the glow unchanged».
 _STILL_ROOM = re.compile(
     r"\bhold(?:s|ing)?\s+exactly\s+as\b"
     r"|\bnothing\s+(?:has\s+|is\s+)?(?:changed|changes|changing|moves|moving)\b"
     r"|\bevery\s+object\s+(?:stays\s+|holds\s+|remains\s+)?in\s+its\s+place\b"
     r"|\b(?:room|scene|background|world)\s+(?:\w+\s+){0,2}?(?:stays?|remains?|holds?)\s+"
     r"(?:still|unchanged|motionless|the\s+same)\b"
+    r"|\b(?:room|scene|background|world)\b(?:\s+[\w'’-]+){0,4}?\s+still(?=\s*(?:[,.;:—–]|$))"
     r"|\b(?:light|glow|lamp\w*|room|scene|background|sky)\b[^.;]{0,40}?\bunchanged\b",
     re.IGNORECASE,
 )
@@ -2770,29 +2896,35 @@ def serial_motion(package: dict[str, Any], look: dict[str, Any]) -> tuple[str, b
         else:
             action = fitted
     # The faces and the life follow the plan (2026-10-16, 87c05891 scenes 1 and 6): the
-    # plan's expression is named in the faces sentence, held from the first frame to the last;
-    # the people's gestures only when the plan leaves them free, the room's flicker only when
-    # nothing asks for a steady light or a still room (`serial_life_sentence`).
-    faces = serial_faces_sentence(package)
-    expressed = faces != SERIAL_FACES_SENTENCE
+    # plan's expression is named after the faces sentence, held from the first frame to the
+    # last; the people's gestures only when the plan leaves them free, the room's flicker only
+    # when nothing asks for a steady light or a still room (`serial_life_sentence`).
+    expression = serial_expression_sentence(package)
     life = serial_listen_sentence(package) or serial_life_sentence(package)
     feeling_sentence = _sentence(feeling) if feeling else ""
     # A plan that holds its people or its room is padded with what holds, never with «keeps
     # moving» (`MOTIONLESS_PAD`).
     held = serial_holds_pose(package) or not serial_room_free(package)
     pad = MOTIONLESS_PAD if held else MOTION_PAD
+    # Which the cap keeps first. People the plan leaves free move as they speak before their
+    # expression is named («Mișcare v2», 2026-10-11: the clips held their people still while
+    # they spoke; the review of b7d2ef9, 2026-10-16: f06808c9 scenes 3, 6 and 7 lost their whole
+    # life sentence to the expression). A plan that holds its people names the expression it
+    # holds first (87c05891 scene 6: the mouth opened and smiled where the plan held it closed).
+    life_rank, expression_rank = (4, 5) if serial_people_free(package) else (5, 4)
 
-    def items_for(faces_said: str, feeling_said: str) -> list[tuple[int, int, str]]:
+    def items_for(expression_said: str, feeling_said: str) -> list[tuple[int, int, str]]:
         return [
             (0, 0, move_sentence),
             (1, 1, action),
             (2, 2, ending_sentence),
             (2, 3, serial_cast_sentence(package)),
-            (3, 4, faces_said),
-            (4, 5, life),
-            (6, 6, feeling_said),
-            (5, 7, END_BEAT if two_beats else ""),
-            (0, 9, lint.MOTION_CLOSING),
+            (3, 4, SERIAL_FACES_SENTENCE),
+            (expression_rank, 5, expression_said),
+            (life_rank, 6, life),
+            (7, 7, feeling_said),
+            (6, 8, END_BEAT if two_beats else ""),
+            (0, 10, lint.MOTION_CLOSING),
         ]
 
     required = " ".join([move_sentence, action, ending_sentence, lint.MOTION_CLOSING])
@@ -2801,15 +2933,14 @@ def serial_motion(package: dict[str, Any], look: dict[str, Any]) -> tuple[str, b
     def fitted_prompt(items: list[tuple[int, int, str]]) -> str:
         said = _fit_sentences(items, lint.DEFAULT_PROMPT_MAX_UTF16, word_budget)
         if len(said.split()) < MOTION_MIN_WORDS:
-            said = _fit_sentences([*items, (6, 6, pad)], lint.DEFAULT_PROMPT_MAX_UTF16, word_budget)
+            said = _fit_sentences([*items, (7, 7, pad)], lint.DEFAULT_PROMPT_MAX_UTF16, word_budget)
         return said
 
-    # The feeling is said once: inside the faces sentence when it carries the expression.
-    prompt = fitted_prompt(items_for(faces, "" if expressed else feeling_sentence))
-    if expressed and faces not in prompt:
-        # The expression does not fit beside the action and the ending: the faces are said
-        # without it (the feeling then last, while there is room), never left out for it.
-        prompt = fitted_prompt(items_for(SERIAL_FACES_SENTENCE, feeling_sentence))
+    # The feeling is said once: as the expression held when it fits, else plainly, last, while
+    # there is room.
+    prompt = fitted_prompt(items_for(expression, "" if expression else feeling_sentence))
+    if expression and expression not in prompt:
+        prompt = fitted_prompt(items_for("", feeling_sentence))
     if ending_sentence and ending_sentence not in prompt:
         dropped = True  # the vendor's cap took it after all
     return prompt, dropped

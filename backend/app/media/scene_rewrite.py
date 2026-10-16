@@ -1359,7 +1359,9 @@ def _serial_shot(context: dict[str, Any]) -> dict[str, Any]:
             "to the comma that begins their next moment), then emotion, background and "
             "continuity while there is room; on an establishing or wide shot the people are "
             "small figures in the room and no hand-by-hand detail of action, emotion, "
-            "background or continuity is said in the picture (the clip keeps the whole action)"
+            "background or continuity is said in the picture: what a hand rests on or holds "
+            "is said placed before its owner, every other word stays (the clip keeps the whole "
+            "action)"
         ),
         "how_the_clip_is_composed": (
             "camera_move with its path and tempo, the whole action as the chain of movement, "
@@ -1534,8 +1536,10 @@ def _layer_fields(context: dict[str, Any], layer: str) -> tuple[dict[str, str], 
             fields = {
                 "action": (
                     "its FIRST moment is the still's action (without hand-by-hand detail on an "
-                    "establishing or wide shot); the whole action is the clip's chain of "
-                    "movement, and a pose it holds takes the people's gestures out"
+                    "establishing or wide shot: what a hand rests on or holds stays, placed "
+                    "before its owner); the whole action is the clip's chain of movement, and a "
+                    "pose its hands hold («her right hand resting on…», «holds,», «held still») "
+                    "takes the people's gestures out"
                 ),
                 "emotion": (
                     "said in the still, and in the motion as the expression held from the "
