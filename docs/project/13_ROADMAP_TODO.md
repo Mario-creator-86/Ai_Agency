@@ -2142,4 +2142,11 @@ No provider was called, no run was queued, no credit was spent, and
   shutdown (the resume pass re-runs the stage; nothing paid is in flight) or `restart.py`
   refuses to stop while a DAILY_RUN is claimed and says so; the boundary scripts must treat a
   claimed day run as blocking, not only a writer's run in flight.
+- 2026-10-16 00:46Z — next: the still gate approves pictures the clip QC then refuses for the
+  bible: 7c26a7ce scene 1 (a window with daylight in a windowless lab, approved 21:27Z) and
+  scene 2 (the scientist's face in profile under a faceless bible, approved 21:27Z) each cost
+  a test shot (0,33-0,38 USD) before the fault was placed in the picture. The still gate
+  should read the bible's hard limits (faces, windows, lighting state) as the clip QC does —
+  the same look, before the shot is bought — or the clip QC's look should run on the still
+  first.
 
