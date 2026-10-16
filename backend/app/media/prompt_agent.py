@@ -2267,12 +2267,12 @@ _ENDING_PREPOSITION = re.compile(r"^(?:on|with|at|in|as)\b", re.IGNORECASE)
 #: silvery bar rests inside its glass display case, …») — is said «The shot ends as …», not
 #: «The shot ends on the silvery bar rests …» (2026-10-15 22:19Z, 7c26a7ce scene 1: the
 #: Director refused the fragment twice and the guard called it a tool defect).
-#: Words as often nouns («both faces turned to the viewer», «her looks», «turns») are not
-#: here: a wrong «as» reads worse than a wrong «on».
+#: Words as often nouns («both faces turned to the viewer», «the pulse mid-travel», «her
+#: looks», «the moves») are not here: a wrong «as» reads worse than a wrong «on» (01:00Z,
+#: 7c26a7ce scene 4: «The shot ends as the pulse mid-travel» — «pulses?» read as a verb).
 _FINITE_VERB = re.compile(
-    r"\b(?:rests?|stays?|remains?|holds?|sits?|lies?|stands?|hangs?|keeps?|is|are|has|have"
-    r"|does|glows?|settles?|comes?|goes?|rises?|moves?|waits?|burns?|shines?|hovers?"
-    r"|floats?|drifts?|spins?|pulses?)\b",
+    r"\b(?:rests?|stays?|remains?|holds?|sits?|lies?|hangs?|keeps?|is|are|has|have|does"
+    r"|settles?|comes?|goes?|waits?|hovers?)\b",
     re.IGNORECASE,
 )
 #: An ending the writer already began with the composer's own words («The shot ends on …»,
@@ -3390,6 +3390,7 @@ def _motion_intent(
         if world
         else ("" if move == "static" or _fixed_world(package) else DEFAULT_WORLD_MOTION),
         "world_fixed": _fixed_world(package),
+        "camera_path": _plan_move_clause(package, move),
         "subject": _sentence(subject),
         "subject_clauses": [_sentence(clause) for clause in subject_clauses],
         "action_clauses": [_sentence(clause) for clause in action_clauses],
@@ -3427,6 +3428,56 @@ _COMPOSER_SENTENCES: tuple[str, ...] = (
     lint.VEO_MOTION_CLOSING,
     *lint.LEGACY_STILLNESS,
 )
+
+
+#: What is not the clip's: a lens, a shot size, the clip's span, the plan's frame words.
+_CAMERA_CLAUSE_NOISE = re.compile(
+    r"\b\d+(?:\.\d+)?\s*mm\b|\bstraight[- ]on\b|\beye[- ]level\b"
+    r"|,?\s*over\s+the\s+(?:shot|clip)(?:'s)?\s+(?:\d+(?:\.\d+)?\s+)?seconds?"
+    r"|,?\s*(?:over|across|for)\s+\d+(?:\.\d+)?\s+seconds?",
+    re.IGNORECASE,
+)
+
+
+def _plan_move_clause(package: Mapping[str, Any], move: str) -> str:
+    """The plan's own words for its move — the path and the tempo the writer gave it —
+    said right after the move's fixed sentence («tracking right — a slow, straight follow
+    along the pulse's path as it travels across the room» → «A slow, straight follow along
+    the pulse's path as it travels across the room.»). Empty when the plan's camera text
+    names the move bare, names another, or has nothing beyond the lens and the size
+    (01:00Z, 7c26a7ce scene 4: the Director refused the fixed sentence twice for «no path
+    and no tempo» while the plan's camera field carried both)."""
+    if not move or move == "static":
+        return ""
+    text = _flatten(package.get("camera"))
+    for clause in re.split(r"\s*(?:;|\.\s)\s*", text):
+        found = lint.camera_moves(clause)
+        if not found or found[0][0] != move:
+            continue
+        said = re.sub(re.escape(found[0][1]) + r"\s*(?:[—–:,-]+\s*)?", " ", clause, count=1)
+        said = _CAMERA_CLAUSE_NOISE.sub(" ", said)
+        said = lint.SHOT_SIZE.sub(" ", said)
+        said = re.sub(r"\s+([.,;:])", r"\1", " ".join(said.split())).strip(" .,;:—–-")
+        if len(said.split()) < 3 or lint.camera_moves(said) or lint.NEGATION.search(said):
+            return ""
+        return _sentence(said[:1].upper() + said[1:])
+    return ""
+
+
+def motion_intent_of(package: Mapping[str, Any]) -> dict[str, Any] | None:
+    """The scene's motion intent as the renderer reads it, or None for a scene from before
+    the intents. An intent stored before a rule was added is completed from the plan it was
+    made from (``world_fixed``, ``camera_path``), so the words the sheet sends and the words
+    the audit reads follow the rule without a rewrite."""
+    intent = package.get("motion_intent") if isinstance(package, Mapping) else None
+    if not isinstance(intent, dict) or intent.get("camera_move") not in lint.CAMERA_MOVES:
+        return None
+    completed = dict(intent)
+    if "world_fixed" not in completed:
+        completed["world_fixed"] = _fixed_world(package)
+    if "camera_path" not in completed:
+        completed["camera_path"] = _plan_move_clause(package, str(completed["camera_move"]))
+    return completed
 
 
 def _fixed_world(package: Mapping[str, Any]) -> bool:
@@ -3487,8 +3538,9 @@ def render_motion(
     at_rest = bool(_MOTIONLESS_WORLD.search(" ".join([world, *map(str, subjects), *actions])))
     if at_rest and move == "static":
         camera = MOVE_SHORT["static"]
-    if (at_rest or move == "static") and world == DEFAULT_WORLD_MOTION:
-        # A stored intent whose stillness stood in its action: the drifting-shadows default
+    if world == DEFAULT_WORLD_MOTION and (at_rest or move == "static" or intent.get("world_fixed")):
+        # A stored intent whose stillness stood in its action, or whose plan fixes its world
+        # (`motion_intent_of` completes it from the plan): the drifting-shadows default
         # contradicted it («Static camera… Shadows drift and the light shifts… Nothing
         # moves.» — 2026-10-15, 7c26a7ce scene 1, refused by the Director twice).
         world = ""
@@ -3496,8 +3548,10 @@ def render_motion(
     seconds = _seconds_of(intent)
     two_beats = amplitude != MEASURED and move != "static" and seconds >= TWO_BEAT_SECONDS
     ending = _ending_sentence(intent.get("ending_frame"))
+    path = str(intent.get("camera_path") or "")
     required = [
         camera,
+        path,
         *[str(c) for c in subjects],
         *actions,
         world if world != DEFAULT_WORLD_MOTION else "",
@@ -3513,7 +3567,8 @@ def render_motion(
     word_budget = max(MOTION_MAX_WORDS, len(" ".join(required).split()))
     items = [
         (0, 0, camera),
-        (2 if world != DEFAULT_WORLD_MOTION else 4, 1, world),
+        (0, 1, path),
+        (2 if world != DEFAULT_WORLD_MOTION else 4, 2, world),
         *[(2, 10 + index, str(clause)) for index, clause in enumerate(subjects)],
         *[(3, 100 + index, clause) for index, clause in enumerate(actions)],
         (5, 800, (MOTIONLESS_END_BEAT if at_rest else END_BEAT) if two_beats else ""),
@@ -3926,8 +3981,8 @@ def motion_prompt_for(
     the dialect of whichever model the scene is bought on. A package from before the
     compiler has none: its stored motion prompt is used as it is (empty when it has none).
     """
-    intent = package.get("motion_intent") if isinstance(package, dict) else None
-    if isinstance(intent, dict) and intent.get("camera_move") in lint.CAMERA_MOVES:
+    intent = motion_intent_of(package) if isinstance(package, dict) else None
+    if intent is not None:
         return render_motion(intent, _motion_family(model_id), lint.prompt_cap(contract, "motion"))
     stored = " ".join(str((package or {}).get("motion_prompt") or "").split())
     negative = (package or {}).get("negative_prompt")

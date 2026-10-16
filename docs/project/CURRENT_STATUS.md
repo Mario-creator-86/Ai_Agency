@@ -5,6 +5,14 @@ AGENT_SCENARIO_ACCEPTANCE later used actual Ollama Cloud calls, with normal seri
 acceptance and real GPU/media/upload still pending. Current local UI evidence is reported
 separately below and does not prove those external workflows.
 
+## The plan's own path follows the move's sentence; one reader of the intent for sheet and audit (2026-10-16)
+
+**Claim:** 7c26a7ce scene 4 under template v3 (00:55–00:59Z): the Director refused the fixed tracking sentence «Steady tracking right alongside the subject, the background sliding past behind it» six times for «no path and no tempo» while the plan's camera field carried both («tracking right — a slow, straight follow along the pulse's path as it travels across the room, over the shot's 3.2 seconds»); the stored intent kept the drift default although the plan fixes the light; and the ending «The final frame holds the pulse mid-travel: …» was said «The shot ends as the pulse mid-travel» («pulse» read as a verb). The guard declared a tool defect (correctly).
+
+**Fixes (`media/prompt_agent.py`, `media/prompt_audit.py`):** (1) `_plan_move_clause`: the plan's own clause of its move, without lens, shot size and the clip's span, said right after the move's fixed sentence («A slow, straight follow along the pulse's path as it travels across the room.»); carried on the intent as `camera_path`. (2) `motion_intent_of`: one reader of the intent for the sheet (`motion_prompt_for`) and the audit (`prompt_text`) that completes an intent stored before a rule (`world_fixed`, `camera_path`) from its plan, so a corrected rule reaches the words without a rewrite; `render_motion` drops the drift default for a fixed world. (3) `_FINITE_VERB` keeps only words that are verbs when they end in -s (no pulses, glows, moves, falls, turns…).
+
+**Tested:** `test_motion_v2.py::test_the_plans_own_path_and_tempo_follow_the_moves_sentence_and_a_noun_is_not_a_verb` (compiled words; a stale intent rendered the same by the sheet and the audit; a bare move name adds nothing); 138 passed across motion/sheet/audit/redo/costing files, the 4 known fixture failures unchanged; ruff, mypy clean. Live from the next restart: scene 4's words change (new digest) and the audit runs again.
+
 ## A plan that fixes its light gets no drift; the lens is the picture's (audit v3) (2026-10-16)
 
 **Claim:** 7c26a7ce scene 4 (00:47Z): the Director refused the tracking shot's words twice — «Shadows drift and the light shifts…» in a lab whose plan says «the traveling pulse is the only moving light… no flicker» and «the room itself does not change», and a camera sentence «with no lens, no framing distance» — and Kael's second rewrite gave the same words (the sentences were the composer's); the studio declared a tool defect and she took over.

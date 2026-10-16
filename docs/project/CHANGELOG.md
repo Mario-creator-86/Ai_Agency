@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-16 — The plan's path follows the move; one intent reader
+
+- `media/prompt_agent.py`, `media/prompt_audit.py`: the plan's own clause of its move (path and tempo, without lens, size and span) follows the move's fixed sentence (`camera_path`); `motion_intent_of` completes a stored intent from its plan for the sheet and the audit alike (`world_fixed`, `camera_path`); the finite-verb list keeps verbs only («the pulse mid-travel» is no sentence). 7c26a7ce scene 4, six refusals at 00:55–00:59Z.
+
 ## 2026-10-16 — The render bay is the render bay
 
 - `config/serial_series_look.json`: the «Video & Render Bay» room entry is the bay (rows of dark render racks with small lights, cable runs, one long work desk, dark walls, no window), not the house's furniture with a named dark monitor — 87c05891 scene 5 was refused twice on the composer's own room sentence (00:48Z); no look version bump (no re-buy of approved pictures).

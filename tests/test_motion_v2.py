@@ -890,6 +890,70 @@ def test_a_plan_that_fixes_its_light_gets_no_drift_default_and_an_ordinary_one_d
     assert DEFAULT_WORLD_MOTION in prompt, prompt
 
 
+def test_the_plans_own_path_and_tempo_follow_the_moves_sentence_and_a_noun_is_not_a_verb():
+    """01:00Z, 7c26a7ce scene 4: the Director refused «Steady tracking right alongside the
+    subject, the background sliding past behind it» twice for «no path and no tempo» while
+    the plan's camera field said «tracking right — a slow, straight follow along the pulse's
+    path as it travels across the room, over the shot's 3.2 seconds»; and the ending «The
+    final frame holds the pulse mid-travel: …» was said «The shot ends as the pulse
+    mid-travel» («pulse» read as a verb)."""
+    from app.media import prompt_audit
+
+    plan = {
+        **PLAN,
+        "camera": (
+            "Medium shot, straight-on, 50mm: the pulse centred and large in the vertical "
+            "frame, the dark laboratory around it; tracking right — a slow, straight follow "
+            "along the pulse's path as it travels across the room, over the shot's 3.2 seconds."
+        ),
+        "motion": (
+            "The pulse streaks in a straight line across the dark room; the room itself does "
+            "not change"
+        ),
+        "environment": "The dark laboratory, the walls and the bench dim",
+        "lighting": "The traveling pulse is the only moving light; no flicker.",
+        "background": "",
+        "ending_frame": (
+            "The final frame holds the pulse mid-travel: the bright warm-red pulse centred in "
+            "the dark room, the charcoal walls and the still equipment around it."
+        ),
+        "seconds": 3.2,
+    }
+    plan.pop("camera_move", None)
+    compiled = compile_prompts(plan, FACELESS_BIBLE, {"model_id": "LTX-2.5"})
+    prompt = compiled["motion_prompt"]
+    assert compiled["camera_move"] == "tracking right"
+    path = "A slow, straight follow along the pulse's path as it travels across the room."
+    assert prompt.startswith(MOVE_SENTENCES["tracking right"] + " " + path), prompt
+    assert "50mm" not in prompt and "3.2 seconds" not in prompt and "Medium shot" not in prompt
+    assert DEFAULT_WORLD_MOTION not in prompt, prompt
+    assert "The shot ends on the pulse mid-travel: the bright warm-red pulse" in prompt, prompt
+    assert [m for m, _ in camera_moves(prompt)] == ["tracking right"], prompt
+    assert not _blocks(lint_motion_prompt(prompt, scene=4, model_id="LTX-2.5"))
+    # An intent stored before these rules is completed from its plan: the sheet and the
+    # audit say the same words, with the path and without the drift.
+    stale = {
+        **plan,
+        **compiled,
+        "motion_intent": {
+            k: v
+            for k, v in compiled["motion_intent"].items()
+            if k not in ("world_fixed", "camera_path")
+        }
+        | {"world": DEFAULT_WORLD_MOTION},
+        "motion_prompt": "stale words",
+    }
+    said, _ = motion_prompt_for(stale, "LTX-2.5")
+    assert said == prompt and prompt_audit.prompt_text(stale, "motion") == prompt
+    # A bare move name in the camera text adds nothing.
+    bare = compile_prompts(
+        {**plan, "camera": "Medium shot, 50mm, tracking right"},
+        FACELESS_BIBLE,
+        {"model_id": "LTX-2.5"},
+    )
+    assert bare["motion_intent"]["camera_path"] == ""
+
+
 # ----------------------------------------------------- 6. clip QC and the one retry
 
 

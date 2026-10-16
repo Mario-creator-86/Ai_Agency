@@ -211,10 +211,10 @@ def prompt_text(package: dict[str, Any], layer: str) -> str:
     if layer == "still":
         return " ".join(str(package.get("still_prompt") or "").split())
     from app.media import prompt_lint as lint  # noqa: PLC0415
-    from app.media.prompt_agent import render_motion  # noqa: PLC0415
+    from app.media.prompt_agent import motion_intent_of, render_motion  # noqa: PLC0415
 
-    intent = package.get("motion_intent")
-    if isinstance(intent, dict) and intent.get("camera_move") in lint.CAMERA_MOVES:
+    intent = motion_intent_of(package)
+    if intent is not None:
         family = str(package.get("motion_family") or "") or None
         words, _negative = render_motion(intent, family, lint.prompt_cap(None, "motion"))
         return " ".join(words.split())
