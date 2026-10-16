@@ -23,6 +23,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from app.story.lines import ends_sentence, stops_inside
+
 #: Words a second, as the storyboard builders size a scene from its words.
 WORDS_PER_SECOND = 2.5
 #: A shot with fewer words than this is not a shot of its own: the cut is heard before it is
@@ -42,13 +44,18 @@ FACTUAL_SHOT_TYPES = {"wide": "WIDE", "medium": "MEDIUM", "detail": "DETAIL"}
 SECONDS_PER_SPOKEN_WORD = 0.40
 REACTION_SPLIT_SECONDS = 5.5
 #: A speaker's run shorter than this joins the shot beside it as a two-shot: a cut for four
-#: words is a flicker.
+#: words is a flicker, and a still and a clip bought for under a second of screen.
 MIN_TAKE_SECONDS = 1.6
 #: The longest a serial shot may be (the motion model's clip, before the local slow-down).
 MAX_SHOT_SECONDS = 9.0
 
-_CLAUSE_END = re.compile(r"[.!?;:,—–]$")
-_SENTENCE_END = re.compile(r"[.!?]$")
+_CLAUSE_MARK = re.compile(r"[;:,—–][\"'”’»)\]]*$")
+
+
+def _ends_clause(word: str) -> bool:
+    """A sentence end (`lines.ends_sentence`: never the stop of "Dr." or "U.S.") or a comma,
+    a semicolon, a colon, a dash."""
+    return ends_sentence(word) or bool(_CLAUSE_MARK.search(word))
 
 
 def montage_settings(settings: Any = None) -> dict[str, Any]:
@@ -100,7 +107,11 @@ def shot_count(words: int, *, shot_seconds: float, max_shots: int) -> int:
 def split_words(text: str, count: int) -> list[str]:
     """``text`` cut into ``count`` fragments of about equal length, each cut on a clause end
     (a comma, a full stop, a dash) when one lies near the ideal point, else between words.
-    Fewer fragments when the words cannot give each its MIN_SHOT_WORDS."""
+    Fewer fragments when the words cannot give each its MIN_SHOT_WORDS.
+
+    A title's or an abbreviation's stop is no clause end, and no cut falls right after one
+    (2026-10-16: "signed by Dr." / "Ellen Harper" were two shots and two voice takes, the
+    voice pausing between the title and the name)."""
     tokens = str(text or "").split()
     if count <= 1 or len(tokens) < 2 * MIN_SHOT_WORDS:
         return [" ".join(tokens)] if tokens else []
@@ -116,13 +127,17 @@ def split_words(text: str, count: int) -> list[str]:
         if low > high:
             cut = min(max(ideal, start + MIN_SHOT_WORDS), len(tokens) - MIN_SHOT_WORDS)
         else:
-            # A sentence end nearest the ideal, else a clause end, else the ideal word.
+            # A sentence end nearest the ideal, else a clause end, else the word nearest
+            # the ideal that does not follow a title ("Dr." | "Ellen").
             best = None
-            for pattern in (_SENTENCE_END, _CLAUSE_END):
-                near = [i for i in range(low, high + 1) if pattern.search(tokens[i - 1])]
+            for ends in (ends_sentence, _ends_clause):
+                near = [i for i in range(low, high + 1) if ends(tokens[i - 1])]
                 if near:
                     best = min(near, key=lambda i: abs(i - ideal))
                     break
+            if best is None:
+                free = [i for i in range(low, high + 1) if not stops_inside(tokens[i - 1])]
+                best = min(free, key=lambda i: abs(i - ideal)) if free else None
             cut = best if best is not None else ideal
         cut = max(start + 1, min(cut, len(tokens) - 1))
         if cut <= start:
@@ -184,36 +199,166 @@ def _runs(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return runs
 
 
-def _run_words(run: dict[str, Any]) -> int:
-    return sum(len(str(line.get("text") or "").split()) for line in run["lines"])
+def _words(text: Any) -> int:
+    return len(str(text or "").split())
+
+
+def _clips(seconds: float) -> int:
+    """How many clips ``seconds`` of speech need, each at most MAX_SHOT_SECONDS."""
+    return max(1, int(-(-seconds // MAX_SHOT_SECONDS)))
+
+
+def _line_parts(line: dict[str, Any], count: int) -> list[dict[str, Any]]:
+    """One line cut on its clauses into ``count`` parts (`split_words`), each part still
+    that line's: its speaker, its acting note, every other key it carries."""
+    if count <= 1:
+        return [line]
+    parts = split_words(str(line.get("text") or ""), count)
+    return [{**line, "text": part} for part in parts] if len(parts) > 1 else [line]
+
+
+def _partition(
+    sizes: list[int], joints: list[bool], count: int
+) -> tuple[tuple[int, int, int, float], list[int]]:
+    """``sizes`` (words, in order) cut into ``count`` consecutive groups: first as few
+    groups over MAX_SHOT_SECONDS as the cut allows, then as few under MIN_TAKE_SECONDS,
+    then as few cuts inside a line (``joints[i]``: size i continues the line of size i-1),
+    then as even as can be. Returns (that cost, the index where each group starts)."""
+    mean = sum(sizes) / count
+    prefix = [0]
+    for size in sizes:
+        prefix.append(prefix[-1] + size)
+
+    def cost(start: int, end: int) -> tuple[int, int, int, float]:
+        words = prefix[end] - prefix[start]
+        seconds = words * SECONDS_PER_SPOKEN_WORD
+        return (
+            int(seconds > MAX_SHOT_SECONDS),
+            int(seconds < MIN_TAKE_SECONDS),
+            int(start > 0 and joints[start]),
+            (words - mean) ** 2,
+        )
+
+    # best[j][i]: the cheapest cut of the first i sizes into j groups, and where its last
+    # group starts. The costs add up and compare in their order (a lexicographic sum), so
+    # the cheapest cut of the whole holds the cheapest cut of every prefix.
+    infinite = (len(sizes) + 1, len(sizes) + 1, len(sizes) + 1, float("inf"))
+    best = [[(infinite, 0)] * (len(sizes) + 1) for _ in range(count + 1)]
+    best[0][0] = ((0, 0, 0, 0.0), 0)
+    for j in range(1, count + 1):
+        for i in range(j, len(sizes) + 1):
+            for start in range(j - 1, i):
+                before = best[j - 1][start][0]
+                if before == infinite:
+                    continue
+                here = cost(start, i)
+                total = (
+                    before[0] + here[0],
+                    before[1] + here[1],
+                    before[2] + here[2],
+                    before[3] + here[3],
+                )
+                if total < best[j][i][0]:
+                    best[j][i] = (total, start)
+    starts: list[int] = []
+    end = len(sizes)
+    for j in range(count, 0, -1):
+        end = best[j][end][1]
+        starts.append(end)
+    return best[count][len(sizes)][0], starts[::-1]
 
 
 def _split_run(run: dict[str, Any], pieces: int) -> list[list[dict[str, Any]]]:
-    """A speaker's run cut into ``pieces`` groups of lines of about equal words: whole lines
-    first; one long line is cut on its clauses (`split_words`), its acting note kept on each
-    part."""
-    lines = run["lines"]
-    if pieces <= 1:
-        return [lines]
-    if len(lines) >= pieces:
-        groups: list[list[dict[str, Any]]] = [[] for _ in range(pieces)]
-        total = _run_words(run)
-        target = total / pieces
-        position, counted = 0, 0
-        for line in lines:
-            if position < pieces - 1 and counted >= target * (position + 1) and groups[position]:
-                position += 1
-            groups[position].append(line)
-            counted += len(str(line.get("text") or "").split())
-        return [group for group in groups if group]
-    text = " ".join(str(line.get("text") or "").strip() for line in lines)
-    direction = "; ".join(
-        dict.fromkeys(
-            str(line.get("direction") or "").strip() for line in lines if line.get("direction")
-        )
-    )
-    parts = split_words(text, pieces)
-    return [[{"speaker": run["speaker"], "text": part, "direction": direction}] for part in parts]
+    """A run's lines cut into about ``pieces`` shots of about equal words, never one over
+    MAX_SHOT_SECONDS (the clip) and, where the cut allows, none under MIN_TAKE_SECONDS.
+
+    Every line keeps its speaker and its acting note. A run of several voices (a two-shot)
+    is cut between its lines; a line itself is cut on its clauses (`split_words`) when it is
+    one voice's run that needs the pieces, or when whole lines cannot make shots within the
+    clip. A run the clip cannot hold in ``pieces`` is first cut finer, then given one piece
+    more (the beat's budget of shots is the Owner's, a piece more is one more still and
+    clip bought); a piece that would be a flicker goes back into its neighbour.
+
+    2026-10-16 review: a two-shot cut into more pieces than it had lines was joined into one
+    text and given to the first speaker (Kael said Sarah's «Fine, go.» in his voice), and
+    whole lines were never cut below the clip (a narrator opening of three lines gave a 14 s
+    shot, which the episode's «filmable» rule refused).
+    """
+    lines = [line for line in run["lines"] if _words(line.get("text"))]
+    if not lines:
+        return [list(run["lines"])]
+    one_voice = len({line.get("speaker") or None for line in lines}) == 1
+    # Each line in as many parts as the clip forces on it alone.
+    counts = [_clips(_words(line.get("text")) * SECONDS_PER_SPOKEN_WORD) for line in lines]
+    # The fewest pieces the clip allows the whole run.
+    fewest = _clips(sum(_words(line.get("text")) for line in lines) * SECONDS_PER_SPOKEN_WORD)
+
+    def units_of(counts: list[int]) -> list[tuple[int, dict[str, Any]]]:
+        return [
+            (index, part)
+            for index, (line, count) in enumerate(zip(lines, counts, strict=True))
+            for part in _line_parts(line, count)
+        ]
+
+    def cut_further(units: list[tuple[int, dict[str, Any]]]) -> bool:
+        # The line whose parts are longest takes one part more, when its words allow it.
+        have = [sum(1 for j, _part in units if j == i) for i in range(len(lines))]
+        order = sorted(range(len(lines)), key=lambda i: -_words(lines[i].get("text")) / have[i])
+        for i in order:
+            for more in range(counts[i] + 1, _words(lines[i].get("text")) // MIN_SHOT_WORDS + 1):
+                if len(_line_parts(lines[i], more)) > have[i]:
+                    counts[i] = more
+                    return True
+        return False
+
+    units = units_of(counts)
+    # One voice: as many parts as the shots asked for, its lines cut on their clauses.
+    while one_voice and len(units) < pieces and cut_further(units):
+        units = units_of(counts)
+    added = 0
+    while True:
+        sizes = [_words(part["text"]) for _index, part in units]
+        joints = [i > 0 and units[i - 1][0] == units[i][0] for i in range(len(units))]
+        count = max(1, min(max(pieces, fewest) + added, len(units)))
+        (over, short, _inside, _even), starts = _partition(sizes, joints, count)
+        if over:
+            # A piece over the clip: the lines cut finer, then one piece more.
+            if cut_further(units):
+                units = units_of(counts)
+            elif count < len(units):
+                added += 1
+            else:
+                break
+            continue
+        # A flicker: one piece fewer when the clip allows it...
+        clip_bound = False
+        while short and count > 1:
+            fewer, fewer_starts = _partition(sizes, joints, count - 1)
+            clip_bound = fewer[0] > 0
+            if clip_bound or fewer[1] >= short:
+                break
+            count -= 1
+            short, starts = fewer[1], fewer_starts
+        # ...else a line cut finer, so the few words join a piece of their neighbour's: for
+        # several voices only when whole lines cannot make shots within the clip.
+        if short and count > 1 and (one_voice or clip_bound) and cut_further(units):
+            units = units_of(counts)
+            continue
+        break
+
+    shots: list[list[dict[str, Any]]] = []
+    for start, end in zip(starts, [*starts[1:], len(units)], strict=True):
+        piece: list[dict[str, Any]] = []
+        previous = None
+        for index, part in units[start:end]:
+            if index == previous:
+                # Two parts of one line in one piece are that line again, whole.
+                piece[-1] = {**piece[-1], "text": f"{piece[-1]['text']} {part['text']}"}
+            else:
+                piece.append(part)
+            previous = index
+        shots.append(piece)
+    return shots
 
 
 def serial_shots(
@@ -227,7 +372,9 @@ def serial_shots(
     """A serial beat's shots: ``[{"lines", "size", "on", "shot", "of"}]``.
 
     One shot per speaker's run (the camera cuts with the dialogue); a run shorter than
-    MIN_TAKE_SECONDS joins its neighbour as a two-shot; a run longer than
+    MIN_TAKE_SECONDS joins the shot before it as a two-shot, or the speaking shot after it
+    when nothing speaks before it (the beat's first words, the first after the narrator) —
+    never the narrator's, and a beat's only line stays its own shot; a run longer than
     REACTION_SPLIT_SECONDS is cut in two, the second half a reaction shot on the listener
     (``on``), the words heard from beside the frame; a run longer than MAX_SHOT_SECONDS is
     cut into as many pieces as it needs. The first shot of the first beat establishes the
@@ -254,10 +401,27 @@ def serial_shots(
             and groups[-1]["speaker"] is not None
         ):
             groups[-1]["lines"] = [*groups[-1]["lines"], *run["lines"]]
-            if run["speaker"] != groups[-1]["speaker"]:
-                groups[-1]["shared"] = True
             continue
-        groups.append({"speaker": run["speaker"], "lines": list(run["lines"]), "shared": False})
+        groups.append({"speaker": run["speaker"], "lines": list(run["lines"])})
+    # A short run with no speaking shot before it (the beat opens on «Wait.», or it answers
+    # the narrator) joins the speaking shot after it, never the narrator's: on its own it
+    # was a shot of under a second, a still and a clip bought for a flicker (2026-10-16
+    # review). With no speaking shot after it either, it stays a shot of its own.
+    joined: list[dict[str, Any]] = []
+    waiting: dict[str, Any] | None = None
+    for group in groups:
+        if waiting is not None and group["speaker"] is not None:
+            group = {**group, "lines": [*waiting["lines"], *group["lines"]]}
+        elif waiting is not None:
+            joined.append(waiting)
+        waiting = None
+        seconds = _take_seconds(" ".join(str(line.get("text") or "") for line in group["lines"]))
+        opens = not joined or joined[-1]["speaker"] is None
+        if group["speaker"] is not None and seconds < MIN_TAKE_SECONDS and opens:
+            waiting = group
+            continue
+        joined.append(group)
+    groups = [*joined, waiting] if waiting is not None else joined
 
     # 2. How many pieces each shot is cut into: what its words ask (about shot_seconds each
     # past REACTION_SPLIT_SECONDS), within the beat's budget of max_shots — a run longer than
@@ -284,29 +448,26 @@ def serial_shots(
         wanted[max(loose, key=lambda i: wanted[i])] -= 1
 
     # 3. The shots: a cut run alternates the speaker and the listener (the words go on,
-    # heard from beside the frame); a shared shot is a two-shot.
+    # heard from beside the frame). A piece is on whoever speaks in it, a two-shot when two
+    # do; a reaction is only ever on a listener who says nothing in it.
     shots: list[dict[str, Any]] = []
     for group, pieces in zip(groups, wanted, strict=True):
         others = [name for name in distinct if name != group["speaker"]]
-        listener = others[0] if others and group["speaker"] is not None else None
         run = {"speaker": group["speaker"], "lines": group["lines"]}
-        for piece_index, piece in enumerate(
-            _split_run(run, pieces) if pieces > 1 else [group["lines"]]
-        ):
+        for piece_index, piece in enumerate(_split_run(run, pieces)):
+            voices = list(dict.fromkeys(str(line.get("speaker") or "") or None for line in piece))
+            silent = [name for name in others if name not in voices]
+            listener = silent[0] if silent and group["speaker"] is not None else None
             reaction = piece_index % 2 == 1 and listener is not None
             if group["speaker"] is None:
-                size = "establishing"  # the voice in off over the room and its people
+                size, on = "establishing", None  # the voice in off over the room and its people
+            elif reaction:
+                size, on = "reaction", listener
+            elif len(voices) > 1:
+                size, on = "two_shot", group["speaker"]
             else:
-                size = "reaction" if reaction else ("two_shot" if group["shared"] else "single")
-            shots.append(
-                {
-                    "lines": piece,
-                    "size": size,
-                    "on": listener if reaction else group["speaker"],
-                    "shot": 0,
-                    "of": 0,
-                }
-            )
+                size, on = "single", voices[0] if voices else group["speaker"]
+            shots.append({"lines": piece, "size": size, "on": on, "shot": 0, "of": 0})
     if first_beat and shots:
         shots[0]["size"] = "establishing"
     kind = str(part or "").strip().lower()

@@ -60,7 +60,6 @@ from __future__ import annotations
 import copy
 import json
 import logging
-import re
 from typing import Any
 from uuid import uuid4
 
@@ -84,7 +83,14 @@ from app.factual.sanitizer import wrap_in_inert_boundary
 from app.providers.registry import ProviderRegistry
 from app.publishing.models import ChannelRecord
 from app.services import append_event, utc_now
-from app.story.lines import NameBook, beat_lines, participants, speakers_of, spoken_text
+from app.story.lines import (
+    NameBook,
+    beat_lines,
+    participants,
+    sentence_count,
+    speakers_of,
+    spoken_text,
+)
 from app.story.locations import location_id, studio_locations
 from app.story.models import ContinuityState, DailyStudioLog, StoryEpisode
 from app.story.projection import leaks
@@ -341,7 +347,9 @@ def _length(beats: list[dict], seconds: float) -> dict[str, Any]:
 
 
 def _sentences(text: str) -> int:
-    return len([part for part in re.split(r"[.!?]+", text) if part.strip()])
+    # A title's stop ("Dr. Aris"), an abbreviation's or a decimal's point ends no sentence
+    # (`lines.sentence_count`): the roster's "Dr. Aris" counted as two, 2026-10-16.
+    return sentence_count(text)
 
 
 def _narration(lines_by_beat: list[list[dict[str, Any]]], v3: bool) -> dict[str, Any]:

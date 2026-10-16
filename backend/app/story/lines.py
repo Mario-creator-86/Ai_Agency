@@ -35,6 +35,16 @@ _DIRECTION = re.compile(r"\(([^()]{1,160})\)|\[([^\[\]]{1,160})\]|\*([^*]{1,160}
 #: is part of what is said.
 _LABEL = re.compile(r"^\s*([^:\n]{1,60}?)\s*:\s*(.+)$", re.DOTALL)
 
+#: Words whose full stop belongs to the word, not to the end of a sentence: the titles before
+#: a name and the abbreviations a script writes mid-sentence ("Dr. Aris", "the U.S. Navy").
+#: Kept without their last stop, as `stops_inside` compares them.
+_ABBREVIATIONS = frozenset(
+    {"dr", "mr", "mrs", "ms", "prof", "st", "jr", "sr", "u.s", "u.k", "e.g", "i.e", "vs"}
+)
+#: What may close a sentence after its mark ('"go."', "(done.)") or open a word before it.
+_CLOSERS = "\"'”’»)]}"
+_OPENERS = "\"'“‘«([{"
+
 
 def _key(text: Any) -> str:
     """A name as compared: case folded, spaces collapsed, outer punctuation off."""
@@ -164,6 +174,46 @@ def beat_lines(beat: dict[str, Any], names: NameBook | None = None) -> list[dict
         if line is not None:
             found.append(line)
     return found
+
+
+def stops_inside(word: Any) -> bool:
+    """Whether a word's full stop is part of the word: a title or an abbreviation
+    (`_ABBREVIATIONS`), or a single capital initial ("J. Robert"). "I." is not an initial:
+    "So did I." ends a line far more often than a name starts with it."""
+    bare = str(word or "").strip().rstrip(_CLOSERS).lstrip(_OPENERS)
+    if not bare.endswith(".") or bare.endswith(".."):
+        return False
+    stem = bare[:-1]
+    initial = len(stem) == 1 and stem.isalpha() and stem.isupper() and stem != "I"
+    return initial or stem.casefold() in _ABBREVIATIONS
+
+
+def ends_sentence(word: Any) -> bool:
+    """Whether a word ends its sentence: its last mark, before any closing quote or bracket,
+    is a full stop, a question or an exclamation mark — and the stop is not a title's, an
+    abbreviation's or an initial's (`stops_inside`). A decimal ("3.5") ends nothing: its
+    point is inside the word.
+
+    Measured 2026-10-16: «Dr. Aris guards his numbers.» was two sentences to the narration
+    check and two shots, two voice takes, to the montage, cut between the title and the name.
+    """
+    bare = str(word or "").strip().rstrip(_CLOSERS)
+    if not bare or bare[-1] not in ".!?":
+        return False
+    return not stops_inside(bare)
+
+
+def sentence_count(text: Any) -> int:
+    """How many sentences ``text`` holds (`ends_sentence`); words after the last full stop
+    are one more, and marks with no word before them are none."""
+    count, open_sentence = 0, False
+    for word in str(text or "").split():
+        if any(char.isalnum() for char in word):
+            open_sentence = True
+        if open_sentence and ends_sentence(word):
+            count += 1
+            open_sentence = False
+    return count + (1 if open_sentence else 0)
 
 
 def spoken_text(lines: Iterable[dict[str, Any]]) -> str:

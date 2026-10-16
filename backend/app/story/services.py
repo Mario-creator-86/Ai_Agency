@@ -211,6 +211,24 @@ def _text_or_empty(value: Any) -> Any:
     return "" if value is None else value
 
 
+def _cited(value: Any) -> Any:
+    """A beat's event ids as the model meant them. A beat of the story's own cites nothing
+    (2026-10-16), and a model says so with null, "none" or the format's own "<...>": each is
+    an empty list, not a refusal. Until this, null refused the whole answer with a format
+    reason that never named the field, and "none" was refused as an event that never
+    happened, so both drafts of a run could be lost to it."""
+    if value is None:
+        return []
+    kept = []
+    for item in value if isinstance(value, list) else [value]:
+        text = "" if item is None else str(item).strip()
+        key = " ".join(text.casefold().split()).strip(" \"'").rstrip(".!")
+        if not key or key in _MEANS_EMPTY or (key.startswith("<") and key.endswith(">")):
+            continue
+        kept.append(text)
+    return kept
+
+
 class _Line(BaseModel):
     """One spoken line: who says it, the words said, and how (never said)."""
 
@@ -265,6 +283,7 @@ class _Beat(BaseModel):
     #: The day's events this beat draws on, each in the day's log; none when the beat is
     #: the story's own (2026-10-16: the story is invented, the day is its backdrop).
     event_ids: list[str] = Field(default_factory=list, max_length=10)
+    _no_citation = field_validator("event_ids", mode="before")(_cited)
     # A scene of 330 characters where 300 were allowed threw the whole episode away.
     _clip_scene = field_validator("scene", mode="before")(joined(800))
     _clip_part = field_validator("part", mode="before")(
@@ -1017,7 +1036,7 @@ Answer ONLY with one JSON object in this format, nothing before or after it:
       "text": "<the words said aloud>",
       "direction": "<an optional acting note>"}}],
     "background": ["<a silent name from ALLOWED_NAMES>"],
-    "event_ids": ["<an id from EVENTS, or none>"]}}],
+    "event_ids": []}}],
   "summary": "<one paragraph: what happened in this episode>",
   "logline": "<one sentence for a stranger: who wants what today, without the button>",
   "threads_continued": [], "threads_closed": [], "threads_opened": [], "recurring": [],
@@ -1438,9 +1457,27 @@ def _judge_the_plan(session: Session, judged: dict[str, Any], by_episode_id: str
     earlier.continuity_json = continuity
 
 
+#: The voice in off as `is_narrator` compares it: cased down, brackets, a leading "the" and the
+#: outer punctuation taken off ("V.O." is "v.o").
+_NARRATOR_LABELS = frozenset(
+    {NARRATOR_NAME.casefold(), "voice-over", "voiceover", "voice over", "v.o"}
+)
+_BRACKETED = re.compile(r"\([^()]*\)|\[[^\[\]]*\]")
+
+
 def is_narrator(speaker: Any) -> bool:
-    """Whether a written speaker is the voice in off (NARRATOR_NAME, any case)."""
-    return str(speaker or "").strip().lower() == NARRATOR_NAME.lower()
+    """Whether a written speaker is the voice in off: NARRATOR_NAME as a screenplay writes
+    it too — any case, a bracketed "(V.O.)" or "(O.S.)", a leading "The", a trailing colon —
+    or a voice-over by name (`_NARRATOR_LABELS`). Until 2026-10-16 only "Narrator" was, and
+    "Narrator (V.O.)" was a stranger in the studio who refused the whole episode."""
+    raw = str(speaker or "")
+    key = _BRACKETED.sub(" ", raw)
+    if not key.strip(" .,;:!?-—–"):
+        key = raw.replace("(", " ").replace(")", " ").replace("[", " ").replace("]", " ")
+    key = " ".join(key.casefold().split()).strip(" .,;:!?\"'-—–")
+    if key.startswith("the "):
+        key = key[4:].strip()
+    return key in _NARRATOR_LABELS
 
 
 def _episode_from_answer(
