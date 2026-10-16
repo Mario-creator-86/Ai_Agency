@@ -61,6 +61,7 @@ from app.agents.memory import (
 from app.agents.messages import post_message
 from app.agents.models import Agent, AgentMessage, AgentRun, MemoryRecord, Role
 from app.analytics.models import DirectorDecision
+from app.factual.models import ScriptDraft, TopicIdea
 from app.media.models import Storyboard
 from app.models import OwnerPolicy
 from app.schemas import AutonomyModeCommand, EnvironmentCommand, PolicyCommand
@@ -628,10 +629,33 @@ def test_an_old_ask_about_a_film_still_in_work_is_kept_and_the_words_are_true(
         session.get(Storyboard, closed).status = "REJECTED"
         log_id = _day_log(session)
         live_episode = _episode(session, log_id, "DRAFT")
+
+        def topic_of(board_id: str) -> str:
+            board = session.get(Storyboard, board_id)
+            return str(session.get(ScriptDraft, board.script_draft_id).topic_id)
+
+        # A chosen topic with no film yet is the work in hand; a chosen topic keeps its status
+        # after its film is over, and an ask about it is then about no work at all.
+        unfilmed = str(uuid4())
+        session.add(
+            TopicIdea(
+                id=unfilmed,
+                title="Chosen, not yet filmed",
+                topic="space",
+                angle="fixture",
+                target_audience="test",
+                novelty_score=0.9,
+                status="SELECTED",
+                created_at=ago(days=STALE_ASK_DAYS + 6),
+            )
+        )
         for key, body in (
             ("live film", {"storyboard_id": live}),
             ("live episode", {"episode_id": live_episode}),
+            ("live topic", {"topic_id": topic_of(live)}),
+            ("unfilmed topic", {"topic_id": unfilmed}),
             ("closed film", {"storyboard_id": closed}),
+            ("topic filmed out", {"topic_id": topic_of(closed)}),
             ("nothing", {}),
         ):
             row = post_message(
@@ -646,13 +670,14 @@ def test_an_old_ask_about_a_film_still_in_work_is_kept_and_the_words_are_true(
             row.created_at = ago(days=STALE_ASK_DAYS + 5)
             ids[key] = row.id
     result = expire_stale_asks(engine)
-    assert result["by_reason"] == {FILM_CLOSED: 1, EXPIRED: 1}
+    assert result["by_reason"] == {FILM_CLOSED: 1, EXPIRED: 2}
     with Session(engine) as session:
-        for key in ("live film", "live episode"):
+        for key in ("live film", "live episode", "live topic", "unfilmed topic"):
             assert session.get(AgentMessage, ids[key]).status == "OPEN", key
-        expired = session.get(AgentMessage, ids["nothing"])
-        assert expired.status == "ANSWERED"
-        assert "fără să țină de un film în lucru" in expired.resolution
+        for key in ("nothing", "topic filmed out"):
+            expired = session.get(AgentMessage, ids[key])
+            assert expired.status == "ANSWERED", key
+            assert "fără să țină de un film în lucru" in expired.resolution
 
 
 def test_nothing_is_swept_while_the_owner_has_stopped_autonomy(engine, staffed):  # noqa: F811

@@ -193,11 +193,25 @@ class _Subjects:
         _exists, closed, title = self._board(storyboard_id)
         return closed, title
 
+    def _topic_filmed_out(self, topic_id: str) -> bool:
+        """Whether the topic has films and every one of them is over (a chosen topic keeps its
+        status after its film is published)."""
+        from app.factual.models import ScriptDraft  # noqa: PLC0415 - factual imports agents
+        from app.media.models import Storyboard  # noqa: PLC0415 - media imports agents
+
+        boards = self.session.scalars(
+            select(Storyboard.id)
+            .join(ScriptDraft, ScriptDraft.id == Storyboard.script_draft_id)
+            .where(ScriptDraft.topic_id == topic_id)
+        ).all()
+        return bool(boards) and all(self._board(str(board))[1] for board in boards)
+
     def live(self, body: dict[str, Any]) -> bool:
         """Whether the letter names a film still in work: a storyboard that exists and is not
-        over, an episode not refused, or a topic chosen for a film. Such an ask is about the
-        work in hand and is kept however long that takes (a film can wait days on a card);
-        `closed` has already closed the ones whose film, episode or topic is over."""
+        over, an episode not refused, or a topic chosen for a film that is not yet over (no
+        film yet, or one still in work). Such an ask is about the work in hand and is kept
+        however long that takes (a film can wait days on a card); `closed` has already closed
+        the ones whose film, episode or topic is over."""
         storyboard_id = str(body.get("storyboard_id") or "")
         if storyboard_id:
             exists, closed, _title = self._board(storyboard_id)
@@ -215,7 +229,11 @@ class _Subjects:
             from app.factual.models import TopicIdea  # noqa: PLC0415 - factual imports agents
 
             topic = self.session.get(TopicIdea, topic_id)
-            if topic is not None and topic.status in LIVE_TOPIC_STATUSES:
+            if (
+                topic is not None
+                and topic.status in LIVE_TOPIC_STATUSES
+                and not self._topic_filmed_out(topic_id)
+            ):
                 return True
         return False
 
