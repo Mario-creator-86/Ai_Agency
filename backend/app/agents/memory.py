@@ -353,8 +353,62 @@ DAILY_REVIEW_MARKER = "Daily review:"
 
 
 #: The head of each TEMP_CONTEXT row the same review writes per priority it set; they live
-#: `TEMP_CONTEXT_DAYS` (`agents.director.director_review`).
+#: `TEMP_CONTEXT_DAYS` (`agents.director.director_review`). `remember` writes none for a
+#: priority a live row already says: that row, whichever review wrote it, says it.
 PRIORITY_MARKER = "Priority:"
+#: How the daily review row says the priorities it set, after its summary: this head, then
+#: their words joined by `PRIORITIES_JOIN` (`agents.director.director_review`).
+PRIORITIES_HEAD = " Priorities: "
+PRIORITIES_JOIN = "; "
+
+
+@dataclass(frozen=True)
+class StandingPriorities:
+    """The priorities in force: those her newest review that set any gave
+    (`own_priorities`)."""
+
+    #: That review's «Daily review:» row: its minute is when she set them.
+    review: MemoryRecord
+    #: What tells them: her live «Priority:» row for each, in her order, whichever review
+    #: wrote it; the review row whole, which says them, when one has no live row; or, when the
+    #: review row does not read back whole (clipped), the live rows its own run wrote.
+    rows: list[MemoryRecord]
+    #: Their words, in her order: a row that holds them all says them, and they need no
+    #: telling beside it.
+    words: tuple[str, ...] = ()
+
+
+def _priority_words(row: MemoryRecord) -> str:
+    """A «Priority:» row's words, as the review row joins them («Priority: X» → «X»)."""
+    return row.content.removeprefix(PRIORITY_MARKER).removeprefix(" ")
+
+
+def _said_priorities(content: str, words: Iterable[str]) -> list[str] | None:
+    """The priorities a daily review row ends by saying, in her order: after
+    `PRIORITIES_HEAD`, these words joined by `PRIORITIES_JOIN`, each whole. None when its end
+    is not that: its summary said «Priorities:» and the review set none. Read from the back, a
+    whole priority at a time, so a priority may hold «; » and a summary « Priorities: » (69 of
+    the 281 «Priority:» rows and 7 of the 119 reviews on the copy of studio-20261016T115708Z
+    do)."""
+    if PRIORITIES_HEAD not in content:
+        return None
+    texts = sorted({text for text in words if text}, key=len, reverse=True)
+    # The end of each list still to read back, and the priorities read after it.
+    ends: dict[int, list[str]] = {len(content): []}
+    for end in range(len(content), 0, -1):
+        later = ends.get(end)
+        if later is None:
+            continue
+        for text in texts:
+            start = end - len(text)
+            if start < 0 or not content.startswith(text, start):
+                continue
+            said = [text, *later]
+            if content.endswith(PRIORITIES_HEAD, 0, start):
+                return said
+            if content.endswith(PRIORITIES_JOIN, 0, start):
+                ends.setdefault(start - len(PRIORITIES_JOIN), said)
+    return None
 
 
 def own_review(session: Session, agent: Agent) -> MemoryRecord | None:
@@ -375,40 +429,79 @@ def own_review(session: Session, agent: Agent) -> MemoryRecord | None:
     )
 
 
-def own_priorities(session: Session, agent: Agent) -> list[MemoryRecord]:
-    """The priorities her newest review that set any still holds: its live «Priority: …»
-    TEMP_CONTEXT rows (one per priority, `TEMP_CONTEXT_DAYS`), in the order she set them; []
-    when none lives. The review runs at every mail round now (33 on 2026-10-15) and 40 of the
-    119 «Daily review:» rows on the copy of studio-20261016T115708Z set none, so her newest
-    review alone would leave the priorities of the one before untold. Older reviews'
-    priorities, still live, are not told: the newest set she gave replaces them (120 live rows
-    from 44 reviews on that copy, 23,483 characters)."""
-    newest = session.scalar(
+def own_priorities(session: Session, agent: Agent) -> StandingPriorities | None:
+    """The priorities in force: those her newest review that set any gave, while that review
+    is younger than `TEMP_CONTEXT_DAYS`; None when no review of that age set any.
+
+    The review runs at every mail round now (33 on 2026-10-15) and 40 of the 119 «Daily
+    review:» rows on the copy of studio-20261016T115708Z set none, so her newest review alone
+    would leave the priorities of the one before untold. Older reviews' priorities, still live,
+    are not told: the newest set she gave replaces them (120 live rows from 44 reviews on that
+    copy, 23,483 characters).
+
+    Her review decides, not the run that wrote a «Priority:» row: `remember` writes no row for
+    a priority a live row already says, so a repeated priority keeps the row, run and expiry of
+    the review that first set it, and a review that repeats them all writes none (on that
+    copy, of the 39 reviews since 2026-10-14 whose run's answer matches their row, 14 set a
+    priority with no row of its own, 27 priorities in all). The review row's own words
+    say her set, in her order; each is told by her live row with those words, whichever review
+    wrote it, and the review row is told whole when one of them has none (its older row lapsed
+    before the set did). A review whose summary says «Priorities:» but whose end is no list of
+    her rows set none, and the set before it stays in force; one whose run wrote rows set
+    them, and when its row does not read back whole (rows were clipped at `MAX_CONTENT`
+    characters until 2026-10-15) the live rows its run wrote are told."""
+    now = datetime.now(UTC)
+    since = (now - timedelta(days=TEMP_CONTEXT_DAYS)).isoformat()
+    # Every row a review of that age could have said its priorities by: the rows live at its
+    # time, its own among them. The newest row with each words says them.
+    rows: dict[str, MemoryRecord] = {}
+    wrote: dict[str, list[MemoryRecord]] = {}
+    for row in session.scalars(
         select(MemoryRecord)
         .where(
-            *_readable(agent, ["TEMP_CONTEXT"]),
+            MemoryRecord.memory_class == "TEMP_CONTEXT",
             MemoryRecord.agent_id == agent.id,
+            MemoryRecord.invalidated_at.is_(None),
             MemoryRecord.content.like(f"{PRIORITY_MARKER}%"),
+            MemoryRecord.created_at >= (now - timedelta(days=2 * TEMP_CONTEXT_DAYS)).isoformat(),
         )
         .order_by(MemoryRecord.created_at.desc())
-        .limit(1)
-    )
-    if newest is None:
-        return []
-    if not newest.source_id:
-        return [newest]
-    return list(
-        session.scalars(
-            select(MemoryRecord)
-            .where(
-                *_readable(agent, ["TEMP_CONTEXT"]),
-                MemoryRecord.agent_id == agent.id,
-                MemoryRecord.content.like(f"{PRIORITY_MARKER}%"),
-                MemoryRecord.source_id == newest.source_id,
-            )
-            .order_by(MemoryRecord.created_at, MemoryRecord.id)
+    ):
+        rows.setdefault(_priority_words(row), row)
+        if row.source_id:
+            wrote.setdefault(row.source_id, []).append(row)
+    if not rows:
+        return None
+    live = utc_now()
+
+    def alive(row: MemoryRecord) -> bool:
+        return row.expires_at is None or row.expires_at > live
+
+    for review in session.scalars(
+        select(MemoryRecord)
+        .where(
+            *_readable(agent, ["AGENT_OPINION"]),
+            MemoryRecord.agent_id == agent.id,
+            MemoryRecord.content.like(f"{DAILY_REVIEW_MARKER}%"),
+            MemoryRecord.created_at >= since,
         )
-    )
+        .order_by(MemoryRecord.created_at.desc())
+    ):
+        said = _said_priorities(review.content, rows)
+        if said is None:
+            own = wrote.get(review.source_id or "")
+            if not own:
+                continue
+            # It set some, and its row does not read back whole: its run's rows say them.
+            kept = [row for row in reversed(own) if alive(row)]
+            if not kept:
+                return None
+            return StandingPriorities(review, kept, tuple(_priority_words(row) for row in kept))
+        told = list({rows[words].id: rows[words] for words in said}.values())
+        if all(alive(row) for row in told):
+            return StandingPriorities(review, told, tuple(said))
+        return StandingPriorities(review, [review], tuple(said))
+    return None
 
 
 def tied_memory(

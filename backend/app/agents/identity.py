@@ -40,7 +40,6 @@ from app.agents.memory import (
     POLICY_DECISION,
     POLICY_IN_FORCE,
     POLICY_SUPERSEDED,
-    PRIORITY_MARKER,
     PolicyRow,
     own_priorities,
     own_review,
@@ -911,18 +910,23 @@ def compose_identity(
         )
 
     review = own_review(session, agent) if ctx.own_review else None
-    priorities = own_priorities(session, agent) if ctx.own_review else []
-    if review is not None and all(
-        row.content.removeprefix(PRIORITY_MARKER).strip() in review.content for row in priorities
+    standing = own_priorities(session, agent) if ctx.own_review else None
+    if (
+        standing is not None
+        and review is not None
+        and standing.words
+        and all(words in review.content for words in standing.words)
     ):
-        priorities = []  # the newest review set them: its row says them whole
+        standing = None  # her newest review's row, told whole, says them all
+    priorities = standing.rows if standing is not None else []
     if review is not None:
         lines.append("YOUR LAST DAILY REVIEW (weigh it in this decision):")
         lines.append(_memory_line(review))
-    if priorities:
+    if standing is not None:
         lines.append(
             "THE PRIORITIES YOU SET FOR THE NEXT DAY, in your newest review that set any, "
-            f"{_minute(priorities[0].created_at)} (still in force; weigh them in this decision):"
+            f"{_minute(standing.review.created_at)} (still in force; weigh them in this "
+            "decision):"
         )
         lines.extend(_memory_line(row) for row in priorities)
 
@@ -986,6 +990,7 @@ def compose_identity(
         "owner_letter_memory": owner_letter is not None,
         "own_review_id": review.id if review is not None else None,
         "own_priority_ids": [row.id for row in priorities],
+        "own_priority_review_id": standing.review.id if standing is not None else None,
         "direction_message_ids": [row.id for row in weekly],
         "decision_message_ids": [row.id for row in assigned],
         "direction_chars": direction_chars,

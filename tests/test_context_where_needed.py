@@ -56,6 +56,7 @@ from app.agents.memory import (
     POLICY_DECISION,
     POLICY_IN_FORCE,
     POLICY_SUPERSEDED,
+    TEMP_CONTEXT_DAYS,
     owner_policy_rows,
     remember,
 )
@@ -665,35 +666,64 @@ def test_her_look_at_the_bought_pictures_comes_back_to_her_next_review_of_the_fi
 # --------------------------------------------------------------------------- C9
 
 
-def _review(session, sarah_id: str, words: str, priorities: list[str], **before) -> list[str]:
-    """What `director.director_review` writes: her «Daily review:» row and one TEMP_CONTEXT
-    «Priority:» row per priority, all from one run, in that order. Returns the priority rows'
-    ids."""
-    run = str(uuid4())
-    moment = datetime.now(UTC) - timedelta(**before)
-    row = remember(
-        session,
-        memory_class="AGENT_OPINION",
-        content=f"Daily review: {words}"
-        + (" Priorities: " + "; ".join(priorities) if priorities else ""),
-        source_type="run",
-        source_id=run,
-        agent_id=sarah_id,
-    )
-    row.created_at = moment.isoformat()
-    ids = []
-    for number, priority in enumerate(priorities, start=1):
-        kept = remember(
+def _her_review(engine, team, words: str, priorities: list[str], **before) -> str:
+    """Her daily review through `director.director_review` itself, then moved ``before`` into
+    the past: a note in her inbox, the model's answer, and what the review writes — her «Daily
+    review:» row and, through `memory.remember`, a «Priority:» row for each priority that no
+    live row already says. Returns its run id."""
+    with Session(engine) as session, session.begin():
+        post_message(
             session,
-            memory_class="TEMP_CONTEXT",
-            content=f"Priority: {priority}",
-            source_type="run",
-            source_id=run,
-            agent_id=sarah_id,
+            intent="STATUS",
+            subject=f"Evening note {uuid4().hex[:8]}",
+            body={},
+            body_text="Nothing new on the floor.",
+            from_agent_id=team["agents"]["VideoEditor"].id,
         )
-        kept.created_at = (moment + timedelta(milliseconds=number)).isoformat()
-        ids.append(kept.id)
-    return ids
+
+    def answer(prompt):
+        assert 'hash="director-inbox"' in prompt
+        return json.dumps({"summary": words, "decisions": [], "priorities": priorities})
+
+    registry, _model = registry_with(team, answer)
+    run_id = director_review(engine, registry, str(uuid4()))["run_id"]
+    _age(engine, timedelta(**before), run_id)
+    return run_id
+
+
+def _age(engine, delta: timedelta, *run_ids: str) -> None:
+    """Moves the memory rows these runs wrote (every review's, with none named) ``delta`` into
+    the past, their expiry with them: the time that passed since they were written."""
+    with Session(engine) as session, session.begin():
+        query = select(MemoryRecord).where(
+            MemoryRecord.content.like("Daily review:%") | MemoryRecord.content.like("Priority:%")
+        )
+        if run_ids:
+            query = query.where(MemoryRecord.source_id.in_(run_ids))
+        for row in session.scalars(query):
+            row.created_at = (datetime.fromisoformat(row.created_at) - delta).isoformat()
+            if row.expires_at:
+                row.expires_at = (datetime.fromisoformat(row.expires_at) - delta).isoformat()
+
+
+def _priority_row(engine, priority: str) -> tuple[str, str]:
+    """The id of the one «Priority:» row with these words, and the run that wrote it."""
+    with Session(engine) as session:
+        row = session.scalars(
+            select(MemoryRecord).where(MemoryRecord.content == f"Priority: {priority}")
+        ).one()
+        return row.id, row.source_id
+
+
+def _review_row(engine, run_id: str) -> tuple[str, str]:
+    """The id of a review's «Daily review:» row, and its minute as a heading says it."""
+    with Session(engine) as session:
+        row = session.scalars(
+            select(MemoryRecord).where(
+                MemoryRecord.source_id == run_id, MemoryRecord.content.like("Daily review:%")
+            )
+        ).one()
+        return row.id, f"{row.created_at[:16].replace('T', ' ')} UTC"
 
 
 def test_her_priorities_reach_her_management_work_when_her_newest_review_sets_none(
@@ -705,43 +735,157 @@ def test_her_priorities_reach_her_management_work_when_her_newest_review_sets_no
     rows of the one before reached no task (direct_company at 23:23:40Z followed the 22:29:53Z
     review, which set none, and was not told the 22:25:10Z priorities)."""
     sarah = staffed["agents"]["Director"]
-    with Session(engine) as session, session.begin():
-        _review(session, sarah.id, "two days ago.", ["ALPHA old priority"], hours=30)
-        kept = _review(
-            session,
-            sarah.id,
-            "busy day.",
-            ["GAMMA ship the serial first", "DELTA one short a day"],
-            hours=5,
-        )
-        _review(session, sarah.id, "two letters answered, nothing new.", [], hours=1)
+    _her_review(engine, staffed, "two days ago.", ["ALPHA old priority"], hours=30)
+    busy = _her_review(
+        engine,
+        staffed,
+        "busy day.",
+        ["GAMMA ship the serial first", "DELTA one short a day"],
+        hours=5,
+    )
+    _her_review(engine, staffed, "two letters answered, nothing new.", [], hours=1)
+    kept = [
+        _priority_row(engine, p)[0]
+        for p in ("GAMMA ship the serial first", "DELTA one short a day")
+    ]
     for task in ("direct_company", "choose_topic"):
         identity = identity_of(engine, sarah.id, task)
         assert "Daily review: two letters answered, nothing new." in identity.system, task
         assert "Priority: GAMMA ship the serial first" in identity.system, task
         assert "Priority: DELTA one short a day" in identity.system, task
+        assert _review_row(engine, busy)[1] in identity.system, "the minute she set them"
         assert "ALPHA" not in identity.system, "a newer set of priorities replaced it"
         assert identity.context["own_priority_ids"] == kept, task
+        assert identity.context["own_priority_review_id"] == _review_row(engine, busy)[0]
         assert set(kept) <= set(identity.context["memory_record_ids"]), task
     assert "GAMMA" not in identity_of(engine, sarah.id, "director_prompt_audit").system
 
     # When the newest review sets them, its own row says them: not told twice.
-    with Session(engine) as session, session.begin():
-        _review(session, sarah.id, "evening.", ["EPSILON the episode first"], minutes=5)
+    _her_review(engine, staffed, "evening.", ["EPSILON the episode first"], minutes=5)
     identity = identity_of(engine, sarah.id, "direct_company")
     assert identity.system.count("EPSILON the episode first") == 1
     assert identity.context["own_priority_ids"] == []
+    assert identity.context["own_priority_review_id"] is None
     assert "GAMMA" not in identity.system
 
-    # Priorities live TEMP_CONTEXT_DAYS: once they lapse, none is told.
-    with Session(engine) as session, session.begin():
-        for row in session.scalars(
-            select(MemoryRecord).where(MemoryRecord.content.like("Priority:%"))
-        ):
-            row.expires_at = ago(minutes=1)
-        _review(session, sarah.id, "quiet.", [], minutes=1)
+    # Priorities live TEMP_CONTEXT_DAYS from the review that set them: once it is that old,
+    # none is told.
+    _age(engine, timedelta(days=TEMP_CONTEXT_DAYS))
+    _her_review(engine, staffed, "quiet.", [])
     identity = identity_of(engine, sarah.id, "direct_company")
-    assert "Priority:" not in identity.system and "EPSILON" not in identity.system
+    assert "Daily review: quiet." in identity.system
+    assert "EPSILON" not in identity.system and "GAMMA" not in identity.system
+    assert identity.context["own_priority_ids"] == []
+
+
+def test_her_newest_set_of_priorities_is_told_whole_whichever_review_wrote_their_rows(
+    engine,
+    staffed,  # noqa: F811
+):
+    """`memory.remember` writes no row when an identical live row exists. So a priority her
+    review repeats keeps the row, the run and the expiry of the review that first set it, and a
+    review that repeats them all writes no «Priority:» row at all. On the 2026-10-16 copy, of
+    the 39 reviews since 2026-10-14 whose run's answer matches their row, 14 set a priority
+    with no row of its own.
+    Taken by the newest row's run, her newest set lost its repeats, a set she had dropped came
+    back «still in force», and the heading carried an older review's minute.
+
+    Her newest review that set any decides: its own words, matched to her live rows whole (a
+    priority may hold «; », and a summary «Priorities:» that set nothing); its row whole when
+    one of its rows has lapsed before it."""
+    sarah = staffed["agents"]["Director"]
+    alpha, beta, gamma = (
+        "ALPHA ship the serial",
+        "BETA one short a day",
+        "GAMMA fix the audio; then mix",
+    )
+    one = _her_review(engine, staffed, "day one.", [alpha, beta], hours=70)
+    two = _her_review(engine, staffed, "day two.", [alpha, gamma], hours=5)
+    # A summary that says «Priorities:» sets none: the set before stays in force.
+    _her_review(engine, staffed, "letters answered. Priorities: as before.", [], hours=1)
+    alpha_id, alpha_run = _priority_row(engine, alpha)
+    gamma_id, gamma_run = _priority_row(engine, gamma)
+    assert (alpha_run, gamma_run) == (one, two), "her repeat wrote no row"
+    for task in ("direct_company", "choose_topic"):
+        identity = identity_of(engine, sarah.id, task)
+        assert f"Priority: {alpha}" in identity.system, "her newest set's first priority"
+        assert f"Priority: {gamma}" in identity.system, task
+        assert beta not in identity.system, "her newer set dropped it"
+        assert _review_row(engine, two)[1] in identity.system, "the minute of her newest set"
+        assert _review_row(engine, one)[1] not in identity.system, task
+        assert identity.context["own_priority_ids"] == [alpha_id, gamma_id], task
+
+    # She sets ALPHA alone: GAMMA, whose row is the newest, is no longer in force.
+    _her_review(engine, staffed, "day three.", [alpha], minutes=40)
+    _her_review(engine, staffed, "nothing new.", [], minutes=30)
+    identity = identity_of(engine, sarah.id, "direct_company")
+    assert f"Priority: {alpha}" in identity.system
+    assert "GAMMA" not in identity.system and beta not in identity.system
+    assert identity.context["own_priority_ids"] == [alpha_id]
+
+    # A review that repeats them all, in a new order, writes no row; it says them itself.
+    evening = _her_review(engine, staffed, "evening.", [gamma, alpha], minutes=20)
+    identity = identity_of(engine, sarah.id, "direct_company")
+    assert identity.system.count(alpha) == 1 and identity.system.count(gamma) == 1
+    assert identity.context["own_priority_ids"] == []
+    # After a review that sets none they are told in her order, under her minute.
+    _her_review(engine, staffed, "quiet.", [], minutes=10)
+    identity = identity_of(engine, sarah.id, "direct_company")
+    told = identity.system
+    assert told.index(f"Priority: {gamma}") < told.index(f"Priority: {alpha}")
+    assert told.count(alpha) == 1 and told.count(gamma) == 1
+    assert _review_row(engine, evening)[1] in told
+    assert identity.context["own_priority_ids"] == [gamma_id, alpha_id]
+
+    # Three hours on, ALPHA's row (written 73 hours ago) has lapsed; her evening set, three
+    # hours old, has not: its own row says it whole, nothing of it left out.
+    _age(engine, timedelta(hours=3))
+    identity = identity_of(engine, sarah.id, "direct_company")
+    evening_id = _review_row(engine, evening)[0]
+    assert f"Daily review: evening. Priorities: {gamma}; {alpha}" in identity.system
+    assert identity.context["own_priority_ids"] == [evening_id]
+    assert evening_id in identity.context["memory_record_ids"]
+    assert beta not in identity.system
+
+
+def test_a_review_row_clipped_before_2026_10_15_is_told_by_the_rows_its_run_wrote(
+    engine,
+    staffed,  # noqa: F811
+):
+    """Until 2026-10-15 a memory row was clipped at 600 characters, its priorities with it: the
+    end of such a review row does not read back, and the rows its own run wrote say what it
+    set. The set before it is not told in its place."""
+    sarah = staffed["agents"]["Director"]
+    _her_review(engine, staffed, "day one.", ["ALPHA ship the serial"], hours=30)
+    run = str(uuid4())
+    clipped = ("Daily review: " + "long day. " * 60 + " Priorities: OMEGA the episode")[:600]
+    with Session(engine) as session, session.begin():
+        for memory_class, content in (
+            ("AGENT_OPINION", clipped.strip()),
+            ("TEMP_CONTEXT", "Priority: OMEGA the episode"),
+        ):
+            remember(
+                session,
+                memory_class=memory_class,
+                content=content,
+                source_type="run",
+                source_id=run,
+                agent_id=sarah.id,
+            )
+    _age(engine, timedelta(hours=5), run)
+    omega = _priority_row(engine, "OMEGA the episode")[0]
+    # Her newest review, clipped: its row does not say them, so they are told beside it.
+    identity = identity_of(engine, sarah.id, "direct_company")
+    assert identity.context["own_review_id"] == _review_row(engine, run)[0]
+    assert "Priority: OMEGA the episode" in identity.system
+    assert "ALPHA" not in identity.system
+    assert identity.context["own_priority_ids"] == [omega]
+    _her_review(engine, staffed, "nothing new.", [], hours=1)
+    identity = identity_of(engine, sarah.id, "direct_company")
+    assert "Priority: OMEGA the episode" in identity.system
+    assert "ALPHA" not in identity.system
+    assert identity.context["own_priority_ids"] == [omega]
+    assert identity.context["own_priority_review_id"] == _review_row(engine, run)[0]
 
 
 def test_her_last_daily_review_and_its_priorities_reach_her_management_work(engine, staffed):  # noqa: F811

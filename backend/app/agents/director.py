@@ -25,7 +25,14 @@ from sqlalchemy.orm import Session
 
 from app.agents.identity import blocker_of, clipped, parse_structured
 from app.agents.inbox import inbox_page, sweep_stale_asks
-from app.agents.memory import DAILY_REVIEW_MARKER, agent_for_role, remember
+from app.agents.memory import (
+    DAILY_REVIEW_MARKER,
+    PRIORITIES_HEAD,
+    PRIORITIES_JOIN,
+    PRIORITY_MARKER,
+    agent_for_role,
+    remember,
+)
 from app.agents.messages import message_view, open_messages, post_message, resolve_message
 from app.agents.models import Agent, AgentMessage, Role
 from app.agents.services import run_agent_task
@@ -617,7 +624,11 @@ def director_review(
             memory_class="AGENT_OPINION",
             content=f"{DAILY_REVIEW_MARKER} "
             + review.summary
-            + (" Priorities: " + "; ".join(review.priorities) if review.priorities else ""),
+            + (
+                PRIORITIES_HEAD + PRIORITIES_JOIN.join(review.priorities)
+                if review.priorities
+                else ""
+            ),
             source_type="run",
             source_id=result["id"],
             agent_id=director_id,
@@ -626,7 +637,7 @@ def director_review(
             remember(
                 session,
                 memory_class="TEMP_CONTEXT",
-                content=f"Priority: {priority}",
+                content=f"{PRIORITY_MARKER} {priority}",
                 source_type="run",
                 source_id=result["id"],
                 agent_id=director_id,
