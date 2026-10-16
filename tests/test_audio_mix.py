@@ -279,7 +279,12 @@ def test_the_vendors_silence_is_trimmed_and_no_cut_carries_dead_air(
         assert 1.2 <= scene["audio_seconds"] <= 1.3, scene
         trimmed = scene["trimmed_silence"]
         assert trimmed["lead_seconds"] == pytest.approx(0.37, abs=0.03)
-        assert trimmed["trail_seconds"] == pytest.approx(0.42, abs=0.03)
+        # The tail is cut at the last letter, where the sound dies away (the pause rules'
+        # trim_to_last_letter, 2026-10-16): all of the vendor's 0.45 s after the words goes,
+        # and no silence is kept after the last sound for the join to add to.
+        assert trimmed["trail_seconds"] == pytest.approx(0.45, abs=0.03)
+        assert trimmed["takes"][-1]["rule"] == "last_letter"
+        assert trimmed["takes"][-1]["kept_tail_seconds"] <= 0.03
     # The captions moved with the words: the first word now starts at the take's start.
     film = Path(render["file_path"])
     srt = (film.parent / "captions.srt").read_text(encoding="utf-8")

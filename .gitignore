@@ -16,6 +16,9 @@ output/
 .playwright-cli/
 *.egg-info/
 backend/storage/
+# The voices' measured pauses (app.media.pauses.load_profiles), derived from the kept
+# narration takes beside the films and rebuilt by itself: never committed.
+voice_pause_profiles.json
 Claude outputs/
 # Unreal reference project: everything the editor generates from the checked-in scripts
 art-source/unreal/AMNReference/Saved/

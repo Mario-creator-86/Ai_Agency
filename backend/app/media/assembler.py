@@ -38,6 +38,7 @@ from app.config import ROOT
 from app.db import lock_for_write
 from app.factual.editorial import dangles
 from app.media import music_library
+from app.media import pauses as pause_rules
 from app.media.balance_rule import (
     DEFAULT_MARGIN,
     LOW_BALANCE,
@@ -112,6 +113,8 @@ from app.media.toolchain import (
     EDGE_KEEP_SECONDS,
     LOUDNESS_TARGET_LUFS,
     MASTER_SAMPLE_RATE,
+    SILENCE_MIN_SECONDS,
+    SILENCE_THRESHOLD_DB,
     TRUE_PEAK_CEILING_DBTP,
     TRUE_PEAK_TARGET_DBTP,
     AudioMasterError,
@@ -670,13 +673,29 @@ def _trimmed_take(
 ) -> tuple[TTSResult, dict[str, Any]]:
     """The take with the vendor's silence before and after its words cut away (audit Q4).
 
-    The take is decoded to a 48 kHz, 24-bit mono WAV (``name``.wav in ``work_dir``), its
-    silent edges measured (`toolchain.speech_edges`: under -45 dB for 50 ms), and all but
-    EDGE_KEEP_SECONDS of each cut, never into a word the vendor timed. Its word timing and
-    the vendor's character alignment move earlier by what was cut from the front, so the
-    captions stay on the words. The vendor's own file, kept as the narration take, is not
-    touched: this is done again, for nothing, every time the take is used. A take that cannot
-    be decoded or measured is returned as it came, and the record says why.
+    The take is decoded to a 48 kHz, 24-bit mono WAV (``name``.wav in ``work_dir``) and its
+    silent edges measured (`toolchain.speech_edges`: under -45 dB for 50 ms).
+
+    With the pause rules' ``trim_to_last_letter`` switch on (`pauses.switch`, the Owner's
+    decision 7 of 2026-10-16) and the vendor's timing at hand, the tail is cut at the end of
+    the take's last LETTER or DIGIT plus EDGE_KEEP_SECONDS, or later where the sound has not
+    yet died away: at the first point after the last letter starts where the signal falls
+    under -45 dBFS and stays there for SILENCE_MIN_SECONDS (or to the end of the file), and
+    never inside a sound (`pauses.trim_cut`). The vendor stretches a take's final "." to the
+    end of its file, so the old rule below, which let the vendor's clock veto the meter, cut
+    0.000 s on all 55 kept takes. The head is cut by the meter, never past the first sound.
+
+    Otherwise (the switch off, or no timing) all but EDGE_KEEP_SECONDS of each measured edge
+    is cut, never into a word the vendor timed, as before.
+
+    The record says what was cut (``lead_seconds``, ``trail_seconds``) and the silence the
+    meter still hears inside what is kept, before the first sound and after the last
+    (``kept_head_seconds``, ``kept_tail_seconds``): the pad a join adds is the planned pause
+    less these (`pauses.render_pad`). Its word timing and the vendor's character alignment
+    move earlier by what was cut from the front, so the captions stay on the words. The
+    vendor's own file, kept as the narration take, is not touched: this is done again, for
+    nothing, every time the take is used. A take that cannot be decoded or measured is
+    returned as it came, and the record says why.
     """
     import wave  # noqa: PLC0415
 
@@ -722,15 +741,43 @@ def _trimmed_take(
         return said, record
     finally:
         source.unlink(missing_ok=True)
-    cut_lead = max(0.0, lead - EDGE_KEEP_SECONDS)
-    cut_trail = max(0.0, trail - EDGE_KEEP_SECONDS)
-    words = take_word_timing(said)
-    if words:
-        # The vendor's clock wins over the meter: a word it timed is never cut.
-        cut_lead = min(cut_lead, max(0.0, min(float(w["start"]) for w in words)))
-        cut_trail = min(cut_trail, max(0.0, duration - max(float(w["end"]) for w in words)))
-    first = int(round(cut_lead * rate))
-    last = max(first + 1, params.nframes - int(round(cut_trail * rate)))
+    loud = _loud_samples(frames, params.sampwidth, params.nchannels)
+    cut = None
+    letter = _last_letter(said)
+    if loud is not None and letter is not None and pause_rules.switch("trim_to_last_letter"):
+        cut = pause_rules.trim_cut(
+            loud,
+            rate,
+            last_letter=letter,
+            lead_seconds=lead,
+            edge_keep=EDGE_KEEP_SECONDS,
+            settle_seconds=SILENCE_MIN_SECONDS,
+        )
+    if cut is not None and letter is not None:
+        first = cut.head
+        last = max(first + 1, cut.tail)
+        record.update(
+            rule="last_letter",
+            head_sample=first,
+            tail_sample=last,
+            last_letter_seconds=round(letter[1], 3),
+            guard_seconds=round(max(0, cut.tail - cut.letter_cut) / rate, 3),
+            guard_moved=cut.guard_moved,
+        )
+    else:
+        cut_lead = max(0.0, lead - EDGE_KEEP_SECONDS)
+        cut_trail = max(0.0, trail - EDGE_KEEP_SECONDS)
+        words = take_word_timing(said)
+        if words:
+            # The vendor's clock wins over the meter: a word it timed is never cut.
+            cut_lead = min(cut_lead, max(0.0, min(float(w["start"]) for w in words)))
+            cut_trail = min(cut_trail, max(0.0, duration - max(float(w["end"]) for w in words)))
+        first = int(round(cut_lead * rate))
+        last = max(first + 1, params.nframes - int(round(cut_trail * rate)))
+        record["rule"] = "meter"
+    edges = pause_rules.kept_edges(loud, rate, first, last) if loud is not None else None
+    if edges is not None:
+        record.update(kept_head_seconds=edges[0], kept_tail_seconds=edges[1])
     step = params.sampwidth * params.nchannels
     kept = frames[first * step : last * step]
     buffer = io.BytesIO()
@@ -779,6 +826,36 @@ def _trimmed_take(
         ),
         record,
     )
+
+
+def _loud_samples(frames: bytes, sample_width: int, channels: int) -> Any:
+    """Per sample, whether the decoded take is at or above SILENCE_THRESHOLD_DB; None when the
+    samples cannot be read (the trim then keeps the meter's rule)."""
+    try:
+        return pause_rules.loud_samples(frames, sample_width, channels, SILENCE_THRESHOLD_DB)
+    except (ImportError, ValueError) as exc:
+        logger.warning("take_samples_unread", extra={"error": type(exc).__name__})
+        return None
+
+
+def _last_letter(said: TTSResult) -> tuple[float, float] | None:
+    """(start, end) of the take's last letter or digit as the vendor timed it: its character
+    ``alignment`` (never ``normalized_alignment``, which times the text as the vendor spelt it
+    out), else the last word the adapter timed; None when the take carries no timing."""
+    alignment = pause_rules.alignment_of(said.raw_response)
+    if alignment is not None:
+        return pause_rules.last_letter_times(alignment)
+    timed = [
+        item
+        for item in (said.word_timings or [])
+        if isinstance(item, dict)
+        and isinstance(item.get("start"), int | float)
+        and isinstance(item.get("end"), int | float)
+    ]
+    if not timed:
+        return None
+    last = max(timed, key=lambda item: float(item["end"]))
+    return float(last["start"]), float(last["end"])
 
 
 def _aligned_starts(words: list[str], timed: Any, span: float) -> list[float] | None:

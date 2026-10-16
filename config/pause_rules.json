@@ -1,0 +1,156 @@
+{
+  "version": 1,
+  "status": "PROPOSED",
+  "proposed_on": "2026-10-16",
+  "proposed_by": "the pause design «pauza vocii» (voice-continuous timing), after the Owner listened to the before/after preview built from the takes already paid for",
+  "use_until_the_owner_changes_it": true,
+  "owner_decision": "2026-10-16, the Owner, after the preview: «Sună foarte bine și este o îmbunătățire. Deci da.» One take per writer scene and per speaker run; joins by class from each voice's own pauses; marked beats; END = the narrator's PARAGRAPH pause; tempo 1.0 per channel; the trim to the last letter with its guard; nothing hard-coded.",
+  "note": "A proposal the Owner may change; it is not in his database. backend/app/media/pauses.py holds only the formulas: every number they use is here, each research constant with its source and each studio choice with its reason. The per-channel knobs (tempo, where the picture cut falls inside a pause, the L-cut, the film's end) are in config/factual_look.json and config/serial_series_look.json under \"pauses\"; channel_defaults below is what a look file that names none gets. Each voice's own numbers are measured from its kept PAID narration takes (<media_root>/<film>/narration/*.json, the vendor's 'alignment', never 'normalized_alignment') and cached in the git-ignored <media_root>/voice_pause_profiles.json; a voice with fewer than min_samples of a pause takes its pool's, and a pool with too few takes the fallback below. Each film's pauses are frozen on its storyboard rows when it is built, so a later change here never changes an open film. With use_until_the_owner_changes_it false the studio keeps its legacy timing (0.4 s after every shot, the old trim).",
+  "switches": {
+    "trim_to_last_letter": {
+      "value": true,
+      "why": "The vendor stretches a take's final '.' to the end of its file and the old trim let the vendor's clock veto the meter: it cut 0.000 s on all 55 kept takes. The take is now cut at its last letter or digit (+ 0.03 s), guarded so that no sound is split (assembler._trimmed_take, pauses.trim_cut); only then is a planned pause the silence heard."
+    },
+    "voice_groups": {
+      "value": true,
+      "why": "One take per writer scene (factual) and per speaker run inside a beat (serial); the montage cuts the picture on the word timestamps inside it and adds 0 s."
+    },
+    "marked_beats": {
+      "value": true,
+      "why": "The Owner, 2026-10-16: a writer's «…» at a factual scene's end, «(beat)» in a serial direction, is a real silence."
+    },
+    "per_take_tempo": {
+      "value": false,
+      "why": "A take's own pace comes from its text (numbers, short takes) at a fixed vendor speed, not from the voice: scaling pauses by it is off (Trouvain 2004: the effect varies by speaker)."
+    }
+  },
+  "research": {
+    "paragraph_ratio": {
+      "value": 1.565,
+      "source": "Doukhan et al. 2012 (Interspeech): a professional storyteller reading 12 tales paused 1127 ms at a paragraph against 720 ms at a sentence (median), 1.565; Strangert 1991 gives 1/0.6 = 1.67.",
+      "url": "https://groupeaa.lisn.upsaclay.fr/_media/membres:cda:2012_interspeech.pdf"
+    },
+    "turn_seconds": {
+      "value": 0.236,
+      "source": "Stivers et al. 2009 (PNAS, 10 languages): the English mean gap at a speaker change, 236 ms; Heldner & Edlund 2010: gaps between speakers are shorter than pauses within one; Templeton 2022: longer gaps were rated less enjoyable.",
+      "url": "https://www.frontiersin.org/journals/psychology/articles/10.3389/fpsyg.2015.00731/full"
+    },
+    "turn_floor_seconds": {
+      "value": 0.12,
+      "source": "Heldner 2011 (JASA, detection thresholds for gaps and overlaps): a silence between speakers under about 120 ms is not heard as a gap. Heldner & Edlund 2010 (three corpora) is the related measurement of where real transitions fall.",
+      "related_url": "https://staff.fnwi.uva.nl/r.fernandezrovira/teaching/cosp/cosp2016/docs/HeldnerEdlund2010.pdf"
+    },
+    "beat_floor_seconds": {
+      "value": 0.7,
+      "source": "Kendrick & Torreira 2015: a gap of 700 ms or more reads as marked (dispreferred responses only outnumber preferred ones from 700 ms).",
+      "url": "https://eprints.whiterose.ac.uk/116177"
+    },
+    "beat_ceiling_seconds": {
+      "value": 1.2,
+      "source": "Roberts et al. 2006: silences of 600 and 1200 ms change what a response means; Frontiers in Psychology 2022: past a 1.2 s pause naturalness falls.",
+      "url": "https://doi.org/10.3389/fpsyg.2022.778018"
+    },
+    "beat_factor": {
+      "value": 1.4,
+      "source": "Televised stand-up (828 performances, arXiv 2605.00143): the pause before the highest-surprise sentence was 35.6-41% longer than before low-surprise ones. Tunable.",
+      "url": "https://arxiv.org/abs/2605.00143"
+    },
+    "join_ceiling_seconds": {
+      "value": 1.2,
+      "source": "Frontiers in Psychology 2022 (English read speech, pauses at commas and periods changed): past a 1.2 s period pause, rated naturalness falls. Every planned join except a card stays at or under it.",
+      "url": "https://doi.org/10.3389/fpsyg.2022.778018"
+    },
+    "short_guard_syllables": {
+      "value": 10,
+      "source": "Zvonik & Cummins 2003 (1212 inter-sentence pauses, six speakers): pauses under about 300 ms occurred essentially only next to a phrase of 10 syllables or fewer. Two short neighbouring sentences take the voice's first-quartile pause.",
+      "url": "https://www.isca-archive.org/eurospeech_2003/zvonik03_eurospeech.pdf"
+    },
+    "dead_air_tolerance": {
+      "value": 0.2,
+      "source": "Owoicho et al. 2024 (Speech Prosody): listeners notice inter-sentence pauses only far from the norm; 0.2 is their Weber example. A join heard longer than planned x (1 + this) + one frame is dead air.",
+      "url": "https://www.isca-archive.org/speechprosody_2024/owoicho24_speechprosody.pdf"
+    },
+    "no_pause_before_a_punchline": {
+      "value": true,
+      "source": "Attardo & Pickering 2011: in 20 joke performances speakers neither paused before the punchline nor changed speech rate around it.",
+      "url": "https://lair.etamu.edu/chssa-faculty-publications/8"
+    }
+  },
+  "studio": {
+    "min_samples": {
+      "value": 5,
+      "why": "A voice's own pause (or its high speech rate) is used from 5 measured samples; under that its pool's (Nadia had 3 sentence pauses on 2026-10-16)."
+    },
+    "realised_pause_seconds": {
+      "value": 0.08,
+      "why": "A comma is paused only about half the time (narrator 45%): the clause pause is read where the voice did pause, from the measurement's own detection minimum (silencedetect d = 0.08 s, 2026-10-16)."
+    },
+    "body_pair": {
+      "value": ["DEVELOPMENT", "EVIDENCE"],
+      "why": "The factual body alternates these two purposes scene by scene; a change between them is no new section (a PARAGRAPH at every cut of a five-scene film was rejected)."
+    },
+    "beat_marks": {
+      "factual": {
+        "value": ["…", "..."],
+        "why": "The writer's ellipsis at the end of a scene: «…» asks for a silence after it."
+      },
+      "serial_words": {
+        "value": ["beat", "a beat", "pause", "pauses", "silence"],
+        "why": "A serial line's direction that asks for a silence («(beat)», \"long pause\"), matched as whole words."
+      }
+    },
+    "marks_per_section": {
+      "value": 1,
+      "why": "The Owner, 2026-10-16: at most one marked silence per factual section or serial beat."
+    },
+    "wall_cap_seconds": {
+      "value": 180.0,
+      "why": "YouTube's Shorts wall: the wall is min(the channel's shorts_max_seconds, this)."
+    },
+    "wall_stages": {
+      "value": [["CLAUSE", "DASH"], ["SENTENCE", "PARAGRAPH", "END", "TURN"]],
+      "why": "Speakers shorten pauses first when they speed up (Trouvain 2004; Werner 2022) and shorter pauses were not dispreferred (Owoicho 2024): the row-voiced clause and dash pauses go toward their floors first, then one common factor shrinks every join's distance to its floor, so the ladder keeps its order."
+    },
+    "never_compressed": {
+      "value": ["BEAT", "CARD"],
+      "why": "A marked silence is the writer's, and a silent card's length is already its pause."
+    },
+    "rate_spread": {
+      "value": 0.904,
+      "why": "The narrator's per-take speech rate, first quartile over median (2.696 / 2.982 spoken words a second, 25 takes, 2026-10-16; 0.912 counted in written words): a voice with fewer than min_samples takes has its high rate (what a clip is bought for) from its median and this spread, until its pool can measure its own."
+    }
+  },
+  "channel_defaults": {
+    "tempo": {
+      "value": 1.0,
+      "why": "The Owner, 2026-10-16: every pause follows the voice's own rhythm (1.0); a channel may make it brisker or calmer in its look file."
+    },
+    "cut_in_pause": {
+      "value": 1.0,
+      "why": "Where the picture cut falls inside a pause: 1.0, the outgoing shot holds the whole pause and the new picture comes with its words, as before. The Owner may choose 0.1 (Leake 2017)."
+    },
+    "picture_slide_words": {
+      "value": 0,
+      "why": "No L-cut: the picture cuts on the words until the Owner asks the picture to flow a word over the next phrase."
+    },
+    "end_class": {
+      "value": "PARAGRAPH",
+      "why": "The Owner, 2026-10-16: the film's last word is held for the narrator's PARAGRAPH pause (about 0.77 s), the serial included."
+    }
+  },
+  "fallback": {
+    "provenance": "2026-10-16 measurement of the 55 kept eleven_flash_v2 takes of 8 films (25 narrator, 30 serial characters). Pauses: ffmpeg silencedetect at -45 dB, zeros included (the clause pause where the voice paused). Speech rate: from the first letter to the last on the vendor's alignment, a word counted as assembler.spoken_words counts it (a number said in words), the unit every estimate multiplies; seconds_per_word_high is 1 / the takes' first-quartile rate.",
+    "narrator": {
+      "SENTENCE": {"median": 0.49, "p25": 0.34, "n": 12},
+      "CLAUSE": {"median": 0.2, "p25": 0.14, "n": 10},
+      "DASH": {"median": 0.3, "p25": 0.18, "n": 10},
+      "rate": {"seconds_per_word": 0.35, "seconds_per_word_high": 0.371, "takes": 25}
+    },
+    "character": {
+      "SENTENCE": {"median": 0.28, "p25": 0.23, "n": 32},
+      "CLAUSE": {"median": 0.24, "p25": 0.19, "n": 22},
+      "DASH": {"median": 0.35, "p25": 0.18, "n": 10},
+      "rate": {"seconds_per_word": 0.34, "seconds_per_word_high": 0.375, "takes": 30}
+    }
+  }
+}
