@@ -8,13 +8,17 @@ costisitoare, maxim încă o randare» — the first render and at most one more
 
 The number lives in one place, `Settings.renders_per_layer` (STUDIO_RENDERS_PER_LAYER), and is
 read at call time through `renders_per_layer`, never copied into a module constant: every
-route that buys a still or a shot (the stills step and its re-rolls, the motion step and its
-clip-QC retry, the test shot, the Director's paid redo, the studio's clip-redo proposal, the
-release of a delivery retry), the budget holds sized for those purchases, and every sentence
-that states the number read it here. A render is a paid request among the scene's takes of that
-layer, whatever became of it (`assembler._paid_attempts`: a stills request's candidates share
-its task id); a request that made nothing and cost nothing is not one. Each montage shot is its
-own storyboard scene, so the cap counts per shot.
+route that buys a still or a shot (the stills step, its re-rolls and its technical retry, the
+motion step and its clip-QC retry, the test shot, the Director's paid redo, the studio's
+clip-redo proposal, the release of a delivery retry, and the Owner's own press of a scene redo,
+whose plan says the cap is reached instead of pricing a render past it), the budget holds sized
+for those purchases, and every sentence that states the number read it here. A render is a
+paid request among the scene's takes of that layer, whatever became of it
+(`assembler._paid_attempts`: a stills request's candidates share its task id; a charged vendor
+failure is one); a request that made nothing and cost nothing is not one. Each montage shot is
+its own storyboard scene, so the cap counts per shot. Past the cap the Director keeps what is
+closest (`stills_stage.settle_scene_under_cap`, `assembler.settle_motion_under_cap`, and her
+local move of a scene no clip can carry, below), and nothing waits for the Owner.
 """
 
 from __future__ import annotations
@@ -101,6 +105,17 @@ def paid_redos_per_scene(settings: Any = None) -> int:
     return room
 
 
+def paid_redos_setting(settings: Any = None) -> str:
+    """The variable the per-scene paid redos come from, as `paid_redos_per_scene` reads them:
+    the Owner's own STUDIO_FILM_MAX_PAID_REDOS_PER_SCENE when he set one lower than the cap
+    leaves, else the renders cap (STUDIO_RENDERS_PER_LAYER)."""
+    room = max(0, renders_per_layer(settings) - 1)
+    configured = getattr(settings, "film_max_paid_redos_per_scene", None)
+    if isinstance(configured, int) and not isinstance(configured, bool) and 0 <= configured < room:
+        return "STUDIO_FILM_MAX_PAID_REDOS_PER_SCENE"
+    return ENV_NAME
+
+
 def renders_left(made: int, settings: Any = None) -> int:
     """How many more times a layer may be made once ``made`` renders of it exist."""
     return max(0, renders_per_layer(settings) - int(made))
@@ -176,3 +191,90 @@ def at_cap(
     """Whether the scene's ``layer`` has had its renders: nothing more of it is bought."""
     made = renders_made(session, storyboard_id, scene_number, layer)
     return made >= renders_per_layer(settings)
+
+
+# ------------------------------------------------ the Director's local move under the cap
+#
+# Past the cap nothing more of a layer is bought, and the Director keeps what is closest to
+# the plan (the Owner, 2026-10-15: «publicăm cu ce Directoarea alege ca fiind cel mai
+# apropiat»). For a filmed scene whose motion has had its renders, the closest is a clip it
+# has (`assembler.settle_motion_under_cap` keeps it under the cap); when none can carry the
+# scene's span — none on disk, or the closest too short for its words even slowed down — the
+# closest is its approved still moved locally (0 credits), the way his LOCAL_MOVE on the
+# sheet shows one. Her choice is recorded here and read by every reader of his: the motion
+# plan (the scene is LOCAL, never planned), the sheet's and the render's readiness, the
+# fallback gate and film QC. It stands while the scene's motion is at the cap: a cap he
+# raises (STUDIO_RENDERS_PER_LAYER) gives the scene its render back.
+
+#: {storyboard_id, scene_index, renders, cap, reason_ro} on the storyboard.
+CAP_LOCAL_MOVE_EVENT = "media.cap_local_move"
+#: Who chose a cap local move (the sheet's ``decided_by``).
+CAP_LOCAL_MOVE_BY = "director"
+
+
+def cap_local_moves(session: Session, storyboard_id: str, settings: Any = None) -> set[int]:
+    """The scenes the Director moved locally under the renders cap, while their motion is
+    still at the cap."""
+    from app.models import DomainEvent  # noqa: PLC0415
+
+    chosen: set[int] = set()
+    for event in session.scalars(
+        select(DomainEvent).where(
+            DomainEvent.event_type == CAP_LOCAL_MOVE_EVENT,
+            DomainEvent.aggregate_id == storyboard_id,
+        )
+    ):
+        payload = event.payload if isinstance(event.payload, dict) else {}
+        scene = payload.get("scene_index")
+        if isinstance(scene, int) and not isinstance(scene, bool):
+            chosen.add(scene)
+    if not chosen:
+        return chosen
+    made = renders_by_scene(session, storyboard_id, "motion")
+    cap = renders_per_layer(settings)
+    return {scene for scene in chosen if made.get(scene, 0) >= cap}
+
+
+def cap_local_move_words(scene_index: int, settings: Any = None) -> str:
+    """Her choice, said: the scene's still moved locally, the cap that left nothing else."""
+    return (
+        f"Scena {scene_index}: mișcarea ei a avut deja {renders_ro(None, settings)}, plafonul "
+        "Proprietarului, și niciun cadru al ei nu acoperă scena; Directoarea o arată ca imagine "
+        "fixă animată local (0 credite), cel mai apropiat de plan, iar filmul merge mai departe."
+    )
+
+
+def record_cap_local_move(
+    session: Session,
+    storyboard_id: str,
+    scene_index: int,
+    correlation_id: str,
+    *,
+    reason_ro: str = "",
+    settings: Any = None,
+) -> bool:
+    """Her local move of a scene whose motion is at the cap, recorded once while it stands.
+    False (nothing written) when the motion is not at the cap or the move already stands."""
+    from app.services import append_event  # noqa: PLC0415
+
+    made = renders_made(session, storyboard_id, scene_index, "motion")
+    cap = renders_per_layer(settings)
+    if made < cap or int(scene_index) in cap_local_moves(session, storyboard_id, settings):
+        return False
+    append_event(
+        session,
+        CAP_LOCAL_MOVE_EVENT,
+        "storyboard",
+        storyboard_id,
+        1,
+        {
+            "storyboard_id": storyboard_id,
+            "scene_index": int(scene_index),
+            "renders": made,
+            "cap": cap,
+            "decided_by": CAP_LOCAL_MOVE_BY,
+            "reason_ro": (reason_ro or cap_local_move_words(int(scene_index), settings))[:1500],
+        },
+        correlation_id,
+    )
+    return True

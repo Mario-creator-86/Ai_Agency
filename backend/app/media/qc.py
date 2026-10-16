@@ -1363,7 +1363,7 @@ def evaluate_media_qc(
         #     through. In TEST two motion scenes are the policy and the rest push by design,
         #     so the old ceiling only warns there. Cards are composed, never filmed.
         if render_job is not None:
-            owner_choices = owner_local_moves(session, render_job.storyboard_id)
+            owner_choices = chosen_local_moves(session, render_job.storyboard_id)
         else:
             owner_choices = set()
         if not manifest.get("motion") and not manifest.get("scenes"):
@@ -2551,6 +2551,17 @@ class ClipRetry:
     reason_ro: str
 
 
+def clip_capped_words(scene: int) -> str:
+    """Why a refused clip buys no retry once the scene's motion has had its renders: the
+    Owner's cap, its number read now, and what happens instead (the Director keeps the
+    closest clip, `assembler._keep_clip_under_cap`)."""
+    return (
+        f"Scena {scene}: clipul a picat controlul, iar plafonul Proprietarului "
+        f"({renders_of_ro('mișcării')}) este atins; nu se mai cumpără o reluare: Directoarea "
+        "păstrează cel mai apropiat cadru."
+    )
+
+
 def clip_retry_decision(
     report: ClipReport,
     *,
@@ -2559,10 +2570,17 @@ def clip_retry_decision(
     committed_credits: float,
     price_credits: float,
     cap_credits: float,
+    renders_left: int | None = None,
 ) -> ClipRetry:
     """What a clip's QC verdict buys: nothing more, one retry with seed + 1, a new still, or
     the Owner. A clip whose still is at fault (``report.back_to_still``) is never animated
-    again from that still: another seed animates the same panels (2026-10-09, scene 5)."""
+    again from that still: another seed animates the same panels (2026-10-09, scene 5).
+
+    ``renders_left``: how many more renders of the scene's motion the Owner's renders cap
+    allows after this clip (`renders_cap`), when the caller counted them. At none, no retry
+    is bought whatever the money says, and the refusal says so before the money is read: the
+    cap, not the approved credits, is what stops it, and past it the Director keeps the
+    closest clip (2026-10-16, «maxim încă o randare»)."""
     if report.passed:
         return ClipRetry("ACCEPT", seed, f"Scena {report.scene}: clipul a trecut controlul.")
     if report.back_to_still:
@@ -2581,6 +2599,8 @@ def clip_retry_decision(
             "aceeași imagine nu se mai animă. Scena are nevoie de o imagine nouă, apoi de "
             "mișcare nouă.",
         )
+    if renders_left is not None and renders_left <= 0:
+        return ClipRetry("ESCALATE", None, clip_capped_words(report.scene))
     if report.persists and report.matched_plan:
         # 2026-10-12, late evening (the review of 9ac0195, finding 3, for the clip): the clip
         # shows its corrected movement and the mistake is there again, so those words do not
@@ -2597,16 +2617,14 @@ def clip_retry_decision(
             "cumpără o reluare pe aceleași cuvinte; Directoarea rescrie mișcarea.",
         )
     if retries_done >= clip_retries():
+        if not retries_done:
+            # A cap of one render: the clip was the motion's only one.
+            return ClipRetry("ESCALATE", None, clip_capped_words(report.scene))
         return ClipRetry(
             "ESCALATE",
             None,
-            f"Scena {report.scene}: clipul a picat controlul"
-            + (
-                " și după reluare"
-                if retries_done
-                else f"; plafonul Proprietarului ({renders_of_ro('mișcării')}) nu lasă o reluare"
-            )
-            + "; nu se mai cumpără. Decide Proprietarul pe foaia de filmare.",
+            f"Scena {report.scene}: clipul a picat controlul și după reluare; nu se mai "
+            "cumpără. Decide Proprietarul pe foaia de filmare.",
         )
     blocking = [item for item in report.checks if item.blocking]
     if blocking and all(item.status == "NOT_RUN" for item in blocking):
@@ -2748,6 +2766,7 @@ def qc_clip_with_retry(
     committed_credits: float,
     cap_credits: float,
     look: Callable[[ClipReport], Mapping[str, Any] | None] | None = None,
+    renders_left: int | None = None,
 ) -> ClipQCOutcome:
     """Check a bought clip. Production supplies ``look``: a refusal goes to the existing
     Director rewrite/review ladder before a replacement is bought. Without that workflow
@@ -2764,7 +2783,10 @@ def qc_clip_with_retry(
     require her separate review; an unavailable look cannot authorize a mechanical retry.
     A clip sent back to its still only by
     a reading (`sent_back_by_reading`) is shown to her too before a new still is bought; a
-    refusal clip QC measured (`measured_refusal`) is kept only as «not in the clip»."""
+    refusal clip QC measured (`measured_refusal`) is kept only as «not in the clip».
+
+    ``renders_left``: the renders of the scene's motion the Owner's cap allows after this
+    clip (`clip_retry_decision`); at none, no retry is bought and the refusal names the cap."""
     from app.media.fix_check import look_accepts  # noqa: PLC0415 - a small module
 
     first = check(clip)
@@ -2775,6 +2797,7 @@ def qc_clip_with_retry(
         committed_credits=committed_credits,
         price_credits=price_credits,
         cap_credits=cap_credits,
+        renders_left=renders_left,
     )
     if decision.action == "ACCEPT":
         return ClipQCOutcome("PASSED", clip, 1, (seed,), (first,), 0.0, decision.reason_ro, "")
@@ -2875,6 +2898,7 @@ def qc_clip_with_retry(
         committed_credits=committed_credits + price_credits,
         price_credits=price_credits,
         cap_credits=cap_credits,
+        renders_left=None if renders_left is None else renders_left - 1,
     )
     # The retry failed too: before the scene goes on to a rewrite or a new still (and a
     # purchase), she looks at the clip bought last, where she may (`look_may_overturn`).
@@ -2977,6 +3001,16 @@ def owner_local_moves(session: Session, storyboard_id: str) -> set[int]:
     return chosen
 
 
+def chosen_local_moves(session: Session, storyboard_id: str) -> set[int]:
+    """The scenes the film may show as a locally animated still: the Owner's own choices
+    (`owner_local_moves`) and the Director's past his renders cap, while it stands
+    (`renders_cap.cap_local_moves`: the scene's motion had its renders and no clip of it can
+    carry the scene — his rule of 2026-10-15, the film is published with what is closest)."""
+    from app.media.renders_cap import cap_local_moves  # noqa: PLC0415 - it reads the assembler
+
+    return owner_local_moves(session, storyboard_id) | cap_local_moves(session, storyboard_id)
+
+
 def fallback_verdict(
     production: dict[str, Any],
     *,
@@ -3045,9 +3079,10 @@ def require_chosen_fallbacks(
     settings: Any | None = None,
 ) -> dict[str, Any]:
     """The assembler's gate: raise FallbackNotChosen before a PRODUCTION film is assembled
-    with a LIVE scene the Owner did not choose to show as a still. Returns the verdict."""
+    with a LIVE scene nobody chose to show as a still: the Owner on the sheet, or the Director
+    past his renders cap (`chosen_local_moves`). Returns the verdict."""
     with Session(engine) as session:
-        chosen = owner_local_moves(session, storyboard_id)
+        chosen = chosen_local_moves(session, storyboard_id)
     verdict = fallback_verdict(
         production,
         environment=environment or studio_environment(engine),

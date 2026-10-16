@@ -24,6 +24,7 @@ import pytest
 from app.agents.identity import STANDING_RULES, standing_rules
 from app.config import Settings
 from app.media import assembler, renders_cap, scene_rewrite, shooting_sheet, stills_stage
+from app.media import qc as clip_qc
 from app.media.assembler import (
     CLIP_QC_EVENT,
     SceneRedoRefused,
@@ -56,6 +57,7 @@ from app.media.shooting_sheet import DEFAULT_CEILING_SCENES, film_ceiling_micros
 from app.media.still_gate import StillReport, next_step
 from app.media.toolchain import find_ffmpeg
 from app.models import DomainEvent
+from app.providers.media_http import MediaProviderError
 from app.runbook import stages
 from app.services import append_event, utc_now
 from sqlalchemy import select
@@ -63,7 +65,16 @@ from sqlalchemy.orm import Session
 from test_director_delivery_routing import failed_delivery
 from test_director_rewrites_failed_scene import BRIEF, Agents, agents_say
 from test_director_rewrites_failed_scene import studio as studio  # noqa: F401 - fixture
-from test_film_costing import SEEDANCE, Account, Models, SpyVideo, approved, by_scene
+from test_film_costing import (
+    SEEDANCE,
+    VEO_FAST,
+    Account,
+    Models,
+    SpyVideo,
+    approved,
+    by_scene,
+    hero_approved,
+)
 from test_film_costing import a_film as a_film_with_stills
 from test_stills_stage import (
     FACE,
@@ -416,7 +427,9 @@ def test_a_scene_whose_motion_had_two_renders_is_never_planned_and_the_retry_is_
 @needs_ffmpeg
 def test_the_test_shot_bought_after_a_shot_on_older_words_is_the_last(engine, tmp_path):
     """The hero had one shot on older words. The test shot is its second render: clip QC
-    refuses it and nothing more is bought — no retry, and no later plan offers a third."""
+    refuses it and nothing more is bought — no retry, and no later plan offers a third. The
+    renders cap stops the retry, not the money: no STOPPED_AT_CAP, no «Decide Proprietarul»;
+    the refused clip stands under the cap, the Director's closest (the review of f7ba9ee)."""
     board = a_film_with_stills(engine, tmp_path, scenes=1)
     with Session(engine) as session, session.begin():
         _take(session, board, 1, "test_shot", status="PAID", on_disk=tmp_path / "old.mp4")
@@ -436,9 +449,15 @@ def test_the_test_shot_bought_after_a_shot_on_older_words_is_the_last(engine, tm
     )
 
     assert len(video.asked) == 1
-    assert by_scene(result)[1]["status"] != "PAID"
+    entry = by_scene(result)[1]
+    assert not str(result.get("stopped") or "").startswith("STOPPED_AT_CAP")
+    assert "plafonul aprobat" not in str(entry.get("reason") or "")
+    assert "Decide Proprietarul" not in str(entry.get("reason") or "")
+    assert entry["status"] == "PAID" and entry["clip_qc"]["accepted_under_cap"] is True
     with Session(engine) as session:
         assert renders_cap.renders_made(session, board, 1, "motion") == 2
+        kept = session.get(SceneTake, entry["take_id"])
+        assert kept.kind == "test_shot" and kept.approved_by == assembler.CAP_APPROVER
     again = motion_plan(engine, board, capabilities=[SEEDANCE])
     assert again["steps"]["test_shot"]["to_buy"] == []
     assert again["scenes"][0]["status"] != "PLANNED"
@@ -582,3 +601,370 @@ def test_the_words_say_two(monkeypatch):
     assert any("{renders_times}" in rule for rule in STANDING_RULES)
     monkeypatch.setenv("STUDIO_RENDERS_PER_LAYER", "3")
     assert "at most 3 times" in next(r for r in standing_rules() if "made at most" in r)
+
+
+# ------------------------------------------------- 5. the review of f7ba9ee, item by item
+
+
+def _passed_clip(scene: int) -> ClipReport:
+    return ClipReport(
+        scene=scene,
+        path="clip.mp4",
+        checks=(ClipCheck("motion", "PASSED", True, 4.0, ""),),
+        passed=True,
+        blocks_ro=(),
+        warnings_ro=(),
+        unmeasured=(),
+    )
+
+
+def _at(session: Session, take_id: str, when: str) -> None:
+    """A take's creation time, set: the newest is chosen by it."""
+    row = session.get(SceneTake, take_id)
+    row.created_at = row.updated_at = when
+
+
+def test_a_charged_vendor_failure_is_a_render_and_its_retry_is_not_bought_past_the_cap(
+    engine, tmp_path
+):
+    """Scene 2 had one paid refused still. Its next request is accepted (the task is heard)
+    and then fails INTERNAL.BAD_OUTPUT: charged, so it is its second render. The technical
+    retry the stills step would buy next is a third: it is not bought, and the closest still
+    the scene has stands under the cap (review item 1)."""
+    board = a_film_to_buy(engine, tmp_path)
+    with Session(engine) as session, session.begin():
+        older = _take(session, board, 2, "still", on_disk=tmp_path / "older.png")
+
+    class Failing(SpyStills):
+        async def generate_candidates(self, prompt, *, on_submitted=None, **kwargs):
+            if SUBJECTS[2] in prompt:
+                self.asked.append({"prompt": prompt, **kwargs})
+                if on_submitted is not None:
+                    on_submitted(f"img-task-bad-{len(self.asked)}")
+                raise MediaProviderError("bad output", code="INTERNAL.BAD_OUTPUT")
+            return await super().generate_candidates(prompt, on_submitted=on_submitted, **kwargs)
+
+    adapter = Failing()
+    result = approved_run(engine, board, tmp_path, adapter, SpyJudge(), face_counter=faces_in())
+
+    assert len([asked for asked in adapter.asked if SUBJECTS[2] in asked["prompt"]]) == 1
+    by_index = {entry["scene_index"]: entry for entry in result["scenes"]}
+    assert by_index[2]["status"] == "APPROVED"
+    with Session(engine) as session:
+        assert renders_cap.renders_made(session, board, 2, "still") == 2
+        kept = session.get(SceneTake, older)
+        assert kept.status == "APPROVED" and kept.approved_by == assembler.CAP_APPROVER
+
+
+@needs_ffmpeg
+def test_a_clip_at_the_cap_stops_no_step_and_the_later_scene_is_still_bought(engine, tmp_path):
+    """Scenes 2 (seedance, his choice) and 3 (veo) each had one shot on older words: their
+    next is their last render and the plan holds no retry for either. Scene 2's clip fails
+    clip QC. The renders cap, not the money, refuses its retry: no STOPPED_AT_CAP, scene 3 is
+    bought, and scene 2's clip stands under the cap — nothing «Decide Proprietarul» (item 6)."""
+    board = a_film_with_stills(engine, tmp_path, scenes=3)
+    account = Account(50_000)
+    caps = [SEEDANCE, VEO_FAST]
+    hero_models = Models(SpyVideo("seedance2_5", account), SpyVideo("veo3.1_fast", account))
+    hero_approved(engine, board, tmp_path, hero_models, account, capabilities=caps)
+    with Session(engine) as session, session.begin():
+        for scene in (2, 3):
+            _take(
+                session, board, scene, "motion", status="PAID", on_disk=tmp_path / f"o{scene}.mp4"
+            )
+    overrides = {2: "seedance2_5"}
+    plan = motion_plan(engine, board, capabilities=caps, overrides=overrides)
+    step = plan["steps"]["motion"]
+    assert step["to_buy"] == [2, 3]
+    each = {item["scene_index"]: item["credits"] for item in plan["scenes"]}
+    assert each[2] > each[3]
+    # Neither scene holds a retry: their next shot is their last render.
+    assert step["cap_credits"] == each[2] + each[3] + step["round_overhead_credits"]
+
+    def check(path, **kwargs):
+        scene = int(kwargs["scene"])
+        return _failed_clip(scene) if scene == 2 else _passed_clip(scene)
+
+    seedance, veo = SpyVideo("seedance2_5", account), SpyVideo("veo3.1_fast", account)
+    result = approved(
+        engine,
+        board,
+        tmp_path,
+        "motion",
+        Models(seedance, veo),
+        account,
+        capabilities=caps,
+        overrides=overrides,
+        clip_check=check,
+    )
+
+    assert not str(result.get("stopped") or "").startswith("STOPPED_AT_CAP")
+    scenes = by_scene(result)
+    assert scenes[3]["status"] == "PAID" and len(veo.asked) == 1
+    assert scenes[2]["status"] == "PAID" and len(seedance.asked) == 1
+    assert scenes[2]["clip_qc"]["accepted_under_cap"] is True
+    assert "Decide Proprietarul" not in str(scenes[2].get("reason") or "")
+    with Session(engine) as session:
+        assert renders_cap.renders_made(session, board, 2, "motion") == 2
+
+
+def test_the_retry_decision_names_the_cap_before_the_money():
+    report = _failed_clip(2)
+    capped = clip_retry_decision(
+        report,
+        seed=7,
+        retries_done=0,
+        committed_credits=340,
+        price_credits=340,
+        cap_credits=400,
+        renders_left=0,
+    )
+    assert capped.action == "ESCALATE"
+    assert "2 randări ale mișcării" in capped.reason_ro
+    assert "plafonul aprobat" not in capped.reason_ro
+    assert "Decide Proprietarul" not in capped.reason_ro
+    # With a render left, the money decides as before.
+    money = clip_retry_decision(
+        report,
+        seed=7,
+        retries_done=0,
+        committed_credits=340,
+        price_credits=340,
+        cap_credits=400,
+        renders_left=1,
+    )
+    assert money.action == "ESCALATE" and "plafonul aprobat de 400" in money.reason_ro
+
+
+@needs_ffmpeg
+def test_a_motion_capped_scene_with_paid_shots_on_older_words_keeps_the_closest(engine, tmp_path):
+    """Scene 2's motion had its two renders, both PAID on older words: the plan holds it, and
+    the walk's ladder keeps the newest as its clip under the cap, without the Owner — the
+    next plan reads it bought (item 7)."""
+    board = a_film_with_stills(engine, tmp_path, scenes=3)
+    with Session(engine) as session, session.begin():
+        older = _take(session, board, 2, "motion", status="PAID", on_disk=tmp_path / "a.mp4")
+        newer = _take(session, board, 2, "motion", status="PAID", on_disk=tmp_path / "b.mp4")
+        _at(session, older, "2026-10-16T09:00:00+00:00")
+        _at(session, newer, "2026-10-16T10:00:00+00:00")
+    plan = motion_plan(engine, board, capabilities=[SEEDANCE])
+    scene = next(item for item in plan["scenes"] if item["scene_index"] == 2)
+    assert scene["status"] == "NEEDS_OWNER" and 2 not in plan["steps"]["motion"]["to_buy"]
+    # The stop's words say the scene is the Director's, not his.
+    said = stages._held_words(engine, board, "mișcarea", [2])
+    assert "decizia Proprietarului" not in said and "2 randări" in said
+
+    film = {"status": "WAITING", "refusal": "NEEDS_OWNER", "scenes": [2]}
+    assert stages._ladder_scenes(engine, board, film) == []
+    assert film["settled_under_cap"] == [2]
+    with Session(engine) as session:
+        kept = session.get(SceneTake, newer)
+        assert kept.approved_by == assembler.CAP_APPROVER
+        assert clip_qc_of(session, newer)["accepted_under_cap"] is True
+        assert session.get(SceneTake, older).approved_by != assembler.CAP_APPROVER
+        assert renders_cap.renders_made(session, board, 2, "motion") == 2
+    again = motion_plan(engine, board, capabilities=[SEEDANCE])
+    scene = next(item for item in again["scenes"] if item["scene_index"] == 2)
+    assert scene["status"] == "BOUGHT" and scene["take_id"] == newer
+    # Settled once: the next walk changes nothing, so it never loops on it.
+    film = {"status": "WAITING", "refusal": "NEEDS_OWNER", "scenes": [2]}
+    stages._ladder_scenes(engine, board, film)
+    assert "settled_under_cap" not in film
+
+
+@needs_ffmpeg
+def test_a_motion_capped_scene_with_no_clip_on_disk_is_moved_locally_by_the_director(
+    engine, tmp_path
+):
+    """Scene 2's two renders were charged and delivered nothing: no clip to keep. The
+    Director shows its approved still moved locally (0 credits): the plan reads it LOCAL and
+    hers, and the PRODUCTION fallback gate lets the film through (item 7)."""
+    board = a_film_with_stills(engine, tmp_path, scenes=3)
+    with Session(engine) as session, session.begin():
+        for _ in range(2):
+            _take(session, board, 2, "motion", status="REFUSED", failure_code=None, credits=340.0)
+    film = {"status": "WAITING", "refusal": "NEEDS_OWNER", "scenes": [2]}
+    assert stages._ladder_scenes(engine, board, film) == []
+    assert film["settled_under_cap"] == [2]
+    with Session(engine) as session:
+        assert renders_cap.cap_local_moves(session, board) == {2}
+        assert clip_qc.chosen_local_moves(session, board) == {2}
+    plan = motion_plan(engine, board, capabilities=[SEEDANCE])
+    scene = next(item for item in plan["scenes"] if item["scene_index"] == 2)
+    assert scene["status"] == "LOCAL" and scene["decided_by"] == renders_cap.CAP_LOCAL_MOVE_BY
+    assert "animată local" in scene["reason_ro"] and "2 randări" in scene["reason_ro"]
+    assert 2 not in plan["steps"]["motion"]["to_buy"]
+    production = {
+        "scenes": [
+            {"scene_index": 1, "scene_kind": "LIVE", "motion": {"bytes": 1}},
+            {"scene_index": 2, "scene_kind": "LIVE", "motion": None},
+            {"scene_index": 3, "scene_kind": "LIVE", "motion": {"bytes": 1}},
+        ]
+    }
+    verdict = clip_qc.require_chosen_fallbacks(engine, board, production, environment="PRODUCTION")
+    assert verdict["passed"]
+
+
+def test_a_clip_too_short_at_the_cap_is_moved_locally_instead_of_redone(engine, tmp_path):
+    """The narration came out longer than the clip of a scene whose motion had its two
+    renders: the studio's longer-clip proposal buys nothing past the cap, and the Director
+    shows the scene's still moved locally so the film is assembled (item 2)."""
+    board = a_film_with_stills(engine, tmp_path, scenes=3)
+    with Session(engine) as session, session.begin():
+        for name in ("s1.mp4", "s2.mp4"):
+            _take(session, board, 2, "motion", status="PAID", on_disk=tmp_path / name)
+        append_event(
+            session,
+            assembler.ASSEMBLY_REFUSED_EVENT,
+            "storyboard",
+            board,
+            1,
+            {
+                "storyboard_id": board,
+                "scenes": [
+                    {
+                        "scene_index": 2,
+                        "code": assembler.CLIP_SHORT,
+                        "needed_seconds": 9.0,
+                        "reason_ro": "Scena 2: clipul este prea scurt.",
+                    }
+                ],
+            },
+            "c",
+        )
+    (outcome,) = assembler.propose_clip_redos(engine, board, "c", wiring={})
+    assert outcome["status"] == assembler.RENDERS_CAP
+    assert "animată local" in outcome["reason_ro"]
+    with Session(engine) as session:
+        assert renders_cap.cap_local_moves(session, board) == {2}
+        assert renders_cap.renders_made(session, board, 2, "motion") == 2
+
+
+def test_the_owners_own_press_is_refused_past_the_cap_and_his_plan_says_so(engine, tmp_path):
+    """His «Refă imaginea» on a scene whose still was made twice is not priced as a third: the
+    plan is not buyable and names the cap and its setting, and the press is refused before
+    anything is bought (items 3 and 8)."""
+    board = a_film_with_stills(engine, tmp_path, scenes=3)
+    with Session(engine) as session, session.begin():
+        _take(session, board, 1, "still", on_disk=tmp_path / "second.png")
+        for name in ("m2a.mp4", "m2b.mp4"):
+            _take(session, board, 2, "motion", status="PAID", on_disk=tmp_path / name)
+    plan = assembler.redo_plan(engine, board, "still", 1)
+    assert plan["buyable"] is False and plan["renders_capped"] is True
+    assert "2 randări" in plan["reason_ro"] and "STUDIO_RENDERS_PER_LAYER" in plan["reason_ro"]
+    # A new picture of scene 2 could not be animated: not buyable either.
+    animated = assembler.redo_plan(engine, board, "still", 2)
+    assert animated["buyable"] is False and "nu mai poate fi animată" in animated["reason_ro"]
+    with pytest.raises(SceneRedoRefused) as refused:
+        redo_scene(
+            engine, board, str(uuid4()), kind="still", scene_index=1, plan_hash=plan["plan_hash"]
+        )
+    assert refused.value.status == assembler.RENDERS_CAP
+    with Session(engine) as session:
+        assert renders_cap.renders_made(session, board, 1, "still") == 2
+
+
+@needs_ffmpeg
+def test_the_owners_motion_redo_is_not_buyable_after_two_shots(engine, tmp_path):
+    board = a_film_with_stills(engine, tmp_path, scenes=3)
+    with Session(engine) as session, session.begin():
+        for name in ("m2a.mp4", "m2b.mp4"):
+            _take(session, board, 2, "motion", status="PAID", on_disk=tmp_path / name)
+    plan = assembler.redo_plan(engine, board, "motion", 2, capabilities=[SEEDANCE])
+    assert plan["buyable"] is False and plan["renders_capped"] is True
+    assert "2 randări" in plan["reason_ro"]
+    with pytest.raises(SceneRedoRefused) as refused:
+        redo_scene(
+            engine,
+            board,
+            str(uuid4()),
+            kind="motion",
+            scene_index=2,
+            plan_hash=plan["plan_hash"],
+            capabilities=[SEEDANCE],
+        )
+    assert refused.value.status == assembler.RENDERS_CAP
+
+
+def test_a_scene_at_the_still_cap_keeps_a_still_approved_on_older_words(engine, tmp_path):
+    """Scene 3's words were rewritten after its still was approved; a request on the new words
+    was charged and left nothing. At the cap the approved still on the older words is the
+    closest the scene has: it stands, nothing is bought and nobody waits (item 7, stills)."""
+    board = a_film_to_buy(engine, tmp_path)
+    with Session(engine) as session, session.begin():
+        approved_before = _take(
+            session, board, 3, "still", status="APPROVED", on_disk=tmp_path / "older.png"
+        )
+        _take(
+            session,
+            board,
+            3,
+            "still",
+            status="REFUSED",
+            failure_code=None,
+            credits=float(price_still(STILLS_MODEL, STILLS_RESOLUTION, 1)),
+        )
+    _bible, scenes = stills_stage._read_scenes(engine, board)
+    three = next(scene for scene in scenes if scene.index == 3)
+    assert three.reuse is not None and three.reuse.id == approved_before
+    assert three.reuse.approved_by == assembler.CAP_APPROVER
+    assert 3 not in stills_stage.stills_plan(engine, board)["to_buy"]
+    # A scene with nothing at all on disk waits, and his press is no promise any more.
+    assert "apăsată de el" not in stills_stage.capped_reason(3)
+    assert "STUDIO_RENDERS_PER_LAYER" in stills_stage.capped_reason(3)
+
+
+def test_the_directors_letter_names_the_renders_cap_and_its_setting():
+    """A scene her repair did not buy because a layer had its renders is said with the cap
+    and STUDIO_RENDERS_PER_LAYER, never as a paid-redo limit he never set (item 9)."""
+    (line,) = stages._repair_lines(
+        {
+            "limited": [
+                {
+                    "scene_index": 5,
+                    "per_scene": 1,
+                    "per_film": 20,
+                    "renders": {"still": 2},
+                    "renders_cap": 2,
+                    "report_rounds": 0,
+                    "report_rounds_cap": 2,
+                    "per_scene_setting": renders_cap.ENV_NAME,
+                }
+            ]
+        }
+    )
+    assert "imaginea ei a avut deja 2 randări" in line
+    assert "STUDIO_RENDERS_PER_LAYER" in line
+    assert "STUDIO_FILM_MAX_PAID_REDOS_PER_SCENE" not in line
+    # A per-scene limit he did not set is said from the cap's own setting.
+    (per_scene,) = stages._repair_lines(
+        {
+            "limited": [
+                {
+                    "scene_index": 4,
+                    "per_scene": 1,
+                    "per_film": 20,
+                    "renders": {},
+                    "per_scene_setting": renders_cap.paid_redos_setting(
+                        SimpleNamespace(film_max_paid_redos_per_scene=None)
+                    ),
+                }
+            ]
+        }
+    )
+    assert "(STUDIO_RENDERS_PER_LAYER, STUDIO_FILM_MAX_PAID_REDOS)" in per_scene
+    assert (
+        renders_cap.paid_redos_setting(SimpleNamespace(film_max_paid_redos_per_scene=0))
+        == "STUDIO_FILM_MAX_PAID_REDOS_PER_SCENE"
+    )
+
+
+def test_the_writer_eval_fingerprint_follows_what_the_writers_are_told(monkeypatch):
+    """The standing rules say the cap from the setting: two settings, two identities (item 5)."""
+    from app.evals import variants
+
+    told_twice = variants.fingerprint("serial")["identity_sha256"]
+    monkeypatch.setenv("STUDIO_RENDERS_PER_LAYER", "3")
+    told_three = variants.fingerprint("serial")["identity_sha256"]
+    assert told_twice != told_three
+    assert "app.agents.identity.standing_rules()" in variants.fingerprint("serial")["parts"]

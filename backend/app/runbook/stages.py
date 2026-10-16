@@ -140,7 +140,13 @@ from app.media.prompt_agent import (
     write_shot_prompts,
 )
 from app.media.qc import evaluate_media_qc, rights_verdict
-from app.media.renders_cap import paid_redos_per_scene, renders_per_layer, renders_ro
+from app.media.renders_cap import at_cap as renders_at_cap
+from app.media.renders_cap import (
+    paid_redos_per_scene,
+    paid_redos_setting,
+    renders_per_layer,
+    renders_ro,
+)
 from app.media.serial_storyboard import describe_serial_shots
 from app.media.services import generate_storyboard_from_script
 from app.models import DomainEvent
@@ -1855,14 +1861,24 @@ def _ladder_scenes(
     scene is listed on ``film["rejudged"]``. Then a refused scene whose picture has had its
     renders, or whose motion has had its renders, is not rewritten: what it has stands under
     the Owner's cap (`stills_stage.settle_scene_under_cap`) and the scene is listed on
-    ``film["settled_under_cap"]`` instead, so the walk goes on.
+    ``film["settled_under_cap"]`` instead, so the walk goes on. A stopped scene at the cap that
+    quality control did not refuse (held by the cap itself, its shots made on older words, a
+    clip too short for its words) is settled the same way: past the cap the Director keeps
+    what is closest and nothing waits for the Owner (2026-10-16).
 
     ``act=False`` only reads the refused scenes and changes nothing (`_ladders_stop`)."""
     if film.get("status") != "WAITING" or film.get("refusal") not in LADDER_REFUSALS:
         return []
     scenes = [int(scene) for scene in film.get("scenes") or [] if isinstance(scene, int)]
     refused = _quality_scenes(engine, storyboard_id, scenes) if scenes else []
-    if not refused or not act:
+    if not act:
+        return refused
+    capped = [
+        scene
+        for scene in scenes
+        if scene not in refused and _at_a_cap(engine, storyboard_id, scene)
+    ]
+    if not refused and not capped:
         return refused
     from app.media.stills_stage import (  # noqa: PLC0415
         rejudge_refused_stills,
@@ -1890,11 +1906,28 @@ def _ladder_scenes(
                 "ladder_scene_not_settled",
                 extra={"storyboard_id": storyboard_id, "scene": scene, "error": type(exc).__name__},
             )
+    for scene in capped:
+        try:
+            if settle_scene_under_cap(engine, storyboard_id, scene, str(uuid4())):
+                settled.append(scene)
+        except Exception as exc:  # noqa: BLE001 - the walk's stop stands for this scene
+            logger.warning(
+                "capped_scene_not_settled",
+                extra={"storyboard_id": storyboard_id, "scene": scene, "error": type(exc).__name__},
+            )
     if settled:
         film.setdefault("settled_under_cap", []).extend(settled)
     if rejudged:
         film.setdefault("rejudged", []).extend(rejudged)
     return [scene for scene in refused if scene not in settled and scene not in rejudged]
+
+
+def _at_a_cap(engine: Engine, storyboard_id: str, scene: int) -> bool:
+    """Whether the scene's picture or its motion has had its renders (`renders_cap`)."""
+    with Session(engine) as session:
+        return renders_at_cap(session, storyboard_id, scene, "still") or renders_at_cap(
+            session, storyboard_id, scene, "motion"
+        )
 
 
 def _ladders_stop(engine: Engine, storyboard_id: str, film: dict[str, Any]) -> bool:
@@ -1937,9 +1970,11 @@ def _scenes_ro(scenes: list[int], *, refused: bool = False) -> str:
 
 def _held_words(engine: Engine, storyboard_id: str, stair_ro: str, scenes: list[int]) -> str:
     """Why the walk stops before a stair, in the film's words: the scenes quality control
-    refused wait for the Director's rewrite (her ladder, this same walk), the others for the
-    Owner's decision on the shooting sheet. 2026-10-12: «scena 6 așteaptă decizia
-    Proprietarului» reached him for a clip quality control had refused — hers, not his."""
+    refused wait for the Director's rewrite (her ladder, this same walk), the scenes at the
+    Owner's renders cap are hers to settle with what is closest (`_ladder_scenes`, nothing
+    bought), the others wait for the Owner's decision on the shooting sheet. 2026-10-12:
+    «scena 6 așteaptă decizia Proprietarului» reached him for a clip quality control had
+    refused — hers, not his; 2026-10-16, the same for a scene the renders cap had stopped."""
     hers = set(_quality_scenes(engine, storyboard_id, scenes))
     from app.media.scene_rewrite import DELIVERY_CODES, last_failure_code  # noqa: PLC0415
 
@@ -1950,7 +1985,10 @@ def _held_words(engine: Engine, storyboard_id: str, stair_ro: str, scenes: list[
             if last_failure_code(session, storyboard_id, index) in DELIVERY_CODES
         }
     quality = hers - deliveries
-    his = [scene for scene in scenes if scene not in hers]
+    capped = [
+        scene for scene in scenes if scene not in hers and _at_a_cap(engine, storyboard_id, scene)
+    ]
+    his = [scene for scene in scenes if scene not in hers and scene not in capped]
     parts: list[str] = []
     if quality:
         parts.append(_scenes_ro(sorted(quality), refused=True) + " așteaptă rescrierea Directoarei")
@@ -1958,19 +1996,29 @@ def _held_words(engine: Engine, storyboard_id: str, stair_ro: str, scenes: list[
         parts.append(
             _scenes_ro(sorted(deliveries)) + " așteaptă remedierea livrării de către Directoare"
         )
+    if capped:
+        parts.append(
+            _scenes_ro(capped)
+            + (" a avut" if len(capped) == 1 else " au avut")
+            + f" randările plafonului Proprietarului ({renders_ro()} pe imagine sau mișcare, "
+            "STUDIO_RENDERS_PER_LAYER): Directoarea păstrează ce este mai apropiat de plan"
+        )
     if his:
         parts.append(_scenes_ro(his) + " așteaptă decizia Proprietarului pe foaia de filmare")
-    ending = (
-        "nu se cumpără din nou până nu decide el."
-        if not hers
-        else (
+    if his:
+        ending = (
+            "nu se cumpără din nou până nu decide el."
+            if not hers and not capped
+            else "nu se cumpără din nou până atunci."
+        )
+    elif hers:
+        ending = (
             "nu se cumpără din nou până nu stabilește ea remedierea."
             if deliveries
             else "nu se cumpără din nou până nu o rescrie ea."
         )
-        if not his
-        else "nu se cumpără din nou până atunci."
-    )
+    else:
+        ending = "nu se mai cumpără nimic pentru " + ("ea." if len(capped) == 1 else "ele.")
     return f"după pasul «{stair_ro}», " + "; ".join(parts) + "; " + ending
 
 
@@ -6227,6 +6275,7 @@ def _apply_repairs(
     per_scene = paid_redos_per_scene(settings) + allowed_more
     per_film = int(getattr(settings, "film_max_paid_redos", 2)) + allowed_more
     renders_cap = renders_per_layer(settings)
+    per_scene_setting = paid_redos_setting(settings)
     paid: dict[int, list[str]] = {}
     for proposal in proposals:
         if (
@@ -6283,6 +6332,7 @@ def _apply_repairs(
                     "renders_cap": renders_cap,
                     "report_rounds": report_rounds,
                     "report_rounds_cap": REPAIR_ROUNDS_PER_REPORT,
+                    "per_scene_setting": per_scene_setting,
                 }
             )
             continue
@@ -6310,6 +6360,7 @@ def _apply_repairs(
                             "renders_cap": renders_cap,
                             "report_rounds": report_rounds,
                             "report_rounds_cap": REPAIR_ROUNDS_PER_REPORT,
+                            "per_scene_setting": per_scene_setting,
                         }
                     )
                     continue
@@ -6492,7 +6543,12 @@ def _apply_repairs(
                 and sum(previous["rounds"].values()) + len(reserved) >= per_film
             ):
                 result["limited"].append(
-                    {"scene_index": candidate, "per_scene": per_scene, "per_film": per_film}
+                    {
+                        "scene_index": candidate,
+                        "per_scene": per_scene,
+                        "per_film": per_film,
+                        "per_scene_setting": per_scene_setting,
+                    }
                 )
                 raise SceneRedoRefused("REDO_LIMIT", "Plafonul refacerilor plătite este atins.")
 
@@ -6842,6 +6898,43 @@ def _reencode_from_takes(
         )
 
 
+#: A layer of a scene, as the Director's letter names what reached the renders cap.
+_LAYER_HAD_RO = {"still": "imaginea ei", "motion": "mișcarea ei"}
+
+
+def _limited_line(item: dict[str, Any]) -> str:
+    """One scene her repair did not buy, said by what stopped it, with the setting that holds
+    the number: the Owner's renders cap (STUDIO_RENDERS_PER_LAYER), the repairs bought on one
+    report, or the paid redos per scene and per film."""
+    scene = item["scene_index"]
+    renders = item.get("renders") or {}
+    if renders:
+        had = " și ".join(
+            f"{_LAYER_HAD_RO.get(layer, layer)} a avut deja {renders_ro(int(made))}"
+            for layer, made in renders.items()
+        )
+        cap = item.get("renders_cap")
+        return (
+            f"- Scena {scene}: nu se mai cumpără, {had}, iar plafonul tău este de "
+            f"{renders_ro(int(cap) if cap else None)} pe imagine sau mișcare "
+            "(STUDIO_RENDERS_PER_LAYER); rămâne ce este mai apropiat de plan"
+        )
+    rounds_cap = item.get("report_rounds_cap")
+    if rounds_cap is not None and int(item.get("report_rounds") or 0) >= int(rounds_cap):
+        return (
+            f"- Scena {scene}: nu se mai cumpără automat, raportul a avut deja "
+            f"{count(int(rounds_cap), 'reparație cumpărată', 'reparații cumpărate')}, plafonul "
+            "tău pe raport"
+        )
+    setting = str(item.get("per_scene_setting") or "STUDIO_FILM_MAX_PAID_REDOS_PER_SCENE")
+    return (
+        f"- Scena {scene}: nu se mai cumpără automat, s-a atins limita de "
+        f"{count(int(item['per_scene']), 'refacere plătită', 'refaceri plătite')} pe scenă"
+        f" și {count(int(item['per_film']), 'refacere plătită', 'refaceri plătite')} pe "
+        f"film ({setting}, STUDIO_FILM_MAX_PAID_REDOS)"
+    )
+
+
 def _repair_lines(result: dict[str, Any]) -> list[str]:
     """What one repair did, line by line in the Owner's words, for the Director's letter:
     each free fix, each paid redo bought under his rule, each one waiting for his answer, the
@@ -6865,10 +6958,7 @@ def _repair_lines(result: dict[str, Any]) -> list[str]:
         )
     for item in result.get("limited") or []:
         done.append(
-            f"- Scena {item['scene_index']}: nu se mai cumpără automat, s-a atins limita de "
-            f"{count(int(item['per_scene']), 'refacere plătită', 'refaceri plătite')} pe scenă"
-            f" și {count(int(item['per_film']), 'refacere plătită', 'refaceri plătite')} pe "
-            "film (STUDIO_FILM_MAX_PAID_REDOS_PER_SCENE, STUDIO_FILM_MAX_PAID_REDOS)"
+            _limited_line(item)
             + (
                 "; ai un card: mai cumpăr, public așa cum e, sau închid."
                 if result.get("card_id")

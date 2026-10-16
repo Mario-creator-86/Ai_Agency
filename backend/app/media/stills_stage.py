@@ -784,20 +784,12 @@ def _read_scenes(engine: Engine, storyboard_id: str) -> tuple[dict[str, Any], li
             motion_full = renders_made(session, storyboard_id, scene.index, "motion") >= cap_now
         if scene.pending or (not motion_full and scene.renders < cap_now):
             continue
-        with Session(engine) as session:
-            newest = _newest_kept(session, storyboard_id, scene.index)
-            take_id = newest.id if newest is not None else None
-            said = str(newest.failure_detail or "") if newest is not None else ""
-        if take_id is None:
+        kept = _keep_under_renders_cap(engine, storyboard_id, scene.index)
+        if kept is None:
             capped[scene.index] = capped_reason(scene.index, motion=motion_full)
             continue
-        _approve_under_cap(engine, take_id, [said])
-        with Session(engine) as session:
-            kept = session.get(SceneTake, take_id)
-            if kept is not None:
-                session.expunge(kept)
-                scene.reuse = kept
-                scene.pending = []
+        scene.reuse = kept
+        scene.pending = []
     # What each scene still to be bought remembers since the Owner last decided about it: a
     # scene the gate or the vendor left to him is held, and is never bought meanwhile.
     open_scenes = {
@@ -827,12 +819,15 @@ def _read_scenes(engine: Engine, storyboard_id: str) -> tuple[dict[str, Any], li
 
 def capped_reason(scene_index: int, *, motion: bool = False) -> str:
     """Why a scene at the Owner's renders cap with nothing of its own on disk to stand is not
-    bought: past the cap nothing is bought unasked; his own press on the sheet still may."""
+    bought: past the cap nothing is bought, by any route (his press included: «maxim încă o
+    randare»); only his setting (STUDIO_RENDERS_PER_LAYER) moves the number. Paid renders
+    that left no picture are the vendor's (charged and undelivered, or unanswered)."""
     layer = "mișcării" if motion else "imaginii"
     return (
         f"Scena {scene_index}: plafonul Proprietarului de {renders_of_ro(layer)} este "
-        "atins și nu a rămas pe disc nicio imagine a ei care să rămână; nu se mai cumpără "
-        "nimic pentru ea fără refacerea apăsată de el pe foaia de filmare."
+        "atins și nicio randare plătită nu a lăsat pe disc o imagine a ei care să rămână; "
+        "nu se mai cumpără nimic pentru ea cât timp plafonul (STUDIO_RENDERS_PER_LAYER) "
+        "rămâne acesta."
     )
 
 
@@ -1347,26 +1342,47 @@ def _newest_refused(session: Session, storyboard_id: str, scene_index: int) -> S
 def _newest_kept(session: Session, storyboard_id: str, scene_index: int) -> SceneTake | None:
     """What stands as the scene's picture when the cap stops another render: its newest refused
     still on disk (`_newest_refused`), else its newest paid one on disk that was judged (a
-    runner-up), else None."""
+    runner-up), else its newest still approved on other words that is on disk (the words were
+    rewritten after it; no render of the new ones may be bought), else None."""
     refused = _newest_refused(session, storyboard_id, scene_index)
     if refused is not None:
         return refused
-    rows = session.scalars(
-        select(SceneTake)
-        .where(
-            SceneTake.storyboard_id == storyboard_id,
-            SceneTake.scene_number == int(scene_index),
-            SceneTake.kind == "still",
-            SceneTake.status == "PAID",
+    for status in ("PAID", "APPROVED"):
+        rows = session.scalars(
+            select(SceneTake)
+            .where(
+                SceneTake.storyboard_id == storyboard_id,
+                SceneTake.scene_number == int(scene_index),
+                SceneTake.kind == "still",
+                SceneTake.status == status,
+            )
+            .order_by(SceneTake.created_at.desc())
         )
-        .order_by(SceneTake.created_at.desc())
-    )
-    for row in rows:
-        if row.failure_code == UNJUDGED_FAILURE_CODE:
-            continue
-        if row.path and row.sha256 and Path(row.path).is_file():
-            return row
+        for row in rows:
+            if row.failure_code == UNJUDGED_FAILURE_CODE:
+                continue
+            if row.path and row.sha256 and Path(row.path).is_file():
+                return row
     return None
+
+
+def _keep_under_renders_cap(
+    engine: Engine, storyboard_id: str, scene_index: int
+) -> SceneTake | None:
+    """The scene's closest still (`_newest_kept`) APPROVED under the Owner's renders cap and
+    returned, detached; None when nothing of it is on disk to stand."""
+    with Session(engine) as session:
+        newest = _newest_kept(session, storyboard_id, scene_index)
+        take_id = newest.id if newest is not None else None
+        said = str(newest.failure_detail or "") if newest is not None else ""
+    if take_id is None:
+        return None
+    _approve_under_cap(engine, take_id, [said])
+    with Session(engine) as session:
+        kept = session.get(SceneTake, take_id)
+        if kept is not None:
+            session.expunge(kept)
+        return kept
 
 
 def _approve_under_cap(engine: Engine, take_id: str, reasons: list[str]) -> None:
@@ -1528,19 +1544,23 @@ def rejudge_refused_stills(
 def settle_scene_under_cap(
     engine: Engine, storyboard_id: str, scene_index: int, correlation_id: str
 ) -> bool:
-    """A scene quality control refused whose picture, or whose motion, has had its renders
-    (`renders_cap`): what it has stands under the Owner's cap, before any rewrite — its newest
-    refused still on disk becomes its picture when none is approved, and, when its shots have
-    had theirs, its newest refused shot on disk becomes its clip
-    (`assembler._keep_clip_under_cap`). A motion at its cap settles the scene whatever its
-    picture's count: a new picture could not be animated, so a rewrite would buy nothing
-    that reaches the film. Returns True when something was settled (05:20Z, 7c26a7ce scenes
-    1-2: the still under the cap, three clips refused for it, and every walk stopped at
-    «Directoarea nu a putut încă rescrie» — the ladder ran before the cap could act)."""
+    """A stopped scene whose picture, or whose motion, has had its renders (`renders_cap`),
+    whatever stopped it: what it has stands under the Owner's cap, before any rewrite, and
+    nothing is bought or left to him (2026-10-15: «publicăm cu ce Directoarea alege ca fiind
+    cel mai apropiat»; 2026-10-16: «maxim încă o randare»).
+
+    Its picture: with no still approved for its words as they are now, its closest still on
+    disk (`_newest_kept`: the newest refused, a judged runner-up, one approved on older words)
+    is approved under the cap. A motion at its cap settles the picture whatever the picture's
+    count: a new one could not be animated. Its motion, at its cap: the closest clip it has
+    stands, else its still moved locally (`assembler.settle_motion_under_cap`). A render still
+    pending (at the vendor, or collected and not judged) is judged first, never passed over.
+    Returns True when something was settled (05:20Z, 7c26a7ce scenes 1-2: the still under the
+    cap, three clips refused for it, and every walk stopped at «Directoarea nu a putut încă
+    rescrie» — the ladder ran before the cap could act)."""
     from app.media.assembler import (  # noqa: PLC0415
-        SHOT_TAKE_KINDS,
-        _keep_clip_under_cap,
-        clip_qc_of,
+        scene_approved_still,
+        settle_motion_under_cap,
     )
 
     motion_full = _motion_at_renders_cap(engine, storyboard_id, scene_index)
@@ -1548,69 +1568,23 @@ def settle_scene_under_cap(
         return False
     settled = False
     with Session(engine) as session:
-        approved = session.scalar(
+        pending = session.scalar(
             select(SceneTake.id).where(
                 SceneTake.storyboard_id == storyboard_id,
                 SceneTake.scene_number == int(scene_index),
                 SceneTake.kind == "still",
-                SceneTake.status == "APPROVED",
+                (SceneTake.status == "SUBMITTED")
+                | (
+                    (SceneTake.status == "PAID") & (SceneTake.failure_code == UNJUDGED_FAILURE_CODE)
+                ),
             )
         )
-        newest = (
-            None if approved is not None else _newest_refused(session, storyboard_id, scene_index)
+    if pending is None and scene_approved_still(engine, storyboard_id, scene_index) is None:
+        settled = _keep_under_renders_cap(engine, storyboard_id, scene_index) is not None
+    if motion_full:
+        settled = settle_motion_under_cap(engine, storyboard_id, scene_index, correlation_id) or (
+            settled
         )
-        still_id = newest.id if newest is not None else None
-        still_said = str(newest.failure_detail or "") if newest is not None else ""
-    if still_id is not None:
-        _approve_under_cap(engine, still_id, [still_said])
-        settled = True
-    with Session(engine) as session:
-        shots = list(
-            session.scalars(
-                select(SceneTake)
-                .where(
-                    SceneTake.storyboard_id == storyboard_id,
-                    SceneTake.scene_number == int(scene_index),
-                    SceneTake.kind.in_(SHOT_TAKE_KINDS),
-                )
-                .order_by(SceneTake.created_at.desc())
-            )
-        )
-        accepted = any(
-            row.status == "APPROVED"
-            or (
-                row.status == "PAID"
-                and (clip_qc_of(session, row.id) or {}).get("verdict") == "PASSED"
-            )
-            for row in shots
-        )
-        shot_id: str | None = None
-        record: dict[str, Any] = {}
-        if not accepted and motion_full:
-            for row in shots:
-                if (
-                    row.status == "REJECTED"
-                    and row.path
-                    and row.sha256
-                    and Path(row.path).is_file()
-                ):
-                    shot_id = row.id
-                    record = clip_qc_of(session, row.id) or {}
-                    if not record.get("blocks_ro"):
-                        record["blocks_ro"] = [str(row.failure_detail or "")]
-                    break
-    if shot_id is not None:
-        _keep_clip_under_cap(
-            engine,
-            shot_id,
-            {**record, "verdict": "FAILED"},
-            storyboard_id=storyboard_id,
-            scene_number=int(scene_index),
-            seed=record.get("seed"),
-            attempt=int(record.get("attempt") or 1),
-            correlation_id=correlation_id,
-        )
-        settled = True
     return settled
 
 
@@ -2875,6 +2849,19 @@ def run_stills_stage(
                 # His mode or rule changed while the step ran: nothing more is bought.
                 stopped = lowered
                 outcome = {"status": "NOT_BOUGHT", "reason": stopped}
+                break
+            if _at_renders_cap(engine, storyboard_id, scene.index):
+                # The Owner's renders cap, counted again before every request (2026-10-16:
+                # «maxim încă o randare»): a charged vendor failure is a render too, so the
+                # technical retry after one is not bought past the cap. What the scene has
+                # stands under it (its closest still on disk), else nothing more is bought.
+                kept = _keep_under_renders_cap(engine, storyboard_id, scene.index)
+                if kept is None:
+                    outcome = {"status": "NOT_BOUGHT", "reason": capped_reason(scene.index)}
+                    break
+                if scene.index == first_live and kept.path:
+                    figure_one = Path(kept.path).read_bytes()
+                outcome = _RoundEnd(take_id=kept.id, approved_by=CAP_APPROVER).approved()
                 break
             if requests >= limit:
                 outcome = {

@@ -1060,6 +1060,7 @@ def _sheet(
     from app.factual.story_review import story_gate  # noqa: PLC0415
     from app.media.prompt_agent import motion_prompt_for, shot_plan_gaps  # noqa: PLC0415
     from app.media.qc import owner_local_moves  # noqa: PLC0415 - qc reads the sheet's events
+    from app.media.renders_cap import cap_local_moves  # noqa: PLC0415 - it reads assembler
     from app.models import OwnerPolicy  # noqa: PLC0415
     from app.services import (  # noqa: PLC0415 - services imports media
         ACTION_RISK_TIERS,
@@ -1126,7 +1127,10 @@ def _sheet(
         # looked for a shot of any length. It now reads the render's own readiness
         # (`assembly_readiness`): the same shot identity, the same span from the narration
         # (measured, else estimated), the same slow-down allowance.
-        local_moves = owner_local_moves(session, storyboard_id)
+        # His own LOCAL_MOVE, and the Director's past his renders cap (a scene whose motion
+        # had its renders and has no clip that carries it: its still moved locally).
+        cap_moves = cap_local_moves(session, storyboard_id)
+        local_moves = owner_local_moves(session, storyboard_id) | cap_moves
         readiness = assembly_readiness(
             session,
             storyboard_id,
@@ -1142,6 +1146,7 @@ def _sheet(
             },
             environment=environment,
             local_moves=local_moves,
+            cap_moves=cap_moves,
         )
         # Each clip's length as the motion step buys it: the narration it will carry.
         sizes = clip_plan(session, storyboard_id, scenes)

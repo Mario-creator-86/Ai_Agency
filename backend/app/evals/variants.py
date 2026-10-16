@@ -126,6 +126,10 @@ IDENTITY_PARTS: tuple[tuple[str, str], ...] = (
     ("app.agents.services", "compose_identity"),
     ("app.agents.memory", "recall"),
 )
+#: What a writer is told that the parts above only template, hashed as it is said now: the
+#: standing rules state the Owner's renders cap from his setting (STUDIO_RENDERS_PER_LAYER,
+#: `agents.identity.standing_rules`), so runs told «twice» and «3 times» are two identities.
+IDENTITY_SAID: tuple[tuple[str, str], ...] = (("app.agents.identity", "standing_rules"),)
 
 
 def _described(value: Any) -> str:
@@ -141,12 +145,19 @@ def _described(value: Any) -> str:
         return repr(value)
 
 
-def _sha(parts: tuple[tuple[str, str], ...]) -> str:
+def _sha(parts: tuple[tuple[str, str], ...], said: tuple[tuple[str, str], ...] = ()) -> str:
+    """The parts as text (`_described`), then each of ``said`` called and its answer: what
+    the writer is told, beside the code that tells it."""
     digest = hashlib.sha256()
     for module_name, attribute in parts:
         value = getattr(importlib.import_module(module_name), attribute)
         digest.update(f"{module_name}.{attribute}\n".encode())
         digest.update(_described(value).encode("utf-8"))
+        digest.update(b"\n\0")
+    for module_name, attribute in said:
+        answer = getattr(importlib.import_module(module_name), attribute)()
+        digest.update(f"{module_name}.{attribute}()\n".encode())
+        digest.update(_described(answer).encode("utf-8"))
         digest.update(b"\n\0")
     return digest.hexdigest()
 
@@ -158,6 +169,7 @@ def fingerprint(kind: str) -> dict[str, Any]:
         raise ValueError(f"Nu există scenarist de tipul {kind!r}")
     return {
         "brief_sha256": _sha(BRIEF_PARTS[kind]),
-        "identity_sha256": _sha(IDENTITY_PARTS),
-        "parts": [f"{module}.{name}" for module, name in BRIEF_PARTS[kind] + IDENTITY_PARTS],
+        "identity_sha256": _sha(IDENTITY_PARTS, IDENTITY_SAID),
+        "parts": [f"{module}.{name}" for module, name in BRIEF_PARTS[kind] + IDENTITY_PARTS]
+        + [f"{module}.{name}()" for module, name in IDENTITY_SAID],
     }

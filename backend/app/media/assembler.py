@@ -88,8 +88,12 @@ from app.media.production_policy import (
 )
 from app.media.prompt_lint import LintScene, has_block, lint_film, summary_ro
 from app.media.renders_cap import (
+    CAP_LOCAL_MOVE_BY,
+    cap_local_move_words,
+    cap_local_moves,
     clip_retries,
     max_rerolls,
+    record_cap_local_move,
     renders_by_scene,
     renders_left,
     renders_made,
@@ -4829,6 +4833,7 @@ def assembly_readiness(
     environment: str,
     local_moves: set[int],
     from_prompt: bool = False,
+    cap_moves: set[int] | None = None,
 ) -> list[dict[str, Any]]:
     """Whether each filmed scene can go into the film assembled from its takes, and why not:
     what the shooting sheet shows and `assemble_from_takes` checks before anything is voiced.
@@ -4838,7 +4843,9 @@ def assembly_readiness(
     `narration_readings`), and the shortest it can come out (the same over each reading's
     ``least``) until a render measured the words; each reading is `clip_readiness`'s, with
     ``span_source`` and the sheet's ``reason_ro``. A scene without a shot it may cut in is
-    ready only by the Owner's LOCAL_MOVE for it, or as a still in TEST."""
+    ready only by a local move chosen for it (``local_moves``: the Owner's LOCAL_MOVE, and
+    ``cap_moves``, the Director's past his renders cap, `renders_cap.cap_local_moves`), or as
+    a still in TEST."""
     narration = narration_readings(session, storyboard_id, scenes)
     spans = expected_shot_spans(
         scenes, {index: (said.seconds, said.source) for index, said in narration.items()}
@@ -4902,7 +4909,11 @@ def assembly_readiness(
             reading.update(
                 ok=True,
                 how="local_move",
-                reason_ro=f"Scena {index}: imagine fixă animată local, aleasă de Proprietar.",
+                reason_ro=(
+                    cap_local_move_words(index)
+                    if index in (cap_moves or set())
+                    else f"Scena {index}: imagine fixă animată local, aleasă de Proprietar."
+                ),
             )
         elif environment != "PRODUCTION":
             reading.update(
@@ -5099,6 +5110,14 @@ def propose_clip_redos(
         plan: dict[str, Any] = {}
         outcome: dict[str, Any] = {"scene_index": index}
         try:
+            if _redo_past_cap(engine, storyboard_id, index, "motion", settings) is not None:
+                # Past the Owner's renders cap no longer clip is bought (2026-10-16): the
+                # Director shows the scene as its approved still moved locally, the closest
+                # it can be, and the film is assembled with it — nothing waits for him.
+                with Session(engine) as session, session.begin():
+                    lock_for_write(session)
+                    record_cap_local_move(session, storyboard_id, index, correlation_id)
+                raise SceneRedoRefused(RENDERS_CAP, cap_local_move_words(index))
             plan = redo_plan(
                 engine,
                 storyboard_id,
@@ -5310,6 +5329,162 @@ def _keep_clip_under_cap(
             correlation_id,
         )
     return kept
+
+
+def scene_approved_still(engine: Engine, storyboard_id: str, scene_index: int) -> SceneTake | None:
+    """The filmed scene's still approved for its words as they are now (as the sheet and the
+    assembly look for it: `still_options`), detached, or None."""
+    _title, scenes = _storyboard_scenes(engine, storyboard_id)
+    scene = next((item for item in scenes if int(item["scene_index"]) == int(scene_index)), None)
+    if scene is None or scene_kind_of(scene) != LIVE_KIND:
+        return None
+    with Session(engine) as session:
+        found = usable_take(
+            session,
+            storyboard_id,
+            int(scene_index),
+            "still",
+            still_options(engine, scene),
+            statuses=("APPROVED",),
+        )
+        if found is not None:
+            session.expunge(found)
+        return found
+
+
+def scene_readiness(
+    engine: Engine, storyboard_id: str, scene_index: int, *, environment: str | None = None
+) -> dict[str, Any] | None:
+    """The assembly's reading of one filmed scene as it stands (`assembly_readiness`, its
+    still looked for as the sheet looks for it, no local move counted), or None for a card or
+    a scene with no approved still (its picture is settled first)."""
+    from app.services import studio_environment  # noqa: PLC0415
+
+    _title, scenes = _storyboard_scenes(engine, storyboard_id)
+    scene = next((item for item in scenes if int(item["scene_index"]) == int(scene_index)), None)
+    if scene is None or scene_kind_of(scene) != LIVE_KIND:
+        return None
+    with Session(engine) as session:
+        stills: dict[int, str | None] = {}
+        for item in scenes:
+            if scene_kind_of(item) != LIVE_KIND:
+                continue
+            found = usable_take(
+                session,
+                storyboard_id,
+                int(item["scene_index"]),
+                "still",
+                still_options(engine, item),
+                statuses=("APPROVED",),
+            )
+            stills[int(item["scene_index"])] = found.sha256 if found is not None else None
+        if not stills.get(int(scene_index)):
+            return None
+        readings = assembly_readiness(
+            session,
+            storyboard_id,
+            scenes,
+            stills,
+            environment=environment or studio_environment(engine),
+            local_moves=set(),
+        )
+    return next((item for item in readings if int(item["scene_index"]) == int(scene_index)), None)
+
+
+def _cuts_a_clip(reading: dict[str, Any]) -> bool:
+    """Whether a scene's reading cuts a clip into the film (its shot, slowed, or at risk until
+    its words are measured): a still — TEST's or a local move — is not a clip."""
+    return bool(reading.get("ok")) and reading.get("how") in ("shot", "slowed", "at_risk")
+
+
+def _closest_shot(session: Session, storyboard_id: str, scene_number: int) -> SceneTake | None:
+    """The scene's paid shot nearest its plan among those still on disk, whatever words or
+    model made it: one clip QC passed first, then the newest (made on the most corrected
+    words). His own APPROVED shots are his and are never re-marked here."""
+    best: SceneTake | None = None
+    for row in session.scalars(
+        select(SceneTake)
+        .where(
+            SceneTake.storyboard_id == storyboard_id,
+            SceneTake.scene_number == int(scene_number),
+            SceneTake.kind.in_(SHOT_TAKE_KINDS),
+            SceneTake.status.in_(("PAID", "REJECTED")),
+        )
+        .order_by(SceneTake.created_at.desc())
+    ):
+        if not row.path or not row.sha256 or not Path(row.path).is_file():
+            continue
+        if (clip_qc_of(session, row.id) or {}).get("verdict") == "PASSED":
+            return row
+        if best is None:
+            best = row
+    return best
+
+
+def settle_motion_under_cap(
+    engine: Engine,
+    storyboard_id: str,
+    scene_index: int,
+    correlation_id: str,
+    *,
+    environment: str | None = None,
+) -> bool:
+    """A filmed scene whose motion has had its renders (`renders_cap`) and that the film cannot
+    cut in as it stands: the Director keeps what is closest to the plan, and the film goes on
+    (the Owner, 2026-10-15: «publicăm cu ce Directoarea alege ca fiind cel mai apropiat»;
+    2026-10-16: «maxim încă o randare»). First the closest clip it has on disk
+    (`_closest_shot`: any words, any model) stands under the cap (`_keep_clip_under_cap`);
+    when none does, or the one kept is too short for its words even slowed down (CLIP_SHORT),
+    the scene is shown as its approved still moved locally (`renders_cap.record_cap_local_move`,
+    0 credits). Nothing is bought, nothing waits for the Owner. Returns True only when
+    something changed (the walk is walked again on it), so a walk never loops on it."""
+    with Session(engine) as session:
+        if renders_made(session, storyboard_id, scene_index, "motion") < renders_per_layer():
+            return False
+        pending = session.scalar(
+            select(SceneTake.id).where(
+                SceneTake.storyboard_id == storyboard_id,
+                SceneTake.scene_number == int(scene_index),
+                SceneTake.kind.in_(SHOT_TAKE_KINDS),
+                SceneTake.status == "SUBMITTED",
+            )
+        )
+    if pending is not None:
+        # Its last render is still at the vendor: collected and checked first, never passed
+        # over for an older clip or a still.
+        return False
+    reading = scene_readiness(engine, storyboard_id, scene_index, environment=environment)
+    if reading is None or _cuts_a_clip(reading):
+        return False
+    changed = False
+    if reading.get("code") != CLIP_SHORT:
+        with Session(engine) as session:
+            shot = _closest_shot(session, storyboard_id, scene_index)
+            kept = shot is not None and shot.approved_by == CAP_APPROVER
+            record = dict(clip_qc_of(session, shot.id) or {}) if shot is not None else {}
+            shot_id = shot.id if shot is not None else None
+            failure = str(shot.failure_detail or "") if shot is not None else ""
+        if shot_id is not None and not kept:
+            if not record.get("blocks_ro"):
+                record["blocks_ro"] = [failure] if failure else []
+            _keep_clip_under_cap(
+                engine,
+                shot_id,
+                {**record, "verdict": record.get("verdict") or "FAILED"},
+                storyboard_id=storyboard_id,
+                scene_number=int(scene_index),
+                seed=record.get("seed"),
+                attempt=int(record.get("attempt") or 1),
+                correlation_id=correlation_id,
+            )
+            changed = True
+            reading = scene_readiness(engine, storyboard_id, scene_index, environment=environment)
+    if reading is not None and not _cuts_a_clip(reading):
+        with Session(engine) as session, session.begin():
+            lock_for_write(session)
+            moved = record_cap_local_move(session, storyboard_id, int(scene_index), correlation_id)
+        changed = moved or changed
+    return changed
 
 
 def _keep_clip_report(
@@ -9368,13 +9543,37 @@ def _bought_shots(
             # (`propose_clip_redos`), since nothing unasked retires what he approved, and only
             # his yes to it or his own «Refă mișcarea» replaces it. Planning a purchase here
             # instead would buy a clip that his choice keeps out of the film, at every step.
-            shot = owner_clip_choice(session, storyboard_id, index, [fields]) or _shot_take(
-                session, storyboard_id, index, fields, motion_seconds(scene)
+            shot = (
+                owner_clip_choice(session, storyboard_id, index, [fields])
+                or _shot_take(session, storyboard_id, index, fields, motion_seconds(scene))
+                # The clip the Director kept under the Owner's renders cap, whatever its length:
+                # the scene's shot, never bought over; too short for its words, the assembly
+                # reads it CLIP_SHORT and she moves the scene locally (`settle_motion_under_cap`).
+                or _cap_kept_shot(session, storyboard_id, index)
             )
             if shot is not None:
                 session.expunge(shot)
                 shots[index] = shot
     return stills, shots, fields_of, holds
+
+
+def _cap_kept_shot(session: Session, storyboard_id: str, scene_number: int) -> SceneTake | None:
+    """The scene's newest shot kept under the Owner's renders cap (`_keep_clip_under_cap`,
+    `CAP_APPROVER`) that is still on disk, or None."""
+    for row in session.scalars(
+        select(SceneTake)
+        .where(
+            SceneTake.storyboard_id == storyboard_id,
+            SceneTake.scene_number == int(scene_number),
+            SceneTake.kind.in_(SHOT_TAKE_KINDS),
+            SceneTake.status.in_(("PAID", "APPROVED")),
+            SceneTake.approved_by == CAP_APPROVER,
+        )
+        .order_by(SceneTake.created_at.desc())
+    ):
+        if row.path and row.sha256 and Path(row.path).is_file():
+            return row
+    return None
 
 
 def _in_flight_shots(
@@ -9458,15 +9657,25 @@ def _motion_state(
     for index, memory in remembered.items():
         if memory.hold_ro:
             holds[index] = memory.hold_ro
-    # The Owner's renders cap (`renders_cap`; 2026-10-16: the first render and at most one
-    # more): a scene whose motion has had its renders and has no usable shot is never planned,
-    # so no step buys it again — her ladder keeps its newest refused shot under the cap
-    # (`stills_stage.settle_scene_under_cap`). The scene he is having redone is his own act.
+    # The Owner's renders cap (`renders_cap`; 2026-10-16: «maxim încă o randare»): a scene
+    # whose motion has had its renders and has no usable shot is never planned, on any route —
+    # the day's steps, the Director's repair, his own press of a redo (``redo``) — so no step
+    # buys it again. Past the cap the Director keeps what is closest (`settle_motion_under_cap`,
+    # on the walk's ladder): a clip it has, under the cap, else its still moved locally; a
+    # scene she moved locally is LOCAL here, as his LOCAL_MOVE is, and waits for nobody.
     with Session(engine) as session:
         motion_made = renders_by_scene(session, storyboard_id, "motion")
+        cap_moves = cap_local_moves(session, storyboard_id)
     renders_cap = renders_per_layer()
+    moved = {index for index in cap_moves if index in fields_of and index not in shots}
+    if moved:
+        from app.media.production_policy import LOCAL_MOVE  # noqa: PLC0415
+
+        overrides = {**(overrides or {}), **{index: LOCAL_MOVE for index in moved}}
+        for index in moved:
+            holds.pop(index, None)
     for index in fields_of:
-        if index in shots or index in in_flight or index == redo:
+        if index in shots or index in in_flight or index in moved:
             continue
         if motion_made.get(index, 0) >= renders_cap:
             holds.setdefault(index, motion_capped_reason(index))
@@ -9507,6 +9716,12 @@ def _motion_state(
         table=prices,
     )
     chosen = {int(entry["scene_index"]): entry for entry in policy["scenes"]}
+    for index in moved:
+        # Hers, past his cap, not his: said so on the sheet.
+        if chosen.get(index, {}).get("status") == "LOCAL":
+            chosen[index].update(
+                decided_by=CAP_LOCAL_MOVE_BY, reason_ro=cap_local_move_words(index)
+            )
 
     view: list[dict[str, Any]] = []
     lint_scenes: list[LintScene] = []
@@ -9603,7 +9818,9 @@ def _motion_state(
         )
     findings = lint_film(lint_scenes, bible=bible)
     raw_hero = policy.get("hero_scene")
-    held = sorted(index for index, memory in remembered.items() if memory.hold_ro)
+    held = sorted(
+        index for index, memory in remembered.items() if memory.hold_ro and index not in moved
+    )
     bought_hero = next((index for index, take in shots.items() if take.kind == "test_shot"), None)
     if bought_hero is not None:
         # A bought test shot stays the film's test shot: a scene released after it (film
@@ -10544,6 +10761,11 @@ def _check_shot(
     Owner's ``reason``, the scene's ``clip_qc`` record and ``cap_stop`` (STOPPED_AT_CAP when
     the retry was not bought because of the cap).
 
+    The Owner's renders cap (`renders_cap`, 2026-10-16) binds first: a refused clip whose
+    motion has had its renders buys no retry (its refusal names the cap, never the money, and
+    sets no ``cap_stop``), and the clip stands under the cap (`_keep_clip_under_cap`, PAID):
+    past it the Director keeps the closest and the film goes on.
+
     2026-10-12, late evening: the clip is also checked for what the scene's movement was
     rewritten to fix (`fix_check.open_findings`, motion layer); before the retry is bought the
     Director looks at the refused clip (`fix_check.shot_second_look`) — a clip her look keeps
@@ -10625,6 +10847,12 @@ def _check_shot(
             ffmpeg_path=ffmpeg_exe,
         )
 
+    # The Owner's renders cap, counted with this clip (already on its take): a refused clip
+    # whose motion has had its renders buys no retry, and the refusal says the cap stopped it
+    # before the money is read (`qc.clip_retry_decision`; 2026-10-16: «maxim încă o randare»).
+    with Session(engine) as session:
+        motion_left = renders_left(renders_made(session, storyboard_id, index, "motion"))
+    retry_allowed = motion_left > 0 and clip_retries() > 0
     outcome = clip_qc.qc_clip_with_retry(
         clip,
         check=check,
@@ -10637,6 +10865,7 @@ def _check_shot(
         committed_credits=float(committed),
         cap_credits=float(cap),
         look=look,
+        renders_left=motion_left,
     )
     kept_by_her = outcome.status == clip_qc.ACCEPTED_BY_LOOK
     records: list[dict[str, Any]] = []
@@ -10668,14 +10897,27 @@ def _check_shot(
         records.append({**record, "take_id": checked, "seed": used_seed})
     surviving = [record for record in records if record["verdict"] != "FAILED"]
     final = surviving[-1] if surviving else None
+    motion_spent = False
+    if final is None and records:
+        with Session(engine) as session:
+            made = renders_made(session, storyboard_id, index, "motion")
+        motion_spent = made >= renders_per_layer()
     if (
         final is None
-        and outcome.status == "BACK_TO_STILL"
         and records
-        and _still_at_renders_cap(engine, storyboard_id, index)
+        and (
+            motion_spent
+            or (
+                outcome.status == "BACK_TO_STILL"
+                and _still_at_renders_cap(engine, storyboard_id, index)
+            )
+        )
     ):
-        # The picture is at fault and has had its renders (`renders_cap`): nothing can be
-        # bought for it, so the clip stands under the Owner's cap and the film goes on to QC.
+        # The motion has had its renders, or the picture is at fault and has had its own
+        # (`renders_cap`): nothing more can be bought for the scene's clip (a new picture
+        # could not be animated either), so the clip stands under the Owner's cap — the
+        # Director keeps the closest, the newest on the most corrected words — and the film
+        # goes on to its QC. Nothing waits for the Owner.
         last = records[-1]
         records[-1] = _keep_clip_under_cap(
             engine,
@@ -10729,11 +10971,14 @@ def _check_shot(
     cap_stop: str | None = None
     if (
         final is None
+        and retry_allowed
         and outcome.attempts == 1
         and records
         and records[0]["verdict"] == "FAILED"
         and committed + price > cap
     ):
+        # Only a retry the renders cap allowed is stopped by the money: a retry the cap
+        # refused was never the step's to buy, and stops nothing (its hold never held it).
         cap_stop = (
             f"STOPPED_AT_CAP: reluarea cadrului scenei {index} ({price:.0f} credite) ar depăși "
             f"plafonul aprobat de {cap:.0f} credite (deja {committed:.0f})."
@@ -12171,23 +12416,15 @@ def run_motion_step(
     # is his own act and is not counted against it.
     limit = max_paid_attempts_per_scene()
     sent: dict[int, int] = {}
-    # The Owner's renders cap (`renders_cap`; 2026-10-16: the first render and at most one
-    # more), read now and counted again before every purchase: no shot of a scene is bought
-    # past it, its first, its clip-QC retry or its technical retry. His own press of a scene
-    # redo buys its one shot whatever the count (his decision), and nothing after it.
+    # The Owner's renders cap (`renders_cap`; 2026-10-16: «maxim încă o randare»), read now
+    # and counted again before every purchase: no shot of a scene is bought past it, its
+    # first, its clip-QC retry or its technical retry, on any route — his own press of a scene
+    # redo included (the plan he answers says the cap is reached and is not buyable).
     renders_cap = renders_per_layer(settings)
-    own_press = step == REDO_STEP and not unasked
-    with Session(engine) as session:
-        made_at_start = {
-            index: renders_made(session, storyboard_id, index, "motion") for index in to_buy
-        }
 
     def over_renders(scene_index: int) -> bool:
-        allowed = renders_cap
-        if own_press:
-            allowed = max(allowed, made_at_start.get(scene_index, 0) + 1)
         with Session(engine) as session:
-            return renders_made(session, storyboard_id, scene_index, "motion") >= allowed
+            return renders_made(session, storyboard_id, scene_index, "motion") >= renders_cap
 
     # Every shot take the scenes to buy had when the plan was read: one that appears later and
     # is not this step's was bought by someone else, and the scene is not bought again.
@@ -13354,16 +13591,17 @@ class SceneRedoRefused(RuntimeError):
         }
 
 
-#: An unasked redo refused by the Owner's renders cap (`_redo_past_cap`): a 409.
+#: A redo refused by the Owner's renders cap (`_redo_past_cap`), on any route: a 409.
 RENDERS_CAP = "RENDERS_CAP"
 
 
 def _redo_past_cap(
     engine: Engine, storyboard_id: str, scene_index: int, kind: str, settings: Any = None
 ) -> str | None:
-    """Why a redo nobody pressed would buy a layer past the Owner's renders cap (`renders_cap`;
-    2026-10-16: «maxim încă o randare»), or None. The Director's repair and the studio's own
-    proposal of a longer clip are such redos; his press on the sheet is his decision. A new
+    """Why a redo would buy a layer past the Owner's renders cap (`renders_cap`; 2026-10-16:
+    «maxim încă o randare»), or None: on every route — the Director's repair, the studio's own
+    proposal of a longer clip, and his own press on the sheet, whose plan says so and is not
+    buyable (`redo_plan`); only his setting (STUDIO_RENDERS_PER_LAYER) moves the number. A new
     picture is past the cap too when the scene's motion has had its renders: no clip could be
     made from it, and the clip it would retire is what the film has."""
     if kind not in ("still", "motion"):
@@ -13380,14 +13618,15 @@ def _redo_past_cap(
         layer = "imaginea" if kind == "still" else "mișcarea"
         return (
             f"Scena {scene_index}: {layer} ei a avut deja {renders_ro(made)}, iar plafonul "
-            f"Proprietarului este de {renders_ro(cap)}; o refacere nepornită de el nu o mai "
-            "cumpără. Rămâne ce are scena, iar Directoarea alege cel mai apropiat."
+            f"Proprietarului este de {renders_ro(cap)} (STUDIO_RENDERS_PER_LAYER); nu se mai "
+            "cumpără, pe nicio cale. Rămâne ce are scena, iar Directoarea alege cel mai "
+            "apropiat."
         )
     if kind == "still" and motion >= cap:
         return (
             f"Scena {scene_index}: mișcarea ei a avut deja {renders_ro(motion)} (plafonul "
-            "Proprietarului), deci o imagine nouă nu mai poate fi animată; nu se cumpără, iar "
-            "scena rămâne cu cadrul pe care îl are."
+            "Proprietarului, STUDIO_RENDERS_PER_LAYER), deci o imagine nouă nu mai poate fi "
+            "animată; nu se cumpără, iar scena rămâne cu cadrul pe care îl are."
         )
     return None
 
@@ -14606,11 +14845,16 @@ def _still_redo_plan(
     overhead = int(prices.round_overhead("image", model_id))
     per_round = per_request + overhead
     # Its rounds: the purchase and its re-rolls, no more than the Owner's renders cap still
-    # leaves the scene's picture (`renders_cap`), and at least the one his press buys.
+    # leaves the scene's picture (`renders_cap`). None left — or a motion that has had its own
+    # renders, which could not animate a new picture — and the plan is not buyable, on any
+    # route, his press included (`_redo_past_cap`): it says so instead of pricing a render.
     rerolls = max_rerolls()
     with Session(engine) as session:
         made = renders_made(session, plan["storyboard_id"], index, "still")
-    rounds = max(1, min(1 + rerolls, renders_left(made)))
+    past_cap = _redo_past_cap(engine, plan["storyboard_id"], index, "still")
+    rounds = max(0, min(1 + rerolls, renders_left(made)))
+    if past_cap is not None:
+        rounds = 0
     cap = per_round * rounds
     first_live = next((s for s in scenes if not is_composed(s)), None)
     figure_one: str | None = None
@@ -14670,7 +14914,7 @@ def _still_redo_plan(
         cap_usd=round(cap * prices.credit_usd, 6),
         price_source=source_label(row),
         candidates=STILL_CANDIDATES,
-        max_rerolls=rounds - 1,
+        max_rerolls=max(0, rounds - 1),
         still_prompt=words,
         figure_one_sha256=figure_one,
         replaces=replaces,
@@ -14702,13 +14946,16 @@ def _still_redo_plan(
             "le-a predat încă. Se ridică fără plată, după numărul sarcinii, și apar pe foaia de "
             "filmare; până atunci scena nu se cumpără din nou."
         )
+    elif past_cap is not None:
+        plan.update(buyable=False, renders_capped=True)
+        reason = past_cap
     return _seal(
         plan,
         {
             "model_id": model_id,
             "resolution": STILLS_RESOLUTION,
             "candidates": STILL_CANDIDATES,
-            "max_rerolls": rounds - 1,
+            "max_rerolls": max(0, rounds - 1),
             "credits": per_round,
             "cap_credits": cap,
             **({"round_overhead_credits": overhead} if overhead else {}),
@@ -14719,6 +14966,7 @@ def _still_redo_plan(
             "replaces": replaces,
             "invalidates": invalidates,
             **({"in_flight": in_flight} if in_flight else {}),
+            **({"renders_capped": True} if past_cap is not None else {}),
             # Only a rewritten plan says so: a plan with current words keeps its hash.
             **({"prompt_rewrite": shown} if shown is not None else {}),
         },
@@ -14787,6 +15035,7 @@ def _motion_redo_plan(
         lint_blocked=state["plan"]["lint_blocked"],
         replaces=replaces,
     )
+    past_cap = None if buyable else _redo_past_cap(engine, plan["storyboard_id"], index, "motion")
     if buyable:
         reason = (
             f"Mișcarea scenei {index}: un singur cadru pe {item['model_id']}, "
@@ -14794,6 +15043,10 @@ def _motion_redo_plan(
             f"{step['cap_credits']}). Cadrul vechi se retrage abia după aprobare; celelalte "
             "scene nu se ating."
         )
+    elif past_cap is not None:
+        # The Owner's renders cap, on his press too: the plan says it, never a price.
+        plan.update(renders_capped=True)
+        reason = past_cap
     else:
         reason = f"Scena {index} nu are ce cumpăra: {item['reason_ro'] or item['status']}."
     return _seal(
@@ -15622,7 +15875,8 @@ def redo_scene(
             requester=requester,
         )
         return _redo_done(engine, correlation_id, plan, free, {}, (0.0, None))
-    if unasked and scene_index is not None:
+    if scene_index is not None:
+        # The Owner's renders cap binds every redo, his own press too («maxim încă o randare»).
         capped = _redo_past_cap(engine, storyboard_id, int(scene_index), kind, settings)
         if capped is not None:
             raise SceneRedoRefused(RENDERS_CAP, capped, plan=plan)
@@ -16949,6 +17203,17 @@ class _StillRedoBuyer:
             if lowered is not None:
                 # His mode or rule changed while the redo ran: no further re-roll is bought.
                 outcome = {"status": "NOT_BOUGHT", "reason": lowered}
+                break
+            if stills._at_renders_cap(engine, c["storyboard_id"], index):
+                # The Owner's renders cap, counted before every request of the redo (a charged
+                # vendor failure is a render too): nothing past it, the retry included; the
+                # scene keeps the picture it has (retired only after a new one is approved).
+                outcome = {
+                    "status": "NOT_BOUGHT",
+                    "reason": f"Scena {index}: imaginea ei a avut deja {renders_ro()}, plafonul "
+                    "Proprietarului; nu se mai cumpără, iar scena rămâne cu imaginea pe care o "
+                    "are.",
+                }
                 break
             if self.committed + per_request > c["cap"]:
                 outcome = {
