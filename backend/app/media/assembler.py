@@ -5151,6 +5151,90 @@ def clip_report_record(report: Any) -> dict[str, Any]:
     }
 
 
+#: The Owner's renders cap (2026-10-15, `runbook.stages.RENDERS_PER_LAYER`): a scene's still
+#: made three times is the scene's picture whatever the clip's look finds in it.
+RENDERS_PER_LAYER = 3
+
+
+def _still_at_renders_cap(engine: Engine, storyboard_id: str, scene_number: int) -> bool:
+    """Whether the scene's still has been made RENDERS_PER_LAYER times (every paid request
+    among its takes): a clip refused for the picture's fault cannot send it back for a fourth."""
+    with Session(engine) as session:
+        rows = list(
+            session.scalars(
+                select(SceneTake).where(
+                    SceneTake.storyboard_id == storyboard_id,
+                    SceneTake.scene_number == int(scene_number),
+                    SceneTake.kind == "still",
+                )
+            )
+        )
+    return _paid_attempts(rows, "still") >= RENDERS_PER_LAYER
+
+
+def _keep_clip_under_cap(
+    engine: Engine,
+    take_id: str,
+    record: dict[str, Any],
+    *,
+    storyboard_id: str,
+    scene_number: int,
+    seed: int | None,
+    attempt: int,
+    correlation_id: str,
+) -> dict[str, Any]:
+    """A clip refused for its picture's fault when the picture is at the renders cap: the
+    clip stands as the scene's shot, accepted under the Owner's cap (`CAP_APPROVER`), its
+    refusal kept as the lesson in its quality note and in the record (04:11Z, 7c26a7ce
+    scenes 1-3: the stills kept under the cap carried a window, every clip of them was sent
+    back to a still that could not be bought again, and the film stood still)."""
+    kept = {
+        **record,
+        "verdict": "PASSED",
+        "passed": True,
+        "accepted_by": CAP_APPROVER,
+        "accepted_under_cap": True,
+        "cap_note_ro": (
+            f"Acceptat sub plafonul Proprietarului ({RENDERS_PER_LAYER} randări ale imaginii): "
+            "clipul rămâne; ce a rămas sub standard e lecție pentru filmul următor."
+        ),
+    }
+    with Session(engine) as session, session.begin():
+        lock_for_write(session)
+        row = session.get(SceneTake, take_id)
+        if row is not None:
+            row.status = "PAID"
+            row.approved_by = CAP_APPROVER
+            row.failure_code = None
+            row.failure_detail = None
+            row.updated_at = utc_now()
+            sync_take_quality(
+                session,
+                row,
+                accepted=True,
+                reason=(kept["cap_note_ro"] + " " + "; ".join(record.get("blocks_ro") or []))[
+                    :4000
+                ],
+            )
+        append_event(
+            session,
+            CLIP_QC_EVENT,
+            "scene_take",
+            take_id,
+            1,
+            {
+                "storyboard_id": storyboard_id,
+                "scene_number": scene_number,
+                "take_id": take_id,
+                "seed": seed,
+                "attempt": attempt,
+                **kept,
+            },
+            correlation_id,
+        )
+    return kept
+
+
 def _keep_clip_report(
     engine: Engine,
     take_id: str,
@@ -10468,6 +10552,26 @@ def _check_shot(
         records.append({**record, "take_id": checked, "seed": used_seed})
     surviving = [record for record in records if record["verdict"] != "FAILED"]
     final = surviving[-1] if surviving else None
+    if (
+        final is None
+        and outcome.status == "BACK_TO_STILL"
+        and records
+        and _still_at_renders_cap(engine, storyboard_id, index)
+    ):
+        # The picture is at fault and has had its three renders: nothing can be bought for
+        # it, so the clip stands under the Owner's cap and the film goes on to its QC.
+        last = records[-1]
+        records[-1] = _keep_clip_under_cap(
+            engine,
+            last["take_id"],
+            last,
+            storyboard_id=storyboard_id,
+            scene_number=index,
+            seed=last.get("seed"),
+            attempt=len(records),
+            correlation_id=correlation_id,
+        )
+        final = records[-1]
     kept = final is not None and final["verdict"] == "PASSED"
     if outcome.reports and not (retry_deferred is not None and retry_deferred()):
         with Session(engine) as session, session.begin():
@@ -10487,6 +10591,7 @@ def _check_shot(
     clip_record: dict[str, Any] = {
         "status": outcome.status,
         "verdict": final["verdict"] if final is not None else "FAILED",
+        "accepted_under_cap": bool(final is not None and final.get("accepted_under_cap")),
         "attempts": outcome.attempts,
         "seeds": list(outcome.seeds),
         "retry_credits": outcome.retry_credits,

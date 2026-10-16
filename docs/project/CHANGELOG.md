@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-16 — A refused clip of a capped still stands under the cap
+
+- `media/assembler.py`: a clip refused for its picture's fault when the picture is at the renders cap stands as the scene's shot under the cap (`_keep_clip_under_cap`, `director_cap`) instead of sending the still back for a fourth render — 7c26a7ce scenes 1–3 stood still between the stills cap and the clip QC (04:21Z). Test in `test_clip_qc_wiring.py`.
+
 ## 2026-10-16 — A static camera says its framing is held
 
 - `media/prompt_agent.py`: a static camera's sentence closes with «the framing held exactly as it starts from the first frame to the last» (`STATIC_HELD_CLAUSE`), in the factual and the serial composer — the clips of «static» shots pushed in (7c26a7ce scenes 1-2, 87c05891 scene 5) and every review asked for the framing to be held.

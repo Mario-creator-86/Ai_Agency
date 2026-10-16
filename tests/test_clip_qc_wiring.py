@@ -244,6 +244,68 @@ def test_a_shot_that_fails_is_held_for_the_director_and_is_never_assembled(engin
     assert _jobs(engine) == jobs_before
 
 
+def test_a_clip_refused_for_a_still_at_the_renders_cap_stands_under_the_cap(engine, tmp_path):
+    """04:11Z, 7c26a7ce scenes 1-3: the stills kept under the Owner's cap carried a window,
+    every clip of them was refused by clip QC for the picture's fault and sent back to a still
+    that could not be bought again, and the film stood still. With the still at its three
+    renders, the clip stands under the cap and the film goes on to its QC."""
+    from app.services import utc_now
+
+    storyboard_id = a_film(engine, tmp_path, scenes=1)
+    with Session(engine) as session, session.begin():
+        (still_row,) = session.scalars(
+            select(SceneTake).where(
+                SceneTake.storyboard_id == storyboard_id, SceneTake.kind == "still"
+            )
+        )
+        still_row.approved_by = "still_gate"
+        still_id = still_row.id
+        for n in range(2):
+            take_id = str(uuid4())
+            session.add(
+                SceneTake(
+                    id=take_id,
+                    storyboard_id=storyboard_id,
+                    scene_number=1,
+                    kind="still",
+                    prompt_hash=uuid4().hex,
+                    model_id="seedream5_pro",
+                    resolution="1080:1920",
+                    status="REJECTED",
+                    failure_code="LOCAL.STILL_GATE",
+                    path=f"storage/{take_id}.bin",
+                    sha256=uuid4().hex,
+                    remote_task_id=f"task-{n}",
+                    created_at=utc_now(),
+                    updated_at=utc_now(),
+                )
+            )
+    account = Account(10_000)
+    models = Models(SpyVideo("seedance2_5", account))
+
+    summary = approved(
+        engine,
+        storyboard_id,
+        tmp_path,
+        "test_shot",
+        models,
+        account,
+        clip_check=ScriptedCheck("PANELS", "PASSED"),
+    )
+
+    assert models.posts() == 1, "the same still was animated again"
+    (entry,) = summary["scenes"]
+    assert entry["status"] == "PAID", entry
+    assert entry["clip_qc"]["accepted_under_cap"] is True
+    assert entry["clip_qc"]["verdict"] == "PASSED" and entry["clip_qc"]["retry_credits"] == 0
+    (take,) = shots(engine, storyboard_id)
+    assert take.status == "PAID" and take.approved_by == "director_cap"
+    assert take.failure_code is None
+    with Session(engine) as session:
+        still = session.get(SceneTake, still_id)
+        assert still.status == "APPROVED"  # not sent back to the gate
+
+
 def test_a_shot_animated_from_panels_is_not_bought_again_on_the_same_still(engine, tmp_path):
     """2026-10-09: scene 5's still was three stacked panels and its clip animated them. A seed
     + 1 on the same still animates the same panels, so nothing more is bought: the scene goes

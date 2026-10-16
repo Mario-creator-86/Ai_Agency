@@ -5,6 +5,14 @@ AGENT_SCENARIO_ACCEPTANCE later used actual Ollama Cloud calls, with normal seri
 acceptance and real GPU/media/upload still pending. Current local UI evidence is reported
 separately below and does not prove those external workflows.
 
+## A clip refused for a still at the renders cap stands under the cap (2026-10-16)
+
+**Claim:** 7c26a7ce at 04:11–04:21Z: the stills of scenes 1–3 kept under the Owner's renders cap carried a window the model keeps drawing; every clip made from them was refused by clip QC for the picture's fault («The still itself is wrong… re-animating the same still reproduces the same defects») and sent back to a still that could not be bought again; scene 5's clip passed. The film stood still between two caps.
+
+**Fix (`media/assembler.py`):** in `_check_shot`, a clip refused as BACK_TO_STILL whose still is at the renders cap (`_still_at_renders_cap`, `assembler._paid_attempts`) stands as the scene's shot under the cap (`_keep_clip_under_cap`: take PAID, approved_by «director_cap», the refusal kept as the lesson in its quality note and a PASSED clip record `accepted_under_cap`), so the film assembles and its QC and the Director's decision judge it — where her ACCEPT under the cap already ships it.
+
+**Tested:** `tests/test_clip_qc_wiring.py::test_a_clip_refused_for_a_still_at_the_renders_cap_stands_under_the_cap` (three stills made → the clip stands, the still is not sent back; the panels case with one still unchanged); clip QC wiring, stills cap, costing, stills stage, redo and QC-decision suites pass (known failures unchanged); ruff, mypy clean.
+
 ## One camera sentence with the plan's path; the fixed world said; the cap keeps the newest refused still before any round (2026-10-16)
 
 **Claim:** after the 02:00Z restart both films stopped again on the composer's fixed words. 7c26a7ce scene 4 (02:02–02:03Z): the Director refused the fixed tracking sentence followed by the plan's own path clause as «two camera instructions, the vague one first», and asked that the words say the room, its light and its equipment hold. 87c05891 scene 1 (02:04Z): the Director's review refused the rewrite on the composer's fixed framing sentence; three stills had been made and the cap of b0d4602 acts only inside a new judged round, so the scene stayed held and the episode's four dependent scenes were still not bought.
