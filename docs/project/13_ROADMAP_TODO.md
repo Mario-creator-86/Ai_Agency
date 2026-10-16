@@ -2133,7 +2133,8 @@ No provider was called, no run was queued, no credit was spent, and
   findings of the take under treatment only. Also: `test_director_rewrites_failed_scene::
   test_the_days_staircase_has_her_rewrite_the_refused_scene_and_walks_on` fails since the
   no-cap audit rounds («Scena 1: auditul nu a spus nimic de ea» — the test's Director fake
-  answers the brief, not the audit's rounds): teach the fake the audit's answer.
+  answers the brief, not the audit's rounds): teach the fake the audit's answer. The same fake fails
+  `test_director_delivery_routing` (ASKED expected, WAITING «auditul nu a spus nimic de ea»).
 - 2026-10-15 23:08Z — next: a graceful stop sent while a DAILY_RUN is claimed takes the page
   down («shutdown_waiting_for_worker») and waits for the whole day run — the serial's writing
   rounds, 12-25 min each, up to ten — so `scripts/restart.py` gave up after 600 s with the

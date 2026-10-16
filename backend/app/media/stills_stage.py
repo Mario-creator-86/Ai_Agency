@@ -1239,6 +1239,92 @@ def _approve_under_cap(engine: Engine, take_id: str, reasons: list[str]) -> None
         )
 
 
+def settle_scene_under_cap(
+    engine: Engine, storyboard_id: str, scene_index: int, correlation_id: str
+) -> bool:
+    """A scene quality control refused whose picture has had its three renders: what it has
+    stands under the Owner's cap, before any rewrite — its newest refused still on disk
+    becomes its picture when none is approved, and, when its shots too have had their three,
+    its newest refused shot on disk becomes its clip (`assembler._keep_clip_under_cap`).
+    Returns True when something was settled (05:20Z, 7c26a7ce scenes 1-2: the still under
+    the cap, three clips refused for it, and every walk stopped at «Directoarea nu a putut
+    încă rescrie» — the ladder ran before the cap could act)."""
+    from app.media.assembler import (  # noqa: PLC0415
+        SHOT_TAKE_KINDS,
+        _keep_clip_under_cap,
+        clip_qc_of,
+    )
+
+    if not _at_renders_cap(engine, storyboard_id, scene_index):
+        return False
+    settled = False
+    with Session(engine) as session:
+        approved = session.scalar(
+            select(SceneTake.id).where(
+                SceneTake.storyboard_id == storyboard_id,
+                SceneTake.scene_number == int(scene_index),
+                SceneTake.kind == "still",
+                SceneTake.status == "APPROVED",
+            )
+        )
+        newest = (
+            None if approved is not None else _newest_refused(session, storyboard_id, scene_index)
+        )
+        still_id = newest.id if newest is not None else None
+        still_said = str(newest.failure_detail or "") if newest is not None else ""
+    if still_id is not None:
+        _approve_under_cap(engine, still_id, [still_said])
+        settled = True
+    with Session(engine) as session:
+        shots = list(
+            session.scalars(
+                select(SceneTake)
+                .where(
+                    SceneTake.storyboard_id == storyboard_id,
+                    SceneTake.scene_number == int(scene_index),
+                    SceneTake.kind.in_(SHOT_TAKE_KINDS),
+                )
+                .order_by(SceneTake.created_at.desc())
+            )
+        )
+        accepted = any(
+            row.status == "APPROVED"
+            or (
+                row.status == "PAID"
+                and (clip_qc_of(session, row.id) or {}).get("verdict") == "PASSED"
+            )
+            for row in shots
+        )
+        shot_id: str | None = None
+        record: dict[str, Any] = {}
+        if not accepted and _paid_attempts(shots, "motion") >= RENDERS_PER_LAYER:
+            for row in shots:
+                if (
+                    row.status == "REJECTED"
+                    and row.path
+                    and row.sha256
+                    and Path(row.path).is_file()
+                ):
+                    shot_id = row.id
+                    record = clip_qc_of(session, row.id) or {}
+                    if not record.get("blocks_ro"):
+                        record["blocks_ro"] = [str(row.failure_detail or "")]
+                    break
+    if shot_id is not None:
+        _keep_clip_under_cap(
+            engine,
+            shot_id,
+            {**record, "verdict": "FAILED"},
+            storyboard_id=storyboard_id,
+            scene_number=int(scene_index),
+            seed=record.get("seed"),
+            attempt=int(record.get("attempt") or 1),
+            correlation_id=correlation_id,
+        )
+        settled = True
+    return settled
+
+
 def _approve_by_look(engine: Engine, take_id: str, look: Mapping[str, Any]) -> None:
     """The candidate her look let stand, APPROVED by her (`fix_check.DIRECTOR_LOOK_APPROVER`),
     with no failure left on it — as `director_qc.record_look` writes her choice: a failure left

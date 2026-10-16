@@ -1776,6 +1776,8 @@ def _film_staircase(
                 )
                 bought.extend(film.get("bought") or [])
                 refused = _ladder_scenes(engine, storyboard_id, film)
+                if not refused and film.get("settled_under_cap") and not stop_requested(engine):
+                    continue  # what the cap settled is bought nowhere: the film is walked on
                 if not refused or stop_requested(engine):
                     break
                 if len(rounds) >= DIRECTOR_LADDER_ROUNDS:
@@ -1828,11 +1830,31 @@ LADDER_CAUSE = "director_ladder"
 
 
 def _ladder_scenes(engine: Engine, storyboard_id: str, film: dict[str, Any]) -> list[int]:
-    """The scenes of a stopped walk that quality control refused (the Director's to answer)."""
+    """The scenes of a stopped walk that quality control refused (the Director's to answer).
+    A refused scene whose picture has had its three renders is not rewritten: what it has
+    stands under the Owner's cap (`stills_stage.settle_scene_under_cap`) and the scene is
+    listed on ``film["settled_under_cap"]`` instead, so the walk goes on."""
     if film.get("status") != "WAITING" or film.get("refusal") not in LADDER_REFUSALS:
         return []
     scenes = [int(scene) for scene in film.get("scenes") or [] if isinstance(scene, int)]
-    return _quality_scenes(engine, storyboard_id, scenes) if scenes else []
+    refused = _quality_scenes(engine, storyboard_id, scenes) if scenes else []
+    if not refused:
+        return []
+    from app.media.stills_stage import settle_scene_under_cap  # noqa: PLC0415
+
+    settled: list[int] = []
+    for scene in refused:
+        try:
+            if settle_scene_under_cap(engine, storyboard_id, scene, str(uuid4())):
+                settled.append(scene)
+        except Exception as exc:  # noqa: BLE001 - the ladder's stop stands for this scene
+            logger.warning(
+                "ladder_scene_not_settled",
+                extra={"storyboard_id": storyboard_id, "scene": scene, "error": type(exc).__name__},
+            )
+    if settled:
+        film.setdefault("settled_under_cap", []).extend(settled)
+    return [scene for scene in refused if scene not in settled]
 
 
 def _quality_scenes(engine: Engine, storyboard_id: str, scenes: list[int]) -> list[int]:

@@ -106,6 +106,79 @@ def test_a_scene_held_after_three_stills_keeps_its_newest_refused_still_and_is_r
     assert two.reuse is not None and two.reuse.approved_by != stills_stage.CAP_APPROVER
 
 
+def test_a_refused_scene_with_its_three_stills_and_three_shots_is_settled_under_the_cap(
+    engine, tmp_path
+):
+    """05:20Z, 7c26a7ce scenes 1-2: the still kept under the cap, three clips refused for it,
+    and every walk stopped at the Director's ladder. The ladder skips a scene the cap settles:
+    its newest refused shot on disk stands as its clip, and the walk goes on."""
+    import hashlib
+
+    from app.media.assembler import CLIP_QC_EVENT, clip_qc_of
+    from app.runbook import stages
+    from app.services import append_event
+
+    board = a_film(engine, tmp_path, scenes=1)
+    with Session(engine) as session, session.begin():
+        _take(session, board, 1)
+        _take(session, board, 1)  # three still requests with the film's own approved one
+        shots = []
+        for n in range(3):
+            shot = str(uuid4())
+            shots.append(shot)
+            file = tmp_path / f"shot{n}.mp4"
+            file.write_bytes(b"clip %d" % n)
+            session.add(
+                SceneTake(
+                    id=shot,
+                    storyboard_id=board,
+                    scene_number=1,
+                    kind="motion",
+                    prompt_hash=uuid4().hex,
+                    model_id="seedance",
+                    resolution="1080:1920",
+                    status="REJECTED",
+                    failure_code="QC.CLIP",
+                    failure_detail="Controlul clipului: fereastră în laboratorul fără ferestre",
+                    path=str(file),
+                    sha256=hashlib.sha256(b"clip %d" % n).hexdigest(),
+                    remote_task_id=f"shot-{n}",
+                    created_at=utc_now(),
+                    updated_at=utc_now(),
+                )
+            )
+        append_event(
+            session,
+            CLIP_QC_EVENT,
+            "scene_take",
+            shots[-1],
+            1,
+            {
+                "storyboard_id": board,
+                "scene_number": 1,
+                "take_id": shots[-1],
+                "verdict": "FAILED",
+                "passed": False,
+                "blocks_ro": ["fereastră în laboratorul fără ferestre"],
+                "seed": 7,
+            },
+            "c",
+        )
+    film = {"status": "WAITING", "refusal": "NEEDS_OWNER", "scenes": [1]}
+    assert stages._ladder_scenes(engine, board, film) == []
+    assert film["settled_under_cap"] == [1]
+    with Session(engine) as session:
+        kept = session.get(SceneTake, shots[-1])
+        assert kept.status == "PAID" and kept.approved_by == "director_cap"
+        assert kept.failure_code is None
+        record = clip_qc_of(session, shots[-1])
+        assert record["verdict"] == "PASSED" and record["accepted_under_cap"] is True
+        assert session.get(SceneTake, shots[0]).status == "REJECTED"
+    # Settled once: the next reading finds the clip accepted and nothing to settle.
+    again = {"status": "WAITING", "refusal": "NEEDS_OWNER", "scenes": [1]}
+    assert stages._ladder_scenes(engine, board, again) == [] and "settled_under_cap" not in again
+
+
 def test_past_three_stills_the_closest_candidate_stands_and_the_scene_goes_on(
     engine, tmp_path, monkeypatch
 ):
