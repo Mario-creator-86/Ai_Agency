@@ -5,6 +5,69 @@ AGENT_SCENARIO_ACCEPTANCE later used actual Ollama Cloud calls, with normal seri
 acceptance and real GPU/media/upload still pending. Current local UI evidence is reported
 separately below and does not prove those external workflows.
 
+## Review fixes, context by task, two renders, the voice's own pause (2026-10-16)
+
+**Claim.** The Owner wants the day's work finished and tested before the server starts again: «Aștept să faci toate modificările și testul și după îmi spui și pornim serverul».
+
+His decisions today, all by card:
+- context by task, after his Ollama limit was drained: «pe abonament costă… Facem doar strictul necesar», «contextul ar trebui să îl aibă doar acolo unde este necesar»;
+- the voice's own pause, not a fixed number;
+- at most 2 renders a layer;
+- measurement before any new judge or playbook;
+- 30 USD a day.
+
+They are recorded in the decision log of 2026-10-16.
+
+**Done** (amn-pr1, c4fad3d..HEAD, every group verified adversarially before it was merged):
+- **The review's 30 defects** in the montage and v8 day: row-to-entry mapping, speaker-safe cuts, the length under the wall, the Director's full view, day resume, the re-judge mark, the redo bitrate floor, holds per round.
+- **Audit fixes:** a montage shot judged as itself; prompt lessons out of every identity.
+- **Context by task** (identity-v4-task; `agents/identity.TASK_CONTEXT`, `agents/inbox.py`):
+  - BARE by default and CRAFT where a reason is written; INBOX only for mail;
+  - the Owner's current policies pinned whole;
+  - stale asks expire with an event;
+  - the Director's decisions, priorities, looks and retention row reach the work that needs them;
+  - measured offline (`scripts/identity_size.py`, no model): whole prompts −92.8% on the last 1,000 runs.
+- **Two renders a layer** (`STUDIO_RENDERS_PER_LAYER`, default 2; `media/renders_cap.py`, `media/cap_choice.py`):
+  - strict on every route, his own press included;
+  - past the cap the Director chooses with one look, and a failed look is said as «studioul a păstrat»;
+  - ACCEPTED_UNDER_CAP is never PASSED;
+  - kept takes stay out of the LTX set;
+  - her 0-credit local move when no clip is usable.
+- **The voice's own pause** (`media/pauses.py`, `media/pause_plan.py`, `config/pause_rules.json` PROPOSED; spec 08 step 10 rewritten):
+  - the trim to the last letter, with a guard that never cuts sound;
+  - one take per scene or speaker's run, with montage cuts on its word timestamps;
+  - joins by class from each voice's measured pause, frozen on the storyboard and fitted to min(channel max, 180 s);
+  - one estimate (`media/film_length.py`) for the review, the purchase and QC;
+  - the Shorts wall exact, with no slack;
+  - a free listening preview of 3 films was approved by the Owner.
+- **A published topic is finished:** a topic whose film the channel confirmed is finished, whatever drafts follow. On 2026-10-16 «Viteza luminii» had held the factual selection all day.
+- **The dishonest-code audit's 12 findings** fixed (STUB-001..006, SAFE-001..007). The pr-review-toolkit silent-failure agent is not installed, so a general agent with its brief stood in.
+- **The writer evaluation harness** (`scripts/writer_eval.py`, 20 cases discovered from the backups, the stranger judge on nemotron-3-ultra): built and dry-run only. A real run needs his card.
+
+**Tested.**
+- The full suite ran in 4 shards on the merged tree, then re-ran with the temporary folder on E:. The first pass lost about 180 tests to the studio's own DISK_LOW guard: the test temp on C: fell under 20 GB. C: was then freed to 70 GB.
+- What remains:
+  - 38 failures that predate 2026-10-16, identical on the pre-change base 47d65a2. Among them: `test_clip_fits_narration` and `test_scene_longer_than_one_clip` timing (some), `test_bad_film_never_bought` (2), `test_director_delivery_routing`, `test_director_rewrites_failed_scene`, `test_editorial` (2, `think`), `test_film_close`, `test_mode_lowered_mid_step`, `test_motion_v2`, `test_next_round_balance`, `test_owner_takes_never_retired`, `test_paid_path_write_lock` (2), `test_readiness`, `test_rewrite_learns` and `test_runpod_money_adversary`;
+  - 3 status-header checks that read the uncommitted UI notes another agent left at the head of this file (repaired with `docs_note.py --repair`);
+  - 1 order-dependent test (`test_film_dry_run`) that passes alone.
+- ruff is clean. mypy has the same 21 errors in 6 files as before. `scripts/check_docs.py` passes.
+
+**Not changed / known (roadmap of 2026-10-16):**
+- A film refused OVER_THE_WALL is held, not sent back for a shorter rewrite.
+- The advisory `pause_marks` check is not built.
+- Legacy CLIP_QC rows recorded PASSED under the cap are read as kept, not migrated.
+- The serial tells a day closed minutes after midnight.
+- 11_DATA_MODEL still says 60/70 s.
+- The studio is stopped since 17:15 local, by the Owner's card.
+
+**Next.**
+1. He starts the server.
+2. The DAILY budget is set to 30 USD through the economy command.
+3. Through the app: the v7 film 87c05891 («Zero Scripts, Blocked Log») is closed and its episode refused, and 2026-10-16 is retold on v8.
+4. The ~160 s short is written.
+5. He reads both, and only then presses GO.
+6. On the first frozen film, compare `spans[].pause` planned against heard.
+
 ## The serial's v8: a narrator, a story of its own, 90-175 s (2026-10-16)
 
 Claim: the serial's v8 form, the Owner's second increment (07:05Z: «Eu nu înțeleg nimic. Ar trebui să existe o narațiune pe poveste, o introducere în scenă… Dialogul de ce este compus din 4-5 cuvinte?»). Decided by card: 90-180 s with 250-450 words (max 180, «mergem atunci ca maxim 180»), a narrator opening and closing, a story the showrunner invents with the real day as backdrop.

@@ -1,5 +1,35 @@
 # Roadmap / TODO v3
 
+## 2026-10-16 — Review fixes, context by task, two renders, the voice's own pause (Claude)
+
+- [x] 30 review defects of the montage/v8 day fixed; context by task; renders cap 2 (a setting);
+      the voice's own pause (`config/pause_rules.json`); a published topic is finished; the
+      dishonest-code audit's 12 findings fixed; the writer eval harness (`scripts/writer_eval.py`).
+- [ ] At the next start (the Owner presses GO): set the DAILY budget to 30 USD through the economy
+      budget command; close film 87c05891 («Zero Scripts, Blocked Log», v7) and refuse its episode
+      through the app, retell 2026-10-16 on v8; write the ~160 s short through the app; he reads
+      both before any paid step. Watch the first frozen film: `spans[].pause` planned vs heard.
+- [ ] A film refused OVER_THE_WALL (`FilmOverTheWall`, the stills step's `not_bought`) is held but
+      not sent back to the writer for a shorter rewrite; the Director loop, routes and sheet must
+      know the status.
+- [ ] The advisory `pause_marks` review check from the pause design (not built).
+- [ ] The scene clip check uses the whole pause a shot holds (0.77 s before a change of part); a
+      model with 5 s clips refuses 13-word scenes — decide whether to check the pause at its floor.
+- [ ] Legacy CLIP_QC rows with verdict PASSED and accepted_under_cap are read as kept (not migrated);
+      LTX manifest rows approved by `director_cap` stay in the file (the trainer skips them).
+- [ ] A scene at the still cap with ≥2 stills is held in `stills_plan` until a settle asks the
+      Director: watch the ordering on a live board.
+- [ ] The serial tells a day closed minutes after midnight (the day log closes at each run's end);
+      check what «the day» means for `serial_next` before the v8 retell.
+- [ ] `test_writer_brief::test_the_cost_line_is_priced_from_the_table_or_left_out` fails only in
+      a shard (order-dependent film ceiling): find the leaked setting.
+- [ ] Quality plan steps 3-6 ([STUDIO_QUALITY_PLAN_2026-10-16.md](STUDIO_QUALITY_PLAN_2026-10-16.md)):
+      the audit loop's attributed segments and checked quotes, independent judges (nemotron-3-ultra
+      stranger; a vision QA model not Kael's), playbooks measured on the harness, the Owner's
+      calibration form (`writer_eval.py --calibration-form`). Real-model runs only by his card.
+- [ ] 11_DATA_MODEL still says 60/70 s for the Shorts maximum (decision logged; hash update owed).
+- [ ] 38 failures that predate 2026-10-16 (listed in CURRENT_STATUS of 2026-10-16).
+
 ## 2026-10-15 — The studio publishes by itself (Claude)
 
 - [x] Cloud asked nothing about thinking; writers get a JSON second attempt; serial film unblocked

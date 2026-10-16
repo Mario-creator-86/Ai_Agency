@@ -1266,16 +1266,19 @@ def test_a_channel_may_take_shorts_up_to_three_minutes(engine, tmp_path, monkeyp
 
 
 def test_the_slack_is_forgiven_only_under_youtubes_wall(engine, tmp_path, monkeypatch):
-    """A channel the Owner set to 150 s still forgives the container's rounding; one at 180
-    does not take a film past 180 (2026-10-16, review finding 19)."""
+    """The wall is exact (2026-10-16, «pauza vocii»: every pause is planned and fitted under
+    min(the channel's maximum, 180 s)): a channel the Owner set to 150 s takes 150 s and not a
+    second more, and one at 180 never takes a film past 180 (review finding 19)."""
     seed_default_channels(engine)
     with Session(engine) as session, session.begin():
         channel = session.scalars(
             select(ChannelRecord).where(ChannelRecord.channel_type == "MAIN_FACTUAL")
         ).one()
         channel.shorts_max_seconds = 150
-    technical, _ = _qc_duration(engine, tmp_path / "a", monkeypatch, 150.9)
+    technical, _ = _qc_duration(engine, tmp_path / "a", monkeypatch, 150.0)
     assert technical["max_duration_seconds"] == 150 and technical["duration_valid"] is True
+    technical, _ = _qc_duration(engine, tmp_path / "a2", monkeypatch, 150.9)
+    assert technical["duration_valid"] is False
     with Session(engine) as session, session.begin():
         session.scalars(
             select(ChannelRecord).where(ChannelRecord.channel_type == "MAIN_FACTUAL")

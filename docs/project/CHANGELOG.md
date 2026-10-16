@@ -1,5 +1,38 @@
 # Changelog
 
+## 2026-10-16 — Review fixes, context by task, two renders, the voice's own pause
+
+Today's afternoon and evening work, on top of the morning's montage and serial v8 (amn-pr1, 06d59b2..):
+
+- **Review fixes.** An adversarial review of 47d65a2..c4fad3d confirmed 30 defects. All are fixed, in seven groups of 14 commits:
+  - each montage row reads its own script entry;
+  - each line keeps its speaker, and no shot runs past one clip;
+  - the reviews measure the film the montage cuts, under the 180 s wall;
+  - the Director sees the whole film;
+  - a day a dead process left behind is resumed, never run again whole;
+  - re-judged stills keep their rewrite mark;
+  - a scene redo keeps the bitrate floor;
+  - a paid step holds its next round, not its whole cap.
+- **Audit fixes.** A montage shot's still is judged as that shot. Prompt lessons never ride an identity.
+- **Context by task** (identity-v4-task): BARE by default, CRAFT only where a reason is written, INBOX only in mail tasks. Only the Owner's current policies are pinned, and stale asks expire. Whole prompts are 92.8% smaller on the last 1,000 runs.
+- **Two renders a layer, a setting** (`STUDIO_RENDERS_PER_LAYER`, default 2). It is strict on every route. Past it the Director chooses with one look, and kept takes are recorded truthfully.
+- **The voice's own pause** (`config/pause_rules.json`):
+  - the trim to the last letter, with a guard that never cuts sound;
+  - one take per scene or speaker's run, with montage cuts inside the take;
+  - joins by class from each voice's measured pause, frozen per film and fitted to the wall;
+  - one estimate of the film everywhere;
+  - QC against the plan.
+- **A published topic is finished.** A topic whose film the channel confirmed is finished, whatever later drafts it has. This had blocked the day's factual selection.
+- **Dishonest-code audit fixes** (STUB-001..006, SAFE-001..007): the Director truly chooses past the cap; expired asks are shown as unanswered; frames keep their scene's name; a speakerless line is the narrator's only in the narration; the day goal reads the budget per film; the eval harness judges again; a continuation is said to resume only after it did.
+- **Tools:**
+  - `scripts/writer_eval.py`, the frozen writer evaluation harness with the stranger judge, which runs only with the Owner's card;
+  - `scripts/identity_size.py`;
+  - `scripts/measure_voice_timing.py`.
+- **Docs:**
+  - [STORYCRAFT_RESEARCH_2026-10-16.md](STORYCRAFT_RESEARCH_2026-10-16.md) and [STUDIO_QUALITY_PLAN_2026-10-16.md](STUDIO_QUALITY_PLAN_2026-10-16.md);
+  - the decision log entry for the five card decisions;
+  - spec 08 step 10 rewritten for the voice's own pause.
+
 ## 2026-10-16 — The serial's v8 form
 
 - The serial's v8 form (the Owner, 2026-10-16): a narrator opens (where, who, what is at stake) and closes; 250-430 spoken words over 90-175 s in whole sentences; the story is the showrunner's and the real day its backdrop (citations optional, a quiet day told); the review keeps the truth rule for studio facts and the 2-4 cast, the length ceiling is the Short's wall, the floor, the narration and the crowding are recommendations; the montage gives the narrator wide shots of its own.

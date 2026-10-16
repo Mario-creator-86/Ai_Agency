@@ -57,7 +57,7 @@
     "RunPod awaits credentials/endpoints and image service selection",
     "Stored voice/motion/YouTube configuration present; no fresh live media/upload acceptance"
   ],
-  "migration_version": "0057_runpod_copy_pod",
+  "migration_version": "0058_shorts_max_180",
   "autonomy_mode": "AUTONOMOUS_CEO",
   "feature_flags": {
     "public_publish_enabled": false,
@@ -66,7 +66,7 @@
     "provider_auto_switch_enabled": false,
     "world_generation_enabled": false
   },
-  "migration_count": 56,
+  "migration_count": 57,
   "feature_flags_note": "public_publish_enabled is per channel since migration 0037 (channel_record.public_publish_enabled, seeded false on both slots); the studio-wide flag here is the seeded default. Since migration 0043 autonomy_mode above is a real column moved only by change_autonomy_mode, recorded AUTONOMOUS_CEO because that is what the code does; the four Literal[\"False\"] switches below are still constants on PolicyView, and three of the acts they name now also carry a T3 tier that may_act reasons about independently Since 2026-10-02 a new install starts MANUAL (services.NEW_STUDIO_AUTONOMY_MODE); the Owner's own studio stays AUTONOMOUS_CEO.",
   "scenario_evidence": "data/scenario-acceptance-2026-10-08",
   "verification_before_scenarios": {

@@ -263,10 +263,16 @@ old path, cost over 1,000 Runway credits and failed QC; the first capped paid fi
    `plan_hash` and the run's correlation; `redo:{film}:{kind}:{scene}:…` for a redo). A step that
    fails after paying is booked from the measured balance drop, raises `SpentStageError` (a HARD
    fault, never retried) and writes the Owner a letter.
-10. **Assemble.** Narration bought per scene and kept as a `narration` take (reused, never bought
-    twice), its silent edges trimmed to a 0.12 s breath, stitched with the neighbouring words for
-    a voice that accepts it; captions on the voice's own clock, lit word by word; the film graded
-    toward its first filmed scene; free second framings (punch-ins) inside long scenes; a closing
+10. **Assemble.** Narration bought per voice group — one take per writer's scene (factual) and per
+    speaker's run inside a beat (serial) — and kept as a `narration` take (reused, never bought
+    twice). Its tail is trimmed to the last letter plus 0.03 s and never while the voice still
+    sounds; the montage's picture cuts fall on the take's word timestamps and add no time; between
+    takes the pause is the voice's own at that kind of boundary (sentence, change of part, change
+    of speaker, writer's marked beat, end), measured from the studio's kept takes per voice and
+    ruled by `config/pause_rules.json`, frozen on the storyboard and fitted under the Shorts wall
+    (2026-10-16, the Owner's cards; it replaces the 0.12 s and 0.4 s fixed breaths). Stitched
+    with the neighbouring words for a voice that accepts it; captions on the voice's own clock, lit word by word; the film graded
+    toward its first filmed scene; no second framing (the punch-in is off since 2026-10-16: the montage cuts instead); a closing
     card instead of a black ending; a music bed and ambience only from the Owner's licensed
     library (`config/music_library.json` or `STUDIO_MUSIC_LIBRARY`; each entry needs
     `commercial_ok`, a licence and a matching SHA-256), the bed ducked 20 LU under the voice;

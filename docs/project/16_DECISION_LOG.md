@@ -1,5 +1,68 @@
 # Architectural / Product Decision Log v5
 
+## The Owner's five cards: context by task, the voice's own pause, two renders, measurement first, 30 USD (2026-10-16)
+
+On 2026-10-16 the Owner made five decisions by card. Each one changes a rule the studio worked under that morning.
+
+**1. Context by task.** The Owner: «pe abonament costă. Avem limită și acolo la OLLAMA și testele au scurs o mare parte din această limită! … Facem doar strictul necesar», then «Context pe sarcină», then «contextul ar trebui să îl aibă doar acolo unde este necesar».
+
+The stopped studio's `agent_run` shows why. Prompt tokens rose from 4.2-4.3M a day (10-12, 10-13) to 25M on 10-14, 109M on 10-15 and 46M on 10-16 by 06:46Z. The rise follows the 2026-10-14 "complete context" (identity-v3). Every call carried the 120 newest memories, every open ask with its whole thread, and the full contract, so identity was about 94% of all input. The Owner's 16 policies were evicted by recency, and 51 of 103 `answer_mail` runs failed on the model's window.
+
+Decision: `identity-v4-task`, defined in `agents/identity.TASK_CONTEXT`:
+- **BARE by default.** Name, role, mission, persona, the standing rules, and the Owner's CURRENT policies (the newest row per matter, read against the `owner_policy` table, told whole).
+- **CRAFT** only for a task that needs something its own data does not carry, with a one-line reason in the table: the writers, the shot plan and bible, the Director's QC review, and her management work.
+- **INBOX** only for the mail tasks, one letter and its thread at a time.
+- Asks of closed, published, replaced or rejected subjects expire with an `agent.ask_expired` event. Asks the model failed to answer are closed as never answered.
+- Prompt lessons never ride an identity.
+- Nothing is cut mid-record.
+
+The 10-14 "complete context" is superseded, except for whole-record integrity. Measured offline on the newest backup (no model call): the last 1,000 runs' whole prompts fall from 295M to 21M characters (−92.8%).
+
+Rejected alternatives:
+- Back to 12 recalled memories: still recency, not relevance.
+- Keep complete context: 50-110M tokens a day.
+
+**2. The voice's own pause.** The Owner: «Nu eu am ales-o. Această pauză trebuie să fie corectă, logică, normală și firească. Poate fi dinamică! Nu ar trebui să fie hard coded». The 0.4 s of the 10-16 card was the session's proposal, bundled in an option about the zoom. It was not his number.
+
+Measured on the 55 kept takes: the vendor's tail (0.27-1.09 s) was never trimmed, so cuts carried 0.8-1.56 s of silence and a change of speaker 0.70 s.
+
+Decision (design wf_78d75762-bb0; free listening preview approved: «Sună foarte bine și este o îmbunătățire. Deci da»):
+- **Trim.** The tail is cut at the last letter plus 0.03 s, and never while the signal stays above −45 dBFS.
+- **Takes.** One take per writer's scene (factual) and per speaker's run (serial). Montage cuts fall on the take's word timestamps and add 0 s.
+- **Joins between takes**, by class, from each voice's measured pause:
+  - SENTENCE: the voice's own pause;
+  - PARAGRAPH: 1.565× (Doukhan 2012);
+  - TURN: 0.236 s (Stivers 2009);
+  - INTERRUPT: the edges only;
+  - writer-marked BEAT («…», «(beat)»): 0.7-1.2 s, at most one per section;
+  - END: the narrator's paragraph pause;
+  - ceiling: 1.2 s.
+- **Values** live in `config/pause_rules.json` (PROPOSED), with per-channel knobs and per-voice profiles measured from the sidecars. They are frozen per film at the storyboard and fitted to min(channel max, 180 s) by compressing toward their floors.
+- **Spec change.** [08_VIDEO_PIPELINE.md](../architecture/08_VIDEO_PIPELINE.md) step 10 is rewritten and its index hash updated to 96d42fc4a2fde323….
+
+Defaults still open to him:
+- the cut at the end of the pause;
+- no L-cut;
+- a changed acting note re-buys nothing.
+
+**3. Two renders.** The Owner: «limităm acum la 2 randări, pentru că sunt mai lungi și mai costisitoare, maxim încă o randare». This supersedes the 2026-10-15 three renders.
+
+Decision:
+- One setting, `STUDIO_RENDERS_PER_LAYER`, default 2, read when used, on every purchase route.
+- The cap is strict even for his own «Refă» press (card).
+- Past the cap the Director looks at the takes on disk and chooses, with one vision call in the BARE context. With one take, it is kept with no call. When the look fails, «studioul a păstrat …» is said, never that she chose.
+- A clip kept under the cap is recorded ACCEPTED_UNDER_CAP, never PASSED, and stays out of the LTX training set.
+- When a scene's motion is at the cap with no usable clip, the Director may move its still locally at 0 credits, and the film publishes. Until now only he could choose a local move; this is approved by his card.
+
+**4. Measurement first.** The Owner, by card:
+- **Order of the quality plan:** a frozen evaluation harness (`scripts/writer_eval.py`), then context, the audit loop, independent judges, playbooks and calibration.
+- **The stranger judge:** nemotron-3-ultra.
+- **Calibration:** he will label about 15 past scripts.
+
+Then: no run of real models for tests, evaluations or probes without his card.
+
+**5. Budget.** The daily budget for montage days becomes 30 USD. It is to be set through the economy budget command at the next start, never by a database write. The estimate: a short of about 40 rows plus an episode of about 37 rows cost about 19.3-19.9 USD with no re-roll.
+
 ## The format: 180 s, narrator, story first, no punch-in (2026-10-16)
 
 **The format (2026-10-16).** The Owner, after reading «Zero Scripts, Blocked Log» and watching the shorts: the viewer must understand what he is watching; the 4-5-word lines and the cut shots were our limits, not the generators'. Decided by card: shorts 60-180 s aiming at 160 (YouTube's Shorts limit stays the wall: «mergem atunci ca maxim 180»); serial episodes 90-180 s with 250-450 spoken words, a narrator opening (where, who, what is at stake) and closing, a story the showrunner invents with the studio's real day as backdrop, not as plot; no punch-in, every shot breathes 0.4 s after its words. The channels' `shorts_max_seconds` goes to 180 by migration 0058 (11_DATA_MODEL's 60/70 are superseded). The serial's writer and review rules change in the next increment.
