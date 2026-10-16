@@ -30,6 +30,7 @@ import base64
 import json
 import logging
 import subprocess
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -54,6 +55,7 @@ from app.media.models import (
     StoryboardScene,
     VideoRenderJob,
 )
+from app.media.montage import beat_of
 from app.media.prompt_agent import (
     SCOPE_FACTUAL,
     SCOPE_SERIAL,
@@ -68,11 +70,13 @@ from app.wording import viewing_verdict
 logger = logging.getLogger("studio.editorial")
 
 EDITORIAL_TASK = "editorial_review"
-TEMPLATE_VERSION = "editorial-v1"
+#: v2 (2026-10-16, the montage): the frames are spread over the whole film (`frame_picks`) and
+#: the note says which scenes they come from.
+TEMPLATE_VERSION = "editorial-v2"
 #: Under this many spoken words there is no story to tell, whatever the pictures.
 MIN_WORDS = 40
 FRAMES = 3
-#: One frame per scene, up to this many.
+#: One frame per writer's scene, up to this many, spread over the whole film (`frame_picks`).
 MAX_FRAMES = 8
 FRAME_WIDTH = 480
 
@@ -143,8 +147,9 @@ _INSTRUCTIONS = (
     "You are the Director, and this is the last look before a film leaves the studio. Below "
     "is everything the film is, as data: the topic, {script_note}, each scene's picture and "
     "narration, what quality control measured{frames_note}. Judge it as the audience will: "
-    "{judgement}; do the pictures show the story rather than decorate it — one frame from "
-    "every scene is attached, and a blank field, stripes, noise or garbled writing in any of "
+    "{judgement}; do the pictures show the story rather than decorate it — the frames are "
+    "spread over the whole film, one from each scene named with them, and a blank field, "
+    "stripes, noise or garbled writing in any of "
     "them means REJECT, however good the rest is (the studio burns its own captions — the "
     "narration's words, a few at a time — into the bottom of every frame: they are the "
     "film's subtitles, never writing in the picture and never a reason); is it worth their "
@@ -292,6 +297,9 @@ def gather_facts(session: Session, media_asset_id: str, language: str) -> dict[s
         "scenes": [
             {
                 "index": s.scene_index,
+                # The writer's scene this shot was cut from (the montage, `montage.beat_of`);
+                # None for a scene the montage did not cut.
+                "writer_scene": beat_of(s.prompt_json).get("scene_number"),
                 "seconds": s.duration_seconds,
                 "narration": s.voiceover_segment,
                 "picture": s.visual_prompt,
@@ -343,31 +351,79 @@ def model_can_see(session: Session, agent_id: str) -> bool:
     )
 
 
+def frame_picks(beats: Sequence[Any], limit: int = MAX_FRAMES) -> list[int]:
+    """Which storyboard rows a look of ``limit`` frames is shown, as positions in film order.
+
+    ``beats`` holds each row's writer scene (``prompt_json.beat.scene_number``,
+    `montage.beat_of`), None for a row the montage did not cut. Every row when they all fit;
+    else one row per writer's scene — the middle shot of its beat, and the film's last row for
+    the last beat, so the payoff is always seen — sampled evenly over the film when there are
+    more writer's scenes than frames, and the frames left over spread evenly over the rows
+    between.
+
+    The montage (2026-10-16) cut each writer's scene into 2-3 rows, and the first eight rows
+    were the first 25-35 s of a 160 s film: the Director's viewing and the film's picture look
+    never saw its ending, the very failure (the ATLAS payoff approved unseen) one frame per
+    scene was written against.
+    """
+    count = len(beats)
+    if limit <= 0 or count == 0:
+        return []
+    if count <= limit:
+        return list(range(count))
+    groups: list[list[int]] = []
+    for position, beat in enumerate(beats):
+        if groups and beat is not None and beats[groups[-1][-1]] == beat:
+            groups[-1].append(position)
+        else:
+            groups.append([position])
+    chosen = groups
+    if len(groups) > limit:
+        # Evenly over the film, its first and its last writer's scene included.
+        chosen = (
+            [groups[round(i * (len(groups) - 1) / (limit - 1))] for i in range(limit)]
+            if limit > 1
+            else [groups[-1]]
+        )
+    picks = [group[(len(group) - 1) // 2] for group in chosen[:-1]] + [chosen[-1][-1]]
+    taken = set(picks)
+    rest = [position for position in range(count) if position not in taken]
+    spare = limit - len(picks)
+    if spare > 0 and rest:
+        picks += [rest[(2 * i + 1) * len(rest) // (2 * spare)] for i in range(spare)]
+    return sorted(picks)
+
+
 def frames_for(
     path: str,
     ffmpeg_path: str | None,
     duration: float | None,
     scene_seconds: list[float | None] | None = None,
+    picks: Sequence[int] | None = None,
 ) -> list[str]:
-    """One frame from the middle of every scene, as base64 JPEG, for a model that can see.
+    """One frame from the middle of each picked scene, as base64 JPEG, for a model that can
+    see: ``picks`` are positions in ``scene_seconds`` (`frame_picks`); without them, rows
+    spread over the whole film, its last one included.
 
     It used to be three frames at 20, 50 and 80 per cent of the film. A five-scene film showed
     the Director three of its scenes, and the payoff of the ATLAS film — eleven seconds of
     stripes — was approved on that. The planned scene lengths are scaled to the film's real
-    length, because a scene lasts as long as its narration was recorded.
+    length, because a scene lasts as long as its narration was recorded. Every scene's length
+    places the picked ones on the timeline, so a frame is cut where its own scene plays.
     """
     ffmpeg = find_ffmpeg(ffmpeg_path)
     file = Path(path)
     if not ffmpeg or not file.is_file() or not duration or duration <= 0:
         return []
-    planned = [float(seconds) for seconds in (scene_seconds or []) if seconds]
+    lengths = [float(seconds) if seconds else 0.0 for seconds in (scene_seconds or [])]
     moments: list[float] = []
-    if planned:
-        scale = duration / sum(planned)
-        start = 0.0
-        for seconds in planned[:MAX_FRAMES]:
-            moments.append(start + seconds * scale / 2)
-            start += seconds * scale
+    if sum(lengths) > 0:
+        scale = duration / sum(lengths)
+        starts = [sum(lengths[:position]) for position in range(len(lengths))]
+        chosen = frame_picks([None] * len(lengths)) if picks is None else list(picks)
+        for position in chosen:
+            if 0 <= position < len(lengths):
+                moments.append((starts[position] + lengths[position] / 2) * scale)
     else:
         moments = [duration * fraction for fraction in (0.2, 0.5, 0.8)[:FRAMES]]
     frames: list[str] = []
@@ -474,13 +530,24 @@ def editorial_review(
 
         with Session(engine) as session:
             can_see = model_can_see(session, director_id)
+        listed = list(facts.get("scenes") or [])
+        # One frame per writer's scene, spread over the whole film, its last row included.
+        picks = frame_picks([scene.get("writer_scene") for scene in listed])
         if can_see:
             frames = frames_for(
                 facts["path"],
                 ffmpeg_path,
                 facts["duration_seconds"],
-                scene_seconds=[scene.get("seconds") for scene in facts.get("scenes") or []],
+                scene_seconds=[scene.get("seconds") for scene in listed],
+                picks=picks,
             )
+        # Which scenes the frames are, in order: no longer simply the first ones (a film whose
+        # scenes have no lengths is cut at fixed fractions, and names none).
+        framed = (
+            [listed[position].get("index") for position in picks][: len(frames)]
+            if any(scene.get("seconds") for scene in listed)
+            else []
+        )
         shown = {k: v for k, v in facts.items() if k not in ("path", "hard_rejects")}
         prompt = (
             audience_language_line(language)
@@ -488,6 +555,11 @@ def editorial_review(
                 bool(facts.get("serial")),
                 frames_note=(
                     f", and {len(frames)} frames from the file itself are attached"
+                    + (
+                        f" (the middle of scenes {', '.join(map(str, framed))}, in that order)"
+                        if framed and len(framed) == len(frames)
+                        else ""
+                    )
                     if frames
                     else (
                         ". You cannot see the film itself — your model has no vision — so "

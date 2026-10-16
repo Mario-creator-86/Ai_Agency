@@ -250,10 +250,10 @@ def seen_frames(monkeypatch):
     """The encoder, faked: one frame per scene, without asking ffmpeg for a film we never made."""
     asked: dict = {}
 
-    def frames_for(path, ffmpeg_path, duration, scene_seconds=None):
+    def frames_for(path, ffmpeg_path, duration, scene_seconds=None, picks=None):
         asked["path"] = path
         asked["scene_seconds"] = list(scene_seconds or [])
-        return list(FRAMES)
+        return list(FRAMES) if picks is None else [FRAMES[p] for p in picks if p < len(FRAMES)]
 
     monkeypatch.setattr("app.media.picture_qc.frames_for", frames_for)
     return asked
@@ -499,7 +499,8 @@ def test_no_registry_and_no_frames_are_both_not_applicable(engine, staffed, monk
     assert without_registry["failures"] == []
 
     monkeypatch.setattr(
-        "app.media.picture_qc.frames_for", lambda path, ffmpeg, duration, scene_seconds=None: []
+        "app.media.picture_qc.frames_for",
+        lambda path, ffmpeg, duration, scene_seconds=None, picks=None: [],
     )
     registry, model = registry_with(staffed, lambda p: all_good())
     without_frames = evaluate_pictures(engine, registry, ids["asset"], str(uuid4()))

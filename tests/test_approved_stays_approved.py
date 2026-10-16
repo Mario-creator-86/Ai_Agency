@@ -63,9 +63,9 @@ def frames(monkeypatch):
     """The encoder, faked: one frame per scene of the film, counted."""
     asked: list[list[float]] = []
 
-    def frames_for(path, ffmpeg_path, duration, scene_seconds=None):
+    def frames_for(path, ffmpeg_path, duration, scene_seconds=None, picks=None):
         asked.append(list(scene_seconds or []))
-        return list(FRAMES)
+        return list(FRAMES) if picks is None else [FRAMES[p] for p in picks if p < len(FRAMES)]
 
     monkeypatch.setattr("app.media.picture_qc.frames_for", frames_for)
     return asked

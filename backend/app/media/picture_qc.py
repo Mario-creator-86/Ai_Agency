@@ -86,7 +86,7 @@ from pydantic import (
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
-from app.agents.editorial import FRAME_WIDTH, MAX_FRAMES
+from app.agents.editorial import FRAME_WIDTH, frame_picks
 from app.agents.identity import clipped
 from app.agents.vision import frames_at, frames_for, vision_agent
 from app.factual.sanitizer import wrap_in_inert_boundary
@@ -101,6 +101,7 @@ from app.media.models import (
     StoryboardScene,
     VideoRenderJob,
 )
+from app.media.montage import beat_of
 from app.media.toolchain import find_ffmpeg
 
 if TYPE_CHECKING:
@@ -1322,6 +1323,9 @@ def evaluate_pictures(
         scenes: list[dict[str, Any]] = [
             {
                 "index": scene.scene_index,
+                # The writer's scene this shot was cut from (the montage, `montage.beat_of`);
+                # the frames are spread one per writer's scene (`frame_picks`).
+                "writer_scene": beat_of(scene.prompt_json).get("scene_number"),
                 "seconds": scene.duration_seconds,
                 **film_scene_prompts(session, production, scene),
                 "narration": scene.voiceover_segment,
@@ -1431,7 +1435,9 @@ def evaluate_pictures(
     # Only the scenes not carried forward are shown (2026-10-12): a carried scene's frame is
     # never cut from its shot, and never sent.
     to_judge = [scene for scene in scenes if scene["index"] not in carried]
-    wanted = to_judge[:MAX_FRAMES]
+    # One frame per writer's scene, spread over the whole film with its last row (the montage,
+    # 2026-10-16: the first eight rows were only the film's first half-minute).
+    wanted = [to_judge[p] for p in frame_picks([scene["writer_scene"] for scene in to_judge])]
     source: FrameSource = "FILM"
     frames: list[str] = []
     framed: list[dict[str, Any]] = []
@@ -1443,30 +1449,27 @@ def evaluate_pictures(
             source = "SHOT"
             framed = wanted[: len(frames)]
     if not frames:
-        # The film's frames are found by the scenes' lengths end to end, so every scene is
-        # cut and the carried ones are dropped after.
+        # The film's frames are found by the scenes' lengths end to end: every scene places
+        # the wanted ones on the timeline, and only those are cut.
+        position = {scene["index"]: number for number, scene in enumerate(scenes)}
         cut = frames_for(
             path,
             ffmpeg_path,
             duration,
             scene_seconds=[scene["seconds"] for scene in scenes],
+            picks=[position[scene["index"]] for scene in wanted],
         )
-        cut_pairs = [
-            (scene, frame)
-            for scene, frame in zip(scenes, cut, strict=False)
-            if scene["index"] not in carried
-        ]
-        framed = [scene for scene, _frame in cut_pairs]
-        frames = [frame for _scene, frame in cut_pairs]
+        frames = cut[: len(wanted)]
+        framed = wanted[: len(frames)]
     if not frames:
         return _not_applicable(
             "no frame could be read from the film: there is no encoder, or no file to cut",
             characters_configured=characters_configured,
         )
 
-    # One frame per scene, in order. When the encoder returned fewer than the storyboard
-    # has (the frame cap, or a cut that failed), the frames are the first scenes and only
-    # those are asked about; the scenes past them are named as unlooked-at, never as passed.
+    # One frame per scene shown, in order. When the storyboard has more scenes than the frame
+    # cap (`frame_picks`), or a cut failed, only the scenes framed are asked about; the others
+    # are named as unlooked-at, never as passed.
     looked = framed
     framed_indices = {scene["index"] for scene in framed}
     unlooked = [scene["index"] for scene in to_judge if scene["index"] not in framed_indices]

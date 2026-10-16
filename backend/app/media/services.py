@@ -675,6 +675,11 @@ NO_CAST_ONLY_GUESSED = (
     "guess, and a guessed name draws nobody's portrait and refuses no film"
 )
 
+#: How a board's creation event keys its ``guessed_cast`` since the montage (2026-10-16): by
+#: the storyboard's rows. A board recorded without it was keyed by the writer's scenes, which
+#: were its rows until the montage cut them into shots.
+GUESSED_CAST_BY_ROW = "row"
+
 
 def _character_keys(canonical_name: str) -> tuple[str, tuple[str, ...]] | tuple[()]:
     """A canonical name as a scene may write it: the whole name, and the given name alone.
@@ -1344,16 +1349,6 @@ def generate_storyboard_from_script(
             for index, scene in enumerate(scenes_data, start=1)
         ]
         scenes_with_cast = sum(1 for stated, _ in casts if stated)
-        # What the prose suggested and the board refused to cast on, by scene index as a
-        # string because this is a JSON payload. Kept so the gate can look at a suggested
-        # face without the film ever depending on it, and so the reading that produced a
-        # cast is readable afterwards rather than re-derived from the prose by a second
-        # regex that could disagree with this one.
-        guessed_cast = {
-            str(index): guessed
-            for index, (_stated, guessed) in enumerate(casts, start=1)
-            if guessed
-        }
 
         # Each scene's own kind, decided before anything is written. A card whose numbers no
         # SUPPORTED claim carries fails here, as the Content Gate: nothing is stored. A chart
@@ -1372,6 +1367,19 @@ def generate_storyboard_from_script(
         # seconds, each an ordinary storyboard scene tagged with the writer's scene it came
         # from; a card stays one scene. The script itself is never rewritten.
         rows = _montage_rows(scenes_data, kinds)
+        # What the prose suggested and the board refused to cast on, by the storyboard's own
+        # scene index (a shot of the montage) as a string because this is a JSON payload:
+        # every shot of a writer's scene carries that scene's guesses, since the picture
+        # check reads it by the row it looks at (2026-10-16: keyed by the writer's scene, a
+        # guess was asked about on another scene's shot). Kept so the gate can look at a
+        # suggested face without the film ever depending on it, and so the reading that
+        # produced a cast is readable afterwards rather than re-derived from the prose by a
+        # second regex that could disagree with this one.
+        guessed_cast = {
+            str(idx): casts[beat - 1][1]
+            for idx, (beat, _s, _shot) in enumerate(rows, start=1)
+            if casts[beat - 1][1]
+        }
 
         event = append_event(
             session,
@@ -1404,6 +1412,8 @@ def generate_storyboard_from_script(
                 # spelled a name was refused a cast it could not be sure of.
                 "scenes_with_cast": scenes_with_cast,
                 "guessed_cast": guessed_cast,
+                # How `guessed_cast` is keyed: by the storyboard's rows (`storyboard_cast_record`).
+                "guessed_cast_keys": GUESSED_CAST_BY_ROW,
                 "cast_note": (
                     None
                     if scenes_with_cast
@@ -1525,11 +1535,12 @@ def storyboard_cast_record(session: Session, storyboard_id: str) -> dict:
     The storyboard's own record is its creation event: `media.storyboard_created` carries
     what the builder decided about the cast, the way `agent.model_assigned` carries who chose
     an employee's model. Returned as ``{"note": str | None, "guessed": {scene: [id, ...]}}``
-    with scene indices as strings, exactly as the payload holds them.
+    with the storyboard's scene indices (its rows) as strings, exactly as the payload holds them.
 
     A board written before any of this was recorded answers the empty record, which is
     "nobody said" — not "nobody is in it". The two must not read the same, because a check
     that reports the second on the evidence of the first certifies something nobody measured.
+    So does a board the montage cut before its guesses were keyed by row (`GUESSED_CAST_BY_ROW`).
     """
 
     payload = session.scalar(
@@ -1544,6 +1555,12 @@ def storyboard_cast_record(session: Session, storyboard_id: str) -> dict:
     payload = payload if isinstance(payload, dict) else {}
     note = payload.get("cast_note")
     written = payload.get("guessed_cast")
+    montage_cut = payload.get("shot_count") not in (None, payload.get("scene_count"))
+    if montage_cut and payload.get("guessed_cast_keys") != GUESSED_CAST_BY_ROW:
+        # A board the montage cut before its guesses were keyed by row (2026-10-16): its
+        # numbers are the writer's scenes, not its rows, and would name another shot. Nobody
+        # said which row a guess is on, which is the empty record, not a wrong one.
+        written = None
     guessed: dict[str, list[str]] = {}
     if isinstance(written, dict):
         for index, ids in written.items():

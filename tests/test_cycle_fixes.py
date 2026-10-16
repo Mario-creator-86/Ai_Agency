@@ -301,7 +301,7 @@ def test_quality_control_cannot_certify_pictures_a_model_only_narrated(engine, m
     give_vision(engine, staffed["agents"]["VideoEditor"].id)
     monkeypatch.setattr(
         "app.media.picture_qc.frames_for",
-        lambda path, ffmpeg, duration, scene_seconds=None: list(FRAMES),
+        lambda path, ffmpeg, duration, scene_seconds=None, picks=None: list(FRAMES),
     )
     narrated = (
         "Let me work through the attached frames one at a time. Frame one is a dark field "

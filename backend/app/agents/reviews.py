@@ -596,7 +596,10 @@ DIRECTOR_QC_TASK = "director_qc_review"
 #: settled; her second looks settle what they overturned; the small traces accepted on a take
 #: (``accepted_on_takes``) are accepted; a Motion QC fallback needs no lesson; a measured
 #: serious defect whose only fix was the free fix already made goes to his card.
-DIRECTOR_QC_TEMPLATE_VERSION = "director-qc-v11"
+#: v12 (2026-10-16, the montage): a film cut into shots can carry more findings than the 80
+#: verdicts and 24 repairs the answer held; both are sized from the report
+#: (`qc_answer_caps`), and she is told the report's own numbers.
+DIRECTOR_QC_TEMPLATE_VERSION = "director-qc-v12"
 #: Her verdict on one finding of the report.
 QC_VERDICTS = ("REAL", "FALSE", "OWNER_CHOICE", "ACCEPTED")
 #: The longest lesson she writes for future prompts, in characters.
@@ -624,6 +627,37 @@ DIRECTOR_REDO_KINDS = ("still", "motion", "card", "audio", "encode")
 FILM_LEVEL_REDOS = frozenset({"audio", "encode"})
 #: The redos that cost money (RunPod); the others are free and made once per film.
 PAID_REDOS = frozenset({"still", "motion"})
+#: The fewest verdicts and repairs her answer may hold, whatever the report (`qc_answer_caps`).
+QC_MIN_VERDICTS = 80
+QC_MIN_REPAIRS = 24
+#: The tokens asked for her answer to a report of up to QC_MIN_VERDICTS findings; a longer
+#: report gets as many per finding (`director_qc_tokens`).
+DIRECTOR_QC_MAX_TOKENS = 6000
+
+
+def qc_answer_caps(findings: int, scenes: int) -> tuple[int, int]:
+    """The most verdicts and repairs her answer to a report of ``findings`` findings on a film
+    of ``scenes`` scenes may hold: every finding judged, and every scene's still, motion and
+    card with the film's sound and encode — never fewer than QC_MIN_VERDICTS and
+    QC_MIN_REPAIRS.
+
+    The montage (2026-10-16) cut a 160 s film into 40-90 rows, and a systemic picture problem
+    writes one finding per row. With a fixed 80 she was told «judge at most 80 findings» while
+    the schema wants every finding judged (`decision_schema`), and the bound schema itself held
+    80 (800 once `identity.complete_schema` widened it): a report past either waited for an
+    answer that could not exist."""
+    per_scene = len(DIRECTOR_REDO_KINDS) - len(FILM_LEVEL_REDOS)
+    return (
+        max(QC_MIN_VERDICTS, findings),
+        max(QC_MIN_REPAIRS, per_scene * scenes + len(FILM_LEVEL_REDOS)),
+    )
+
+
+def director_qc_tokens(findings: int) -> int:
+    """The tokens asked for her answer: DIRECTOR_QC_MAX_TOKENS for up to QC_MIN_VERDICTS
+    findings, as many per finding beyond them (each verdict is a reason, a cause, a lesson)."""
+    return max(DIRECTOR_QC_MAX_TOKENS, -(-DIRECTOR_QC_MAX_TOKENS * findings // QC_MIN_VERDICTS))
+
 
 #: The defects quality control MEASURES that are serious whatever she writes (2026-10-12, the
 #: review of v8: a severity she alone wrote let a serious defect be published as «ACCEPTED,
@@ -899,9 +933,9 @@ class DirectorQcDecision(BaseModel):
     """The Director's reading of a failed QC report: a verdict per finding, one decision."""
 
     model_config = ConfigDict(extra="ignore")
-    verdicts: list[FindingVerdict] = Field(min_length=1, max_length=80)
+    verdicts: list[FindingVerdict] = Field(min_length=1, max_length=QC_MIN_VERDICTS)
     decision: Literal["ACCEPT", "REPAIR", "CLOSE"]
-    repairs: list[DirectorRedo] = Field(default_factory=list, max_length=24)
+    repairs: list[DirectorRedo] = Field(default_factory=list, max_length=QC_MIN_REPAIRS)
     summary: str = Field(min_length=1, max_length=800)
 
     @field_validator("decision", mode="before")
@@ -1206,7 +1240,8 @@ def decision_schema(
     (`passed_scene_refusal`), and a REPAIR with at least one redo that can be carried out now
     (`repair_refusal`), or one stopped only by the Owner's limits (`capped_repair`: his card).
     An answer that misses a finding does not validate, so it is asked once more
-    (`structured_run`) and never carried out half-read.
+    (`structured_run`) and never carried out half-read; how many verdicts and repairs it may
+    hold is sized from the report (`qc_answer_caps`), so judging every finding always fits.
 
     2026-10-10 review: with his limits spent (babcf272: the mechanical loop had used the film's
     two paid redos) a REPAIR of only paid redos validated, did nothing, and was asked again
@@ -1215,8 +1250,13 @@ def decision_schema(
     a serious one goes to his card (2026-10-12). CLOSE is refused (the Owner, 2026-10-11: a film
     is redone until QC passes, never closed for quality)."""
     known = _findings_of(context or {})
+    verdict_cap, repair_cap = qc_answer_caps(len(findings), len(scenes))
 
     class BoundDecision(DirectorQcDecision):
+        # Sized from this report (the montage, 2026-10-16), never the fixed 80 and 24.
+        verdicts: list[FindingVerdict] = Field(min_length=1, max_length=verdict_cap)
+        repairs: list[DirectorRedo] = Field(default_factory=list, max_length=repair_cap)
+
         @model_validator(mode="before")
         @classmethod
         def _measured(cls, data: Any) -> Any:
@@ -1402,7 +1442,7 @@ _DIRECTOR_QC_INSTRUCTIONS = (
     'OWNER_CHOICE. "repairs" is empty unless the decision is REPAIR. Every verdict '
     "reason, cause and repair reason is "
     "at most 400 characters; keep the diagnosis and the required change concise. The summary "
-    "is at most 800 characters. Judge at most 80 findings and list at most 24 repairs.\n"
+    "is at most 800 characters.\n"
 )
 
 #: A soft target for context size: optional history/check details can be omitted, but exact
@@ -1495,8 +1535,13 @@ def review_film_qc(
             )
             + "; otherwise the film waits.\n"
         )
+    # The report's own numbers (`qc_answer_caps`): a fixed «at most 80 findings» told her to
+    # leave out what the schema wants judged, once the montage made films of 90 shots.
+    most_repairs = qc_answer_caps(len(findings), len(scenes))[1]
     prompt = (
         _DIRECTOR_QC_INSTRUCTIONS
+        + f"Judge all {len(findings)} findings, one verdict each, and list at most "
+        + f"{most_repairs} repairs.\n"
         + no_repair
         + wrap_in_inert_boundary(_director_payload(context), "director-qc")
     )
@@ -1514,7 +1559,7 @@ def review_film_qc(
             f"Decid filmul «{title}» după controlul calității picat "
             f"({count(len(findings), 'constatare', 'constatări')})."
         ),
-        max_tokens=6000,
+        max_tokens=director_qc_tokens(len(findings)),
     )
     last = second or first
     if parsed is None:
