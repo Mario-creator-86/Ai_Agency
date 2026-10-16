@@ -1831,6 +1831,13 @@ def _film_staircase(
     one's prompt and has it rewritten (`app.media.scene_rewrite.director_ladder`), and the film
     is walked again, at most `DIRECTOR_LADDER_ROUNDS` times; past them a continuation walks it on.
     ``director_ladder`` lists her rounds.
+
+    A walk whose stop the ladder settled under the renders cap, or judged again, buying nothing,
+    is walked again at once — at most `FREE_WALKS` times in a row, and never again on the very
+    stop it settled the walk before: a settle that changes nothing would otherwise turn for
+    ever while the walk holds the film's purchase lease (the dishonest-code audit of
+    2026-10-16, SAFE-013). The film then keeps the walk's own stop, and ``free_walks_stopped``
+    says how many free walks ran.
     """
     from app.media.shooting_sheet import (  # noqa: PLC0415 - media imports runbook
         FILM_BUSY,
@@ -1850,6 +1857,8 @@ def _film_staircase(
         ):
             bought: list[dict[str, Any]] = []
             rounds: list[dict[str, Any]] = []
+            free_walks = 0
+            last_free: tuple[Any, ...] | None = None
             while True:
                 film = _walk_staircase(
                     engine, settings, registry, storyboard_id, wiring, environment, correlation
@@ -1863,7 +1872,30 @@ def _film_staircase(
                     and (film.get("settled_under_cap") or film.get("rejudged"))
                     and not stop_requested(engine)
                 ):
-                    continue  # settled or judged again, bought nowhere: the film is walked on
+                    # Settled or judged again, bought nowhere: the film is walked on, a bounded
+                    # number of times, and never twice on a stop that did not move.
+                    stopped_at = (
+                        film.get("step"),
+                        film.get("refusal"),
+                        tuple(sorted(film.get("settled_under_cap") or [])),
+                        tuple(sorted(film.get("rejudged") or [])),
+                    )
+                    free_walks = 0 if film.get("bought") else free_walks + 1
+                    if free_walks > FREE_WALKS or (
+                        not film.get("bought") and stopped_at == last_free
+                    ):
+                        logger.warning(
+                            "free_walks_stopped",
+                            extra={
+                                "storyboard_id": storyboard_id,
+                                "walks": free_walks,
+                                "step": film.get("step"),
+                            },
+                        )
+                        film["free_walks_stopped"] = free_walks
+                        break
+                    last_free = stopped_at
+                    continue
                 if not refused or stop_requested(engine):
                     break
                 if len(rounds) >= DIRECTOR_LADDER_ROUNDS:
@@ -1910,6 +1942,10 @@ def _film_staircase(
 #: (the Policy Kernel, the budgets, its ceiling) ends them sooner; past them a continuation
 #: walks the film on, so a film is never left idle while money allows it (2026-10-11).
 DIRECTOR_LADDER_ROUNDS = 3
+#: How many walks in a row that bought nothing may follow a settle under the renders cap (or a
+#: still judged again) in one `_film_staircase`: a stair can stop on scenes the cap settles at
+#: most once each (stills, test shot, motion), twice over is room enough (SAFE-013).
+FREE_WALKS = 6
 #: The stops of a walk whose scenes may be quality control's to answer.
 LADDER_REFUSALS = frozenset({"NEEDS_OWNER", "TAKES_NOT_ACCEPTED"})
 LADDER_CAUSE = "director_ladder"
