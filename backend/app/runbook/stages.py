@@ -1842,6 +1842,7 @@ def _ladder_scenes(
     *,
     registry: ProviderRegistry | None = None,
     settings: Settings | None = None,
+    act: bool = True,
 ) -> list[int]:
     """The scenes of a stopped walk that quality control refused (the Director's to answer).
     First, free: a refused still the gate's local checks stopped is judged again by today's
@@ -1849,13 +1850,15 @@ def _ladder_scenes(
     scene is listed on ``film["rejudged"]``. Then a refused scene whose picture has had its
     three renders is not rewritten: what it has stands under the Owner's cap
     (`stills_stage.settle_scene_under_cap`) and the scene is listed on
-    ``film["settled_under_cap"]`` instead, so the walk goes on."""
+    ``film["settled_under_cap"]`` instead, so the walk goes on.
+
+    ``act=False`` only reads the refused scenes and changes nothing (`_ladders_stop`)."""
     if film.get("status") != "WAITING" or film.get("refusal") not in LADDER_REFUSALS:
         return []
     scenes = [int(scene) for scene in film.get("scenes") or [] if isinstance(scene, int)]
     refused = _quality_scenes(engine, storyboard_id, scenes) if scenes else []
-    if not refused:
-        return []
+    if not refused or not act:
+        return refused
     from app.media.stills_stage import (  # noqa: PLC0415
         rejudge_refused_stills,
         settle_scene_under_cap,
@@ -1887,6 +1890,21 @@ def _ladder_scenes(
     if rejudged:
         film.setdefault("rejudged", []).extend(rejudged)
     return [scene for scene in refused if scene not in settled and scene not in rejudged]
+
+
+def _ladders_stop(engine: Engine, storyboard_id: str, film: dict[str, Any]) -> bool:
+    """Whether a walked film's stop is the Director's ladder's, read after the walk: scenes
+    quality control refused, or scenes the walk's ladder judged again or settled under the
+    cap. Read, never acted on: the walk (`_film_staircase`) already judged again and settled
+    what it could, and walked on whatever that moved. A look here moved a film nobody walked
+    on: a still approved after the walk (its look failed in the walk and answered here) was
+    said to wait for «Proprietarul», and the shooting-sheet letter asked him about a scene
+    already resolved for free (the review of 5f10781)."""
+    return bool(
+        _ladder_scenes(engine, storyboard_id, film, act=False)
+        or film.get("rejudged")
+        or film.get("settled_under_cap")
+    )
 
 
 def _quality_scenes(engine: Engine, storyboard_id: str, scenes: list[int]) -> list[int]:
@@ -2750,19 +2768,14 @@ def _sheet_letter(
     film: dict[str, Any],
     plan_cost: dict[str, Any] | None,
     correlation: str,
-    *,
-    registry: ProviderRegistry | None = None,
-    settings: Settings | None = None,
 ) -> str | None:
     """The Owner's letter about one film stopped on its staircase: the sheet in words.
 
     Written once per film, sheet, stair and reason: the same day run again, or tomorrow's
     run finding the same question standing, writes nothing new. Deterministic: the sheet's
-    own facts, never a model's account of them.
-
-    ``registry`` and ``settings`` are the day's, for the ladder's free re-judge of a refused
-    still (`_ladder_scenes`): without them the gate's look answered «nu a fost privită» and
-    that non-answer replaced the still's refusal, so it was never judged with eyes again.
+    own facts, never a model's account of them. Whether the stop is the Director's ladder's
+    is read (`_ladders_stop`), never judged again here: the letter's own look approved a
+    still and then wrote him about the scene it had just resolved.
     """
     from app.agents.messages import post_message  # noqa: PLC0415
     from app.decisions.sources import film_budget  # noqa: PLC0415
@@ -2796,9 +2809,7 @@ def _sheet_letter(
         # His own «Oprește GPU acum» stopped the step (2026-10-12): his card in «Decizii» says
         # it once for every film; a letter per film would repeat his own press back to him.
         return None
-    if status in LADDER_REFUSALS and _ladder_scenes(
-        engine, storyboard_id, film, registry=registry, settings=settings
-    ):
+    if status in LADDER_REFUSALS and _ladders_stop(engine, storyboard_id, film):
         # Quality control's refusal of a scene is the Director's to answer — her ladder in
         # the walk, the `ladder_retry` pass after it — never a letter to the Owner
         # (2026-10-12, 08:10, «The Zero Script Club» scene 3 after two re-rolls: «Foaia de
@@ -3348,9 +3359,9 @@ def _media_staircase(
             if film.get("approval_id") and not asked_correlation:
                 asked_correlation = correlation
         elif film["status"] == "WAITING":
-            if _ladder_scenes(
-                engine, storyboard_id, film, registry=registry, settings=settings
-            ) or (film.get("refusal") == "NEEDS_PROMPT_APPROVAL"):
+            if _ladders_stop(engine, storyboard_id, film) or (
+                film.get("refusal") == "NEEDS_PROMPT_APPROVAL"
+            ):
                 # Her rounds on the words (no cap, 18:15Z) are hers, never «așteaptă
                 # Proprietarul» (15:41Z, a4ecf40a: the register said so of her audit).
                 director_waiting.append(f"«{title}»: {reason}")
@@ -3358,15 +3369,7 @@ def _media_staircase(
                 waiting.append(f"«{title}»: {reason}")
         else:
             held.append(f"{storyboard_id[:8]}: {reason}")
-        _sheet_letter(
-            engine,
-            storyboard_id,
-            film,
-            plan_cost,
-            correlation,
-            registry=registry,
-            settings=settings,
-        )
+        _sheet_letter(engine, storyboard_id, film, plan_cost, correlation)
 
     # The day's one letter about every standing question, as on the legacy path.
     if asked_correlation:

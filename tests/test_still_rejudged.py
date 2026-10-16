@@ -5,8 +5,10 @@ not start, fourteen walks in a row)."""
 
 from __future__ import annotations
 
+import functools
 from uuid import uuid4
 
+from app.agents.models import AgentMessage
 from app.media import stills_stage
 from app.media.assembler import still_fields, take_hash
 from app.media.faces import FaceCount
@@ -319,36 +321,133 @@ def test_with_no_eyes_no_still_is_judged_again_and_none_loses_its_mark(engine, t
     )
 
 
-def test_the_days_registry_reaches_every_ladder_call_the_letter_included(
+def _waiting_film() -> dict:
+    """A walk stopped on scene 1, which quality control refused."""
+    return {
+        "status": "WAITING",
+        "refusal": "NEEDS_OWNER",
+        "scenes": [1],
+        "step": "stills",
+        "reason": "Scena 1: controlul calității a refuzat imaginea.",
+        "bought": [],
+        "sheet": {"title": "Un film", "sheet_hash": "a" * 64, "steps": {}},
+    }
+
+
+def _sheet_letters(engine) -> list[AgentMessage]:
+    with Session(engine) as session:
+        return [
+            message
+            for message in session.scalars(
+                select(AgentMessage).where(AgentMessage.to_agent_id.is_(None))
+            )
+            if (message.body_json or {}).get("kind") == stages.SHEET_LETTER_KIND
+        ]
+
+
+def test_the_walk_judges_with_the_days_registry_and_the_day_after_it_only_reads(
     engine, tmp_path, settings, monkeypatch
 ):
-    """Finding 26's wiring: the walk and the shooting-sheet letter call the ladder with the
-    day's registry and settings, never without them."""
+    """Finding 26's wiring, and R1 of the review of 5f10781: the walk's ladder judges again
+    with the day's registry and settings; what the day says of the film after the walk, and
+    the shooting-sheet letter, only read its refused scenes."""
     board = a_film(engine, tmp_path, scenes=1)
     calls: list[dict] = []
 
-    def ladder(engine, storyboard_id, film, *, registry=None, settings=None):
-        calls.append({"registry": registry, "settings": settings})
-        return [1]
+    def ladder(engine, storyboard_id, film, *, registry=None, settings=None, act=True):
+        calls.append({"registry": registry, "settings": settings, "act": act})
+        return [] if act else [1]
 
     monkeypatch.setattr(stages, "sheet_wiring", lambda *a: {})
-    monkeypatch.setattr(
-        stages,
-        "_film_staircase",
-        lambda *a: {
-            "status": "WAITING",
-            "refusal": "NEEDS_OWNER",
-            "scenes": [1],
-            "step": "stills",
-            "reason": "Scena 1: controlul calității a refuzat imaginea.",
-            "bought": [],
-            "sheet": {"title": "Un film", "sheet_hash": "a" * 64, "steps": {}},
-        },
-    )
+    monkeypatch.setattr(stages, "_walk_staircase", lambda *a: _waiting_film())
     monkeypatch.setattr(stages, "_ladder_scenes", ladder)
 
     stages._media_staircase(engine, settings, None, REGISTRY, [board], [], set(), "TEST")
 
-    assert len(calls) >= 2, calls  # the summary's and the letter's
-    assert all(call["registry"] is REGISTRY for call in calls), calls
-    assert all(call["settings"] is settings for call in calls), calls
+    walk, *after = calls
+    assert walk == {"registry": REGISTRY, "settings": settings, "act": True}, calls
+    assert len(after) == 2 and all(call["act"] is False for call in after), calls
+
+
+def test_a_look_after_the_walk_never_resolves_a_scene_and_writes_the_owner_about_it(
+    engine, tmp_path, settings, monkeypatch
+):
+    """R1 of the review of 5f10781: the walk's look gave no usable verdict, the still kept its
+    mark, and the day's summary and the shooting-sheet letter each ran the ladder again with
+    the registry. The letter's look passed: the still was APPROVED, no scene was refused any
+    more, the day said the film «așteaptă Proprietarul» and the letter asked him «așteaptă
+    decizia ta» about a scene just resolved for free, for a film nobody walked on. After the
+    walk the ladder is read: the still waits, marked, for the next walk's look, and the film
+    is the Director's."""
+    board = a_film(engine, tmp_path, scenes=1)
+    take_id = _refused_by_local_checks(engine, tmp_path, board)
+    passing, _ = _judge(passes=True)
+    looks: list[str] = []
+
+    def flaky(engine, registry, path, plan, correlation_id, *, ffmpeg_path=None):
+        looks.append(str(path))
+        if len(looks) == 1:  # the walk's look: the model gave no usable verdict
+            return StillJudgement(
+                status="NOT_RUN",
+                verdict=None,
+                detail_ro="nu a fost privită: Video Editor nu a dat un verdict utilizabil",
+                run_id=None,
+                looked_by="Video Editor",
+                image_width=None,
+            )
+        return passing(engine, registry, path, plan, correlation_id, ffmpeg_path=ffmpeg_path)
+
+    monkeypatch.setattr(
+        stills_stage,
+        "rejudge_refused_stills",
+        functools.partial(
+            stills_stage.rejudge_refused_stills,
+            judge=flaky,
+            face_counter=_no_faces,
+            measure=("faces",),
+        ),
+    )
+
+    def walk(*args):
+        film = _waiting_film()
+        # The walk's own ladder, with the day's registry: nobody could see the still today.
+        assert stages._ladder_scenes(engine, board, film, registry=REGISTRY, settings=settings)
+        return film
+
+    monkeypatch.setattr(stages, "sheet_wiring", lambda *a: {})
+    monkeypatch.setattr(stages, "_film_staircase", walk)
+
+    outcome = stages._media_staircase(engine, settings, None, REGISTRY, [board], [], set(), "TEST")
+
+    assert len(looks) == 1, looks  # the walk's look, and no other
+    assert _sheet_letters(engine) == []
+    with Session(engine) as session:
+        row = session.get(SceneTake, take_id)
+        assert row.status == "REJECTED" and row.failure_detail == LOCAL_STOP
+    assert "Directoarea preia" in outcome["reason"]
+    assert "așteaptă Proprietarul" not in outcome["reason"]
+
+
+def test_a_film_the_walks_ladder_moved_is_no_letter_to_the_owner(engine, tmp_path):
+    """R1 of the review of 5f10781: a scene the walk's ladder judged again (or settled under
+    the cap) leaves no refused scene behind it, and the walk goes on from it; it is never the
+    Owner's decision on the shooting sheet."""
+    board = a_film(engine, tmp_path, scenes=1)
+    _refused_by_local_checks(engine, tmp_path, board)
+    judge, _ = _judge(passes=True)
+    film = _waiting_film()
+    # The walk's ladder approved the scene's still, free, and listed the scene.
+    assert stills_stage.rejudge_refused_stills(
+        engine,
+        board,
+        1,
+        "c",
+        registry=REGISTRY,
+        judge=judge,
+        face_counter=_no_faces,
+        measure=("faces",),
+    )
+
+    for moved in ({**film, "rejudged": [1]}, {**film, "settled_under_cap": [1]}):
+        assert stages._sheet_letter(engine, board, moved, None, str(uuid4())) is None
+    assert _sheet_letters(engine) == []
