@@ -197,17 +197,20 @@ def _budget_spent(engine: Any, owed: list[str]) -> list[str]:
                 ]
             )
             payload = event.payload if isinstance(event.payload, dict) else {}
-            newest[board_id] = {"kinds": kinds, "payload": payload}
-    waiting: list[str] = []
+            newest[board_id] = {"kinds": kinds, "payload": payload, "known": board is not None}
+    over: set[str] = set()
+    fits: set[str] = set()
     for refusal in newest.values():
         payload = refusal["payload"]
         period = periods.get(str(payload.get("period") or ""))
         if period is None:
             continue
-        if int(payload.get("need_usd_micros") or 0) <= int(period["remaining_usd_micros"]):
-            continue
-        waiting += [kind for kind in refusal["kinds"] if kind in owed and kind not in waiting]
-    return [kind for kind in owed if kind in waiting]
+        if int(payload.get("need_usd_micros") or 0) > int(period["remaining_usd_micros"]):
+            over.update(refusal["kinds"])
+        elif refusal["known"]:
+            # Another film of the same kind whose round fits now: that kind goes on.
+            fits.update(refusal["kinds"])
+    return [kind for kind in owed if kind in over and kind not in fits]
 
 
 def _letter_once(session: Any, date_iso: str, why: str, goal: dict[str, Any]) -> bool:

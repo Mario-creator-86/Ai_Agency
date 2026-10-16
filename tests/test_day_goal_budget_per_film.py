@@ -125,3 +125,15 @@ def test_the_budget_stops_the_day_when_both_owed_films_are_refused(engine, setti
 
     assert result["queued"] is None and result["budget"] is True, result
     assert result["waiting_on_budget"] == ["short", "serial"]
+
+
+def test_another_film_of_the_owed_kind_whose_round_fits_keeps_the_day_going(engine, settings):
+    _a_day_with_three_dollars_left(engine)
+    _published(engine, serial=False)  # only the episode is owed
+    first, second = _board(engine, serial=True), _board(engine, serial=True)
+    _refused(engine, first, 1.0)  # the second episode's round fits in the 3 USD left
+    _refused(engine, second, 3.61)
+
+    result = _pass(engine, settings)
+
+    assert result["queued"], result
