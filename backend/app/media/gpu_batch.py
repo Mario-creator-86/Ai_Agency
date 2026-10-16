@@ -346,7 +346,10 @@ def run_rounds(
     asked to grow to the whole round's price on top of what the step committed, within what
     the budgets have left. ``cap_left`` then reads what the hold covers, so a round the budget
     cannot hold whole is cut like one the cap cannot (2026-10-16: the step used to hold three
-    times every still of the film before its first round)."""
+    times every still of the film before its first round). When RunPod's measured time raised
+    the meter, it is asked for nothing more (``make_room(0.0)``): the hold grows to what the
+    step now owes. ``summary['cap_stop']`` says a cut still owed: a later round sent whole
+    clears it."""
     summary: dict[str, Any] = {
         "rounds": 0,
         "items_sent": 0,
@@ -433,6 +436,13 @@ def run_rounds(
                 carried = [r for r in requests if (r.project_id, r.scene_id) not in in_round]
                 if len(fitted) < len(requests):
                     summary["cap_stop"] = CAP_STOP.format(price=price_credits(requests), left=left)
+                else:
+                    # Sent whole: what an earlier cut left out went out with this round (or its
+                    # scene was decided on what it got), so no stop is owed to that cut. Kept, it
+                    # ended a step that bought everything as stopped at the cap, or on the
+                    # budget once room came back (a refund, another film's hold let go;
+                    # review of 8f5c6ec).
+                    summary["cap_stop"] = None
                 if not fitted:
                     summary["stopped"] = summary["cap_stop"]
                     break
@@ -574,6 +584,10 @@ def run_rounds(
                         else:
                             accounting.reconcile(measured - kept)
                         summary["reconciled_credits"] += measured - kept
+                        if make_room is not None:
+                            # The step's budget hold grows to what it now owes, at once: no
+                            # other step reads money RunPod already used as free.
+                            make_room(0.0)
                 if any(o.error == UNCERTAIN for o in outcomes):
                     uncertain_round = (run, outcomes, kept)
                 if halted is not None:

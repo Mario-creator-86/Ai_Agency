@@ -11963,6 +11963,12 @@ def run_motion_step(
             return budget_hold.budget_words()
         return budget_hold.budget_words(meter.committed, wanted)
 
+    def hold_spent() -> None:
+        """What the step committed is held at once (`StepHold.hold_spent`): a vendor's quote
+        above the price is committed whole, and no other step reads it as free meanwhile."""
+        if budget_hold is not None:
+            budget_hold.hold_spent(meter.committed)
+
     take_kind = MOTION_STEP_TAKE_KINDS.get(step, "motion")
     source = account
     before: float | None = None
@@ -12300,6 +12306,7 @@ def run_motion_step(
                 # later; nothing more is bought in this step.
                 open_spend = max(float(_price), float(_quoted_credits(_adapter) or 0.0))
                 meter.committed += open_spend
+                hold_spent()
                 if intents and intents[-1]:
                     charged.append(
                         {
@@ -12319,6 +12326,7 @@ def run_motion_step(
                     # answer, may be charged like a success: counted, never sent again here.
                     lost = max(float(_price), float(_quoted_credits(_adapter) or 0.0))
                     meter.committed += lost
+                    hold_spent()
                 if unanswered:
                     stopped = UNANSWERED_REASON.format(scene=_index)
                 lost_take = record_take(
@@ -12346,6 +12354,7 @@ def run_motion_step(
                 return None, None
             paid = max(float(_price), float(_quoted_credits(_adapter) or 0.0))
             meter.committed += paid
+            hold_spent()
             retry_clip = work_dir / f"{take_kind}_{_index:02d}_{uuid4().hex[:8]}.mp4"
             retry_clip.write_bytes(retry_bytes)
             retry_take = record_take(
@@ -12486,6 +12495,7 @@ def run_motion_step(
                 # sold anything more today.
                 in_flight_spend = max(float(price), float(_quoted_credits(adapter) or 0.0))
                 meter.committed += in_flight_spend
+                hold_spent()
                 take_id = intents[-1] if intents else None
                 if take_id is None:
                     take_id = _record_intent(
@@ -12530,6 +12540,7 @@ def run_motion_step(
                     # A task the vendor accepted may be charged like a success.
                     spend = max(float(price), float(_quoted_credits(adapter) or 0.0))
                     meter.committed += spend
+                    hold_spent()
                 code = failure_code_of(exc) or (
                     UNANSWERED_FAILURE_CODE if unanswered else failure.kind
                 )
@@ -12619,6 +12630,7 @@ def run_motion_step(
             previous_kind = None
             spend = max(float(price), float(_quoted_credits(adapter) or 0.0))
             meter.committed += spend
+            hold_spent()
             clip = work_dir / f"{take_kind}_{index:02d}_{uuid4().hex[:8]}.mp4"
             clip.write_bytes(clip_bytes)
             take_id = record_take(

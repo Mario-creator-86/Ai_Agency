@@ -971,9 +971,7 @@ def test_a_repeated_command_id_returns_the_stored_result_and_buys_nothing(
 
 
 @requires_ffmpeg
-def test_two_films_against_one_budget_hold_their_rounds_and_the_second_is_refused(
-    engine, tmp_path
-):
+def test_two_films_against_one_budget_hold_their_rounds_and_the_second_is_refused(engine, tmp_path):
     from app.economy.models import SpendReservation
 
     (tmp_path / "a").mkdir()
@@ -1011,6 +1009,44 @@ def test_two_films_against_one_budget_hold_their_rounds_and_the_second_is_refuse
     assert [h.status for h in holds] == ["SETTLED"]
     assert holds[0].usd_micros == 3_400_000
     assert holds[0].purpose == "sheet:test_shot"
+
+
+@requires_ffmpeg
+def test_a_quote_above_the_price_is_held_the_moment_it_is_committed(engine, tmp_path, monkeypatch):
+    # Review of 8f5c6ec: a vendor's quote above the shot's price is committed whole, while the
+    # step's hold stayed at the price until the books settled the step; the money the step
+    # already owed read as free to every other step meanwhile (its clip QC, minutes).
+    from app.economy.models import SpendReservation
+    from app.media import assembler
+
+    storyboard_id = film_with_stills(engine, tmp_path, scenes=3)
+    mode_studio(engine)
+    set_budget(engine, BudgetCommand(period="DAILY", limit_usd="20"))
+    account = Account(10_000)
+
+    class Dearer(SpyVideo):
+        async def create_generation(self, prompt, **kwargs):
+            task = await super().create_generation(prompt, **kwargs)
+            self.last_estimated_credits = float(self.last_estimated_credits or 0) + 100.0
+            return task
+
+    paid: list[tuple[float, int]] = []
+    record = assembler.record_take
+
+    def recorded(engine_, **kwargs):
+        if kwargs.get("status") == "PAID" and not paid:
+            with Session(engine) as session:
+                (hold,) = session.scalars(select(SpendReservation)).all()
+                paid.append((float(kwargs["credits_quoted"]), int(hold.usd_micros)))
+        return record(engine_, **kwargs)
+
+    monkeypatch.setattr(assembler, "record_take", recorded)
+
+    _sheet_step(engine, storyboard_id, Models(Dearer("seedance2_5", account)), account, tmp_path)
+
+    ((quoted, usd_micros),) = paid
+    # The shot's quote (its price and 100 credits more) is held the moment it is committed.
+    assert usd_micros == round(quoted * 10_000)
 
 
 @requires_ffmpeg

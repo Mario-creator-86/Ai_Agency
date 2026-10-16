@@ -929,6 +929,30 @@ def test_a_scene_a_cut_left_out_goes_before_the_rerolls_when_room_comes_back(
     assert meter.committed == 40.0
 
 
+def test_a_cut_the_next_round_made_up_is_no_stop(engine, tmp_path, fake_session):
+    # Review of 8f5c6ec: the cut of round 1 stayed in the summary after round 2 sent what it
+    # had left out (an unsent item's refund made room), so a step that sent everything it was
+    # asked for ended «stopped at the cap», or on the budget under a step's budget hold.
+    cloud = Cloud()
+    # One item per job (a 300 s execution cap): scene 2's /run never leaves the studio.
+    cloud.run_answers = [None, MediaProviderError("no network", unsent=True)]
+    made = adapter(engine, tmp_path, cloud, execution_timeout_cap_seconds=300)
+    made.core.transport = made.core.client.transport = finishing(cloud)
+
+    summary, meter, _seen = rounds(
+        engine, made, [request(str(n), 0) for n in (1, 2, 3, 4)], cap=40.0
+    )
+
+    # Round 1 (45) is cut to scenes 1-3 (35); scene 2's 10 credits come back, so scene 4,
+    # which the cut left out, goes out whole in round 2 (15).
+    sent = [
+        it["scene_id"] for job in sorted(cloud.jobs) for it in cloud.jobs[job]["input"]["items"]
+    ]
+    assert sent == ["1", "3", "4"] and summary["rounds"] == 2
+    assert meter.committed == 40.0
+    assert summary["cap_stop"] is None and summary["stopped"] is None
+
+
 def test_a_stop_mid_round_cancels_and_gives_back_what_was_not_made(engine, tmp_path, fake_session):
     cloud = Cloud()
     made = adapter(engine, tmp_path, cloud)

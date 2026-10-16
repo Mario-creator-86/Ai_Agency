@@ -251,7 +251,7 @@ def a_step_hold(engine, *, cap_credits: float, first_credits: float) -> Any:
     )
 
 
-def rounds_with_a_hold(engine, made, hold: Any, next_round) -> tuple[dict, Any]:
+def rounds_with_a_hold(engine, made, hold: Any, next_round, **kw) -> tuple[dict, Any]:
     """`gpu_batch.run_rounds` as the stills stage drives it: its ledger reads the hold."""
     from app.media.assembler import budget_cut
     from app.media.gpu_batch import run_rounds
@@ -284,6 +284,7 @@ def rounds_with_a_hold(engine, made, hold: Any, next_round) -> tuple[dict, Any]:
         on_outcome=lambda outcome: None,
         meter=ledger.meter,
         sleep=lambda s: None,
+        **kw,
     )
     budget_cut(summary, ledger.budget_words)
     return summary, ledger
@@ -372,6 +373,111 @@ def test_the_hold_never_grows_past_the_steps_cap(engine, tmp_path, gpu):
     assert mine.usd_micros == 400_000  # the cap, and not a cent past it
     assert summary["cap_stop"].startswith("STOPPED_AT_CAP")
     assert hold.budget_stop() is None
+
+
+def refused_events(engine) -> list[DomainEvent]:
+    with Session(engine) as session:
+        rows = list(
+            session.scalars(
+                select(DomainEvent).where(DomainEvent.event_type == "media.step_hold_refused")
+            )
+        )
+        session.expunge_all()
+        return rows
+
+
+def test_a_round_runpod_measured_above_its_estimate_is_held_at_once(engine, tmp_path, gpu):
+    """Review of 8f5c6ec: the hold stayed at the round's estimate after RunPod measured more,
+    so a second film was told the money the step already owed was free."""
+    from app.economy.budget import budget_status
+    from test_runpod_money_adversary import timed
+
+    set_budget(engine, BudgetCommand(period="DAILY", limit_usd="1"))
+    hold = a_step_hold(engine, cap_credits=75, first_credits=25)
+    cloud = Cloud()
+    made = adapter(engine, tmp_path, cloud)
+    # 400 s executing + the worker's start (the 200 s delay, at most the 120 s cold start
+    # budgeted) + 1 s idle = 521 GPU-seconds = 52,1 credits, above the 25 estimated.
+    made.core.transport = made.core.client.transport = timed(
+        cloud, delay_ms=200_000, execution_ms=400_000
+    )
+
+    summary, ledger = rounds_with_a_hold(
+        engine,
+        made,
+        hold,
+        lambda outcomes: [],
+        credits_for_seconds=lambda seconds: seconds * 0.1,
+    )
+
+    assert ledger.committed == pytest.approx(52.1)
+    assert summary["stopped"] is None and summary["cap_stop"] is None
+    # The hold grew to what RunPod used, beyond the round it was asked for.
+    (mine,) = held(engine)
+    assert mine.status == "RESERVED" and mine.usd_micros == 521_000
+    (daily,) = budget_status(engine)["budgets"]
+    assert daily["remaining_usd_micros"] == 479_000
+    # A second film cannot take what the step owes: 0,75 USD is refused, what is left fits.
+    other = reserve_spend(engine, 750_000, "sheet:stills", "the-episode")
+    assert other["allowed"] is False
+    assert reserve_spend(engine, 479_000, "sheet:stills", "the-episode")["allowed"] is True
+    # Holding money already spent stops nothing and is not a refusal of the budget.
+    assert hold.refusal is None and hold.budget_stop() is None
+    assert refused_events(engine) == []
+
+
+def test_money_already_spent_is_held_past_the_round_and_never_refused(engine):
+    """What the step committed above its hold is held by what the budgets have left, never
+    refused as a purchase, and the round's own growth still answers for the next purchase."""
+    set_budget(engine, BudgetCommand(period="DAILY", limit_usd="0.50"))
+    reserve_spend(engine, 150_000, "sheet:motion", "the-short")
+    hold = a_step_hold(engine, cap_credits=75, first_credits=25)
+
+    # The round measured 45 credits; the day has 10 left beside the 25 held.
+    room = hold.room(45.0)
+
+    assert hold.held_micros == 350_000 and room == pytest.approx(-10.0)
+    assert hold.refusal is None and refused_events(engine) == []
+    # Asked again for the same spend, the budget is not asked twice.
+    hold.room(45.0)
+    assert sum(r.usd_micros for r in held(engine) if r.purpose == "sheet:stills") == 350_000
+
+
+def test_a_round_cut_by_the_budget_whose_rest_went_out_later_is_not_a_budget_stop(
+    engine, tmp_path, gpu
+):
+    """Review of 8f5c6ec: a re-roll round cut to what the day had left kept its cut and its
+    refusal after the next round sent the rest, so a step that bought everything was parked
+    on OVER_DAILY_BUDGET and the day's goal read a refusal nobody met."""
+    set_budget(engine, BudgetCommand(period="DAILY", limit_usd="0.70"))
+    other = reserve_spend(engine, 300_000, "sheet:motion", "the-short")
+    hold = a_step_hold(engine, cap_credits=75, first_credits=25)
+    cloud = Cloud()
+    made = adapter(engine, tmp_path, cloud)
+    made.core.transport = made.core.client.transport = finishing(cloud)
+    asked: list[int] = []
+
+    def next_round(outcomes):
+        asked.append(len(outcomes))
+        if len(asked) == 1:
+            return [request("2", 0), request("3", 0)]  # 25 credits; the day has 15 left
+        if len(asked) == 2:
+            # While scene 2 was made, the other film let its hold go.
+            from app.economy.budget import release_reservation
+
+            release_reservation(engine, other["reservation_id"], "the short let it go")
+        return []
+
+    summary, ledger = rounds_with_a_hold(engine, made, hold, next_round)
+
+    # Scene 2 went out alone (the cut), scene 3 in the next round: everything was bought.
+    assert [
+        [it["scene_id"] for it in cloud.jobs[j]["input"]["items"]] for j in sorted(cloud.jobs)
+    ] == [["1", "1"], ["2"], ["3"]]
+    assert ledger.committed == 55.0
+    assert summary["cap_stop"] is None and summary["stopped"] is None
+    assert hold.refusal is None and hold.budget_stop() is None
+    assert refused_events(engine) == []
 
 
 # --------------------------------------------------- 3. the day's goal reads the budget

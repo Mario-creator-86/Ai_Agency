@@ -2906,7 +2906,13 @@ class StepHold:
     the step ends on what it bought with the budget's words (``refusal``). The day reads that
     end as OVER_DAILY_BUDGET (``budget_stop``, `runbook.stages._walk_staircase`), the same path
     as a step refused at its start, never as a fault of the film. The film's ceiling is still
-    checked against the whole cap before the step starts (`check_film_ceiling`)."""
+    checked against the whole cap before the step starts (`check_film_ceiling`).
+
+    What the step has already committed is held too, at once, whatever its estimate said
+    (`hold_spent`): RunPod's measured GPU time raises the meter after a round, and a vendor's
+    quote above the price is committed whole. Review of 8f5c6ec: a round held at its 0,25 USD
+    estimate measured 0,52, the hold stayed at 0,25 until the books settled it, and a second
+    film held 0,75 of a 1 USD day beside it."""
 
     engine: Engine
     storyboard_id: str
@@ -2916,11 +2922,17 @@ class StepHold:
     correlation_id: str
     reservation_id: str | None = None
     held_micros: int = 0
-    #: The budget's refusal of a growth, kept once given: its period, words and the sum the
-    #: round needed beyond the hold (period "" when the row itself was no longer held).
+    #: The budget's refusal of the latest growth asked for a purchase: its period, words and
+    #: the sum it needed beyond the hold (period "" when the row itself was no longer held).
+    #: None once a later growth is granted whole, or not needed: a round cut, whose rest went
+    #: out in the next round, never reads as stopped by the budget (review of 8f5c6ec). Kept
+    #: for good once the step ended on it (``stopped``).
     refusal: dict[str, Any] | None = None
     #: Whether the step ended on the budget's words (the stage said so, `budget_words`).
     stopped: bool = False
+    #: The most the hold was asked to grow to for money already committed (`hold_spent`), in
+    #: micro-dollars: a budget that could not hold a sum is not asked for it again.
+    spent_asked_micros: int = 0
 
     @property
     def covered_credits(self) -> float:
@@ -2931,19 +2943,72 @@ class StepHold:
         """The credits the step may still commit: the cap's rest, and no more than the hold
         covers once grown for ``wanted`` more on top of ``committed``. ``partial`` (a round of
         many items, cut to fit) lets the hold grow by what the budgets have left when the
-        whole round does not fit; a single purchase grows it whole or not at all."""
+        whole round does not fit; a single purchase grows it whole or not at all. What is
+        already committed is held first (`hold_spent`)."""
+        self.hold_spent(committed)
         rest = float(self.cap_credits) - float(committed)
         if wanted > 0:
             total = min(float(self.cap_credits), float(committed) + float(wanted))
             self._cover(total, partial=partial)
         return min(rest, self.covered_credits - float(committed))
 
+    def hold_spent(self, committed: float) -> None:
+        """Grow the hold to what the step has committed, by what the budgets have left.
+
+        The meter can pass the hold after a purchase: RunPod's measured GPU time raises it
+        once a round is over (`gpu_batch.run_rounds`), and a vendor's quote above the price is
+        committed whole. Until the books settle the step, the budgets read only the hold, so
+        another step would take that money as free. It is already spent, so the cap does not
+        bound it, nothing is refused and no refusal is recorded: no purchase was stopped. What
+        the budgets cannot hold any more reaches the books when the step is settled."""
+        target = credits_to_micros(committed, self.credit_usd)
+        if target <= max(self.held_micros, self.spent_asked_micros):
+            return
+        self.spent_asked_micros = target
+        asked = self._grow(float(committed), partial=True)
+        if asked is not None and not asked[1]["allowed"]:
+            logger.warning(
+                "step_hold_below_spend",
+                extra={
+                    "storyboard_id": self.storyboard_id,
+                    "step": self.step,
+                    "held_usd_micros": self.held_micros,
+                    "committed_usd_micros": target,
+                },
+            )
+
     def _cover(self, total_credits: float, *, partial: bool) -> None:
+        """Grow the hold to ``total_credits`` for a purchase, and keep the budget's answer:
+        its refusal, or none when it was granted whole (or the hold already covered it)."""
+        asked = self._grow(total_credits, partial=partial)
+        if self.stopped:
+            return  # the step ended on its refusal: those words stand
+        if asked is None or asked[1]["allowed"]:
+            self.refusal = None
+            return
+        add, hold = asked
+        period = str(hold.get("period") or "")
+        if not period:
+            # The row is no longer held (settled, or swept by the watchdog): nothing more is
+            # bought on it, and that is not the budget's refusal.
+            self.refusal = {"period": "", "reason": str(hold.get("reason") or "")}
+            return
+        reason = _budget_words(
+            self.engine,
+            period,
+            add,
+            step_cap_usd_micros=credits_to_micros(self.cap_credits, self.credit_usd),
+        )
+        self.refusal = {"period": period, "reason": reason, "need_usd_micros": add}
+
+    def _grow(self, total_credits: float, *, partial: bool) -> tuple[int, dict[str, Any]] | None:
+        """Grow the reservation to ``total_credits``; None when it already covers them, else
+        the sum asked (micro-dollars) and the budget's answer."""
         from app.economy.budget import extend_reservation, reserve_spend  # noqa: PLC0415
 
         add = credits_to_micros(total_credits, self.credit_usd) - self.held_micros
         if add <= 0:
-            return
+            return None
         if self.reservation_id is None:
             # Nothing held yet (a first round priced at nothing): the hold starts here.
             hold = reserve_spend(
@@ -2961,21 +3026,7 @@ class StepHold:
             )
             grown = int(hold.get("added_usd_micros") or 0)
         self.held_micros += grown
-        if hold["allowed"] or self.refusal is not None:
-            return
-        period = str(hold.get("period") or "")
-        if not period:
-            # The row is no longer held (settled, or swept by the watchdog): nothing more is
-            # bought on it, and that is not the budget's refusal.
-            self.refusal = {"period": "", "reason": str(hold.get("reason") or "")}
-            return
-        reason = _budget_words(
-            self.engine,
-            period,
-            add,
-            step_cap_usd_micros=credits_to_micros(self.cap_credits, self.credit_usd),
-        )
-        self.refusal = {"period": period, "reason": reason, "need_usd_micros": add}
+        return add, hold
 
     def budget_words(self, committed: float | None = None, wanted: float = 0.0) -> str | None:
         """The refusal's words when the hold, not the cap, is what stops the step's next

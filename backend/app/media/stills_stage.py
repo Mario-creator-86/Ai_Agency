@@ -443,9 +443,17 @@ class _Ledger:
 
     def round_room(self, price: float) -> None:
         """Before a round is fitted (`gpu_batch.run_rounds`): the hold grows to the round, or
-        by what the budgets have left, and the round is cut to what is held."""
+        by what the budgets have left, and the round is cut to what is held. Asked for
+        nothing (``price`` 0, RunPod measured more than estimated), it grows to what the step
+        owes."""
         if self.hold is not None:
             self.hold.room(self.committed, price, partial=True)
+
+    def hold_spent(self) -> None:
+        """What the step committed is held at once (`StepHold.hold_spent`): a vendor's quote
+        above the price is committed whole, and no other step reads it as free meanwhile."""
+        if self.hold is not None:
+            self.hold.hold_spent(self.committed)
 
     def budget_words(self, wanted: float | None = None) -> str | None:
         """The budget's words when the hold, not the cap, stopped the next purchase
@@ -2882,6 +2890,7 @@ def run_stills_stage(
                 break
             previous_kind = None
             ledger.committed += max(float(per_request), float(quoted or 0))
+            ledger.hold_spent()
             unverified = unverified or (
                 bool(references)
                 and not bool(getattr(image_adapter, "REFERENCE_IMAGE_VERIFIED", False))
