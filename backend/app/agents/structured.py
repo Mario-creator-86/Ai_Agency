@@ -30,6 +30,7 @@ is the content, which it is told.
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from typing import Any
 
 from pydantic import BaseModel
@@ -128,6 +129,7 @@ def structured_run[T: BaseModel](
     format_tokens: int = 0,
     extra: dict[str, Any] | None = None,
     model_id: str | None = None,
+    subject: Mapping[str, Any] | None = None,
 ) -> tuple[T | None, dict[str, Any], dict[str, Any] | None]:
     """Run the task; when the answer does not validate, run it once more the way its failure
     asks: no object at all, the same prompt with native thinking; an object the schema refused
@@ -138,7 +140,8 @@ def structured_run[T: BaseModel](
     an ``error_detail`` that says so — so a caller's waiting note names what was wrong, not
     «răspuns fără forma cerută». ``schema_hint`` and ``format_tokens`` are kept for callers.
     ``model_id`` runs both attempts on that model instead of the agent's own
-    (`run_agent_task`), e.g. one that can see the pictures attached.
+    (`run_agent_task`), e.g. one that can see the pictures attached. ``subject`` names what the
+    call works on, for both attempts (`run_agent_task`).
     """
     del schema_hint, format_tokens
     attempts: list[dict[str, Any]] = []
@@ -171,6 +174,7 @@ def structured_run[T: BaseModel](
             emit_message=False,
             extra={**(NATIVE_THINKING if native else first_terms), **(extra or {})},
             model_id=model_id,
+            subject=subject,
         )
         attempts.append(result)
         text = result.get("output_text") or ""

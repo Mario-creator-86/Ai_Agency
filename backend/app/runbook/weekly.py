@@ -11,8 +11,9 @@ week. This module is that review:
    `performance_intake`, which runs daily.
 2. `execute_weekly_review` puts the digest in front of the Director through her identity and
    memory (an ordinary run through the policy kernel), then files her answer where it does
-   work: a HANDOFF message to the sound department and one to the video department — those
-   enter each employee's every run until resolved — and a STATUS report to the Director's
+   work: a HANDOFF message to the sound department and one to the video department — the
+   newest of each is the department's standing direction, told in its work runs
+   (`agents.identity.standing_direction`) — and a STATUS report to the Director's
    inbox. A week with nothing published is reported as such and costs no tokens.
 
 The job is scheduled for every seven days at start-up (`WEEKLY_JOB_NAME`); the Owner can

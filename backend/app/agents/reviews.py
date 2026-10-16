@@ -1560,6 +1560,7 @@ def review_film_qc(
             f"({count(len(findings), 'constatare', 'constatări')})."
         ),
         max_tokens=director_qc_tokens(len(findings)),
+        subject={"storyboard_id": film.get("storyboard_id"), "report_id": film.get("report_id")},
     )
     last = second or first
     if parsed is None:

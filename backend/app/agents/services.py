@@ -27,7 +27,7 @@ from uuid import uuid4
 from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session
 
-from app.agents.identity import compose_identity, seed_role_contracts
+from app.agents.identity import Subject, compose_identity, seed_role_contracts
 from app.agents.models import (
     Agent,
     AgentRun,
@@ -774,13 +774,19 @@ def run_agent_task(
     summary: str | None = None,
     extra: dict | None = None,
     model_id: str | None = None,
+    subject: Subject | None = None,
 ) -> dict:
     """Execute an agent LLM run through the policy kernel. Returns AgentRunView dict.
 
-    Every run carries the agent's identity as the system prompt — name, role, mission,
-    contract, persona and memory (`compose_identity`) — and records what it was given as the
-    run's context manifest. The task text is the user prompt; it never has to repeat who the
-    agent is.
+    Every run carries the agent's identity as the system prompt — who it is, the Owner's
+    policies, and what its task needs beside its own data (`compose_identity`, by task type:
+    the Owner's «Context pe sarcină», 2026-10-16) — and records what it was given as the run's
+    context manifest. The task text is the user prompt; it never has to repeat who the agent
+    is.
+
+    ``subject`` names what the call works on — {"storyboard_id": …, "scene_index": …},
+    {"episode_id": …}, {"topic_id": …}, a mail thread — so the memory tied to it is told first
+    and the run records it.
 
     ``summary`` is that prompt in one sentence the Owner can read — "Verific afirmația «…»"
     rather than nine hundred words of instructions with the claim buried in the middle. The
@@ -817,7 +823,7 @@ def run_agent_task(
         agent = session.get(Agent, agent_id)
         if agent is None:
             raise ValueError(f"Agent {agent_id} not found")
-        identity = compose_identity(session, agent, task_type=task_type)
+        identity = compose_identity(session, agent, task_type=task_type, subject=subject)
         system_prompt, context = identity.system, identity.context
         role = session.get(Role, agent.role_id)
         multiplier = (

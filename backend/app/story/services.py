@@ -1829,6 +1829,8 @@ def write_episode(
             max_tokens=12000,
             temperature=0.7,
             emit_message=False,
+            # What the episode is about: the day's log, and the draft it rewrites.
+            subject={"log_id": log_id, "episode_id": rewrite_of},
         )
         if result["status"] != "SUCCEEDED" or not (result.get("output_text") or "").strip():
             detail = result.get("error_detail") or "fără text vizibil"

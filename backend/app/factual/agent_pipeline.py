@@ -1119,6 +1119,7 @@ def agent_write_script(
         max_tokens=7200,
         temperature=0.4,
         emit_message=False,
+        subject={"topic_id": topic_id},
     )
     result = answered_with_object(
         engine,
@@ -1132,6 +1133,7 @@ def agent_write_script(
         summary=f"Scriu scenariul pentru «{topic_title}»",
         max_tokens=7200,
         temperature=0.4,
+        subject={"topic_id": topic_id},
     )
     if result["status"] != "SUCCEEDED" or not (result.get("output_text") or "").strip():
         detail = result.get("error_detail") or "fără text vizibil"
@@ -1164,6 +1166,7 @@ def agent_write_script(
             max_tokens=7200,
             temperature=0.3,
             emit_message=False,
+            subject={"topic_id": topic_id},
         )
         result = answered_with_object(
             engine,
@@ -1177,6 +1180,7 @@ def agent_write_script(
             summary=f"Rescriu «{topic_title}»",
             max_tokens=7200,
             temperature=0.3,
+            subject={"topic_id": topic_id},
         )
         if result["status"] != "SUCCEEDED" or not (result.get("output_text") or "").strip():
             detail = result.get("error_detail") or "fără text vizibil"
@@ -1223,6 +1227,7 @@ def agent_write_script(
             max_tokens=7200,
             temperature=0.2,
             emit_message=False,
+            subject={"topic_id": topic_id},
         )
         result = answered_with_object(
             engine,
@@ -1236,6 +1241,7 @@ def agent_write_script(
             summary=f"Rescriu «{topic_title}» (grafice)",
             max_tokens=7200,
             temperature=0.2,
+            subject={"topic_id": topic_id},
         )
         if result["status"] != "SUCCEEDED" or not (result.get("output_text") or "").strip():
             detail = result.get("error_detail") or "fără text vizibil"
@@ -1434,6 +1440,7 @@ def answered_with_object(
     summary: str,
     max_tokens: int,
     temperature: float | None,
+    subject: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """The run, or one more run of the same prompt when its answer had no JSON object at all.
 
@@ -1463,6 +1470,7 @@ def answered_with_object(
         temperature=temperature,
         emit_message=False,
         extra=dict(JSON_AGAIN),
+        subject=subject,
     )
     if again.get("status") == "SUCCEEDED" and _script_object(again.get("output_text") or ""):
         return again

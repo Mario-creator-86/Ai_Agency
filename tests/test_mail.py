@@ -160,6 +160,8 @@ def test_a_reply_and_a_forward_stay_in_the_thread_and_the_thread_reads_in_order(
 
 
 def test_a_letter_reaches_the_addressee_with_the_earlier_exchange(engine, staffed):
+    """Through the mail task, one thread at a time (2026-10-16, «Context pe sarcină»): the
+    letter and the earlier exchange are its data; her identity carries no letter."""
     sarah, elena = staffed["agents"]["Director"], staffed["agents"]["FactChecker"]
     with Session(engine) as session, session.begin():
         first = post_message(
@@ -170,7 +172,7 @@ def test_a_letter_reaches_the_addressee_with_the_earlier_exchange(engine, staffe
             from_agent_id=elena.id,
             to_agent_id=None,
         )
-        post_message(
+        asked = post_message(
             session,
             intent="REQUEST_INFO",
             subject="Re: Verificare: 3 afirmații",
@@ -179,11 +181,17 @@ def test_a_letter_reaches_the_addressee_with_the_earlier_exchange(engine, staffe
             to_agent_id=elena.id,
             in_reply_to=first.id,
         )
+        asked_id = asked.id
     with Session(engine) as session:
         system = compose_identity(session, session.get(Agent, elena.id)).system
-    assert "Caută o sursă pentru a treia până diseară" in system
-    assert "earlier, Elena (Fact Checker): Verificare: 3 afirmații" in system
-    assert "a treia nu are sursă" in system
+    assert "Caută o sursă pentru a treia" not in system
+    registry, model = registry_with(staffed, letter_json("Caut sursa. Elena"))
+    answer_mail(engine, registry, asked_id)
+    prompt = model.calls[-1]["prompt"]
+    assert "Caută o sursă pentru a treia până diseară" in prompt
+    assert "Elena (Fact Checker) → the Director's inbox · STATUS: Verificare: 3 afirmații" in prompt
+    assert "a treia nu are sursă" in prompt
+    assert "Caută o sursă" not in model.calls[-1]["system"]
 
 
 # --------------------------------------------------------------------------- answering

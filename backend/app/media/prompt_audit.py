@@ -492,6 +492,11 @@ def _ask(
         summary=f"Verific cuvintele scenelor {sorted(contexts)} înainte de cumpărare.",
         max_tokens=2400,
         temperature=0.1,
+        subject={
+            "storyboard_id": contexts[next(iter(contexts))].get("storyboard_id"),
+            "scene_indexes": sorted(contexts),
+            "layer": layer,
+        },
     )
     return (parsed if isinstance(parsed, PromptAudit) else None), first
 

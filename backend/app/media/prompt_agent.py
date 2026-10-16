@@ -1272,6 +1272,7 @@ def build_visual_bible(
             correlation,
             f"Stabilesc privirea filmului «{facts['title']}».",
             2200,
+            subject={"storyboard_id": storyboard_id},
         )
         if result is not None:
             run_id = result["id"]
@@ -1450,6 +1451,7 @@ def write_shot_prompts(
                 f"Scriu prompturile pentru {len(indices)} cadre.",
                 profile.max_tokens,
                 native_thinking=profile.native_thinking,
+                subject={"storyboard_id": storyboard_id, "scene_indexes": list(indices)},
             )
             if result is None:
                 continue
@@ -1477,6 +1479,7 @@ def write_shot_prompts(
                         not parsed.shots
                         and _first_object(result.get("output_text") or "", ("shots",)) is None
                     ),
+                    subject={"storyboard_id": storyboard_id, "scene_indexes": missing},
                 )
                 if again is not None:
                     run_id = again["id"]
@@ -4165,8 +4168,10 @@ def _run(
     max_tokens: int,
     *,
     native_thinking: bool = False,
+    subject: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
-    """One agent call whose failure is a degradation, not an exception."""
+    """One agent call whose failure is a degradation, not an exception. ``subject`` names the
+    film it works on (`run_agent_task`)."""
     from app.agents.services import run_agent_task  # noqa: PLC0415
     from app.agents.structured import (  # noqa: PLC0415
         JSON_ONLY,
@@ -4188,6 +4193,7 @@ def _run(
             temperature=0.3,
             emit_message=False,
             extra=NATIVE_THINKING if native_thinking else JSON_ONLY,
+            subject=subject,
         )
     except (ValueError, RuntimeError) as exc:
         logger.info("prompt_agent_unavailable", extra={"reason": str(exc)[:160]})

@@ -60,7 +60,11 @@ def test_memory_and_message_resolution_store_the_complete_text(engine, staffed):
         assert message.body_text == text and message.resolution == text
 
 
-def test_every_open_message_and_the_whole_thread_reach_the_identity(engine, staffed):  # noqa: F811
+def test_the_letter_and_its_whole_thread_reach_the_mail_task_uncut(engine, staffed):  # noqa: F811
+    """Since 2026-10-16 («Context pe sarcină») the inbox is read by the mail task, one thread
+    at a time: every letter of the thread reaches it whole, and no identity carries a letter."""
+    from app.agents.mail import answer_mail
+
     agent = staffed["agents"]["VideoEditor"]
     sender = staffed["agents"]["Director"]
     with Session(engine) as session, session.begin():
@@ -85,11 +89,38 @@ def test_every_open_message_and_the_whole_thread_reach_the_identity(engine, staf
                 in_reply_to=first.id,
                 body_text="Evidence " * 300 + f"REQUIRED END {i}",
             )
+        newest = post_message(
+            session,
+            intent="REQUEST_INFO",
+            subject="Scene correction: which one first?",
+            body={},
+            from_agent_id=sender.id,
+            to_agent_id=agent.id,
+            in_reply_to=first.id,
+            body_text="Which correction do you make first?",
+        )
+        newest_id = newest.id
         identity = compose_identity(session, session.get(Agent, agent.id))
-        assert len(identity.context["open_message_ids"]) == 15
-        assert "FIRST REQUIRED INSTRUCTION" in identity.system
-        for i in range(15):
-            assert f"REQUIRED END {i}" in identity.system
+        assert identity.context["open_message_ids"] == []
+        assert "REQUIRED END" not in identity.system
+
+    calls = []
+
+    class Model:
+        async def generate(self, model, prompt, **kwargs):
+            calls.append({"prompt": prompt, **kwargs})
+            return GenerateResult(
+                json.dumps({"reply": "Scene 3 first.", "done": False}), 1, 1, None
+            )
+
+    registry = ProviderRegistry()
+    registry.register(staffed["provider_id"], Model())
+    answer_mail(engine, registry, newest_id)
+    prompt = calls[-1]["prompt"]
+    assert "FIRST REQUIRED INSTRUCTION " + "Evidence " * 299 in prompt
+    for i in range(15):
+        assert "Evidence " * 299 + f"Evidence REQUIRED END {i}" in prompt
+    assert "REQUIRED END" not in calls[-1]["system"]
 
 
 @pytest.mark.parametrize("role_name,director_factor", [("VideoEditor", 1), ("Director", 2)])

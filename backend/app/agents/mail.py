@@ -50,6 +50,7 @@ from sqlalchemy.orm import Session
 from app.agents.director import DirectorError, director_review, threads_decided_since
 from app.agents.ensemble import agreement
 from app.agents.identity import blocker_of
+from app.agents.inbox import expire_stale_asks
 from app.agents.memory import agent_for_role
 from app.agents.messages import (
     open_messages,
@@ -533,6 +534,15 @@ def answer_mail(
         sender_name = names.get(letter.from_agent_id or "", "the Owner")
         agent_id, subject, name = agent.id, letter.subject, agent.display_name
         transcript = _thread_text(thread, names)
+        # The letters of this thread the call answers: the letter and the earlier open ones of
+        # the same sender to this employee, which its reply closes (`_close_earlier`).
+        owed_here = [
+            m.id
+            for m in thread
+            if _owed(m, agent_id)
+            and m.from_agent_id == letter.from_agent_id
+            and m.created_at <= letter.created_at
+        ] or [letter.id]
         previous = _last_reply(thread, agent_id, letter.from_agent_id)
         role = session.get(Role, agent.role_id)
         role_name = role.name if role is not None else None
@@ -573,6 +583,9 @@ def answer_mail(
         summary=f"Răspund la «{subject}» de la {sender_name}.",
         max_tokens=3600,
         temperature=0.3,
+        # One thread per call: the letter and its thread are the task's data, and the identity
+        # adds no other letter (`identity.TASK_CONTEXT`, the Owner's decision of 2026-10-16).
+        subject={"thread_id": thread_id, "message_ids": owed_here},
     )
     final = second or result
     text = final.get("output_text") or ""
@@ -957,6 +970,10 @@ def correspondence_round(
         policy = session.get(OwnerPolicy, 1)
         if policy is not None and policy.autonomy_stopped:
             return {"answered": [], "refused": [], "review": None, "reason": "autonomy stopped"}
+    # The asks whose film is over, repeated or stale are closed first, each with its reason
+    # (`agents.inbox`): nobody is asked to answer a letter about a published film.
+    expired = expire_stale_asks(engine, now=moment)
+    with Session(engine) as session:
         waiting = letters_awaiting_answer(session, limit=max(1, limit), now=moment)
     answered: list[dict[str, Any]] = []
     held: list[dict[str, Any]] = []
@@ -1005,4 +1022,10 @@ def correspondence_round(
             review = {"refused": str(exc)[:200]}
     elif arrived:
         review = {"deferred": "a thread she decided in this hour; her next review reads it"}
-    return {"answered": answered, "held": held, "refused": refused, "review": review}
+    return {
+        "answered": answered,
+        "held": held,
+        "refused": refused,
+        "review": review,
+        "expired": expired["expired"],
+    }

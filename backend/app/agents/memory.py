@@ -14,19 +14,26 @@ travel on a channel of their own (`LESSON_MARKER`).
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import Engine, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy import ColumnElement, Engine, and_, func, literal, or_, select
+from sqlalchemy.orm import Session, aliased
 
-from app.agents.models import MEMORY_CLASSES, Agent, MemoryRecord, Role
+from app.agents.models import MEMORY_CLASSES, Agent, AgentRun, MemoryRecord, Role
+from app.models import DomainEvent
 from app.services import utc_now
 
-#: How many records one run is given. Memory is a briefing, not an archive; the archive is the
-#: table itself, and the ids of what was used are recorded on the run.
+#: How many records `recall()` returns. Memory is a briefing, not an archive; the archive is the
+#: table itself, and the ids of what was used are recorded on the run. An identity no longer
+#: calls it (`agents.identity.compose_identity` reads by task, within a character budget); it
+#: is the plain newest-first window, for whoever wants exactly that.
 RECALL_LIMIT = 120
+#: The Owner's policies: pinned in every identity, never chosen by recency (audit of
+#: 2026-10-16: the Director's 120 newest rows covered 7.5 hours and none of his 16 policies).
+OWNER_POLICY = "OWNER_POLICY"
 #: TEMP_CONTEXT is about the current work; it should not outlive the week.
 TEMP_CONTEXT_DAYS = 3
 MAX_CONTENT = 600
@@ -141,21 +148,101 @@ def recall(
     classes = readable_classes(role)
     if not classes:
         return []
+    return recent_memory(session, agent, classes, limit=limit)
+
+
+def _readable(agent: Agent, classes: Iterable[str]) -> list[ColumnElement[bool]]:
+    """What every read of an agent's memory shares: the classes asked, studio-wide rows and its
+    own, live (not invalidated, not expired), and never a prompt lesson (`LESSON_MARKER`)."""
     now = utc_now()
-    rows = session.scalars(
-        select(MemoryRecord)
-        .where(
-            MemoryRecord.memory_class.in_(classes),
-            or_(MemoryRecord.agent_id.is_(None), MemoryRecord.agent_id == agent.id),
-            MemoryRecord.invalidated_at.is_(None),
-            or_(MemoryRecord.expires_at.is_(None), MemoryRecord.expires_at > now),
-            # The same test `prompt_agent` reads its lesson rows by.
-            MemoryRecord.content.not_like(f"{LESSON_MARKER}%"),
-        )
-        .order_by(MemoryRecord.created_at.desc())
-        .limit(limit)
-    ).all()
-    return list(rows)
+    return [
+        MemoryRecord.memory_class.in_(list(classes)),
+        or_(MemoryRecord.agent_id.is_(None), MemoryRecord.agent_id == agent.id),
+        MemoryRecord.invalidated_at.is_(None),
+        or_(MemoryRecord.expires_at.is_(None), MemoryRecord.expires_at > now),
+        # The same test `prompt_agent` reads its lesson rows by.
+        MemoryRecord.content.not_like(f"{LESSON_MARKER}%"),
+    ]
+
+
+def recent_memory(
+    session: Session, agent: Agent, classes: Sequence[str], *, limit: int
+) -> list[MemoryRecord]:
+    """The newest live rows of these classes this agent may read, at most ``limit``."""
+    if not classes:
+        return []
+    return list(
+        session.scalars(
+            select(MemoryRecord)
+            .where(*_readable(agent, classes))
+            .order_by(MemoryRecord.created_at.desc())
+            .limit(limit)
+        ).all()
+    )
+
+
+def owner_policies(session: Session, agent: Agent, role: Role | None) -> list[MemoryRecord]:
+    """Every live OWNER_POLICY row this role may read, newest first, all of them.
+
+    Pinned whole in every identity (the Owner, 2026-10-16: «his rules, always»): chosen by
+    recency among a role's other memory they were pushed out by a few hours of opinions."""
+    if OWNER_POLICY not in readable_classes(role):
+        return []
+    return list(
+        session.scalars(
+            select(MemoryRecord)
+            .where(*_readable(agent, [OWNER_POLICY]))
+            .order_by(MemoryRecord.created_at.desc())
+        ).all()
+    )
+
+
+def tied_memory(
+    session: Session,
+    agent: Agent,
+    classes: Sequence[str],
+    ids: Sequence[str],
+    *,
+    limit: int,
+) -> list[MemoryRecord]:
+    """The live rows of these classes tied to a call's subject, newest first, at most ``limit``.
+
+    A row is tied to the subject (a storyboard, an episode, a topic, a day's log, a thread, a
+    correlation: any id the caller named) when its source is one of those ids; when the run it
+    came from was about the subject (that run recorded the ids as its ``subject_ids``, or ran
+    under one of them as its correlation); when the event it came from is the subject's; or
+    when its words name one of the ids, whole or by the eight characters the studio quotes
+    them by («Chose today's topic 1c038a99»)."""
+    wanted = sorted({str(i) for i in ids if str(i).strip()})
+    if not classes or not wanted:
+        return []
+    run = aliased(AgentRun)
+    event = aliased(DomainEvent)
+    listed = func.json_each(run.context_json, "$.subject_ids").table_valued("value")
+    recorded = select(literal(1)).select_from(listed).where(listed.c.value.in_(wanted)).exists()
+    heads = sorted({i[:8] for i in wanted if len(i) >= 8})
+    named = [MemoryRecord.content.contains(head, autoescape=True) for head in heads]
+    return list(
+        session.scalars(
+            select(MemoryRecord)
+            .outerjoin(
+                run, and_(MemoryRecord.source_type == "run", run.id == MemoryRecord.source_id)
+            )
+            .outerjoin(event, event.event_id == MemoryRecord.event_id)
+            .where(
+                *_readable(agent, classes),
+                or_(
+                    MemoryRecord.source_id.in_(wanted),
+                    run.correlation_id.in_(wanted),
+                    event.aggregate_id.in_(wanted),
+                    recorded,
+                    *named,
+                ),
+            )
+            .order_by(MemoryRecord.created_at.desc())
+            .limit(limit)
+        ).all()
+    )
 
 
 def memory_view(row: MemoryRecord) -> dict[str, Any]:

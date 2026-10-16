@@ -498,14 +498,15 @@ def test_a_model_the_owner_chose_is_never_switched_by_the_repair(engine, setting
 # ------------------------------------------------------------------ 9. the inbox in a work task
 
 
-def test_a_work_task_carries_the_asks_of_the_inbox_bounded_and_the_inbox_tasks_carry_all(
+def test_no_task_carries_the_inbox_in_its_identity(
     engine,
 ):
     """2026-10-15: the Director's every call carried her 152 open messages (105 status reports
-    since 2026-10-03), 1.6 million characters, and her rewrite reviews came back empty. A work
-    task carries the newest asks (handoff, request, challenge), at most OPEN_MESSAGES_IN_WORK,
-    each whole with its thread; the inbox tasks and an unnamed task carry everything."""
-    from app.agents.identity import INBOX_TASKS, OPEN_MESSAGES_IN_WORK, compose_identity
+    since 2026-10-03), 1.6 million characters, and her rewrite reviews came back empty; the next
+    day her daily review read 1.7 million. The Owner's decision of 2026-10-16 («Context pe
+    sarcină»): the inbox is read by the mail tasks only, one thread or one page at a time, as
+    their data — no identity carries a letter, the inbox tasks' included."""
+    from app.agents.identity import INBOX_TASKS, compose_identity
     from app.agents.messages import post_message
     from app.agents.models import Agent
     from app.agents.services import seed_initial_workforce
@@ -538,14 +539,12 @@ def test_a_work_task_carries_the_asks_of_the_inbox_bounded_and_the_inbox_tasks_c
 
     with Session(engine) as session:
         agent = session.get(Agent, sarah_id)
-        work = compose_identity(session, agent, task_type="director_rewrite_review")
-        assert len(work.context["open_message_ids"]) == OPEN_MESSAGES_IN_WORK
-        assert "Remediere foaie" not in work.system
-        assert "ASK TEXT 24 whole." in work.system and "ASK TEXT 4 whole." not in work.system
-        for task in sorted(INBOX_TASKS):
-            full = compose_identity(session, agent, task_type=task)
-            assert len(full.context["open_message_ids"]) == 55, task
-            assert "Remediere foaie: RESOLVED 0" in full.system
+        for task in ("director_rewrite_review", "direct_company", "", *sorted(INBOX_TASKS)):
+            identity = compose_identity(session, agent, task_type=task)
+            assert identity.context["open_message_ids"] == [], task
+            assert "Remediere foaie" not in identity.system, task
+            assert "ASK TEXT" not in identity.system, task
+            assert len(identity.system) < 20_000, task
 
 
 # ------------------------------------------------------------------ 10. a motion fault by meaning

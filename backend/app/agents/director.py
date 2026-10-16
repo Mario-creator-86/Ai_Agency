@@ -24,6 +24,7 @@ from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
 from app.agents.identity import blocker_of, clipped, parse_structured
+from app.agents.inbox import expire_stale_asks, inbox_page
 from app.agents.memory import agent_for_role, remember
 from app.agents.messages import message_view, open_messages, post_message, resolve_message
 from app.agents.models import Agent, AgentMessage, Role
@@ -495,8 +496,14 @@ def director_review(
     correlation_id: str | None = None,
     outcomes: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Run the Director's review of the inbox. Returns what was decided and what was left."""
+    """Run the Director's review of the inbox. Returns what was decided and what was left.
+
+    She reads a page of it: the newest letters, whole, at most `REVIEW_BATCH` and within
+    `agents.inbox.INBOX_PAGE_CHARS` (a letter longer than the page is read alone, whole); the
+    rest waits for the next review. Her identity adds no other letter (the Owner's decision of
+    2026-10-16: the inbox is read by the mail tasks, a page at a time)."""
     correlation = correlation_id or str(uuid4())
+    expire_stale_asks(engine, correlation_id=correlation)
     with Session(engine) as session:
         director = agent_for_role(session, "Director")
         if director is None:
@@ -511,16 +518,20 @@ def director_review(
         ]
     if not inbox:
         return {"agent_id": director_id, "reviewed": 0, "applied": [], "summary": "Inbox empty."}
+    letters = [
+        {
+            k: v
+            for k, v in m.items()
+            if k in ("id", "intent", "from_name", "subject", "body_text", "body_json", "created_at")
+        }
+        for m in inbox
+    ]
+    page, _waiting = inbox_page(
+        letters, lambda item: len(json.dumps(item, ensure_ascii=False, default=str))
+    )
+    inbox = page
     facts = {
-        "inbox": [
-            {
-                k: v
-                for k, v in m.items()
-                if k
-                in ("id", "intent", "from_name", "subject", "body_text", "body_json", "created_at")
-            }
-            for m in inbox
-        ],
+        "inbox": page,
         "workforce": {
             k: v
             for k, v in measure_workforce(engine).items()
@@ -550,6 +561,7 @@ def director_review(
         ),
         max_tokens=24000,
         temperature=0.1,
+        subject={"message_ids": [str(item["id"]) for item in page]},
     )
     text = (formatted or result).get("output_text") or ""
     if result["status"] != "SUCCEEDED" or not text.strip():

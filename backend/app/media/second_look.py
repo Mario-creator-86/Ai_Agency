@@ -1761,6 +1761,11 @@ def _look(
             max_tokens=2000,
             extra={"images": pictures},
             model_id=model_id,
+            subject={
+                "storyboard_id": storyboard_id,
+                "scene_index": scene_index,
+                "take_ids": list(take_ids),
+            },
         )
     except PolicyKernelError as exc:
         return _unavailable(

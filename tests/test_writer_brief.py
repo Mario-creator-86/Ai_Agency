@@ -276,7 +276,7 @@ def _she_says(verdict: str, *notes: str):
     return answer
 
 
-def test_her_letter_reaches_the_writers_next_prompt_and_is_settled_when_a_later_draft_passes(
+def test_her_letter_reaches_the_writer_by_mail_and_is_settled_when_a_later_draft_passes(
     engine,
     studio,  # noqa: F811 - the fixture
 ):
@@ -309,14 +309,19 @@ def test_her_letter_reaches_the_writers_next_prompt_and_is_settled_when_a_later_
             "45% la final; pierde publicul la 3-9: the setup repeats the hook." in letter.body_text
         )
         assert "0% la 5 s" not in letter.body_text  # a mark she did not give is not said
-        # It enters his next run's prompt, through his identity.
-        identity = compose_identity(session, writer)
-        assert "WHAT IS ASKED OF YOU RIGHT NOW" in identity.system
-        assert letter.subject in identity.system and "70% la 3 s" in identity.system
-        assert letter_id in identity.context["open_message_ids"]
+        # It is a letter his mail round answers, with its whole text (2026-10-16, «Context pe
+        # sarcină»: the inbox is the mail tasks'); no identity of his carries it, and his
+        # rewrite gets her notes in its own data (`agent_write_script(notes=...)`).
+        from app.agents.mail import letters_awaiting_answer
+
+        assert letter_id in letters_awaiting_answer(session)
+        for task in ("write_script", ""):
+            identity = compose_identity(session, writer, task_type=task)
+            assert letter.subject not in identity.system, task
+            assert identity.context["open_message_ids"] == [], task
         director_name = director.display_name
 
-    # A later draft of the same story passes: the letter is resolved and leaves his prompt.
+    # A later draft of the same story passes: the letter is resolved and leaves his mail.
     second = a_script(engine, topic_id, status="VERIFIED_PASS")
     passing, _ = registry_with(studio, _she_says("PASS"))
     assert (
@@ -327,10 +332,7 @@ def test_her_letter_reaches_the_writers_next_prompt_and_is_settled_when_a_later_
         assert letter.status == "RESOLVED"
         assert letter.resolved_by == director_name
         assert letter.resolution == f"Versiunea {second[:8]} a trecut recenzia de poveste."
-        writer = _agent(session, "ScriptWriter")
-        identity = compose_identity(session, writer)
-        assert letter.subject not in identity.system
-        assert identity.context["open_message_ids"] == []
+        assert letter_id not in letters_awaiting_answer(session)
 
 
 # ---------------------------------------------------------------------------
@@ -666,7 +668,8 @@ def test_the_writer_remembers_what_shipped_and_her_last_note(engine, studio):  #
 
 def test_the_contract_tells_the_writer_a_live_scene_is_paid(engine, studio):  # noqa: F811
     with Session(engine) as session:
-        system = compose_identity(session, _agent(session, "ScriptWriter")).system
+        writer = _agent(session, "ScriptWriter")
+        system = compose_identity(session, writer, task_type="write_script").system
     assert "every LIVE scene is a paid shot" in system
     assert "merge two scenes that show the same thing into one" in system
     assert "a vertical YouTube Short watched on a phone" in system

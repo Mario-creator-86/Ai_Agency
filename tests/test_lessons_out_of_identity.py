@@ -20,7 +20,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
-from app.agents.identity import compose_identity
+from app.agents.identity import compose_identity, task_context
 from app.agents.memory import RECALL_LIMIT, recall, remember
 from app.agents.models import Agent, MemoryRecord, Role
 from app.media.prompt_agent import (
@@ -59,8 +59,17 @@ LESSONS = (LEDGER, CAMERA, FROM_BEHIND, FACING)
 STRATEGY = "Strategy v2: boost topic space."
 #: The roles whose contract reads STRATEGY (config/role_contracts.json).
 STRATEGY_READERS = {"Director", "ScriptWriter", "LeadResearcher", "Publisher", "Accountant"}
-#: The tasks the audit measured on, the inbox ones and an unnamed one.
-TASKS = ("", "director_review", "director_prompt_audit", "write_episode", "shot_prompts")
+#: The tasks the audit measured on, the inbox ones, an unnamed one, and the ones whose context
+#: recalls STRATEGY by recency (`identity.TASK_CONTEXT`).
+TASKS = (
+    "",
+    "director_review",
+    "director_prompt_audit",
+    "write_episode",
+    "shot_prompts",
+    "direct_company",
+    "owner_chat",
+)
 
 
 def record_lessons(engine) -> None:
@@ -109,9 +118,11 @@ def test_no_identity_is_told_a_prompt_lesson_even_when_lessons_exist(engine):
                 identity = compose_identity(session, agent, task_type=task)
                 assert told_no_lesson(identity.system), (role_name, task)
                 assert not lesson_ids & set(identity.context["memory_record_ids"]), role_name
-                if role_name in STRATEGY_READERS:
-                    # The memory channel still carries every other STRATEGY row.
-                    assert STRATEGY in identity.system, (role_name, task)
+                # The memory channel still carries every other STRATEGY row, to the tasks
+                # whose context recalls it (2026-10-16, «Context pe sarcină»), and only there.
+                recalls = "STRATEGY" in task_context(task).recall
+                told = STRATEGY in identity.system
+                assert told == (role_name in STRATEGY_READERS and recalls), (role_name, task)
         # The lessons themselves are untouched: their own channel still gives them.
         assert set(prompt_lessons(session)) == {
             LEDGER,

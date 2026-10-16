@@ -36,9 +36,11 @@ money, because rewriting text costs nothing and re-filming a shot costs dollars.
   și poate întoarce către el indicații noi?»): a REVISE or REJECT used to be posted to her
   own inbox, where the Scriptwriter never read it. It is now a REQUEST_REVIEW addressed to
   him, with her retention row and the span where she loses the viewer in its words
-  (`letter_to_writer`); it enters his every run until a later draft of the story passes and
-  `_settle_writer_letters` resolves it. When a story ships, what it scored and her last note
-  become one AGENT_OPINION on his memory (`remember_shipped_story`).
+  (`letter_to_writer`); his mail round answers it (since 2026-10-16 no identity carries a
+  letter: `agents.identity`), his rewrite is given her notes in its own data, and it stays
+  open until a later draft of the story passes and `_settle_writer_letters` resolves it.
+  When a story ships, what it scored and her last note become one AGENT_OPINION on his
+  memory (`remember_shipped_story`).
 """
 
 from __future__ import annotations
@@ -638,8 +640,8 @@ def review_story(
             # fiecare și poate întoarce către el indicații noi?»). It was posted to her own
             # inbox (`to_agent_id=None`), so the one employee who had to act on it never read
             # it in his prompt; the retention row she judged against was stored and never
-            # told. A REQUEST_REVIEW addressed to him enters his every run
-            # (`identity._open_messages`) until a later draft of this story passes.
+            # told. A REQUEST_REVIEW addressed to him is a letter his mail round answers
+            # (`agents.mail`), open until a later draft of this story passes.
             post_message(
                 session,
                 intent="REQUEST_REVIEW",

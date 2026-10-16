@@ -1868,6 +1868,10 @@ def director_brief(
             "și motivele controlului; îi scriu lui Kael ce să evite."
         ),
         max_tokens=2500,
+        subject={
+            "storyboard_id": context.get("storyboard_id"),
+            "scene_index": context.get("scene_index"),
+        },
     )
     last = second or first
     if parsed is None:
@@ -2275,6 +2279,10 @@ def review_rewrite(
             f"«{context['title']}» tratează constatările înainte să cumpărăm ceva pe ea."
         ),
         max_tokens=2400,
+        subject={
+            "storyboard_id": context.get("storyboard_id"),
+            "scene_index": context.get("scene_index"),
+        },
     )
     last = second or first
     if parsed is None:
@@ -2474,6 +2482,7 @@ def _editor_rewrite(
             summary=(f"Rescriu scena {index} din «{context['title']}» după brief-ul Directoarei."),
             max_tokens=3000,
             temperature=0.3,
+            subject={"storyboard_id": context.get("storyboard_id"), "scene_index": index},
         )
         last = second or first
         run_id = last.get("id")
