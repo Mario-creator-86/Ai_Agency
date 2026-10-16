@@ -1344,9 +1344,13 @@ def judge_patches(stranger_id: str) -> Iterator[None]:
 
     real = agent_services.compose_identity
 
-    def bare(session: Any, agent: Any, *, task_type: str = "") -> Any:
+    # Every keyword `compose_identity` takes, today's and the next one's: since b782465 the
+    # run passes ``subject=``, and a stand-in that took ``task_type`` alone raised TypeError on
+    # every stranger call, after the writer's calls had used the subscription (STUB-002). The
+    # other employees' calls reach the real one with all of them.
+    def bare(session: Any, agent: Any, *, task_type: str = "", **keywords: Any) -> Any:
         if agent.id != stranger_id:
-            return real(session, agent, task_type=task_type)
+            return real(session, agent, task_type=task_type, **keywords)
         return Identity(
             system=STRANGER_SYSTEM,
             context={
