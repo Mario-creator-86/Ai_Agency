@@ -143,6 +143,7 @@ from app.media.prompt_agent import (
 from app.media.qc import evaluate_media_qc, rights_verdict
 from app.media.renders_cap import at_cap as renders_at_cap
 from app.media.renders_cap import (
+    motion_spent,
     paid_redos_per_scene,
     paid_redos_setting,
     renders_per_layer,
@@ -4911,11 +4912,20 @@ def _renders_made(session: Session, storyboard_id: str) -> dict[tuple[int, str],
 
 
 def _over_renders(
-    renders: dict[tuple[int, str], int], scene: int, layers: list[str], cap: int
+    renders: dict[tuple[int, str], int],
+    scene: int,
+    layers: list[str],
+    cap: int,
+    *,
+    motion_spent: bool = False,
 ) -> dict[str, int]:
     """The layers of ``layers`` the scene may not buy again under the Owner's renders cap
     (layer -> renders made): a layer made ``cap`` times, and the picture when the scene's
-    motion has had its renders (a new still could not be animated)."""
+    motion has had its renders (a new still could not be animated). ``motion_spent``
+    (`renders_cap.motion_spent`): the motion has nothing left to buy though it had fewer
+    renders, its picture at the cap and the picture kept not to be animated again (2026-10-16,
+    87c05891 scene 1): the motion is over the cap exactly as at its own, said with the
+    picture's renders that put it there."""
     over = {
         layer: renders.get((scene, layer), 0)
         for layer in layers
@@ -4923,6 +4933,9 @@ def _over_renders(
     }
     if "still" in layers and renders.get((scene, "motion"), 0) >= cap:
         over.setdefault("motion", renders.get((scene, "motion"), 0))
+    if "motion" in layers and motion_spent and "motion" not in over:
+        over["motion"] = renders.get((scene, "motion"), 0)
+        over.setdefault("still", renders.get((scene, "still"), 0))
     return over
 
 
@@ -6479,13 +6492,17 @@ def _apply_repairs(
             rounds = _paid_redo_rounds(session, storyboard_id)
             open_round = _open_still_rounds(session, storyboard_id).get(scene)
             renders = _renders_made(session, storyboard_id)
+            # Its picture at the cap and the picture kept not to be animated again: its
+            # motion has nothing left to buy either (`renders_cap.motion_spent`), read before
+            # her second look or any rewrite is paid for in tokens.
+            spent = motion_spent(session, storyboard_id, scene, settings)
         # Only her motion after the scene's new still continues the still's round.
         continues = open_round if paid[scene] == ["motion"] else None
         # The Owner's cap (2026-10-15; since 2026-10-16 two renders a layer a scene,
         # `renders_cap`), two bought repairs a report; past it the scene keeps the best take
         # it has. A new picture needs a render of the motion left: no clip could be made
         # from it, and the clip it retires is what the film has.
-        over_renders = _over_renders(renders, scene, paid[scene], renders_cap)
+        over_renders = _over_renders(renders, scene, paid[scene], renders_cap, motion_spent=spent)
         # A motion that continues its still's round is not a new round, but it is a render:
         # three shots of the scene made, the fourth is not bought (22:21Z, f06808c9 scene 4:
         # the continuation skipped the cap, the Accountant refused it on the cap's own words,
@@ -6524,7 +6541,9 @@ def _apply_repairs(
                 paid[scene].insert(0, "still")
                 # The picture the correction turned to is a render like any other: never one
                 # past the Owner's cap, the scene's or its motion's (2026-10-16).
-                over_renders = _over_renders(renders, scene, paid[scene], renders_cap)
+                over_renders = _over_renders(
+                    renders, scene, paid[scene], renders_cap, motion_spent=spent
+                )
                 if over_renders:
                     result["limited"].append(
                         {

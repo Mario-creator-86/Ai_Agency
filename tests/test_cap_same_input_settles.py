@@ -37,7 +37,7 @@ from app.media.input_guard import REFUSAL_CODE, REFUSED_EVENT
 from app.media.models import SceneTake
 from app.models import DomainEvent
 from app.runbook import stages
-from app.services import append_event
+from app.services import append_event, utc_now
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from test_film_costing import SEEDANCE
@@ -441,22 +441,148 @@ def test_a_still_sent_back_and_kept_again_under_the_cap_settles_its_motion_once(
     assert "settled_under_cap" not in again
 
 
-def test_her_look_that_restored_a_sent_back_still_gives_its_motion_back(engine, tmp_path):
-    """A still clip QC sent back and her look restored (`fix_check.restore_sent_back_scenes`:
-    APPROVED as hers) is a picture she judged fine: its old send-back does not spend its
-    motion."""
-    board = a_film_with_stills(engine, tmp_path, scenes=1)
-    kept = _picture_at_the_cap(engine, tmp_path, board)
+# ---------------------------- 5. his own look, and hers, give the motion back (review of 403dafb)
+
+
+def _sent_back(engine, board: str, still_id: str) -> None:
+    """The still sent back by clip QC (its event, its refusal on the take), as 04:55Z."""
     with Session(engine) as session, session.begin():
-        session.get(SceneTake, kept).approved_by = "director_look"
+        row = session.get(SceneTake, still_id)
+        row.status = "REJECTED"
+        row.failure_code = "LOCAL.STILL_GATE"
+        row.failure_detail = "Controlul clipului a găsit greșeala în imagine; …"
         append_event(
             session,
             renders_cap.STILL_SENT_BACK_EVENT,
             "scene_take",
-            kept,
+            still_id,
             1,
             {"storyboard_id": board, "scene_number": 1, "failure_kind": "CLIP_QC"},
             "c",
         )
+
+
+def test_the_owners_own_approval_of_a_sent_back_still_gives_its_motion_back(engine, tmp_path):
+    """Clip QC sent still X back; a second still was bought and refused, so the picture is at
+    the cap; then the Owner approved X himself on the sheet. His choice stands: X's motion is
+    not spent, the plan buys its second render, his «Refă mișcarea» is not refused by the cap,
+    and the walk does not keep the refused clip under the cap over his choice."""
+    board = a_film_with_stills(engine, tmp_path, scenes=1)
+    still = _picture_at_the_cap(engine, tmp_path, board)
+    clip_id = _refused_clip(engine, tmp_path, board)
+    _sent_back(engine, board, still)
+    assembler.decide_take(engine, still, "APPROVED", decided_by=assembler.TAKE_DECIDER)
+
+    with Session(engine) as session:
+        assert session.get(SceneTake, still).approved_by == assembler.TAKE_DECIDER
+        assert not renders_cap.motion_spent(session, board, 1)
+    assert assembler._redo_past_cap(engine, board, 1, "motion") is None
+    assert not stills_stage.settle_scene_under_cap(engine, board, 1, "c")
+    with Session(engine) as session:
+        assert session.get(SceneTake, clip_id).status == "REJECTED"
+    plan = motion_plan(engine, board, capabilities=[SEEDANCE])
+    assert _scene(plan, 1)["status"] == "PLANNED" and _to_buy(plan) == [1]
+
+
+def test_her_look_gives_the_motion_back_and_only_a_newer_refusal_spends_it(engine, tmp_path):
+    """A still clip QC sent back and her look restored afterwards (APPROVED as hers) is a
+    picture she judged fine: the older send-back spends nothing. A clip from it refused for
+    the picture's fault after her look, at the cap, spends the motion (the newer word)."""
+    board = a_film_with_stills(engine, tmp_path, scenes=1)
+    kept = _picture_at_the_cap(engine, tmp_path, board)
+    _sent_back(engine, board, kept)
+    with Session(engine) as session, session.begin():
+        row = session.get(SceneTake, kept)
+        row.status, row.approved_by = "APPROVED", "director_look"
+        row.failure_code = row.failure_detail = None
+        row.updated_at = utc_now()
     with Session(engine) as session:
         assert not renders_cap.motion_spent(session, board, 1)
+
+    assert not assembler._send_still_back_for_clip(engine, board, 1, kept, BAND, "c")
+    with Session(engine) as session:
+        assert session.get(SceneTake, kept).status == "APPROVED"
+        assert renders_cap.motion_spent(session, board, 1)
+
+
+# ------------------------------------- 6. the Director's repair reads it before any token
+
+
+def test_her_repair_of_a_spent_motion_is_limited_by_the_cap_before_her_look(
+    engine, settings, tmp_path, monkeypatch
+):
+    """Film QC refused the film and her REPAIR names scene 1's motion. Its picture is at the
+    cap and the picture kept cannot be animated again: the repair counts the motion over the
+    cap exactly as at its own (said with the picture's renders), before her second look or
+    any rewrite is paid for in tokens, and nothing is bought."""
+    from app.media.qc_report import RedoProposal  # noqa: PLC0415
+
+    board = a_film_with_stills(engine, tmp_path, scenes=1)
+    kept = _picture_at_the_cap(engine, tmp_path, board)
+    _refused_clip(engine, tmp_path, board)
+    _sent_back(engine, board, kept)
+    with Session(engine) as session, session.begin():
+        row = session.get(SceneTake, kept)
+        row.status, row.approved_by = "APPROVED", CAP_APPROVER
+        row.failure_code = row.failure_detail = None
+
+    def no_look(*_args, **_kwargs):
+        raise AssertionError("her second look ran for a motion the cap had spent")
+
+    monkeypatch.setattr(stages, "_second_look_before_redo", no_look)
+    result = {
+        "applied": [],
+        "bought": [],
+        "asked": [],
+        "refused": [],
+        "limited": [],
+        "made": [],
+        "new_asset": None,
+    }
+    reading = {
+        "storyboard_id": board,
+        "media_asset_id": None,
+        "proposals": [RedoProposal(redo="motion", scene_index=1, reason="the band", credits=None)],
+    }
+
+    stages._apply_repairs(engine, settings, None, None, reading, result, False, "c")
+
+    (limited,) = result["limited"]
+    assert limited["scene_index"] == 1 and limited["renders"] == {"motion": 1, "still": 2}
+    assert result["bought"] == [] and result["asked"] == []
+    line = stages._limited_line(limited)
+    assert "imaginea ei a avut deja 2 randări" in line and "STUDIO_RENDERS_PER_LAYER" in line
+    assert stages._over_renders({(1, "motion"): 1, (1, "still"): 2}, 1, ["motion"], 2) == {}
+    with Session(engine) as session:
+        assert renders_cap.renders_made(session, board, 1, "motion") == 1
+
+
+def test_the_longer_clip_proposal_says_the_pictures_cap(engine, tmp_path):
+    """The studio's longer-clip proposal for a spent motion at one render: refused with the
+    picture's cap in its words, never «mișcarea ei a avut deja 2 randări»."""
+    board = a_film_with_stills(engine, tmp_path, scenes=1)
+    kept = _picture_at_the_cap(engine, tmp_path, board)
+    _refused_clip(engine, tmp_path, board, on_disk=False)
+    _sent_back(engine, board, kept)
+    with Session(engine) as session, session.begin():
+        row = session.get(SceneTake, kept)
+        row.status, row.approved_by = "APPROVED", CAP_APPROVER
+        row.failure_code = row.failure_detail = None
+        append_event(
+            session,
+            assembler.ASSEMBLY_REFUSED_EVENT,
+            "storyboard",
+            board,
+            1,
+            {
+                "storyboard_id": board,
+                "scenes": [{"scene_index": 1, "code": assembler.CLIP_SHORT, "needed_seconds": 9.0}],
+            },
+            "c",
+        )
+    (outcome,) = assembler.propose_clip_redos(engine, board, "c", wiring={})
+    assert outcome["status"] == assembler.RENDERS_CAP
+    assert "imaginea ei a avut deja 2 randări" in outcome["reason_ro"]
+    assert "mișcarea ei a avut deja" not in outcome["reason_ro"]
+    with Session(engine) as session:
+        assert renders_cap.cap_local_moves(session, board) == {1}

@@ -6008,7 +6008,13 @@ def propose_clip_redos(
                 with Session(engine) as session, session.begin():
                     lock_for_write(session)
                     record_cap_local_move(session, storyboard_id, index, correlation_id)
-                raise SceneRedoRefused(RENDERS_CAP, cap_local_move_words(index))
+                    # The picture's cap, said so when the motion had fewer renders than it.
+                    picture = renders_made(
+                        session, storyboard_id, index, "motion"
+                    ) < renders_per_layer(settings)
+                raise SceneRedoRefused(
+                    RENDERS_CAP, cap_local_move_words(index, settings, picture=picture)
+                )
             plan = redo_plan(
                 engine,
                 storyboard_id,

@@ -303,19 +303,55 @@ MOTION_SPENT_EVENT = "media.cap_motion_spent"
 STILL_SENT_BACK_EVENT = "media.still_sent_back"
 
 
+def _approved_at(session: Session, still: Any) -> str | None:
+    """When the Owner's own look (`assembler.decide_take`) or her look at its refused clip
+    (`fix_check.restore_sent_back_scenes`) last approved this still: "" when it stands
+    approved by one of them with no moment recorded (nothing before it counts), None when
+    neither ever did."""
+    from app.media.assembler import TAKE_DECIDED_EVENT, TAKE_DECIDER  # noqa: PLC0415
+    from app.media.fix_check import DIRECTOR_LOOK_APPROVER  # noqa: PLC0415
+    from app.models import DomainEvent  # noqa: PLC0415
+
+    moments = [
+        str(event.timestamp)
+        for event in session.scalars(
+            select(DomainEvent).where(
+                DomainEvent.event_type == TAKE_DECIDED_EVENT,
+                DomainEvent.aggregate_id == str(still.id),
+            )
+        )
+        if isinstance(event.payload, dict) and event.payload.get("decision") == "APPROVED"
+    ]
+    standing = still.status == "APPROVED"
+    if standing and still.approved_by == DIRECTOR_LOOK_APPROVER:
+        moments.append(str(still.updated_at or ""))
+    if standing and still.approved_by == TAKE_DECIDER and not moments:
+        moments.append("")
+    if not moments:
+        return None
+    return "￿" if "" in moments else max(moments)
+
+
 def picture_cannot_move(session: Session, storyboard_id: str, still_take_id: str) -> bool:
     """Whether a clip from this still was refused for the still's own fault: it was sent back
     to the stills gate for it (`STILL_SENT_BACK_EVENT`: clip QC's finding, the same-input
     guard's, a video model's safety refusal of it), or kept at the cap in its place
-    (`MOTION_SPENT_EVENT`). Not when her look at the refused clip overturned the send-back
-    (`fix_check.restore_sent_back_scenes`: the still APPROVED as hers, the clip restored)."""
-    from app.media.fix_check import DIRECTOR_LOOK_APPROVER  # noqa: PLC0415
+    (`MOTION_SPENT_EVENT`). Only such a word newer than the still's latest approval by the
+    Owner himself or by her look at the refused clip counts (`_approved_at`): his own choice
+    of the still, or her look that overturned the send-back, gives its motion back."""
     from app.media.models import SceneTake  # noqa: PLC0415
     from app.models import DomainEvent  # noqa: PLC0415
+
+    still = session.get(SceneTake, str(still_take_id))
+    since = _approved_at(session, still) if still is not None else None
+
+    def newer(event: Any) -> bool:
+        return since is None or str(event.timestamp) > since
 
     if any(
         isinstance(event.payload, dict)
         and str(event.payload.get("still_take_id") or "") == str(still_take_id)
+        and newer(event)
         for event in session.scalars(
             select(DomainEvent).where(
                 DomainEvent.event_type == MOTION_SPENT_EVENT,
@@ -324,18 +360,15 @@ def picture_cannot_move(session: Session, storyboard_id: str, still_take_id: str
         )
     ):
         return True
-    sent_back = session.scalar(
-        select(DomainEvent.event_id)
-        .where(
-            DomainEvent.event_type == STILL_SENT_BACK_EVENT,
-            DomainEvent.aggregate_id == str(still_take_id),
+    return any(
+        newer(event)
+        for event in session.scalars(
+            select(DomainEvent).where(
+                DomainEvent.event_type == STILL_SENT_BACK_EVENT,
+                DomainEvent.aggregate_id == str(still_take_id),
+            )
         )
-        .limit(1)
     )
-    if sent_back is None:
-        return False
-    still = session.get(SceneTake, str(still_take_id))
-    return still is None or still.approved_by != DIRECTOR_LOOK_APPROVER
 
 
 def _kept_still_id(session: Session, storyboard_id: str, scene_index: int) -> str | None:
