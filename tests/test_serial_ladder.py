@@ -481,6 +481,41 @@ def test_a_stale_serial_scene_is_composed_again_as_her_decision(engine, staffed,
         assert serial_recomposition(session, board_id, 3) is None
 
 
+def test_a_serial_scene_whose_clip_words_alone_are_stale_keeps_its_picture(
+    engine,
+    staffed,  # noqa: F811
+    monkeypatch,
+):
+    """2026-10-16: the composer's faces and life sentences changed the clip's words of every
+    serial shot and the picture's words of none but the establishing ones. A refused clip whose
+    picture words are today's is said again on the motion layer: the decision clears the clip,
+    and the stills step does not buy the unchanged picture again."""
+    board_id = described_board(engine, monkeypatch)
+    with Session(engine) as session, session.begin():
+        scene = session.scalar(
+            select(StoryboardScene).where(
+                StoryboardScene.storyboard_id == board_id, StoryboardScene.scene_index == 2
+            )
+        )
+        package = dict(scene.prompt_json or {})
+        still = package["still_prompt"]
+        package["motion_prompt"] = STALE_MOTION + str(package.get("action"))
+        scene.prompt_json = package
+    refused_by_clip_qc(engine, board_id, 2, "the hands lift off the desk")
+
+    outcome = rewrite_failed_scene(engine, models(), board_id, 2, "c-2")
+
+    assert outcome["rewritten"] is True and outcome["layer"] == MOTION, outcome
+    assert outcome["reason"] == SERIAL_RECOMPOSE_REASON
+    assert "doar mișcarea" in outcome["summary_ro"]
+    (event,) = rewritten_events(engine)
+    assert event.payload["layer"] == MOTION and event.payload["decided_by"] == "director"
+    assert event.payload["still_prompt"] == event.payload["old_still_prompt"] == still
+    assert not event.payload["motion_prompt"].startswith(STALE_MOTION)
+    with Session(engine) as session:
+        assert serial_recomposition(session, board_id, 2) is None
+
+
 def test_a_serial_scene_with_todays_words_is_not_rewritten_and_says_so(
     engine,
     staffed,  # noqa: F811

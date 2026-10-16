@@ -42,6 +42,7 @@ from app.media.scene_rewrite import (
     STILL,
     _composer_sentences,
     lock_texts,
+    recomposed_layer,
     review_schema,
     words_kept,
 )
@@ -356,6 +357,15 @@ def test_hand_detail_leaves_only_the_wide_still():
     )
     # A single's still keeps its hands: only an establishing or wide shot drops them.
     assert "right hand" in serial_still_moment(SCENE_SIX)
+
+
+def test_words_said_again_decide_only_the_layer_whose_words_changed():
+    """A serial scene's words said again with today's composer: the faces and life sentences
+    changed the clip's words of every shot, so a picture whose words are unchanged is not
+    bought again for them."""
+    same = {"old_still_prompt": "A still.", "still_prompt": "A  still."}
+    assert recomposed_layer(same) == MOTION
+    assert recomposed_layer({"old_still_prompt": "A still.", "still_prompt": "Another."}) == STILL
 
 
 def test_a_tool_defect_on_the_old_composers_words_no_longer_holds(engine):

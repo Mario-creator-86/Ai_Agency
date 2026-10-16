@@ -3643,22 +3643,36 @@ def serial_recomposition(
     }
 
 
+def recomposed_layer(rewrite: dict[str, Any]) -> str:
+    """The layer a serial scene's words said again decide about: ``still`` when the picture's
+    words changed (the stills step buys again on them, then the clip), ``motion`` when only the
+    clip's did — the picture stays as it was bought. 2026-10-16: the composer's faces and life
+    sentences changed the motion words of every serial shot and the picture words of none but
+    the establishing ones; said again as ``still``, each refused clip would have bought its
+    unchanged picture again."""
+    old = " ".join(str(rewrite.get("old_still_prompt") or "").split())
+    new = " ".join(str(rewrite.get("still_prompt") or "").split())
+    return STILL if old != new else MOTION
+
+
 def _say_serial_words_again(
     session: Session,
     target: StoryboardScene,
     rewrite: dict[str, Any],
     correlation_id: str,
-) -> None:
+) -> str:
     """A serial scene's words as today's composer says them, stored and written as the
-    Director's decision on the scene (`SCENE_PROMPTS_REWRITTEN_EVENT`, layer ``still``: the
-    scene's hold lifts and the stills step buys again on the new words). Inside the caller's
-    write transaction."""
+    Director's decision on the scene (`SCENE_PROMPTS_REWRITTEN_EVENT`, on the layer whose words
+    changed, `recomposed_layer`: ``still`` — the scene's hold lifts and the stills step buys
+    again on the new words — or ``motion`` when the picture's words are unchanged). Inside the
+    caller's write transaction; returns the layer."""
     from app.media.assembler import (  # noqa: PLC0415 - a large module
         DIRECTOR_REWRITE,
         SCENE_PROMPTS_REWRITTEN_EVENT,
     )
     from app.media.montage import keep_frozen  # noqa: PLC0415
 
+    layer = recomposed_layer(rewrite)
     # The film's frozen pauses stay on the row: a rewrite changes a picture's words only.
     target.prompt_json = keep_frozen(dict(rewrite["package"]), target.prompt_json)
     target.visual_prompt = str(rewrite["visual_prompt"])
@@ -3676,11 +3690,12 @@ def _say_serial_words_again(
             "motion_prompt": rewrite["motion_prompt"],
             "reason": SERIAL_RECOMPOSE_REASON,
             "decided_by": DIRECTOR_REWRITE,
-            "layer": "still",
+            "layer": layer,
             "camera_move": rewrite["package"].get("camera_move"),
         },
         correlation_id,
     )
+    return layer
 
 
 def recompose_serial_scene(
@@ -3785,14 +3800,17 @@ def recompose_serial_scene(
                 ),
             )
             return outcome
-        _say_serial_words_again(session, target, rewrite, correlation_id)
+        layer = _say_serial_words_again(session, target, rewrite, correlation_id)
     outcome.update(
         rewritten=True,
-        layer=STILL,
+        layer=layer,
         reason=SERIAL_RECOMPOSE_REASON,
         summary_ro=(
             f"Scena {scene_index} a serialului a fost compusă din nou cu cuvintele de azi "
             "(un singur moment, încadrare fixă); imaginea se reface."
+            if layer == STILL
+            else f"Scena {scene_index} a serialului a fost compusă din nou cu cuvintele de azi; "
+            "imaginea rămâne, se reface doar mișcarea."
         ),
     )
     return outcome
