@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-16 — The render bay is the render bay
+
+- `config/serial_series_look.json`: the «Video & Render Bay» room entry is the bay (rows of dark render racks with small lights, cable runs, one long work desk, dark walls, no window), not the house's furniture with a named dark monitor — 87c05891 scene 5 was refused twice on the composer's own room sentence (00:48Z); no look version bump (no re-buy of approved pictures).
+
 ## 2026-10-16 — Fixed light means no drift; the lens is the picture's
 
 - `media/prompt_agent.py`: no drift default for a plan whose words fix the light or the room (`_fixed_world`, `world_fixed` on the intent); `media/prompt_audit.py` (template v3) and `media/scene_rewrite.py`: the lens, framing distance and shot size are the picture's, never a motion finding; the clip's camera sentence is the move's fixed sentence (7c26a7ce scene 4, 00:47Z).

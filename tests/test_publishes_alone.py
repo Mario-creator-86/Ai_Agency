@@ -1496,7 +1496,10 @@ def test_a_serial_shot_is_drawn_in_the_room_the_beat_names_and_the_block_puts_no
         },
         look,
     )
-    assert "The render bay of the studio house" in bay and "switched off and dark" in bay
+    # 2026-10-16 00:48Z (87c05891 scene 5): the bay's entry had the house's furniture and a
+    # named screen; the Director refused the still twice on the composer's own words.
+    assert "The Video & Render Bay of the studio house" in bay and "dark render racks" in bay
+    assert "switched off and dark" not in bay and "monitor" not in bay
     assert "Executive Penthouse" not in bay
 
 
