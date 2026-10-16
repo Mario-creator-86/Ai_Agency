@@ -5400,18 +5400,26 @@ def _cuts_a_clip(reading: dict[str, Any]) -> bool:
 def _closest_shot(session: Session, storyboard_id: str, scene_number: int) -> SceneTake | None:
     """The scene's paid shot nearest its plan among those still on disk, whatever words or
     model made it: one clip QC passed first, then the newest (made on the most corrected
-    words). His own APPROVED shots are his and are never re-marked here."""
-    best: SceneTake | None = None
-    for row in session.scalars(
-        select(SceneTake)
-        .where(
-            SceneTake.storyboard_id == storyboard_id,
-            SceneTake.scene_number == int(scene_number),
-            SceneTake.kind.in_(SHOT_TAKE_KINDS),
-            SceneTake.status.in_(("PAID", "REJECTED")),
+    words). His own APPROVED shots are his and are never re-marked here, and a shot he
+    rejected himself (`owner_rejected_takes`) is never the closest: it is not used in a film
+    unless he chooses it again (`decide_take`)."""
+    rows = list(
+        session.scalars(
+            select(SceneTake)
+            .where(
+                SceneTake.storyboard_id == storyboard_id,
+                SceneTake.scene_number == int(scene_number),
+                SceneTake.kind.in_(SHOT_TAKE_KINDS),
+                SceneTake.status.in_(("PAID", "REJECTED")),
+            )
+            .order_by(SceneTake.created_at.desc())
         )
-        .order_by(SceneTake.created_at.desc())
-    ):
+    )
+    his_no = owner_rejected_takes(session, rows)
+    best: SceneTake | None = None
+    for row in rows:
+        if row.id in his_no:
+            continue
         if not row.path or not row.sha256 or not Path(row.path).is_file():
             continue
         if (clip_qc_of(session, row.id) or {}).get("verdict") == "PASSED":
@@ -5428,16 +5436,21 @@ def settle_motion_under_cap(
     correlation_id: str,
     *,
     environment: str | None = None,
+    act: bool = True,
 ) -> bool:
     """A filmed scene whose motion has had its renders (`renders_cap`) and that the film cannot
     cut in as it stands: the Director keeps what is closest to the plan, and the film goes on
     (the Owner, 2026-10-15: «publicăm cu ce Directoarea alege ca fiind cel mai apropiat»;
     2026-10-16: «maxim încă o randare»). First the closest clip it has on disk
-    (`_closest_shot`: any words, any model) stands under the cap (`_keep_clip_under_cap`);
-    when none does, or the one kept is too short for its words even slowed down (CLIP_SHORT),
-    the scene is shown as its approved still moved locally (`renders_cap.record_cap_local_move`,
-    0 credits). Nothing is bought, nothing waits for the Owner. Returns True only when
-    something changed (the walk is walked again on it), so a walk never loops on it."""
+    (`_closest_shot`: any words, any model, never one he rejected himself) stands under the
+    cap (`_keep_clip_under_cap`); when none does, or the one kept is too short for its words
+    even slowed down (CLIP_SHORT), the scene is shown as its approved still moved locally
+    (`renders_cap.record_cap_local_move`, 0 credits). Nothing is bought, nothing waits for the
+    Owner. Returns True only when something changed (the walk is walked again on it), so a
+    walk never loops on it.
+
+    ``act=False`` writes nothing and says whether it would change something: the walk's
+    words read it before the ladder acts (`runbook.stages._held_words`)."""
     with Session(engine) as session:
         if renders_made(session, storyboard_id, scene_index, "motion") < renders_per_layer():
             return False
@@ -5465,6 +5478,8 @@ def settle_motion_under_cap(
             shot_id = shot.id if shot is not None else None
             failure = str(shot.failure_detail or "") if shot is not None else ""
         if shot_id is not None and not kept:
+            if not act:
+                return True
             if not record.get("blocks_ro"):
                 record["blocks_ro"] = [failure] if failure else []
             _keep_clip_under_cap(
@@ -5480,6 +5495,11 @@ def settle_motion_under_cap(
             changed = True
             reading = scene_readiness(engine, storyboard_id, scene_index, environment=environment)
     if reading is not None and not _cuts_a_clip(reading):
+        if not act:
+            # `record_cap_local_move` writes only a move that does not stand yet (its motion
+            # is at the cap, read above).
+            with Session(engine) as session:
+                return int(scene_index) not in cap_local_moves(session, storyboard_id)
         with Session(engine) as session, session.begin():
             lock_for_write(session)
             moved = record_cap_local_move(session, storyboard_id, int(scene_index), correlation_id)
@@ -5786,6 +5806,24 @@ def owner_take_decisions(
     return found
 
 
+def owner_rejected_takes(session: Session, rows: Sequence[SceneTake]) -> set[str]:
+    """Of ``rows``, the ids of the takes the Owner rejected himself and has not chosen again:
+    his newest decision on the take (`owner_take_decisions`) is REJECTED, or, with no decision
+    of his on the books, the take carries his `OWNER_REJECTED_CODE`. Such a take is not used
+    in a film unless he chooses it again (`decide_take`): nothing kept under his renders cap
+    is one of them (`_closest_shot`, `stills_stage._newest_kept`)."""
+    decided = owner_take_decisions(session, [row.id for row in rows])
+    turned_down: set[str] = set()
+    for row in rows:
+        said = decided.get(str(row.id)) or []
+        if said:
+            if said[-1].get("decision") == "REJECTED":
+                turned_down.add(str(row.id))
+        elif row.failure_code == OWNER_REJECTED_CODE:
+            turned_down.add(str(row.id))
+    return turned_down
+
+
 def owner_clip_choice(
     session: Session, storyboard_id: str, scene_number: int, field_options: list[dict[str, Any]]
 ) -> SceneTake | None:
@@ -5946,7 +5984,7 @@ def clip_rejection_words(
     code = str(take.failure_code or "")
     if (
         take.status == "REJECTED"
-        and code not in (CLIP_QC_FAILURE_CODE, "OWNER.REJECTED")
+        and code not in (CLIP_QC_FAILURE_CODE, OWNER_REJECTED_CODE)
         and take.failure_detail
     ):
         said.append(str(take.failure_detail).strip())
@@ -8467,6 +8505,9 @@ HERO_ACCEPTED_BY = "clip_qc"
 #: Who may approve or reject a take: the Owner, on the sheet. Nobody else.
 TAKE_DECIDER = "owner"
 TAKE_DECISIONS: tuple[str, ...] = ("APPROVED", "REJECTED")
+#: The failure code of a take the Owner rejected himself (`decide_take`): it is not used in a
+#: film unless he chooses it again (`owner_rejected_takes`).
+OWNER_REJECTED_CODE = "OWNER.REJECTED"
 #: His approval marked final (2026-10-11): ``final`` on his decision, or a note that says so
 #: («finală», «definitiv»). Only a final approval stands against the Director's confirmed
 #: repair (`_retire_takes` ``director_repair``); any other approval of his is still his
@@ -10257,7 +10298,7 @@ def decide_take(
         sync_take_quality(session, row, accepted=decision == "APPROVED", reason=note)
         row.approved_by = TAKE_DECIDER if decision == "APPROVED" else None
         if decision == "REJECTED":
-            row.failure_code = "OWNER.REJECTED"
+            row.failure_code = OWNER_REJECTED_CODE
             row.failure_detail = (note or "Respinsă de Proprietar.")[:TAKE_DETAIL_MAX]
         row.updated_at = utc_now()
         append_event(

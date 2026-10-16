@@ -968,3 +968,164 @@ def test_the_writer_eval_fingerprint_follows_what_the_writers_are_told(monkeypat
     told_three = variants.fingerprint("serial")["identity_sha256"]
     assert told_twice != told_three
     assert "app.agents.identity.standing_rules()" in variants.fingerprint("serial")["parts"]
+
+
+# ------------------------------------- the review of a079fac: whose stop, and his own «Respinge»
+
+
+def _held_for_him(engine, board: str, scene: int) -> None:
+    """The motion step left ``scene`` to the Owner after one charged request the vendor never
+    answered: one render of its motion, one left, the step's hold on its identity."""
+    with Session(engine) as session, session.begin():
+        refused = _take(session, board, scene, "motion", status="REFUSED", credits=340.0)
+        row = session.get(SceneTake, refused)
+        row.failure_code = assembler.UNANSWERED_FAILURE_CODE
+        row.failure_detail = "Furnizorul nu a răspuns."
+    state = assembler._motion_state(engine, board, capabilities=[SEEDANCE])
+    with Session(engine) as session, session.begin():
+        append_event(
+            session,
+            assembler.MOTION_HOLD_EVENT,
+            "storyboard",
+            board,
+            1,
+            {
+                "scene_number": scene,
+                "status": "NEEDS_OWNER",
+                "failure_kind": "UNANSWERED",
+                "reason": f"Scena {scene}: furnizorul nu a răspuns.",
+                "identity": assembler.identity_key(state["fields"][scene]),
+                "holds": True,
+            },
+            "c",
+        )
+
+
+@needs_ffmpeg
+def test_a_motion_left_to_him_with_a_render_left_is_his_though_its_still_had_two(engine, tmp_path):
+    """Scene 2's still was made twice (refused once, then approved: the normal path); its
+    motion had one render and was left to the Owner. The cap stopped nothing here: the stop's
+    words say the scene waits for him, the ladder settles nothing, and his letter is not
+    written with «nu se mai cumpără nimic pentru ea» (review of a079fac, item 1)."""
+    board = a_film_with_stills(engine, tmp_path, scenes=3)
+    with Session(engine) as session, session.begin():
+        _take(session, board, 2, "still", on_disk=tmp_path / "older.png")
+    _held_for_him(engine, board, 2)
+    with Session(engine) as session:
+        assert renders_cap.at_cap(session, board, 2, "still")
+        assert renders_cap.renders_made(session, board, 2, "motion") == 1
+    plan = motion_plan(engine, board, capabilities=[SEEDANCE])
+    scene = next(item for item in plan["scenes"] if item["scene_index"] == 2)
+    assert scene["status"] == "NEEDS_OWNER" and 2 in plan["steps"]["motion"]["held"]
+
+    said = stages._held_words(engine, board, stages.STEP_WORDS["motion"], [2])
+    assert "scena 2 așteaptă decizia Proprietarului pe foaia de filmare" in said
+    assert "plafonului" not in said and "nu se mai cumpără nimic" not in said
+    assert said.endswith("nu se cumpără din nou până nu decide el.")
+    film = {"status": "WAITING", "refusal": "NEEDS_OWNER", "scenes": [2], "step": "motion"}
+    assert stages._ladder_scenes(engine, board, film) == []
+    assert "settled_under_cap" not in film
+    assert not stages._ladders_stop(engine, board, film)
+
+
+def test_a_scene_held_at_the_cap_with_nothing_to_keep_is_not_said_to_be_kept(engine, tmp_path):
+    """Scene 3's two still renders were charged and left nothing on disk: the stills step
+    holds it with the cap's own reason. Nothing can stand for it, so the stop does not say
+    the Director keeps what is closest (review of a079fac, item 1)."""
+    board = a_film_to_buy(engine, tmp_path)
+    with Session(engine) as session, session.begin():
+        for _ in range(2):
+            _take(
+                session,
+                board,
+                3,
+                "still",
+                status="REFUSED",
+                failure_code=None,
+                credits=float(price_still(STILLS_MODEL, STILLS_RESOLUTION, 1)),
+            )
+    _bible, scenes = stills_stage._read_scenes(engine, board)
+    three = next(scene for scene in scenes if scene.index == 3)
+    assert three.reuse is None and "STUDIO_RENDERS_PER_LAYER" in three.hold_ro
+    assert not stills_stage.settle_scene_under_cap(engine, board, 3, "c")
+    said = stages._held_words(engine, board, stages.STEP_WORDS["stills"], [3])
+    assert "Directoarea păstrează" not in said and "decizia Proprietarului" in said
+
+
+@needs_ffmpeg
+def test_clips_the_owner_rejected_are_never_kept_under_the_cap(engine, tmp_path):
+    """Scene 2's motion had its two renders and the Owner rejected both clips on the sheet
+    («Are o față.»). Past the cap the Director keeps what is closest, but never a clip he
+    turned down: neither is re-marked or cut into the film, and the scene is shown as its
+    approved still moved locally, 0 credits. Scene 3's newer clip he rejected, its older one
+    quality control refused: the older one is the closest (review of a079fac, item 2)."""
+    board = a_film_with_stills(engine, tmp_path, scenes=3)
+    with Session(engine) as session, session.begin():
+        older = _take(session, board, 2, "motion", status="PAID", on_disk=tmp_path / "a.mp4")
+        newer = _take(session, board, 2, "motion", status="PAID", on_disk=tmp_path / "b.mp4")
+        _at(session, older, "2026-10-16T09:00:00+00:00")
+        _at(session, newer, "2026-10-16T10:00:00+00:00")
+        refused_by_qc = _take(
+            session, board, 3, "motion", on_disk=tmp_path / "c.mp4", failure_code="QC.CLIP"
+        )
+        his_three = _take(session, board, 3, "motion", status="PAID", on_disk=tmp_path / "d.mp4")
+        _at(session, refused_by_qc, "2026-10-16T09:00:00+00:00")
+        _at(session, his_three, "2026-10-16T10:00:00+00:00")
+    for take_id in (older, newer, his_three):
+        assembler.decide_take(
+            engine, take_id, "REJECTED", decided_by=assembler.TAKE_DECIDER, note="Are o față."
+        )
+    film = {"status": "WAITING", "refusal": "TAKES_NOT_ACCEPTED", "scenes": [2, 3]}
+    assert stages._ladder_scenes(engine, board, film) == []
+    assert sorted(film["settled_under_cap"]) == [2, 3]
+    with Session(engine) as session:
+        for take_id in (older, newer, his_three):
+            row = session.get(SceneTake, take_id)
+            assert row.status == "REJECTED" and row.failure_code == "OWNER.REJECTED"
+            assert row.approved_by != assembler.CAP_APPROVER
+            assert (clip_qc_of(session, take_id) or {}).get("accepted_under_cap") is not True
+        kept = session.get(SceneTake, refused_by_qc)
+        assert kept.status == "PAID" and kept.approved_by == assembler.CAP_APPROVER
+        assert renders_cap.cap_local_moves(session, board) == {2}
+    reading = assembler.scene_readiness(engine, board, 2, environment="PRODUCTION")
+    assert reading is not None and reading.get("take_id") not in (older, newer)
+    assert not assembler._cuts_a_clip(reading)
+    plan = motion_plan(engine, board, capabilities=[SEEDANCE])
+    two = next(item for item in plan["scenes"] if item["scene_index"] == 2)
+    assert two["status"] == "LOCAL" and two["decided_by"] == renders_cap.CAP_LOCAL_MOVE_BY
+    three = next(item for item in plan["scenes"] if item["scene_index"] == 3)
+    assert three["status"] == "BOUGHT" and three["take_id"] == refused_by_qc
+
+
+def test_a_still_the_owner_rejected_is_never_approved_again_under_the_cap(engine, tmp_path):
+    """Scene 2's motion had its two renders, and the Owner then rejected its still on the
+    sheet. No new picture can be animated, but the one he turned down is not approved again
+    under the cap, by the stills step nor by the walk's ladder: the scene waits for him
+    (review of a079fac, item 2, the still's side)."""
+    board = a_film_with_stills(engine, tmp_path, scenes=3)
+    with Session(engine) as session, session.begin():
+        for name in ("m2a.mp4", "m2b.mp4"):
+            _take(session, board, 2, "motion", status="PAID", on_disk=tmp_path / name)
+        still = session.scalar(
+            select(SceneTake.id).where(
+                SceneTake.storyboard_id == board,
+                SceneTake.scene_number == 2,
+                SceneTake.kind == "still",
+            )
+        )
+    assembler.decide_take(
+        engine, still, "REJECTED", decided_by=assembler.TAKE_DECIDER, note="Nu e scena."
+    )
+    _bible, scenes = stills_stage._read_scenes(engine, board)
+    two = next(scene for scene in scenes if scene.index == 2)
+    assert two.reuse is None and two.hold_ro and "respins" in two.hold_ro
+    assert not stills_stage.settle_scene_under_cap(engine, board, 2, "c")
+    film = {"status": "WAITING", "refusal": "NEEDS_OWNER", "scenes": [2]}
+    stages._ladder_scenes(engine, board, film)
+    assert "settled_under_cap" not in film
+    with Session(engine) as session:
+        row = session.get(SceneTake, still)
+        assert row.status == "REJECTED" and row.failure_code == "OWNER.REJECTED"
+        assert row.approved_by != assembler.CAP_APPROVER
+    said = stages._held_words(engine, board, stages.STEP_WORDS["stills"], [2])
+    assert "Directoarea păstrează" not in said and "decizia Proprietarului" in said

@@ -1930,6 +1930,26 @@ def _at_a_cap(engine: Engine, storyboard_id: str, scene: int) -> bool:
         )
 
 
+def _settles_under_cap(engine: Engine, storyboard_id: str, scene: int) -> bool:
+    """Whether the walk's ladder settles the scene under the Owner's renders cap: what
+    `stills_stage.settle_scene_under_cap` would do, read with ``act=False`` (nothing written).
+    A layer at the cap is not enough: a scene whose still had its renders while its motion,
+    with a render left, waits for the Owner (the review of a079fac), or one at the cap with
+    nothing of its own on disk to keep, is not hers to settle and is not said to be."""
+    if not _at_a_cap(engine, storyboard_id, scene):
+        return False
+    from app.media.stills_stage import settle_scene_under_cap  # noqa: PLC0415
+
+    try:
+        return settle_scene_under_cap(engine, storyboard_id, scene, "", act=False)
+    except Exception as exc:  # noqa: BLE001 - unread, the scene is said as the stop has it
+        logger.warning(
+            "capped_scene_unread",
+            extra={"storyboard_id": storyboard_id, "scene": scene, "error": type(exc).__name__},
+        )
+        return False
+
+
 def _ladders_stop(engine: Engine, storyboard_id: str, film: dict[str, Any]) -> bool:
     """Whether a walked film's stop is the Director's ladder's, read after the walk: scenes
     quality control refused, or scenes the walk's ladder judged again or settled under the
@@ -1970,11 +1990,13 @@ def _scenes_ro(scenes: list[int], *, refused: bool = False) -> str:
 
 def _held_words(engine: Engine, storyboard_id: str, stair_ro: str, scenes: list[int]) -> str:
     """Why the walk stops before a stair, in the film's words: the scenes quality control
-    refused wait for the Director's rewrite (her ladder, this same walk), the scenes at the
-    Owner's renders cap are hers to settle with what is closest (`_ladder_scenes`, nothing
-    bought), the others wait for the Owner's decision on the shooting sheet. 2026-10-12:
-    «scena 6 așteaptă decizia Proprietarului» reached him for a clip quality control had
-    refused — hers, not his; 2026-10-16, the same for a scene the renders cap had stopped."""
+    refused wait for the Director's rewrite (her ladder, this same walk), the scenes she
+    settles under the Owner's renders cap with what is closest (`_settles_under_cap`: what
+    `_ladder_scenes` will do, nothing bought), the others wait for the Owner's decision on the
+    shooting sheet. 2026-10-12: «scena 6 așteaptă decizia Proprietarului» reached him for a
+    clip quality control had refused — hers, not his; 2026-10-16, the same for a scene the
+    renders cap had stopped. A scene at a cap that she cannot settle is not said to be hers:
+    its stop is not the cap's, or nothing of it can stand (the review of a079fac)."""
     hers = set(_quality_scenes(engine, storyboard_id, scenes))
     from app.media.scene_rewrite import DELIVERY_CODES, last_failure_code  # noqa: PLC0415
 
@@ -1986,7 +2008,9 @@ def _held_words(engine: Engine, storyboard_id: str, stair_ro: str, scenes: list[
         }
     quality = hers - deliveries
     capped = [
-        scene for scene in scenes if scene not in hers and _at_a_cap(engine, storyboard_id, scene)
+        scene
+        for scene in scenes
+        if scene not in hers and _settles_under_cap(engine, storyboard_id, scene)
     ]
     his = [scene for scene in scenes if scene not in hers and scene not in capped]
     parts: list[str] = []
