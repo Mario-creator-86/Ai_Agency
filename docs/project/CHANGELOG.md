@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-16 — A textured dark band is a surface, not a strip
+
+- `media/qc.py`: a dark surface at the bottom of a still is the picture's own when its rows carry texture (`FlatBand.texture`, mean row range ≥ 4; the desk fronts of 87c05891 read as black at grey 7–12 with grain 7.5–10.7, a pasted strip reads 0–1) — scenes 2/4/6/8 were refused a second time at 04:59Z after the colour rule alone. Tests in `test_still_gate.py`.
+
 ## 2026-10-16 — A refused clip of a capped still stands under the cap
 
 - `media/assembler.py`: a clip refused for its picture's fault when the picture is at the renders cap stands as the scene's shot under the cap (`_keep_clip_under_cap`, `director_cap`) instead of sending the still back for a fourth render — 7c26a7ce scenes 1–3 stood still between the stills cap and the clip QC (04:21Z). Test in `test_clip_qc_wiring.py`.

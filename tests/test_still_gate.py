@@ -1043,6 +1043,16 @@ def test_a_soft_edge_excuses_a_sky_not_a_still_more_than_half_flat():
     assert desk.wide and not desk.soft_edge and desk.surface and not desk.splits_a_still
     black = FlatBand(start=404, end=479, height=480, flat_rows=76, edge_step=9.0, level=6.0)
     assert not black.surface and black.splits_a_still
+    # A dark desk front reads as black (grey 7-12) but its rows carry grain and shading
+    # (05:04Z, 87c05891 scenes 2/4/6/8: mean row range 7.5-10.7); a pasted strip has none.
+    dark_desk = FlatBand(
+        start=404, end=479, height=480, flat_rows=76, edge_step=40.0, level=7.4, texture=7.5
+    )
+    assert dark_desk.surface and not dark_desk.splits_a_still
+    pasted = FlatBand(
+        start=404, end=479, height=480, flat_rows=76, edge_step=40.0, level=7.4, texture=0.6
+    )
+    assert not pasted.surface and pasted.splits_a_still
     white = FlatBand(start=404, end=479, height=480, flat_rows=76, edge_step=9.0, level=240.0)
     assert not white.surface and white.splits_a_still
     wide_desk = FlatBand(start=300, end=479, height=480, flat_rows=180, edge_step=9.0, level=58.0)

@@ -432,6 +432,11 @@ SOFT_BAND_MAX_SHARE = 0.5
 #: lower third, letterboxes) and white caption strips stay splits.
 SURFACE_LEVELS = (24.0, 231.0)
 SURFACE_BAND_MAX_SHARE = 0.3
+#: A dark surface is still a drawn surface when its rows carry texture — wood grain, shading
+#: — where a pasted black strip has none: the mean range of a row's grey within the band.
+#: Measured 2026-10-16 05:04Z on 87c05891's desk fronts (grey level 7-12, read as black):
+#: mean row range 7.5-10.7; a pasted pure strip reads 0-1.
+SURFACE_TEXTURE_MIN = 4.0
 
 
 @dataclass(frozen=True)
@@ -451,6 +456,8 @@ class FlatBand:
     edge_step: float | None = None
     #: The band's mean grey (8-bit) over its rows; None when no band.
     level: float | None = None
+    #: The mean range (max - min grey) of the band's rows: its texture; None when no band.
+    texture: float | None = None
 
     @property
     def rows(self) -> int:
@@ -486,14 +493,13 @@ class FlatBand:
         """Glued to the bottom edge only, a coloured surface of the scene (SURFACE_LEVELS:
         neither black nor white) and no more than SURFACE_BAND_MAX_SHARE of the height: a desk
         front, a floor, the base of a wall — the picture's own, not a strip pasted on."""
-        return (
-            self.rows > 0
-            and self.start > 0
-            and self.end == self.height - 1
-            and self.level is not None
-            and SURFACE_LEVELS[0] <= self.level <= SURFACE_LEVELS[1]
-            and self.share <= SURFACE_BAND_MAX_SHARE
-        )
+        if not (self.rows > 0 and self.start > 0 and self.end == self.height - 1):
+            return False
+        if self.share > SURFACE_BAND_MAX_SHARE:
+            return False
+        coloured = self.level is not None and SURFACE_LEVELS[0] <= self.level <= SURFACE_LEVELS[1]
+        textured = self.texture is not None and self.texture >= SURFACE_TEXTURE_MIN
+        return coloured or textured
 
     @property
     def splits_a_still(self) -> bool:
@@ -616,6 +622,7 @@ def flat_band(ffmpeg: str | None, path: Path | str) -> FlatBand | None:
     if result.returncode != 0 or len(data) != width * height:
         return None
     means: list[float] = []
+    ranges: list[int] = []
     runs: list[tuple[int, int]] = []
     run_start, flat_rows = -1, 0
     for y in range(height + 1):
@@ -624,6 +631,7 @@ def flat_band(ffmpeg: str | None, path: Path | str) -> FlatBand | None:
             row = data[y * width : (y + 1) * width]
             mean = sum(row) / width
             means.append(mean)
+            ranges.append(max(row) - min(row))
             if max(row) - min(row) < FLAT_ROW_RANGE:
                 flat = sum((value - mean) ** 2 for value in row) / width < FLAT_ROW_STD**2
         if flat:
@@ -642,6 +650,7 @@ def flat_band(ffmpeg: str | None, path: Path | str) -> FlatBand | None:
             flat_rows,
             _edge_step(means, start, end),
             level=sum(means[start : end + 1]) / (end - start + 1),
+            texture=sum(ranges[start : end + 1]) / (end - start + 1),
         )
         for start, end in runs
     ]
