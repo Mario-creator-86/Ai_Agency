@@ -341,3 +341,46 @@ def test_a_row_reads_its_own_entry_by_the_grain_its_script_keeps():
     # A board the montage never cut is read row for row, as before.
     uncut = row_entries(writer, [(1, None), (2, None), (3, None)], serial=False)
     assert [uncut[index]["visual_description"] for index in (1, 2, 3)] == ["A", "B", "C"]
+
+
+def test_a_few_words_of_button_are_no_shot_of_their_own_on_the_board(
+    engine,
+    staffed,  # noqa: F811 - the fixture, imported
+    monkeypatch,
+):
+    # The v8 button (one line that lands the laugh, then the narrator's closing sentence):
+    # «Told you.» was a row of its own, a still and a clip bought for 0.8 s of speech in
+    # every episode whose button is a few words (review of 2026-10-16).
+    _, ids = letters_day(engine)
+    beats = beats_for(ids, [KAEL, SARAH])
+    closing = "The cut went back to the bay, and the number stayed on her desk."
+    beats[-1]["lines"] = [
+        {"speaker": KAEL, "text": "Told you.", "direction": "deadpan"},
+        {"speaker": "Narrator", "text": closing},
+    ]
+    episode = written(engine, monkeypatch, beats)
+    decide_episode(engine, episode["id"], True, "")
+
+    board_id = storyboard_from_episode(engine, episode["id"], str(uuid4()))
+    button = [
+        row
+        for row in _rows(engine, board_id)
+        if beat_of(row.prompt_json).get("scene_number") == len(beats)
+    ]
+
+    assert all(len(row.voiceover_segment.split()) >= 4 for row in button), [
+        row.voiceover_segment for row in button
+    ]
+    (held,) = [row for row in button if "Told you." in row.voiceover_segment]
+    tag = beat_of(held.prompt_json)
+    assert tag["size"] == "close" and tag["on"] == KAEL and held.shot_type == "CLOSEUP"
+    assert closing in held.voiceover_segment
+    with Session(engine) as session:
+        kael = session.scalar(
+            select(CharacterBible).where(CharacterBible.canonical_name.like("Kael%"))
+        )
+        board = session.get(Storyboard, board_id)
+        script = session.get(ScriptDraft, board.script_draft_id)
+        assert held.character_ids_json[0] == kael.id
+        entry = script.scenes_json[held.scene_index - 1]
+        assert [line["speaker"] for line in entry["lines"]] == [KAEL, None]

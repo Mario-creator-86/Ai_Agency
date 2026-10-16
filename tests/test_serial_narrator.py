@@ -101,7 +101,8 @@ def test_the_narrators_lines_are_a_wide_shot_of_their_own():
     ]
     shots = montage.serial_shots(lines, 2, part="situation", first_beat=False)
     # Twelve seconds of narration are cut as one clip must be, each piece a wide shot of the
-    # room with nobody's face, never shared with a line spoken in the room.
+    # room with nobody's face, never shared with a line spoken in the room that can be a shot
+    # of its own (a few words with no speaking shot to join share his, held on their speaker).
     narrated = [shot for shot in shots if shot["on"] is None]
     assert narrated == shots[: len(narrated)] and len(narrated) >= 1
     assert all(shot["size"] == "establishing" for shot in narrated)

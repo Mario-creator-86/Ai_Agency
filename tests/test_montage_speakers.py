@@ -80,7 +80,7 @@ def test_a_two_shot_cut_in_pieces_never_gives_one_speakers_words_to_another():
     _kept_whole([long_kael, sarah])
 
 
-def test_a_short_first_line_joins_the_next_speaking_shot_never_the_narrator():
+def test_a_short_first_line_joins_the_next_speaking_shot_before_the_narrators():
     morning = {"speaker": "Kael", "text": "Morning."}
     answer = {"speaker": "Sarah", "text": _said(14)}
     narrator = {"speaker": None, "text": _said(12, "n")}
@@ -94,10 +94,9 @@ def test_a_short_first_line_joins_the_next_speaking_shot_never_the_narrator():
     assert opening["lines"] == [narrator] and opening["size"] == "establishing"
     assert shared["lines"] == [morning, answer] and shared["size"] == "two_shot"
 
-    # Before the narrator, nothing speaks after it in the room: it stays its own shot, and the
-    # narrator's shot stays his.
-    alone, closing = _shots([morning, narrator], part="button")
-    assert alone["lines"] == [morning] and closing["lines"] == [narrator]
+    # With only the narrator after it, it shares his shot, held on its speaker (below).
+    (held,) = _shots([morning, narrator], part="button")
+    assert held["lines"] == [morning, narrator] and held["on"] == "Kael"
 
     # A beat whose only line is short is one shot.
     (only,) = _shots([morning])
@@ -139,7 +138,49 @@ def test_every_cut_keeps_the_speakers_and_stays_within_the_clip(sizes):
     shots = _kept_whole(lines)
     for shot in shots:
         voices = {line["speaker"] for line in shot["lines"]}
-        assert None not in voices or voices == {None}  # the narrator never shares a shot
+        # The narrator shares a shot only with a line too short for one of its own, and that
+        # shot is on the line's speaker, never on the room.
+        if None in voices and voices != {None}:
+            assert shot["on"] in voices and shot["size"] != "establishing", shot
+        if voices == {None}:
+            assert shot["on"] is None and shot["size"] == "establishing", shot
+
+
+def test_a_short_button_shares_the_narrators_closing_shot_held_on_its_speaker():
+    # The v8 button: one line that lands the laugh, then the narrator's one closing sentence.
+    # «Told you.» as a shot of its own was 0.8 s of speech, a still and a clip bought for a
+    # flicker in every episode whose button is a few words (review of 2026-10-16).
+    told = {"speaker": "Kael", "text": "Told you.", "direction": "deadpan"}
+    closing = {
+        "speaker": None,
+        "text": ("And so the render bay stayed dark until the night shift finally came back in."),
+    }
+    shots = _kept_whole([told, closing], part="button")
+    assert all(_seconds(shot) >= montage.MIN_TAKE_SECONDS for shot in shots), shots
+    # The close-up the button asks for, held on Kael while the narrator closes.
+    (held,) = shots
+    assert held["size"] == "close" and held["on"] == "Kael"
+    assert [line["speaker"] for line in held["lines"]] == ["Kael", None]
+    assert held["lines"][0]["direction"] == "deadpan"
+
+    # A closing longer than the clip: the close-up holds the button and the closing's first
+    # words, the rest is the narrator's wide.
+    long_closing = {"speaker": None, "text": _said(26, "c")}
+    first, *rest = _kept_whole([told, long_closing], part="button")
+    assert first["size"] == "close" and first["on"] == "Kael"
+    assert first["lines"][0]["text"] == "Told you."
+    assert rest and all(shot["size"] == "establishing" and shot["on"] is None for shot in rest)
+    assert all(_seconds(shot) >= montage.MIN_TAKE_SECONDS for shot in [first, *rest])
+
+    # A few words after the narrator, with nothing speaking after them, share the narrator's
+    # shot before them; a few words on both sides of the narrator share it too.
+    opening = {"speaker": None, "text": _said(14, "o")}
+    (after,) = _kept_whole([opening, told])
+    assert after["on"] == "Kael" and after["size"] == "single"
+    sarah = {"speaker": "Sarah", "text": "Ha."}
+    shots = _kept_whole([told, opening, sarah], part="button")
+    assert all(_seconds(shot) >= montage.MIN_TAKE_SECONDS for shot in shots), shots
+    assert all(shot["on"] is not None for shot in shots)
 
 
 def test_a_title_or_an_abbreviation_is_never_where_a_shot_cuts():

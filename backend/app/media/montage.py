@@ -43,8 +43,10 @@ FACTUAL_SHOT_TYPES = {"wide": "WIDE", "medium": "MEDIUM", "detail": "DETAIL"}
 #: reacție», 2026-10-16). 0.40 s a spoken word is `assembler.SECONDS_PER_SPOKEN_WORD`.
 SECONDS_PER_SPOKEN_WORD = 0.40
 REACTION_SPLIT_SECONDS = 5.5
-#: A speaker's run shorter than this joins the shot beside it as a two-shot: a cut for four
-#: words is a flicker, and a still and a clip bought for under a second of screen.
+#: A speaker's run shorter than this joins the shot beside it, as a two-shot or, beside only
+#: the narrator, his shot held on the speaker: a cut for four words is a flicker, and a still
+#: and a clip bought for under a second of screen. Only a beat whose one line is this short
+#: is a shot this short.
 MIN_TAKE_SECONDS = 1.6
 #: The longest a serial shot may be (the motion model's clip, before the local slow-down).
 MAX_SHOT_SECONDS = 9.0
@@ -361,6 +363,14 @@ def _split_run(run: dict[str, Any], pieces: int) -> list[list[dict[str, Any]]]:
     return shots
 
 
+def _held(first: dict[str, Any], second: dict[str, Any]) -> dict[str, Any]:
+    """Two neighbouring groups of a beat as one shot, their lines in the order said, on the
+    later group's speaker, or the earlier one's when the later is the narrator: a short line
+    that shares the narrator's run keeps the camera on its speaker while his words go on."""
+    speaker = second["speaker"] if second["speaker"] is not None else first["speaker"]
+    return {"speaker": speaker, "lines": [*first["lines"], *second["lines"]]}
+
+
 def serial_shots(
     lines: list[dict[str, Any]],
     scene_number: int,
@@ -373,8 +383,9 @@ def serial_shots(
 
     One shot per speaker's run (the camera cuts with the dialogue); a run shorter than
     MIN_TAKE_SECONDS joins the shot before it as a two-shot, or the speaking shot after it
-    when nothing speaks before it (the beat's first words, the first after the narrator) —
-    never the narrator's, and a beat's only line stays its own shot; a run longer than
+    when nothing speaks before it (the beat's first words, the first after the narrator),
+    or else the narrator's shot beside it, held on its speaker (the button's «Told you.»
+    before the closing sentence) — a beat's only line stays its own shot; a run longer than
     REACTION_SPLIT_SECONDS is cut in two, the second half a reaction shot on the listener
     (``on``), the words heard from beside the frame; a run longer than MAX_SHOT_SECONDS is
     cut into as many pieces as it needs. The first shot of the first beat establishes the
@@ -393,7 +404,8 @@ def serial_shots(
     for run in runs:
         seconds = _take_seconds(" ".join(str(line.get("text") or "") for line in run["lines"]))
         # The narrator's run (speaker None) is a shot of its own, whole: the voice in off over
-        # the room, never a reaction and never shared with a line in the room.
+        # the room, never a reaction, and shared only with a line in the room too short for a
+        # shot of its own that has no speaking shot to join (below).
         if (
             groups
             and seconds < MIN_TAKE_SECONDS
@@ -404,23 +416,32 @@ def serial_shots(
             continue
         groups.append({"speaker": run["speaker"], "lines": list(run["lines"])})
     # A short run with no speaking shot before it (the beat opens on «Wait.», or it answers
-    # the narrator) joins the speaking shot after it, never the narrator's: on its own it
-    # was a shot of under a second, a still and a clip bought for a flicker (2026-10-16
-    # review). With no speaking shot after it either, it stays a shot of its own.
+    # the narrator) joins the speaking shot after it. With only the narrator after it (the
+    # v8 button: one line that lands the laugh, then the narrator's closing sentence), or
+    # nothing after it at all, it shares the narrator's shot beside it, the camera held on
+    # its speaker while the narrator's words go on (`_held`). On its own it was a shot of
+    # under a second, a still and a clip bought for a flicker, in every episode whose button
+    # is a few words (2026-10-16 review). A beat whose only line is short stays one shot.
+    # Step 1 already joined every short run that had a speaking shot before it, so a short
+    # speaking group here has none.
     joined: list[dict[str, Any]] = []
     waiting: dict[str, Any] | None = None
     for group in groups:
-        if waiting is not None and group["speaker"] is not None:
-            group = {**group, "lines": [*waiting["lines"], *group["lines"]]}
-        elif waiting is not None:
-            joined.append(waiting)
-        waiting = None
+        if waiting is not None:
+            group = _held(waiting, group)
+            waiting = None
         seconds = _take_seconds(" ".join(str(line.get("text") or "") for line in group["lines"]))
-        opens = not joined or joined[-1]["speaker"] is None
-        if group["speaker"] is not None and seconds < MIN_TAKE_SECONDS and opens:
+        if group["speaker"] is not None and seconds < MIN_TAKE_SECONDS:
             waiting = group
             continue
         joined.append(group)
+    while waiting is not None and joined:
+        # Nothing after it: the shot before it takes it (the narrator's, or a speaking shot
+        # that took the narrator's words), and again while the two are still a flicker.
+        waiting = _held(joined.pop(), waiting)
+        seconds = _take_seconds(" ".join(str(line.get("text") or "") for line in waiting["lines"]))
+        if seconds >= MIN_TAKE_SECONDS:
+            break
     groups = [*joined, waiting] if waiting is not None else joined
 
     # 2. How many pieces each shot is cut into: what its words ask (about shot_seconds each
@@ -449,30 +470,41 @@ def serial_shots(
 
     # 3. The shots: a cut run alternates the speaker and the listener (the words go on,
     # heard from beside the frame). A piece is on whoever speaks in it, a two-shot when two
-    # do; a reaction is only ever on a listener who says nothing in it.
+    # do; a reaction is only ever on a listener who says nothing in it. A piece of the
+    # narrator's words alone is his wide shot, also inside a run a short line shares with
+    # him (`_held`), and the alternation counts only the pieces with a voice in the room.
     shots: list[dict[str, Any]] = []
     for group, pieces in zip(groups, wanted, strict=True):
         others = [name for name in distinct if name != group["speaker"]]
         run = {"speaker": group["speaker"], "lines": group["lines"]}
-        for piece_index, piece in enumerate(_split_run(run, pieces)):
+        in_room = 0
+        for piece in _split_run(run, pieces):
             voices = list(dict.fromkeys(str(line.get("speaker") or "") or None for line in piece))
-            silent = [name for name in others if name not in voices]
-            listener = silent[0] if silent and group["speaker"] is not None else None
-            reaction = piece_index % 2 == 1 and listener is not None
-            if group["speaker"] is None:
-                size, on = "establishing", None  # the voice in off over the room and its people
-            elif reaction:
+            room = [name for name in voices if name is not None]
+            if not room:
+                # The voice in off over the room and its people.
+                shots.append(
+                    {"lines": piece, "size": "establishing", "on": None, "shot": 0, "of": 0}
+                )
+                continue
+            silent = [name for name in others if name not in room]
+            listener = silent[0] if silent else None
+            reaction = in_room % 2 == 1 and listener is not None
+            in_room += 1
+            if reaction:
                 size, on = "reaction", listener
-            elif len(voices) > 1:
-                size, on = "two_shot", group["speaker"]
+            elif len(room) > 1:
+                size, on = "two_shot", group["speaker"] if group["speaker"] in room else room[0]
             else:
-                size, on = "single", voices[0] if voices else group["speaker"]
+                size, on = "single", room[0]
             shots.append({"lines": piece, "size": size, "on": on, "shot": 0, "of": 0})
     if first_beat and shots:
         shots[0]["size"] = "establishing"
     kind = str(part or "").strip().lower()
     if kind == "button":
-        # The last shot in the room is the close-up; a narrator's closing shot stays wide.
+        # The last shot in the room is the close-up; a narrator's closing shot stays wide —
+        # save when the button's few words share it (`_held`): it is then that close-up,
+        # held on the speaker under the closing line.
         spoken = [shot for shot in shots if shot["on"] is not None]
         if spoken and spoken[-1]["size"] in ("single", "two_shot"):
             spoken[-1]["size"] = "close"
