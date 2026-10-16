@@ -315,6 +315,12 @@ export function clipQcWords(record) {
   const blocks = (Array.isArray(record.blocks_ro) ? record.blocks_ro : []).map((/** @type {unknown} */ b) => String(b).trim().replace(/\.$/, '')).filter(Boolean).join('; ');
   if (record.verdict === 'PASSED') return 'Controlul clipului: trecut.';
   if (record.verdict === 'FAILED') return blocks ? `Controlul clipului: picat — ${blocks}.` : 'Controlul clipului: picat.';
+  // Kept under the Owner's renders cap (backend assembler.CAP_VERDICT): refused, and it stays.
+  if (record.verdict === 'ACCEPTED_UNDER_CAP') {
+    const who = record.chosen_by === 'director' ? 'ales de Directoare' : 'păstrat de studio';
+    const measured = record.qc_verdict === 'UNCHECKED' ? 'neverificat' : 'picat';
+    return `Controlul clipului: ${measured}${blocks ? ` — ${blocks}` : ''}; rămâne sub plafonul tău de randări, ${who}.`;
+  }
   return `Controlul clipului: neverificat${blocks ? ` (${blocks})` : ''} — așteaptă privirea ta.`;
 }
 

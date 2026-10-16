@@ -125,6 +125,7 @@ from app.factual.story_review import (
 )
 from app.integrations.services import selected_youtube
 from app.integrations.vault import RECONNECT_RO, VaultUnreadable
+from app.media.cap_choice import CAP_KEEPS_RO
 from app.media.models import (
     EditorialReview,
     MediaAsset,
@@ -1967,7 +1968,14 @@ def _ladder_scenes(
             ):
                 rejudged.append(scene)
                 continue
-            if settle_scene_under_cap(engine, storyboard_id, scene, str(uuid4())):
+            if settle_scene_under_cap(
+                engine,
+                storyboard_id,
+                scene,
+                str(uuid4()),
+                registry=registry,
+                ffmpeg_path=getattr(settings, "ffmpeg_path", None),
+            ):
                 settled.append(scene)
         except Exception as exc:  # noqa: BLE001 - the ladder's stop stands for this scene
             logger.warning(
@@ -1976,7 +1984,14 @@ def _ladder_scenes(
             )
     for scene in capped:
         try:
-            if settle_scene_under_cap(engine, storyboard_id, scene, str(uuid4())):
+            if settle_scene_under_cap(
+                engine,
+                storyboard_id,
+                scene,
+                str(uuid4()),
+                registry=registry,
+                ffmpeg_path=getattr(settings, "ffmpeg_path", None),
+            ):
                 settled.append(scene)
         except Exception as exc:  # noqa: BLE001 - the walk's stop stands for this scene
             logger.warning(
@@ -2000,7 +2015,8 @@ def _at_a_cap(engine: Engine, storyboard_id: str, scene: int) -> bool:
 
 def _settles_under_cap(engine: Engine, storyboard_id: str, scene: int) -> bool:
     """Whether the walk's ladder settles the scene under the Owner's renders cap: what
-    `stills_stage.settle_scene_under_cap` would do, read with ``act=False`` (nothing written).
+    `stills_stage.settle_scene_under_cap` would do, read with ``act=False`` (nothing written,
+    no model asked).
     A layer at the cap is not enough: a scene whose still had its renders while its motion,
     with a render left, waits for the Owner (the review of a079fac), or one at the cap with
     nothing of its own on disk to keep, is not hers to settle and is not said to be."""
@@ -2093,7 +2109,7 @@ def _held_words(engine: Engine, storyboard_id: str, stair_ro: str, scenes: list[
             _scenes_ro(capped)
             + (" a avut" if len(capped) == 1 else " au avut")
             + f" randările plafonului Proprietarului ({renders_ro()} pe imagine sau mișcare, "
-            "STUDIO_RENDERS_PER_LAYER): Directoarea păstrează ce este mai apropiat de plan"
+            f"STUDIO_RENDERS_PER_LAYER): {CAP_KEEPS_RO}"
         )
     if his:
         parts.append(_scenes_ro(his) + " așteaptă decizia Proprietarului pe foaia de filmare")
@@ -6820,8 +6836,8 @@ def _apply_repairs(
             "reason_ro": (
                 "plafonul Proprietarului: cel mult "
                 f"{renders_ro(renders_cap)} pe imagine sau mișcare pe scenă și "
-                f"{REPAIR_ROUNDS_PER_REPORT} refaceri cumpărate pe raport; se publică ce avem, "
-                "Directoarea alege ce este cel mai apropiat de plan."
+                f"{REPAIR_ROUNDS_PER_REPORT} refaceri cumpărate pe raport; se publică filmul "
+                "așa cum este, cu ce a rămas fiecărei scene sub plafon."
             ),
         }
 
@@ -7009,7 +7025,7 @@ def _limited_line(item: dict[str, Any]) -> str:
         return (
             f"- Scena {scene}: nu se mai cumpără, {had}, iar plafonul tău este de "
             f"{renders_ro(int(cap) if cap else None)} pe imagine sau mișcare "
-            "(STUDIO_RENDERS_PER_LAYER); rămâne ce este mai apropiat de plan"
+            "(STUDIO_RENDERS_PER_LAYER); rămâne ce are scena"
         )
     rounds_cap = item.get("report_rounds_cap")
     if rounds_cap is not None and int(item.get("report_rounds") or 0) >= int(rounds_cap):

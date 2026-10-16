@@ -91,7 +91,12 @@ def test_a_scene_held_after_three_stills_keeps_its_newest_refused_still_and_is_r
         row.path = str(file)
         row.sha256 = hashlib.sha256(b"newest still bytes").hexdigest()
         row.created_at = utc_now()
-    _bible, scenes = stills_stage._read_scenes(engine, board)
+    # Two refused stills on disk: a reading of the plan holds the scene for the Director's
+    # choice; the step that may ask her keeps one, with no model to show her the studio's own
+    # pick (none passed the gate: the newest).
+    _bible, held = stills_stage._read_scenes(engine, board)
+    assert next(scene for scene in held if scene.index == 1).reuse is None
+    _bible, scenes = stills_stage._read_scenes(engine, board, choose=True)
     one = next(scene for scene in scenes if scene.index == 1)
     assert one.reuse is not None and one.reuse.id == newest
     assert one.reuse.status == "APPROVED" and one.reuse.approved_by == stills_stage.CAP_APPROVER
@@ -172,7 +177,9 @@ def test_a_refused_scene_with_its_three_stills_and_three_shots_is_settled_under_
         assert kept.status == "PAID" and kept.approved_by == "director_cap"
         assert kept.failure_code is None
         record = clip_qc_of(session, shots[-1])
-        assert record["verdict"] == "PASSED" and record["accepted_under_cap"] is True
+        # Kept under the cap, never recorded as a pass it did not earn (STUB-003).
+        assert record["verdict"] == "ACCEPTED_UNDER_CAP" and record["accepted_under_cap"] is True
+        assert record["passed"] is False and record["qc_verdict"] == "FAILED"
         assert session.get(SceneTake, shots[0]).status == "REJECTED"
     # Settled once: the next reading finds the clip accepted and nothing to settle.
     again = {"status": "WAITING", "refusal": "NEEDS_OWNER", "scenes": [1]}
@@ -182,10 +189,17 @@ def test_a_refused_scene_with_its_three_stills_and_three_shots_is_settled_under_
 def test_past_three_stills_the_closest_candidate_stands_and_the_scene_goes_on(
     engine, tmp_path, monkeypatch
 ):
+    import hashlib
+
     board = a_film(engine, tmp_path, scenes=2)  # one approved still a scene already
     with Session(engine) as session, session.begin():
         ids = [_take(session, board, 1) for _ in range(3)]
         _take(session, board, 2)
+        for take_id in ids[:2]:  # the round's two candidates, on disk as they landed
+            file = tmp_path / f"{take_id}.png"
+            file.write_bytes(take_id.encode())
+            row = session.get(SceneTake, take_id)
+            row.path, row.sha256 = str(file), hashlib.sha256(take_id.encode()).hexdigest()
     assert stills_stage._at_renders_cap(engine, board, 1)
     assert not stills_stage._at_renders_cap(engine, board, 2)  # two made: another may be bought
 

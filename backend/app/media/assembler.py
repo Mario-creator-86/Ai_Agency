@@ -47,6 +47,7 @@ from app.media.balance_rule import (
     purchase_stop_ro,
     start_refusal_ro,
 )
+from app.media.cap_choice import CAP_KEEPS_RO, CapChoice, choose_under_cap, record_cap_choice
 from app.media.cards import (
     CARD_KINDS,
     CardError,
@@ -5209,6 +5210,23 @@ def propose_clip_redos(
 CLIP_QC_EVENT = "media.clip_qc_checked"
 #: The failure code of a shot the studio's clip check, not the vendor, refused.
 CLIP_QC_FAILURE_CODE = "QC.CLIP"
+#: The verdict of a clip clip QC did not pass that stands as the scene's shot because the
+#: Owner's renders cap leaves nothing more to buy (`_keep_clip_under_cap`). It is not a pass:
+#: until 2026-10-16 such a clip was recorded PASSED, and the readers of a pass ranked it «QC
+#: passed first» and let it close the Director's motion items (the dishonest-code audit,
+#: STUB-003). Only `clip_kept` reads it as a clip the film may use; QC's own measurement stays
+#: on the record (``qc_verdict``, ``passed``).
+CAP_VERDICT = "ACCEPTED_UNDER_CAP"
+#: The clip-QC verdicts a film may cut in without the Owner's look: a pass, or a clip kept
+#: under his renders cap.
+CLIP_KEPT_VERDICTS = frozenset({"PASSED", CAP_VERDICT})
+
+
+def clip_kept(record: Mapping[str, Any] | None) -> bool:
+    """Whether a clip-QC record lets its clip into the film: it passed, or it is kept under
+    the Owner's renders cap. Never read as a pass by what measures quality (`_cap_shot_candidates`
+    ranks, `fix_check` closes items only on a real PASSED)."""
+    return (record or {}).get("verdict") in CLIP_KEPT_VERDICTS
 
 
 def clip_report_record(report: Any) -> dict[str, Any]:
@@ -5260,11 +5278,10 @@ def _still_at_renders_cap(engine: Engine, storyboard_id: str, scene_number: int)
 
 def motion_capped_reason(scene_index: int) -> str:
     """Why nothing more of a scene's motion is bought: the Owner's renders cap, with its
-    number read now."""
+    number read now, and what stands instead (`settle_motion_under_cap`)."""
     return (
         f"Scena {scene_index}: mișcarea ei a avut deja {renders_ro()}, plafonul "
-        "Proprietarului; nu se mai cumpără: rămâne ce are, iar Directoarea alege cel mai "
-        "apropiat cadru."
+        f"Proprietarului; nu se mai cumpără: {CAP_KEEPS_RO}."
     )
 
 
@@ -5273,32 +5290,51 @@ def _keep_clip_under_cap(
     take_id: str,
     record: dict[str, Any],
     *,
+    choice: CapChoice,
     storyboard_id: str,
     scene_number: int,
     seed: int | None,
     attempt: int,
     correlation_id: str,
 ) -> dict[str, Any]:
-    """A clip refused for its picture's fault when the picture is at the renders cap: the
-    clip stands as the scene's shot, accepted under the Owner's cap (`CAP_APPROVER`), its
-    refusal kept as the lesson in its quality note and in the record (04:11Z, 7c26a7ce
-    scenes 1-3: the stills kept under the cap carried a window, every clip of them was sent
-    back to a still that could not be bought again, and the film stood still)."""
+    """A clip that stands as the scene's shot because the Owner's renders cap leaves nothing
+    more to buy for it (its motion had its renders, or its picture did and a new one could not
+    be bought): accepted under the cap (`CAP_APPROVER`), its refusal kept as the lesson in its
+    quality note and in the record (04:11Z, 7c26a7ce scenes 1-3: the stills kept under the cap
+    carried a window, every clip of them was sent back to a still that could not be bought
+    again, and the film stood still).
+
+    The record keeps what clip QC measured: PASSED only when the clip passed it, else
+    `CAP_VERDICT` with ``passed`` False and QC's own verdict in ``qc_verdict`` — never a pass
+    it did not earn (STUB-003). ``choice`` (`cap_choice.choose_under_cap`) says who chose this
+    clip among the scene's and how; it is recorded with the take (`record_cap_choice`) and said
+    in the note."""
+    measured = str(record.get("qc_verdict") or record.get("verdict") or "FAILED")
     kept = {
         **record,
-        "verdict": "PASSED",
-        "passed": True,
+        "verdict": "PASSED" if measured == "PASSED" else CAP_VERDICT,
+        "qc_verdict": measured,
+        "passed": measured == "PASSED",
         "accepted_by": CAP_APPROVER,
         "accepted_under_cap": True,
+        "chosen_by": choice.chosen_by,
+        "cap_choice": choice.how,
         "cap_note_ro": (
             f"Acceptat sub plafonul Proprietarului ({renders_of_ro('imaginii sau ale mișcării')}"
-            "): clipul rămâne; ce a rămas sub standard e lecție pentru filmul următor."
+            f"): {choice.words_ro} Ce a rămas sub standard e lecție pentru filmul următor."
         ),
     }
     with Session(engine) as session, session.begin():
         lock_for_write(session)
         row = session.get(SceneTake, take_id)
+        previous: dict[str, Any] | None = None
         if row is not None:
+            previous = {
+                "status": row.status,
+                "approved_by": row.approved_by,
+                "failure_code": row.failure_code,
+                "failure_detail": row.failure_detail,
+            }
             row.status = "PAID"
             row.approved_by = CAP_APPROVER
             row.failure_code = None
@@ -5327,6 +5363,14 @@ def _keep_clip_under_cap(
                 **kept,
             },
             correlation_id,
+        )
+        record_cap_choice(
+            session,
+            choice,
+            storyboard_id=storyboard_id,
+            scene_index=int(scene_number),
+            correlation_id=correlation_id,
+            previous=previous,
         )
     return kept
 
@@ -5397,12 +5441,17 @@ def _cuts_a_clip(reading: dict[str, Any]) -> bool:
     return bool(reading.get("ok")) and reading.get("how") in ("shot", "slowed", "at_risk")
 
 
-def _closest_shot(session: Session, storyboard_id: str, scene_number: int) -> SceneTake | None:
-    """The scene's paid shot nearest its plan among those still on disk, whatever words or
-    model made it: one clip QC passed first, then the newest (made on the most corrected
-    words). His own APPROVED shots are his and are never re-marked here, and a shot he
-    rejected himself (`owner_rejected_takes`) is never the closest: it is not used in a film
-    unless he chooses it again (`decide_take`)."""
+def _cap_shot_candidates(
+    session: Session, storyboard_id: str, scene_number: int
+) -> list[SceneTake]:
+    """The scene's paid shots that may stand under the Owner's renders cap, in the studio's
+    own order (`cap_choice.STUDIO_RULE_RO`: one clip QC really passed first — never one only
+    kept under the cap, `CAP_VERDICT` — then the newest, made on the most corrected words):
+    any words, any model, with the file on disk that was bought (its sha256). His own APPROVED
+    shots are his and are never re-marked here, and a shot he rejected himself
+    (`owner_rejected_takes`) is never one: it is not used in a film unless he chooses it again
+    (`decide_take`). Past the cap the Director chooses among them
+    (`cap_choice.choose_under_cap`)."""
     rows = list(
         session.scalars(
             select(SceneTake)
@@ -5416,17 +5465,55 @@ def _closest_shot(session: Session, storyboard_id: str, scene_number: int) -> Sc
         )
     )
     his_no = owner_rejected_takes(session, rows)
-    best: SceneTake | None = None
-    for row in rows:
-        if row.id in his_no:
-            continue
-        if not row.path or not row.sha256 or not Path(row.path).is_file():
-            continue
-        if (clip_qc_of(session, row.id) or {}).get("verdict") == "PASSED":
-            return row
-        if best is None:
-            best = row
-    return best
+    usable = [
+        row
+        for row in rows
+        if row.id not in his_no
+        and row.path
+        and row.sha256
+        and Path(row.path).is_file()
+        and _file_sha256(Path(row.path)) == row.sha256
+    ]
+    return sorted(
+        usable,
+        key=lambda row: 0 if (clip_qc_of(session, row.id) or {}).get("verdict") == "PASSED" else 1,
+    )
+
+
+def _choose_shot_under_cap(
+    engine: Engine,
+    storyboard_id: str,
+    scene_index: int,
+    correlation_id: str,
+    *,
+    registry: Any | None = None,
+    ffmpeg_path: str | None = None,
+) -> tuple[CapChoice, dict[str, Any]] | None:
+    """The clip the scene keeps under the cap among its shots on disk (`_cap_shot_candidates`)
+    and its latest clip-QC record: the one it has, the one the Director chooses among several,
+    or the studio's own pick when she cannot choose (`cap_choice.choose_under_cap`). None when
+    no clip of it can stand."""
+    with Session(engine) as session:
+        ids = [str(row.id) for row in _cap_shot_candidates(session, storyboard_id, scene_index)]
+    choice = choose_under_cap(
+        engine,
+        registry,
+        storyboard_id=storyboard_id,
+        scene_index=int(scene_index),
+        layer="motion",
+        take_ids=ids,
+        correlation_id=correlation_id,
+        ffmpeg_path=ffmpeg_path,
+    )
+    if choice is None:
+        return None
+    with Session(engine) as session:
+        record = dict(clip_qc_of(session, choice.take_id) or {})
+        row = session.get(SceneTake, choice.take_id)
+        failure = str(row.failure_detail or "") if row is not None else ""
+    if not record.get("blocks_ro") and failure:
+        record["blocks_ro"] = [failure.removeprefix("Controlul clipului: ")]
+    return choice, record
 
 
 def settle_motion_under_cap(
@@ -5437,20 +5524,24 @@ def settle_motion_under_cap(
     *,
     environment: str | None = None,
     act: bool = True,
+    registry: Any | None = None,
+    ffmpeg_path: str | None = None,
 ) -> bool:
     """A filmed scene whose motion has had its renders (`renders_cap`) and that the film cannot
-    cut in as it stands: the Director keeps what is closest to the plan, and the film goes on
-    (the Owner, 2026-10-15: «publicăm cu ce Directoarea alege ca fiind cel mai apropiat»;
-    2026-10-16: «maxim încă o randare»). First the closest clip it has on disk
-    (`_closest_shot`: any words, any model, never one he rejected himself) stands under the
-    cap (`_keep_clip_under_cap`); when none does, or the one kept is too short for its words
-    even slowed down (CLIP_SHORT), the scene is shown as its approved still moved locally
+    cut in as it stands: what it has is kept, and the film goes on (the Owner, 2026-10-15:
+    «publicăm cu ce Directoarea alege ca fiind cel mai apropiat»; 2026-10-16: «maxim încă o
+    randare»). First a clip it has on disk stands under the cap (`_keep_clip_under_cap`): the
+    one clip it has, or the one the Director chooses among several by looking at their frames
+    through ``registry``, or the studio's own pick when she cannot, said as the studio's
+    (`_choose_shot_under_cap`); a clip already kept under the cap stays kept and is never
+    chosen again. When none stands, or the one kept is too short for its words even slowed
+    down (CLIP_SHORT), the scene is shown as its approved still moved locally
     (`renders_cap.record_cap_local_move`, 0 credits). Nothing is bought, nothing waits for the
     Owner. Returns True only when something changed (the walk is walked again on it), so a
     walk never loops on it.
 
-    ``act=False`` writes nothing and says whether it would change something: the walk's
-    words read it before the ladder acts (`runbook.stages._held_words`)."""
+    ``act=False`` writes nothing, calls no model, and says whether it would change something:
+    the walk's words read it before the ladder acts (`runbook.stages._held_words`)."""
     with Session(engine) as session:
         if renders_made(session, storyboard_id, scene_index, "motion") < renders_per_layer():
             return False
@@ -5472,28 +5563,36 @@ def settle_motion_under_cap(
     changed = False
     if reading.get("code") != CLIP_SHORT:
         with Session(engine) as session:
-            shot = _closest_shot(session, storyboard_id, scene_index)
-            kept = shot is not None and shot.approved_by == CAP_APPROVER
-            record = dict(clip_qc_of(session, shot.id) or {}) if shot is not None else {}
-            shot_id = shot.id if shot is not None else None
-            failure = str(shot.failure_detail or "") if shot is not None else ""
-        if shot_id is not None and not kept:
+            already = _cap_kept_shot(session, storyboard_id, scene_index) is not None
+            candidates = bool(_cap_shot_candidates(session, storyboard_id, scene_index))
+        if candidates and not already:
             if not act:
                 return True
-            if not record.get("blocks_ro"):
-                record["blocks_ro"] = [failure] if failure else []
-            _keep_clip_under_cap(
+            chosen = _choose_shot_under_cap(
                 engine,
-                shot_id,
-                {**record, "verdict": record.get("verdict") or "FAILED"},
-                storyboard_id=storyboard_id,
-                scene_number=int(scene_index),
-                seed=record.get("seed"),
-                attempt=int(record.get("attempt") or 1),
-                correlation_id=correlation_id,
+                storyboard_id,
+                scene_index,
+                correlation_id,
+                registry=registry,
+                ffmpeg_path=ffmpeg_path,
             )
-            changed = True
-            reading = scene_readiness(engine, storyboard_id, scene_index, environment=environment)
+            if chosen is not None:
+                choice, record = chosen
+                _keep_clip_under_cap(
+                    engine,
+                    choice.take_id,
+                    {**record, "verdict": record.get("verdict") or "FAILED"},
+                    choice=choice,
+                    storyboard_id=storyboard_id,
+                    scene_number=int(scene_index),
+                    seed=record.get("seed"),
+                    attempt=int(record.get("attempt") or 1),
+                    correlation_id=correlation_id,
+                )
+                changed = True
+                reading = scene_readiness(
+                    engine, storyboard_id, scene_index, environment=environment
+                )
     if reading is not None and not _cuts_a_clip(reading):
         if not act:
             # `record_cap_local_move` writes only a move that does not stand yet (its motion
@@ -5568,15 +5667,16 @@ def clip_qc_of(session: Session, take_id: str) -> dict[str, Any] | None:
 def clip_accepted(session: Session, take: SceneTake, environment: str) -> tuple[bool, str]:
     """Whether a usable shot take may be cut into the film, and the Owner's reason when not.
 
-    His APPROVED look accepts it; otherwise its clip QC must have passed. In TEST a paid shot
-    nobody could check is used (the rehearsal's takes predate clip QC); in PRODUCTION it
-    waits for his look on the sheet.
+    His APPROVED look accepts it; otherwise its clip QC must have passed, or the clip is kept
+    under his renders cap (`clip_kept`: `CAP_VERDICT`, past the cap the film is published with
+    what it has). In TEST a paid shot nobody could check is used (the rehearsal's takes
+    predate clip QC); in PRODUCTION it waits for his look on the sheet.
     """
     if take.status == "APPROVED":
         return True, ""
     record = clip_qc_of(session, take.id) or {}
     verdict = record.get("verdict")
-    if verdict == "PASSED":
+    if clip_kept(record):
         return True, ""
     if verdict != "FAILED" and environment != "PRODUCTION":
         return True, ""
@@ -5811,7 +5911,7 @@ def owner_rejected_takes(session: Session, rows: Sequence[SceneTake]) -> set[str
     his newest decision on the take (`owner_take_decisions`) is REJECTED, or, with no decision
     of his on the books, the take carries his `OWNER_REJECTED_CODE`. Such a take is not used
     in a film unless he chooses it again (`decide_take`): nothing kept under his renders cap
-    is one of them (`_closest_shot`, `stills_stage._newest_kept`)."""
+    is one of them (`_cap_shot_candidates`, `stills_stage._cap_candidates`)."""
     decided = owner_take_decisions(session, [row.id for row in rows])
     turned_down: set[str] = set()
     for row in rows:
@@ -5968,6 +6068,12 @@ def clip_rejection_words(
     if record.get("verdict") == "FAILED":
         said.append(
             "Controlul clipului l-a respins: " + ("; ".join(blocks) or "fără motiv scris") + "."
+        )
+    elif record.get("verdict") == CAP_VERDICT:
+        said.append(
+            "Controlul clipului l-a respins ("
+            + ("; ".join(blocks) or "fără motiv scris")
+            + "); a rămas sub plafonul tău de randări."
         )
     elif record.get("verdict") == "UNCHECKED":
         said.append(
@@ -10536,7 +10642,15 @@ def hero_gate(
         "și așteaptă privirea Proprietarului: restul mișcării nu se cumpără până nu este "
         "aprobat pe foaia de filmare"
     )
-    if clip_verdict != "PASSED":
+    # A hero clip QC refused that stands under the Owner's renders cap (`CAP_VERDICT`) lets
+    # the rest of the motion go on as a passing one does; the words say it was kept, not
+    # passed (STUB-003).
+    passed_words = (
+        "a rămas sub plafonul tău de randări (controlul clipului l-a refuzat)"
+        if clip_verdict == CAP_VERDICT
+        else "a trecut controlul clipului"
+    )
+    if clip_verdict not in CLIP_KEPT_VERDICTS:
         if clip_verdict == "FAILED":
             blocks = "; ".join(str(text) for text in record.get("blocks_ro") or [])
             said = "a picat controlul clipului" + (f" ({blocks})" if blocks else "")
@@ -10558,9 +10672,7 @@ def hero_gate(
         why = _hero_rule_words(verdict, rule, threshold, cap_usd)
         view.update(
             status="WAITING",
-            reason_ro=(
-                f"Cadrul de probă (scena {hero}) a trecut controlul clipului {looks} ({why})."
-            ),
+            reason_ro=(f"Cadrul de probă (scena {hero}) {passed_words} {looks} ({why})."),
         )
         return view
     accepted = hero_acceptances(session, [take.id]) if take is not None else {}
@@ -10569,15 +10681,20 @@ def hero_gate(
             status="ACCEPTED",
             accepted_by=HERO_ACCEPTED_BY,
             reason_ro=(
-                f"Cadrul de probă (scena {hero}) a fost acceptat de controlul clipului, cum "
-                "permite regula ta pentru pașii plătiți."
+                f"Cadrul de probă (scena {hero}) a fost acceptat "
+                + (
+                    "sub plafonul tău de randări (controlul clipului l-a refuzat)"
+                    if clip_verdict == CAP_VERDICT
+                    else "de controlul clipului"
+                )
+                + ", cum permite regula ta pentru pașii plătiți."
             ),
         )
         return view
     view.update(
         status="ACCEPTS",
         reason_ro=(
-            f"Cadrul de probă (scena {hero}) a trecut controlul clipului; regula ta pentru "
+            f"Cadrul de probă (scena {hero}) {passed_words}; regula ta pentru "
             "pașii plătiți îl acceptă fără să te aștepte, iar restul mișcării se cumpără în "
             "același pas."
         ),
@@ -10956,22 +11073,53 @@ def _check_shot(
     ):
         # The motion has had its renders, or the picture is at fault and has had its own
         # (`renders_cap`): nothing more can be bought for the scene's clip (a new picture
-        # could not be animated either), so the clip stands under the Owner's cap — the
-        # Director keeps the closest, the newest on the most corrected words — and the film
-        # goes on to its QC. Nothing waits for the Owner.
-        last = records[-1]
-        records[-1] = _keep_clip_under_cap(
+        # could not be animated either), so a clip of the scene stands under the Owner's cap
+        # and the film goes on to its QC: the one it has, the one the Director chooses among
+        # its clips on disk (this check's and earlier ones'), or the studio's own pick when
+        # she cannot choose (`_choose_shot_under_cap`). Nothing waits for the Owner.
+        chosen = _choose_shot_under_cap(
             engine,
-            last["take_id"],
-            last,
-            storyboard_id=storyboard_id,
-            scene_number=index,
-            seed=last.get("seed"),
-            attempt=len(records),
-            correlation_id=correlation_id,
+            storyboard_id,
+            index,
+            correlation_id,
+            registry=registry,
+            ffmpeg_path=ffmpeg_exe,
         )
-        final = records[-1]
-    kept = final is not None and final["verdict"] == "PASSED"
+        if chosen is not None:
+            choice, earlier = chosen
+            position = next(
+                (at for at, item in enumerate(records) if item["take_id"] == choice.take_id),
+                None,
+            )
+            base = (
+                records[position]
+                if position is not None
+                else {**earlier, "take_id": choice.take_id}
+            )
+            final = {
+                **_keep_clip_under_cap(
+                    engine,
+                    choice.take_id,
+                    base,
+                    choice=choice,
+                    storyboard_id=storyboard_id,
+                    scene_number=index,
+                    seed=base.get("seed"),
+                    attempt=(
+                        position + 1 if position is not None else int(base.get("attempt") or 1)
+                    ),
+                    correlation_id=correlation_id,
+                ),
+                "take_id": choice.take_id,
+                "seed": base.get("seed"),
+            }
+            if position is not None:
+                records[position] = final
+    # A clip kept under the cap is not one clip QC passed: it confirms no lesson and closes
+    # none of the Director's motion items (`fix_check.clip_settled`; STUB-003).
+    kept = (
+        final is not None and final["verdict"] == "PASSED" and not final.get("accepted_under_cap")
+    )
     if outcome.reports and not (retry_deferred is not None and retry_deferred()):
         with Session(engine) as session, session.begin():
             lock_for_write(session)  # the open items are read before the note and lessons
@@ -13660,8 +13808,7 @@ def _redo_past_cap(
         return (
             f"Scena {scene_index}: {layer} ei a avut deja {renders_ro(made)}, iar plafonul "
             f"Proprietarului este de {renders_ro(cap)} (STUDIO_RENDERS_PER_LAYER); nu se mai "
-            "cumpără, pe nicio cale. Rămâne ce are scena, iar Directoarea alege cel mai "
-            "apropiat."
+            f"cumpără, pe nicio cale: {CAP_KEEPS_RO}."
         )
     if kind == "still" and motion >= cap:
         return (
@@ -16617,7 +16764,7 @@ def _film_after_motion(
     if entry.get("status") != "PAID" or plan["base_asset_id"] is None:
         return None
     verdict = (entry.get("clip_qc") or {}).get("verdict")
-    if verdict == "FAILED" or (verdict != "PASSED" and environment == "PRODUCTION"):
+    if verdict == "FAILED" or (verdict not in CLIP_KEPT_VERDICTS and environment == "PRODUCTION"):
         return None
     ffmpeg_exe = resolve_ffmpeg_path(ffmpeg_path)
     with Session(engine) as session:

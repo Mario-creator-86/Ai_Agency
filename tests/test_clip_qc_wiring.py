@@ -297,7 +297,9 @@ def test_a_clip_refused_for_a_still_at_the_renders_cap_stands_under_the_cap(engi
     (entry,) = summary["scenes"]
     assert entry["status"] == "PAID", entry
     assert entry["clip_qc"]["accepted_under_cap"] is True
-    assert entry["clip_qc"]["verdict"] == "PASSED" and entry["clip_qc"]["retry_credits"] == 0
+    # Kept under the cap, not passed: its own verdict (the dishonest-code audit, STUB-003).
+    assert entry["clip_qc"]["verdict"] == "ACCEPTED_UNDER_CAP"
+    assert entry["clip_qc"]["retry_credits"] == 0
     (take,) = shots(engine, storyboard_id)
     assert take.status == "PAID" and take.approved_by == "director_cap"
     assert take.failure_code is None

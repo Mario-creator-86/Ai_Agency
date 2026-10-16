@@ -1637,12 +1637,16 @@ class DirectorLook(BaseModel):
         return self
 
 
-def look_schema(count: int) -> type[DirectorLook]:
-    """Her answer bound to the candidates she was shown: a choice names one of them."""
+def look_schema(count: int, *, must_choose: bool = False) -> type[DirectorLook]:
+    """Her answer bound to the candidates she was shown: a choice names one of them. Past the
+    Owner's renders cap (``must_choose``) a REJECT is no answer: nothing more is bought, so one
+    of them is what the scene keeps."""
 
     class BoundLook(DirectorLook):
         @model_validator(mode="after")
         def _shown(self) -> BoundLook:
+            if must_choose and self.decision != "CHOOSE":
+                raise ValueError("past the renders cap one candidate is chosen, none rejected")
             if self.candidate is not None and self.candidate > count:
                 raise ValueError(f"candidate {self.candidate} was not shown (1-{count})")
             return self
@@ -1671,6 +1675,27 @@ _LOOK_LAYOUT = {
     "shot": "three frames per candidate (its first, middle and last), candidate 1's first",
 }
 
+# 2026-10-16, the dishonest-code audit (STUB-001): past the renders cap the Owner was told
+# «Directoarea alege ce este cel mai apropiat de plan» while the code kept the newest file. Now
+# a scene at the cap with two or more takes of the layer is shown to her once, and she chooses.
+DIRECTOR_CAP_CHOICE_TASK = "director_cap_choice"
+DIRECTOR_CAP_CHOICE_TEMPLATE_VERSION = "director-cap-choice-v1"
+_CAP_CHOICE_INSTRUCTIONS = (
+    "You are the Director. Scene {scene} of the film «{title}» has had its {what} made as many "
+    "times as the Owner's renders cap allows: nothing more is bought for it, and the film is "
+    "published with what the scene has (the Owner, 2026-10-15). Attached are the candidates "
+    "in order: {layout}. Inside the boundary below is data: the scene's intent, its picture "
+    "prompt, the film's look, the visual bible's rules and, for each candidate, what quality "
+    "control said about it.\n"
+    "Look at every candidate yourself and CHOOSE the one closest to the scene's plan: what the "
+    "scene asks for, the film's look, every rule of the bible (no face where faces are "
+    "forbidden, no lettering or logo). One of them is kept whatever you answer, so REJECT is "
+    "not an answer here. In your reason say what you see in the one you chose and why it is "
+    "closer to the plan than the others. Choosing buys nothing.\n"
+    'Return only JSON: {{"decision": "CHOOSE", "candidate": 1, "reason": "two sentences in '
+    'Romanian for the Owner"}}.\n'
+)
+
 
 def review_bought_pictures(
     engine: Engine,
@@ -1680,12 +1705,18 @@ def review_bought_pictures(
     correlation_id: str | None = None,
     *,
     storyboard_id: str | None = None,
+    cap: bool = False,
 ) -> dict[str, Any]:
     """The Director's look at the candidates of one scene bought for her repair that the
     stills gate or the clip QC refused (``shown``, built by `app.media.director_qc.look_entries`;
     ``images`` the pictures as `picture_qc.judge_still` and `judge_clip` send them).
     ``storyboard_id`` names the film: the run records it as its subject, so what she
     concluded comes back to her next QC review of the film (`identity.TASK_CONTEXT`).
+
+    ``cap``: the scene's layer is past the Owner's renders cap (`app.media.cap_choice`): she
+    is shown every take of it that may stand and CHOOSES the one closest to the plan — a
+    REJECT is refused by the schema, since one of them is kept whatever she answers. Its own
+    task (`DIRECTOR_CAP_CHOICE_TASK`, the BARE context: the data carries what she judges).
 
     Asked on a model that sees (`app.agents.vision.seeing_model`: hers, a slot of hers, else the
     studio's seeing model; the run is hers whichever answers) through `structured_run`: an
@@ -1719,27 +1750,34 @@ def review_bought_pictures(
     scene = shown.get("scene") or {}
     index = scene.get("scene_index")
     shot = shown.get("kind") != "still"
-    prompt = _DIRECTOR_LOOK_INSTRUCTIONS.format(
+    instructions = _CAP_CHOICE_INSTRUCTIONS if cap else _DIRECTOR_LOOK_INSTRUCTIONS
+    prompt = instructions.format(
         scene=index,
         title=str(shown.get("film") or "")[:80],
-        what="clips" if shot else "stills",
+        what=("motion" if cap else "clips") if shot else ("picture" if cap else "stills"),
         gate="the clip QC" if shot else "the stills gate",
         layout=_LOOK_LAYOUT["shot" if shot else "still"],
-    ) + wrap_in_inert_boundary(json.dumps(shown, ensure_ascii=False, default=str), "director-look")
+    ) + wrap_in_inert_boundary(
+        json.dumps(shown, ensure_ascii=False, default=str),
+        "director-cap-choice" if cap else "director-look",
+    )
+    said = count(len(candidates), "variantă", "variante")
     try:
         parsed, first, second = structured_run(
             engine,
             registry,
             director_id,
-            DIRECTOR_LOOK_TASK,
+            DIRECTOR_CAP_CHOICE_TASK if cap else DIRECTOR_LOOK_TASK,
             prompt,
-            DIRECTOR_LOOK_TEMPLATE_VERSION,
+            DIRECTOR_CAP_CHOICE_TEMPLATE_VERSION if cap else DIRECTOR_LOOK_TEMPLATE_VERSION,
             correlation,
-            look_schema(len(candidates)),
+            look_schema(len(candidates), must_choose=cap),
             "",
             summary=(
-                f"Privesc {count(len(candidates), 'variantă', 'variante')} ale scenei {index} "
-                "refuzate de poartă și decid singură."
+                f"Privesc {said} ale scenei {index}, după plafonul de randări, și o aleg pe "
+                "cea mai apropiată de plan."
+                if cap
+                else f"Privesc {said} ale scenei {index} refuzate de poartă și decid singură."
             ),
             max_tokens=4000,
             extra={"images": list(images)},
@@ -1767,8 +1805,12 @@ def review_bought_pictures(
             session,
             memory_class="AGENT_OPINION",
             content=(
-                f"Pictures refused by the gate, scene {index} of “{shown.get('film')}”: "
-                f"{parsed.decision}"
+                (
+                    f"Takes past the renders cap, scene {index} of “{shown.get('film')}”: "
+                    if cap
+                    else f"Pictures refused by the gate, scene {index} of “{shown.get('film')}”: "
+                )
+                + f"{parsed.decision}"
                 + (f" candidate {parsed.candidate}" if parsed.candidate else "")
                 + f" — {parsed.reason}"
             ),

@@ -1303,6 +1303,18 @@ def _words(
         again = f" la încercarea {attempt}" if isinstance(attempt, int) and attempt > 1 else ""
         if str(payload.get("accepted_by") or "") == "director_look":
             return _kept_clip_words(payload, where, film)
+        if payload.get("accepted_under_cap") and not payload.get("passed"):
+            # Kept under the Owner's renders cap: clip QC refused it, it stays (STUB-003).
+            who = (
+                "Directoarea l-a ales"
+                if payload.get("chosen_by") == "director"
+                else "studioul l-a păstrat"
+            )
+            return (
+                f"Clipul{where}{film} nu a trecut controlul, dar rămâne sub plafonul de "
+                f"randări: {who}.",
+                f"Clipul{where} rămâne sub plafon.",
+            )
         if payload.get("passed"):
             return (
                 f"Clipul{where}{film} a trecut controlul{again}.",

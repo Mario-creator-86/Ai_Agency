@@ -283,7 +283,16 @@ def test_a_scene_at_two_stills_is_never_offered_again_even_with_nothing_on_disk(
                 failure_code=None,
                 credits=float(price_still(STILLS_MODEL, STILLS_RESOLUTION, 1)),
             )
+    # A reading of the plan asks nobody: scene 1 has two stills to choose from, so it waits
+    # for the Director's choice, and nothing more is bought for it (STUB-001).
     _bible, scenes = stills_stage._read_scenes(engine, board)
+    one = next(scene for scene in scenes if scene.index == 1)
+    assert one.reuse is None and "Directoarea alege dintre cele 2 imagini" in str(one.hold_ro)
+    plan = stills_stage.stills_plan(engine, board)
+    assert 1 not in plan["to_buy"] and 1 in plan["held"]
+    # Where she may be asked and no model can show her the stills, the studio keeps its own
+    # pick (none passed the gate: the newest).
+    _bible, scenes = stills_stage._read_scenes(engine, board, choose=True)
     one = next(scene for scene in scenes if scene.index == 1)
     assert one.reuse is not None and one.reuse.id == newest
     assert one.reuse.approved_by == assembler.CAP_APPROVER

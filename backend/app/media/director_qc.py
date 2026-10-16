@@ -2652,6 +2652,35 @@ def _file_sha256(path: Path) -> str | None:
     return digest.hexdigest()
 
 
+def scene_look_view(row: StoryboardScene | None, scene: int, kind: str) -> dict[str, Any]:
+    """What she is told of a scene when she looks at its takes: its narration, its intent,
+    its picture prompt, the film's look, the camera move, the characters and what is in frame,
+    the shot plan, and for a shot its motion prompt. Shared by her look at the candidates her
+    repair bought (`look_entries`) and her choice past the renders cap (`cap_choice`)."""
+    package = row.prompt_json if row is not None and isinstance(row.prompt_json, dict) else {}
+    visual = row.visual_prompt if row is not None else ""
+    view: dict[str, Any] = {
+        "scene_index": scene,
+        "narration": _short(row.voiceover_segment if row is not None else "", 300),
+        "intent": _short(visual, 400),
+        "picture_prompt": _short(package.get("still_prompt") or visual, 800),
+        "look": _short(package.get("look_block"), 400) or None,
+        "camera_move": package.get("camera_move"),
+        # The picture prompt can omit these under its character cap. A look that sees only
+        # that truncated text invents the wardrobe from the candidate itself, then later QC
+        # refuses it against the actual character bible.
+        "character_bible": package.get("characters") or [],
+        "in_frame": package.get("in_frame") or [],
+        "shot_plan": {
+            key: package.get(key)
+            for key in ("subject", "action", "camera", "shot_size", "ending_frame")
+        },
+    }
+    if kind != "still":
+        view["motion_prompt"] = _short(package.get("motion_prompt"), 400) or None
+    return view
+
+
 def look_entries(
     engine: Engine, decision: Mapping[str, Any], *, ffmpeg_path: str | None, work_dir: Path
 ) -> list[dict[str, Any]]:
@@ -2704,29 +2733,7 @@ def look_entries(
                     StoryboardScene.scene_index == scene,
                 )
             ).first()
-            package = (
-                row.prompt_json if row is not None and isinstance(row.prompt_json, dict) else {}
-            )
-            visual = row.visual_prompt if row is not None else ""
-            view: dict[str, Any] = {
-                "scene_index": scene,
-                "narration": _short(row.voiceover_segment if row is not None else "", 300),
-                "intent": _short(visual, 400),
-                "picture_prompt": _short(package.get("still_prompt") or visual, 800),
-                "look": _short(package.get("look_block"), 400) or None,
-                "camera_move": package.get("camera_move"),
-                # The picture prompt can omit these under its character cap. A look that
-                # sees only that truncated text invents the wardrobe from the candidate
-                # itself, then later QC refuses it against the actual character bible.
-                "character_bible": package.get("characters") or [],
-                "in_frame": package.get("in_frame") or [],
-                "shot_plan": {
-                    key: package.get(key)
-                    for key in ("subject", "action", "camera", "shot_size", "ending_frame")
-                },
-            }
-            if kind != "still":
-                view["motion_prompt"] = _short(package.get("motion_prompt"), 400) or None
+            view = scene_look_view(row, scene, kind)
             for take in owed:
                 session.expunge(take)
             planned.append((scene, kind, since, owed, view))

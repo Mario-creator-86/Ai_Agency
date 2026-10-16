@@ -16,9 +16,12 @@ for those purchases, and every sentence that states the number read it here. A r
 paid request among the scene's takes of that layer, whatever became of it
 (`assembler._paid_attempts`: a stills request's candidates share its task id; a charged vendor
 failure is one); a request that made nothing and cost nothing is not one. Each montage shot is
-its own storyboard scene, so the cap counts per shot. Past the cap the Director keeps what is
-closest (`stills_stage.settle_scene_under_cap`, `assembler.settle_motion_under_cap`, and her
-local move of a scene no clip can carry, below), and nothing waits for the Owner.
+its own storyboard scene, so the cap counts per shot. Past the cap the scene keeps what it has
+(`stills_stage.settle_scene_under_cap`, `assembler.settle_motion_under_cap`): with two or more
+takes of the layer the Director looks at them once and chooses the one closest to the plan,
+with one it stays, and when she cannot look the studio keeps its own pick and says so
+(`cap_choice`); a scene no clip can carry is shown as its still moved locally (below). Nothing
+waits for the Owner.
 """
 
 from __future__ import annotations
@@ -253,16 +256,18 @@ def at_cap(
 
 # ------------------------------------------------ the Director's local move under the cap
 #
-# Past the cap nothing more of a layer is bought, and the Director keeps what is closest to
-# the plan (the Owner, 2026-10-15: «publicăm cu ce Directoarea alege ca fiind cel mai
-# apropiat»). For a filmed scene whose motion has had its renders, the closest is a clip it
-# has (`assembler.settle_motion_under_cap` keeps it under the cap); when none can carry the
-# scene's span — none on disk, or the closest too short for its words even slowed down — the
-# closest is its approved still moved locally (0 credits), the way his LOCAL_MOVE on the
-# sheet shows one. Her choice is recorded here and read by every reader of his: the motion
-# plan (the scene is LOCAL, never planned), the sheet's and the render's readiness, the
-# fallback gate and film QC. It stands while the scene's motion is at the cap: a cap he
-# raises (STUDIO_RENDERS_PER_LAYER) gives the scene its render back.
+# Past the cap nothing more of a layer is bought, and the scene keeps what it has (the Owner,
+# 2026-10-15: «publicăm cu ce Directoarea alege ca fiind cel mai apropiat»). For a filmed scene
+# whose motion has had its renders, that is a clip it has (`assembler.settle_motion_under_cap`
+# keeps it under the cap: the one it has, or the one the Director chooses among several,
+# `cap_choice`); when none can carry the scene's span — none on disk, or the one kept too short
+# for its words even slowed down — it is its approved still moved locally (0 credits), the way
+# his LOCAL_MOVE on the sheet shows one: the Director's local move under the cap, which the
+# Owner approved by card on 2026-10-16. The move is not a look: it is made when no clip is left
+# to keep. It is recorded here and read by every reader of his: the motion plan (the scene is
+# LOCAL, never planned), the sheet's and the render's readiness, the fallback gate and film QC
+# (which record it apart from his own choices). It stands while the scene's motion is at the
+# cap: a cap he raises (STUDIO_RENDERS_PER_LAYER) gives the scene its render back.
 
 #: {storyboard_id, scene_index, renders, cap, reason_ro} on the storyboard.
 CAP_LOCAL_MOVE_EVENT = "media.cap_local_move"
@@ -294,11 +299,13 @@ def cap_local_moves(session: Session, storyboard_id: str, settings: Any = None) 
 
 
 def cap_local_move_words(scene_index: int, settings: Any = None) -> str:
-    """Her choice, said: the scene's still moved locally, the cap that left nothing else."""
+    """The local move, said as it is made: the cap left no clip that can carry the scene, so
+    its still is shown moved locally — no look, no choice among takes."""
     return (
         f"Scena {scene_index}: mișcarea ei a avut deja {renders_ro(None, settings)}, plafonul "
-        "Proprietarului, și niciun cadru al ei nu acoperă scena; Directoarea o arată ca imagine "
-        "fixă animată local (0 credite), cel mai apropiat de plan, iar filmul merge mai departe."
+        "Proprietarului, și niciun clip al ei nu acoperă scena; scena se arată ca imagine fixă "
+        "animată local (0 credite), singurul lucru care o mai poate acoperi, iar filmul merge "
+        "mai departe (mutarea locală sub plafon, aprobată de Proprietar pe 2026-10-16)."
     )
 
 

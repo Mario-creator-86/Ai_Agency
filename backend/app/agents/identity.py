@@ -81,10 +81,12 @@ STANDING_RULES = (
     "studio to make a picture or a clip again on the same words, and never waste what is "
     "already paid for when it serves the story (the Owner, 2026-10-15).",
     "A picture or a clip of a scene is made at most {renders_times}, the first render "
-    "included. Past that, nothing is made again: the Director looks at everything the scene "
-    "has, chooses what is closest to the plan, and the film is published as it stands; what "
-    "stayed below standard is a lesson for the next film, never a reason to withhold a "
-    "publication (the Owner, 2026-10-15; the number, 2026-10-16).",
+    "included. Past that, nothing is made again: when the scene has more than one take of "
+    "that layer, the Director looks at them and keeps the one closest to the plan (when she "
+    "cannot look, the studio keeps one quality control passed, else the newest); with one "
+    "take, that one stays. The film is published as it stands; what stayed below standard "
+    "is a lesson for the next film, never a reason to withhold a publication (the Owner, "
+    "2026-10-15; the number, 2026-10-16).",
 )
 #: The place in `STANDING_RULES` where the Owner's renders cap is said, filled when the
 #: identity is composed (`standing_rules`): the number is his setting, never written here.
@@ -337,6 +339,9 @@ TASK_CONTEXT: dict[str, TaskContext] = {
         "judges one take against the refusal, the frames and her earlier looks in its data"
     ),
     "director_take_look": _bare("judges the refused candidates whose pictures its data carries"),
+    "director_cap_choice": _bare(
+        "chooses, past the renders cap, among the scene's takes whose pictures its data carries"
+    ),
     "director_film_reasons_read": _bare("reads the film's refusal reasons its data carries"),
     "director_qc_review": TaskContext(
         PROFILE_CRAFT,

@@ -119,6 +119,7 @@ from app.media.assembler import (
     UNJUDGED_DETAIL,
     UNJUDGED_FAILURE_CODE,
     SpendMeter,
+    _file_sha256,
     _record_intent,
     budget_cut,
     classify_vendor_failure,
@@ -151,6 +152,7 @@ from app.media.balance_rule import (
     purchase_stop_ro,
     start_refusal_ro,
 )
+from app.media.cap_choice import CapChoice, choose_under_cap, record_cap_choice
 from app.media.cost_plan import (
     STILL_CANDIDATES,
     STILLS_MODEL,
@@ -211,6 +213,7 @@ from app.providers.runpod.batch import (
     supports_batch,
 )
 from app.providers.runpod.wiring import bind_scene, sync_take_quality
+from app.wording import count as count_ro
 
 #: The Policy Kernel's name for this step, and the sheet step it is bound to.
 STILLS_ACTION = "media.stills_purchase"
@@ -666,11 +669,27 @@ def _still_plan(scene: _Scene, *, faces_forbidden: bool, rules: tuple[str, ...])
     )
 
 
-def _read_scenes(engine: Engine, storyboard_id: str) -> tuple[dict[str, Any], list[_Scene]]:
+def _read_scenes(
+    engine: Engine,
+    storyboard_id: str,
+    *,
+    choose: bool = False,
+    registry: Any | None = None,
+    correlation_id: str = "",
+    ffmpeg_path: str | None = None,
+) -> tuple[dict[str, Any], list[_Scene]]:
     """The film's scenes as the step reads them: each LIVE scene's still identity (its words
     and the reference picture of the character it shows, the identity `assemble_from_takes`
     looks for), its approved still, what was bought and not settled, and what it remembers
-    since the Owner last decided about it (`assembler.scene_memory`)."""
+    since the Owner last decided about it (`assembler.scene_memory`).
+
+    A scene at the Owner's renders cap keeps a still of its own (`_keep_under_renders_cap`):
+    with one on disk, that one. With two or more the Director chooses among them, and only a
+    caller that may ask her does it (``choose``: the free settle of what was bought, the stills
+    step; ``registry`` is hers to look through, and without one the studio keeps its own pick
+    and says so); a reading of the plan (``choose`` False) never calls a model, and holds such
+    a scene with its reason (`choice_reason`) until one of those, or the walk's ladder
+    (`settle_scene_under_cap`), has her choose."""
     from app.agents.editorial import is_serial_film  # noqa: PLC0415 - agents import media
     from app.factual.models import ScriptDraft  # noqa: PLC0415
     from app.media.prompt_agent import incomplete_plan_fields  # noqa: PLC0415
@@ -766,8 +785,9 @@ def _read_scenes(engine: Engine, storyboard_id: str) -> tuple[dict[str, Any], li
             scenes.append(scene)
     # The Owner's renders cap (`renders_cap`) for a scene held after its rounds: its stills
     # made as many times as the cap allows, none approved, the rewrite ladder still turning —
-    # the newest refused still is the scene's picture (approved under the cap) and nothing more
-    # is bought for it (02:04Z, 87c05891 scene 1: the whole episode waited on a fourth). A
+    # a still of its own is the scene's picture (approved under the cap: the one it has, or
+    # the one the Director chooses among several) and nothing more is bought for it (02:04Z,
+    # 87c05891 scene 1: the whole episode waited on a fourth). A
     # scene whose motion has had its renders buys no new picture either: no clip could be made
     # from it. One with nothing of its own left on disk to stand is not bought past the cap:
     # it waits, said so (2026-10-16: «maxim încă o randare»).
@@ -785,7 +805,19 @@ def _read_scenes(engine: Engine, storyboard_id: str) -> tuple[dict[str, Any], li
             motion_full = renders_made(session, storyboard_id, scene.index, "motion") >= cap_now
         if scene.pending or (not motion_full and scene.renders < cap_now):
             continue
-        kept = _keep_under_renders_cap(engine, storyboard_id, scene.index)
+        with Session(engine) as session:
+            candidates = len(_cap_candidates(session, storyboard_id, scene.index))
+        if candidates > 1 and not choose:
+            capped[scene.index] = choice_reason(scene.index, candidates, motion=motion_full)
+            continue
+        kept = _keep_under_renders_cap(
+            engine,
+            storyboard_id,
+            scene.index,
+            registry=registry,
+            correlation_id=correlation_id,
+            ffmpeg_path=ffmpeg_path,
+        )
         if kept is None:
             with Session(engine) as session:
                 his_no = _owner_rejected_still(session, storyboard_id, scene.index)
@@ -1336,7 +1368,10 @@ def _scene_stills(
 ) -> list[SceneTake]:
     """The scene's stills of ``status`` on disk, newest first, without those the Owner
     rejected himself (`assembler.owner_rejected_takes`): a picture he turned down is not used
-    in a film unless he chooses it again, and the renders cap never approves it for him."""
+    in a film unless he chooses it again, and the renders cap never approves it for him. A
+    file that is no longer the one bought (its sha256) is left out too: approved, it could
+    never be the scene's picture (`usable_take` checks the hash), and the walk would settle
+    it again on every pass (the dishonest-code audit of 2026-10-16, SAFE-013)."""
     rows = list(
         session.scalars(
             select(SceneTake)
@@ -1353,33 +1388,29 @@ def _scene_stills(
     return [
         row
         for row in rows
-        if row.id not in his_no and row.path and row.sha256 and Path(row.path).is_file()
+        if row.id not in his_no
+        and row.path
+        and row.sha256
+        and Path(row.path).is_file()
+        and _file_sha256(Path(row.path)) == row.sha256
     ]
 
 
-def _newest_refused(session: Session, storyboard_id: str, scene_index: int) -> SceneTake | None:
-    """The scene's newest still the gate refused that is still on disk: made on the most
-    corrected words, the closest the scene has when the cap stops another render. Never one
-    the Owner rejected himself (`_scene_stills`)."""
-    rows = _scene_stills(session, storyboard_id, scene_index, "REJECTED")
-    return rows[0] if rows else None
-
-
-def _newest_kept(session: Session, storyboard_id: str, scene_index: int) -> SceneTake | None:
-    """What stands as the scene's picture when the cap stops another render: its newest refused
-    still on disk (`_newest_refused`), else its newest paid one on disk that was judged (a
-    runner-up), else its newest still approved on other words that is on disk (the words were
-    rewritten after it; no render of the new ones may be bought), else None. None of them is
-    one the Owner rejected himself (`_scene_stills`)."""
-    refused = _newest_refused(session, storyboard_id, scene_index)
-    if refused is not None:
-        return refused
-    for status in ("PAID", "APPROVED"):
-        for row in _scene_stills(session, storyboard_id, scene_index, status):
-            if row.failure_code == UNJUDGED_FAILURE_CODE:
-                continue
-            return row
-    return None
+def _cap_candidates(session: Session, storyboard_id: str, scene_index: int) -> list[SceneTake]:
+    """Every still of the scene on disk that may stand when the cap stops another render, in
+    the studio's own order (`cap_choice.STUDIO_RULE_RO`: one the gate passed first — a judged
+    runner-up, or one approved on words rewritten since — then the newest): the refused ones,
+    the runner-ups, the ones approved on other words. Never one not judged yet, never one the
+    Owner rejected himself (`_scene_stills`). Past the cap the Director chooses among them
+    (`cap_choice.choose_under_cap`); with one, it stays."""
+    rows = [
+        row
+        for status in ("REJECTED", "PAID", "APPROVED")
+        for row in _scene_stills(session, storyboard_id, scene_index, status)
+        if row.failure_code != UNJUDGED_FAILURE_CODE
+    ]
+    newest_first = sorted(rows, key=lambda row: str(row.created_at or ""), reverse=True)
+    return sorted(newest_first, key=lambda row: 0 if row.status in ("PAID", "APPROVED") else 1)
 
 
 def _owner_rejected_still(session: Session, storyboard_id: str, scene_index: int) -> bool:
@@ -1398,34 +1429,96 @@ def _owner_rejected_still(session: Session, storyboard_id: str, scene_index: int
     return bool(owner_rejected_takes(session, rows))
 
 
+def choice_reason(scene_index: int, candidates: int, *, motion: bool = False) -> str:
+    """Why a scene at the Owner's renders cap with two or more stills of its own on disk waits
+    a moment in a reading of the plan: nothing more is bought for it, and the Director chooses
+    among them where she can be asked (the free settle of what was bought, the stills step,
+    the walk's ladder), never in a reading."""
+    layer = "mișcării" if motion else "imaginii"
+    return (
+        f"Scena {scene_index}: plafonul Proprietarului de {renders_of_ro(layer)} este atins; "
+        "nu se mai cumpără nimic pentru ea, iar Directoarea alege dintre cele "
+        f"{count_ro(candidates, 'imagine', 'imagini')} ale ei pe cea mai apropiată de plan."
+    )
+
+
 def _keep_under_renders_cap(
-    engine: Engine, storyboard_id: str, scene_index: int
+    engine: Engine,
+    storyboard_id: str,
+    scene_index: int,
+    *,
+    registry: Any | None = None,
+    correlation_id: str = "",
+    ffmpeg_path: str | None = None,
+    first: str | None = None,
+    rule_ro: str | None = None,
+    lessons: Sequence[str] = (),
 ) -> SceneTake | None:
-    """The scene's closest still (`_newest_kept`) APPROVED under the Owner's renders cap and
-    returned, detached; None when nothing of it is on disk to stand."""
+    """The still the scene keeps under the Owner's renders cap, APPROVED under it and
+    returned, detached; None when nothing of it is on disk to stand. Its candidates
+    (`_cap_candidates`; ``first`` put first, with ``rule_ro`` saying why: the round's measured
+    closest) go to the Director's one look when there are two or more
+    (`cap_choice.choose_under_cap`); with one it stays; when she cannot choose the studio keeps
+    the first. Her choice, or the studio's, is recorded with the approval."""
+    correlation_id = correlation_id or str(uuid4())
     with Session(engine) as session:
-        newest = _newest_kept(session, storyboard_id, scene_index)
-        take_id = newest.id if newest is not None else None
-        said = str(newest.failure_detail or "") if newest is not None else ""
-    if take_id is None:
+        ids = [str(row.id) for row in _cap_candidates(session, storyboard_id, scene_index)]
+    if first is not None and first in ids:
+        ids = [first, *(take_id for take_id in ids if take_id != first)]
+    choice = choose_under_cap(
+        engine,
+        registry,
+        storyboard_id=storyboard_id,
+        scene_index=int(scene_index),
+        layer="still",
+        take_ids=ids,
+        correlation_id=correlation_id,
+        ffmpeg_path=ffmpeg_path,
+        rule_ro=rule_ro,
+    )
+    if choice is None:
         return None
-    _approve_under_cap(engine, take_id, [said])
+    _approve_under_cap(
+        engine,
+        choice,
+        storyboard_id=storyboard_id,
+        scene_index=int(scene_index),
+        correlation_id=correlation_id,
+        lessons=lessons,
+    )
     with Session(engine) as session:
-        kept = session.get(SceneTake, take_id)
+        kept = session.get(SceneTake, choice.take_id)
         if kept is not None:
             session.expunge(kept)
         return kept
 
 
-def _approve_under_cap(engine: Engine, take_id: str, reasons: list[str]) -> None:
-    """The closest candidate APPROVED under the cap, its refusal cleared and kept as the
-    lesson in its quality note."""
-    left = "; ".join(dict.fromkeys(text for text in reasons if text))[:2500]
+def _approve_under_cap(
+    engine: Engine,
+    choice: CapChoice,
+    *,
+    storyboard_id: str,
+    scene_index: int,
+    correlation_id: str,
+    lessons: Sequence[str] = (),
+) -> None:
+    """The chosen still APPROVED under the cap, its refusal cleared from the take and kept as
+    the lesson in its quality note and on the choice's event (`cap_choice.record_cap_choice`):
+    the note says who chose it and how, never more than happened."""
     with Session(engine) as session, session.begin():
         lock_for_write(session)
-        row = session.get(SceneTake, take_id)
+        row = session.get(SceneTake, choice.take_id)
         if row is None:
             return
+        previous = {
+            "status": row.status,
+            "approved_by": row.approved_by,
+            "failure_code": row.failure_code,
+            "failure_detail": row.failure_detail,
+        }
+        left = "; ".join(
+            dict.fromkeys(text for text in (str(row.failure_detail or ""), *lessons) if text)
+        )[:2500]
         row.status = "APPROVED"
         row.approved_by = CAP_APPROVER
         row.failure_code = None
@@ -1435,9 +1528,21 @@ def _approve_under_cap(engine: Engine, take_id: str, reasons: list[str]) -> None
             row,
             accepted=True,
             reason=(
-                f"Acceptată sub plafonul Proprietarului ({renders_ro()}): cea mai apropiată "
-                f"de plan; ce a rămas sub standard e lecție pentru filmul următor: {left}"
+                f"Acceptată sub plafonul Proprietarului ({renders_ro()}): {choice.words_ro}"
+                + (
+                    f" Ce a rămas sub standard e lecție pentru filmul următor: {left}"
+                    if left
+                    else ""
+                )
             )[:4000],
+        )
+        record_cap_choice(
+            session,
+            choice,
+            storyboard_id=storyboard_id,
+            scene_index=scene_index,
+            correlation_id=correlation_id,
+            previous=previous,
         )
 
 
@@ -1580,27 +1685,32 @@ def settle_scene_under_cap(
     correlation_id: str,
     *,
     act: bool = True,
+    registry: Any | None = None,
+    ffmpeg_path: str | None = None,
 ) -> bool:
     """A stopped scene whose picture, or whose motion, has had its renders (`renders_cap`),
     whatever stopped it: what it has stands under the Owner's cap, before any rewrite, and
     nothing is bought or left to him (2026-10-15: «publicăm cu ce Directoarea alege ca fiind
     cel mai apropiat»; 2026-10-16: «maxim încă o randare»).
 
-    Its picture: with no still approved for its words as they are now, its closest still on
-    disk (`_newest_kept`: the newest refused, a judged runner-up, one approved on older words;
-    never one the Owner rejected himself) is approved under the cap. A motion at its cap
-    settles the picture whatever the picture's count: a new one could not be animated. Its
-    motion, at its cap: the closest clip it has stands, else its still moved locally
+    Its picture: with no still approved for its words as they are now, a still of its own on
+    disk is approved under the cap (`_keep_under_renders_cap`): the one it has, or the one the
+    Director chooses among several by looking at them through ``registry``
+    (`cap_choice.choose_under_cap`), or, when she cannot, the studio's own pick, said as the
+    studio's; never one the Owner rejected himself. A motion at its cap settles the picture
+    whatever the picture's count: a new one could not be animated. Its motion, at its cap: a
+    clip it has stands (chosen the same way), else its still moved locally
     (`assembler.settle_motion_under_cap`). A render still pending (at the vendor, or collected
-    and not judged) is judged first, never passed over. Returns True when something was
-    settled (05:20Z, 7c26a7ce scenes 1-2: the still under the cap, three clips refused for it,
-    and every walk stopped at «Directoarea nu a putut încă rescrie» — the ladder ran before
-    the cap could act).
+    and not judged) is judged first, never passed over. Returns True only when something
+    changed — a still now approved for the scene, a clip kept, a local move — so a walk never
+    turns on a scene it cannot move (05:20Z, 7c26a7ce scenes 1-2: the still under the cap,
+    three clips refused for it, and every walk stopped at «Directoarea nu a putut încă
+    rescrie» — the ladder ran before the cap could act).
 
-    ``act=False`` writes nothing and says whether it would settle something: only such a
-    scene is said to be the Director's to settle under the cap (`runbook.stages._held_words`);
-    one it cannot settle (a layer at the cap with nothing to keep, or a stop the cap did not
-    make) is not."""
+    ``act=False`` writes nothing, calls no model, and says whether it would settle something:
+    only such a scene is said to be the Director's to settle under the cap
+    (`runbook.stages._held_words`); one it cannot settle (a layer at the cap with nothing to
+    keep, or a stop the cap did not make) is not."""
     from app.media.assembler import (  # noqa: PLC0415
         scene_approved_still,
         settle_motion_under_cap,
@@ -1625,12 +1735,33 @@ def settle_scene_under_cap(
     if pending is None and scene_approved_still(engine, storyboard_id, scene_index) is None:
         if not act:
             with Session(engine) as session:
-                if _newest_kept(session, storyboard_id, scene_index) is not None:
+                if _cap_candidates(session, storyboard_id, scene_index):
                     return True
         else:
-            settled = _keep_under_renders_cap(engine, storyboard_id, scene_index) is not None
+            kept = _keep_under_renders_cap(
+                engine,
+                storyboard_id,
+                scene_index,
+                registry=registry,
+                correlation_id=correlation_id,
+                ffmpeg_path=ffmpeg_path,
+            )
+            # A change only when the scene now has its picture: a still approved that could
+            # not be the scene's would be approved again on every walk (SAFE-013).
+            settled = (
+                kept is not None
+                and scene_approved_still(engine, storyboard_id, scene_index) is not None
+            )
     if motion_full:
-        moved = settle_motion_under_cap(engine, storyboard_id, scene_index, correlation_id, act=act)
+        moved = settle_motion_under_cap(
+            engine,
+            storyboard_id,
+            scene_index,
+            correlation_id,
+            act=act,
+            registry=registry,
+            ffmpeg_path=ffmpeg_path,
+        )
         settled = moved or settled
     return settled
 
@@ -1809,14 +1940,28 @@ def _settle_round(
         confirmed = looked.confirmed
         if _at_renders_cap(engine, storyboard_id, scene.index):
             # The Owner's cap (`renders_cap`): its stills made, none passed, her look let none
-            # stand — the closest candidate is the scene's picture and nothing more is bought.
-            take_id, report = _closest(verdicts)
-            _approve_under_cap(engine, take_id, [*report.reasons_ro, *confirmed])
-            end = _RoundEnd(
-                take_id=take_id, report=report, approved_by=CAP_APPROVER, confirmed=confirmed
+            # stand — nothing more is bought, and a still of the scene stands as its picture:
+            # the one the Director chooses among its stills on disk, this round's and earlier
+            # ones' (`_keep_under_renders_cap`); when she cannot choose, the studio keeps the
+            # round's measured closest (`_closest`).
+            measured, _report = _closest(verdicts)
+            kept = _keep_under_renders_cap(
+                engine,
+                storyboard_id,
+                scene.index,
+                registry=registry,
+                correlation_id=correlation_id,
+                first=measured,
+                rule_ro="cea cu cele mai puține abateri măsurate în runda aceasta",
+                lessons=confirmed,
             )
-            _after_approval(engine, storyboard_id, scene, end, correlation_id)
-            return end
+            if kept is not None:
+                report = next((rep for take, rep in verdicts if take == kept.id), None)
+                end = _RoundEnd(
+                    take_id=kept.id, report=report, approved_by=CAP_APPROVER, confirmed=confirmed
+                )
+                _after_approval(engine, storyboard_id, scene, end, correlation_id)
+                return end
         if step.action in ("reroll", "needs_owner") and any(
             report.violations for report in reports
         ):
@@ -1997,7 +2142,16 @@ def settle_stills(
     fix_check.read_film_reasons(
         engine, registry, storyboard_id=storyboard_id, correlation_id=correlation_id
     )
-    bible, scenes = _read_scenes(engine, storyboard_id)
+    # A scene at the renders cap with stills of its own to choose from is settled here too,
+    # free: the Director chooses (`_read_scenes` with ``choose``).
+    bible, scenes = _read_scenes(
+        engine,
+        storyboard_id,
+        choose=True,
+        registry=registry,
+        correlation_id=correlation_id,
+        ffmpeg_path=ffmpeg_path,
+    )
     results: list[dict[str, Any]] = []
     for scene in scenes:
         if scene.kind != LIVE_KIND or scene.reuse is not None or not scene.pending:
@@ -2645,7 +2799,14 @@ def run_stills_stage(
     fix_check.read_film_reasons(
         engine, registry, storyboard_id=storyboard_id, correlation_id=correlation_id
     )
-    bible, scenes = _read_scenes(engine, storyboard_id)
+    bible, scenes = _read_scenes(
+        engine,
+        storyboard_id,
+        choose=True,
+        registry=registry,
+        correlation_id=correlation_id,
+        ffmpeg_path=ffmpeg_path,
+    )
     live = [scene for scene in scenes if scene.kind == LIVE_KIND]
     to_buy = {int(index) for index in plan["to_buy"]}
 
@@ -2901,8 +3062,16 @@ def run_stills_stage(
                 # The Owner's renders cap, counted again before every request (2026-10-16:
                 # «maxim încă o randare»): a charged vendor failure is a render too, so the
                 # technical retry after one is not bought past the cap. What the scene has
-                # stands under it (its closest still on disk), else nothing more is bought.
-                kept = _keep_under_renders_cap(engine, storyboard_id, scene.index)
+                # stands under it (the still it has, or the one the Director chooses among its
+                # stills on disk), else nothing more is bought.
+                kept = _keep_under_renders_cap(
+                    engine,
+                    storyboard_id,
+                    scene.index,
+                    registry=registry,
+                    correlation_id=correlation_id,
+                    ffmpeg_path=ffmpeg_path,
+                )
                 if kept is None:
                     with Session(engine) as session:
                         his_no = _owner_rejected_still(session, storyboard_id, scene.index)

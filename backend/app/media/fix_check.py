@@ -303,7 +303,9 @@ def _approved_still_after(session: Session, storyboard_id: str, scene: int, mome
 
 
 def _passing_clip_after(session: Session, storyboard_id: str, scene: int, moment: Any) -> bool:
-    """Whether a clip made after ``moment`` was accepted: his approval, or clip QC's pass."""
+    """Whether a clip made after ``moment`` was accepted: his approval, or clip QC's pass. A
+    clip only kept under the Owner's renders cap (`assembler.CAP_VERDICT`) did not pass and
+    closes nothing (the dishonest-code audit of 2026-10-16, STUB-003)."""
     from app.media.assembler import SHOT_TAKE_KINDS, clip_qc_of  # noqa: PLC0415 - a large module
 
     for row in session.scalars(

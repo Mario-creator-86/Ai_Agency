@@ -1359,13 +1359,16 @@ def evaluate_media_qc(
 
         # 2e. Motion QC — which LIVE scenes the film shows as a still. In PRODUCTION none may
         #     be, unless the Owner chose a locally animated still for that scene on the
-        #     sheet: the old ceiling of half the scenes let the Nepal film's two stills
-        #     through. In TEST two motion scenes are the policy and the rest push by design,
-        #     so the old ceiling only warns there. Cards are composed, never filmed.
+        #     sheet, or the Director moved it locally past his renders cap (no clip of it can
+        #     carry it): the old ceiling of half the scenes let the Nepal film's two stills
+        #     through. The two are recorded apart: his choices are his alone. In TEST two
+        #     motion scenes are the policy and the rest push by design, so the old ceiling
+        #     only warns there. Cards are composed, never filmed.
+        owner_choices: set[int] = set()
+        cap_choices: set[int] = set()
         if render_job is not None:
-            owner_choices = chosen_local_moves(session, render_job.storyboard_id)
-        else:
-            owner_choices = set()
+            owner_choices = owner_local_moves(session, render_job.storyboard_id)
+            cap_choices = cap_local_moves_of(session, render_job.storyboard_id)
         if not manifest.get("motion") and not manifest.get("scenes"):
             manifest_for_motion: dict[str, Any] = {"motion": {"scenes": len(storyboard_scenes)}}
         else:
@@ -1374,6 +1377,7 @@ def evaluate_media_qc(
             manifest_for_motion,
             environment=environment,
             owner_choices=owner_choices,
+            cap_choices=cap_choices,
             settings=settings,
         )
         if not motion["passed"]:
@@ -2553,12 +2557,15 @@ class ClipRetry:
 
 def clip_capped_words(scene: int) -> str:
     """Why a refused clip buys no retry once the scene's motion has had its renders: the
-    Owner's cap, its number read now, and what happens instead (the Director keeps the
-    closest clip, `assembler._keep_clip_under_cap`)."""
+    Owner's cap, its number read now, and what happens instead (a clip of the scene is kept
+    under the cap, `assembler._keep_clip_under_cap`: the one it has, the one the Director
+    chooses among several, or the studio's own pick when she cannot, `cap_choice`)."""
+    from app.media.cap_choice import CAP_KEEPS_RO  # noqa: PLC0415 - media reads the agents
+
     return (
         f"Scena {scene}: clipul a picat controlul, iar plafonul Proprietarului "
-        f"({renders_of_ro('mișcării')}) este atins; nu se mai cumpără o reluare: Directoarea "
-        "păstrează cel mai apropiat cadru."
+        f"({renders_of_ro('mișcării')}) este atins; nu se mai cumpără o reluare: "
+        f"{CAP_KEEPS_RO}."
     )
 
 
@@ -3001,14 +3008,21 @@ def owner_local_moves(session: Session, storyboard_id: str) -> set[int]:
     return chosen
 
 
-def chosen_local_moves(session: Session, storyboard_id: str) -> set[int]:
-    """The scenes the film may show as a locally animated still: the Owner's own choices
-    (`owner_local_moves`) and the Director's past his renders cap, while it stands
-    (`renders_cap.cap_local_moves`: the scene's motion had its renders and no clip of it can
-    carry the scene — his rule of 2026-10-15, the film is published with what is closest)."""
+def cap_local_moves_of(session: Session, storyboard_id: str) -> set[int]:
+    """The scenes the Director moved locally past the Owner's renders cap, while the move
+    stands (`renders_cap.cap_local_moves`: the scene's motion had its renders and no clip of
+    it can carry the scene — his rule of 2026-10-15, the film is published with what it has)."""
     from app.media.renders_cap import cap_local_moves  # noqa: PLC0415 - it reads the assembler
 
-    return owner_local_moves(session, storyboard_id) | cap_local_moves(session, storyboard_id)
+    return cap_local_moves(session, storyboard_id)
+
+
+def chosen_local_moves(session: Session, storyboard_id: str) -> set[int]:
+    """The scenes the film may show as a locally animated still: the Owner's own choices
+    (`owner_local_moves`) and the Director's past his renders cap (`cap_local_moves_of`).
+    Their union, for a reader that only asks whether a still is allowed; who chose which is
+    read from the two apart (`fallback_verdict`)."""
+    return owner_local_moves(session, storyboard_id) | cap_local_moves_of(session, storyboard_id)
 
 
 def fallback_verdict(
@@ -3016,12 +3030,17 @@ def fallback_verdict(
     *,
     environment: str,
     owner_choices: set[int],
+    cap_choices: set[int] | None = None,
     settings: Any | None = None,
 ) -> dict[str, Any]:
     """Whether the film's stills are allowed. In PRODUCTION no LIVE scene may be a still
-    unless the Owner chose a locally animated still for that very scene; no setting loosens
-    it. In TEST stills are the studio's own policy, so the old ceiling (the setting, else half
-    the scenes) only warns."""
+    unless the Owner chose a locally animated still for that very scene (``owner_choices``),
+    or the Director moved it locally past his renders cap because no clip of it could carry it
+    (``cap_choices``, `renders_cap.cap_local_moves`; his card of 2026-10-16); no setting
+    loosens it. The record keeps the two apart: ``owner_chosen`` lists his choices only,
+    ``director_cap_chosen`` hers under the cap (the dishonest-code audit of 2026-10-16,
+    STUB-004: her moves were listed as his). In TEST stills are the studio's own policy, so
+    the old ceiling (the setting, else half the scenes) only warns."""
     recorded = production.get("motion")
     motion: dict[str, Any] = recorded if isinstance(recorded, dict) else {}
     listed_scenes = production.get("scenes")
@@ -3031,15 +3050,19 @@ def fallback_verdict(
     listed = live_fallback_scenes(production)
     count = len(listed) if listed is not None else int(motion.get("fallback_scenes") or 0)
     fallbacks = listed or []
-    chosen = sorted(index for index in fallbacks if index in owner_choices)
-    unchosen = sorted(index for index in fallbacks if index not in owner_choices)
+    capped = cap_choices or set()
+    his = sorted(index for index in fallbacks if index in owner_choices)
+    hers = sorted(index for index in fallbacks if index in capped and index not in owner_choices)
+    chosen = sorted({*his, *hers})
+    unchosen = sorted(index for index in fallbacks if index not in chosen)
     record: dict[str, Any] = {
         "environment": environment,
         "scenes": total,
         "motion_scenes": moving,
         "fallback_scenes": count,
         "live_fallbacks": fallbacks,
-        "owner_chosen": chosen,
+        "owner_chosen": his,
+        "director_cap_chosen": hers,
         "unchosen": unchosen,
         "warning": None,
         "reason_ro": None,
@@ -3053,9 +3076,11 @@ def fallback_verdict(
                 f"{unexplained} scene filmate"
             )
             record["reason_ro"] = (
-                f"{named}: imagine fixă (fallback) fără alegerea Proprietarului. În PRODUCȚIE "
+                f"{named}: imagine fixă (fallback) pe care n-a ales-o nimeni. În PRODUCȚIE "
                 "nicio scenă filmată nu rămâne imagine fixă decât dacă Proprietarul a ales "
-                "„imagine fixă animată local” pentru ea pe foaia de filmare."
+                "„imagine fixă animată local” pentru ea pe foaia de filmare, sau dacă "
+                "Directoarea a mutat-o local după plafonul de randări, când niciun clip al ei "
+                "nu o poate acoperi."
             )
         return record
     ceiling = getattr(settings, "max_fallback_scenes", None)
@@ -3079,14 +3104,17 @@ def require_chosen_fallbacks(
     settings: Any | None = None,
 ) -> dict[str, Any]:
     """The assembler's gate: raise FallbackNotChosen before a PRODUCTION film is assembled
-    with a LIVE scene nobody chose to show as a still: the Owner on the sheet, or the Director
-    past his renders cap (`chosen_local_moves`). Returns the verdict."""
+    with a LIVE scene nobody chose to show as a still: the Owner on the sheet
+    (`owner_local_moves`), or the Director past his renders cap (`cap_local_moves_of`), each
+    recorded as whose it is. Returns the verdict."""
     with Session(engine) as session:
-        chosen = chosen_local_moves(session, storyboard_id)
+        his = owner_local_moves(session, storyboard_id)
+        hers = cap_local_moves_of(session, storyboard_id)
     verdict = fallback_verdict(
         production,
         environment=environment or studio_environment(engine),
-        owner_choices=chosen,
+        owner_choices=his,
+        cap_choices=hers,
         settings=settings,
     )
     if not verdict["passed"]:
