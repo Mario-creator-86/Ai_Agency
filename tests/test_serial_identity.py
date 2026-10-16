@@ -251,7 +251,7 @@ def test_the_brief_states_the_shows_tone_and_asks_for_a_logline(engine, staffed,
     assert "THE SHOW\n" + SHOW_TONE in prompt
     assert "deadpan workplace comedy" in SHOW_TONE and "take their jobs" in SHOW_TONE
     assert '"logline":' in prompt
-    assert episode["continuity"]["template_version"] == EPISODE_TEMPLATE_VERSION == "episode-v7"
+    assert episode["continuity"]["template_version"] == EPISODE_TEMPLATE_VERSION == "episode-v8"
     assert episode["continuity"]["logline"] == LOGLINE
 
 

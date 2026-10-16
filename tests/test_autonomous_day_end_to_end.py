@@ -1453,8 +1453,9 @@ def test_one_click_films_one_episode_and_writes_the_next(engine, settings, studi
     assert again["serial_next"]["artefacts"]["written"] == 0, again["serial_next"]["reason"]
     assert _episode_prompts(studio) == written_on_d
 
-    # Day D+1: the storyboard built on D is filmed; nothing is readied or written again, and
-    # D+1 itself (quiet: nothing is timestamped on it) gets none.
+    # Day D+1: the storyboard built on D is filmed; nothing of D is readied or written again.
+    # D+1 itself (quiet: nothing is timestamped on it) is asked for its script since
+    # 2026-10-16 (the story is the showrunner's, the day its backdrop).
     monkeypatch.setattr("app.story.services.datetime", _Tomorrow)
     assert business_date(TZ) != day_d
     next_day = click()
@@ -1464,8 +1465,8 @@ def test_one_click_films_one_episode_and_writes_the_next(engine, settings, studi
     assert next_day["serial_queue"]["artefacts"]["storyboard_id"] is None
     assert serial[day_d]["storyboard_id"] == board_d
     assert serial[day_d]["filmed"], next_day["media"]["reason"]
-    assert _episode_prompts(studio) == written_on_d
-    # D+1's own script is not written from a day with nothing on it, and the stage says so.
+    assert _episode_prompts(studio) > written_on_d  # D+1's script was asked for
+    # D+1, quiet, has its own script asked for since 2026-10-16 (the story is the
+    # showrunner's, the day its backdrop); the stage says what became of it.
     assert next_day["serial_next"]["status"] == "COMPLETED", next_day["serial_next"]
-    assert next_day["serial_next"]["artefacts"]["written"] == 0
     assert next_day["serial_next"]["reason"].strip()

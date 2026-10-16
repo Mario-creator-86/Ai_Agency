@@ -194,7 +194,9 @@ def storyboard_from_episode(engine: Engine, episode_id: str, correlation_id: str
         spoken = [spoken_text(said) for said in lines]
         dialogue = "\n\n".join(spoken)
         words = len(dialogue.split())
-        target_seconds = max(30, min(75, round(words / WORDS_PER_SECOND)))
+        # 90-180 s since 2026-10-16 (the Owner's format; the review holds the words under
+        # the Short's wall).
+        target_seconds = max(90, min(180, round(words / WORDS_PER_SECOND)))
         # The montage (the Owner, 2026-10-16): a beat cut into shots with its dialogue — one
         # per speaker's run, a reaction shot on the listener when a run is long — each an
         # ordinary scene of the storyboard and of the script's `scenes_json`, tagged with the
@@ -247,7 +249,7 @@ def storyboard_from_episode(engine: Engine, episode_id: str, correlation_id: str
                 # The beat this shot was cut from, and which of its shots it is.
                 "beat": (
                     beat_tag(cut["beat"], cut["shot"], cut["of"], cut.get("size"), on=cut.get("on"))
-                    if int(cut["of"]) > 1
+                    if int(cut["of"]) > 1 or cut.get("size")
                     else None
                 ),
             }
@@ -360,7 +362,7 @@ def storyboard_from_episode(engine: Engine, episode_id: str, correlation_id: str
                 size = serial_shot_size(beat.get("part"), cut["beat"], len(speakers))
             tag = (
                 beat_tag(cut["beat"], cut["shot"], cut["of"], size, on=cut.get("on"))
-                if int(cut["of"]) > 1
+                if int(cut["of"]) > 1 or cut.get("size")
                 else None
             )
             session.add(

@@ -2177,3 +2177,15 @@ No provider was called, no run was queued, no credit was spent, and
   walk claimed at 06:05:52Z, twelve seconds later, was cut by the stop: the boundary and the
   stop must be one step (`restart.py` taking a lock the worker respects, or the stop refusing
   while a FILM_CONTINUE is claimed), not a check followed by a stop.
+- 2026-10-16 08:00Z — the Owner's format, open after the serial's v8 and the 160 s short:
+  (a) the architecture's data model (11_DATA_MODEL) still documents 60/70 s for `shorts_max_seconds`
+  (migration 0058 raised them to 180; decision logged) — update the text and its index hash;
+  (b) the narrator voice of the serial is the Organization default, the same voice a character
+  without a voice falls back to — a dedicated narrator voice in the OFFICE_SERIAL channel's
+  `series_rules_json["office_serial"]["voice"]` is the Owner's choice (a card); (c) measure the
+  first 160 s short and the first v8 episode: cost per film (estimate 7-8 USD with montage),
+  QC length, how many shots; (d) the factual writer's schema still caps a scene at 800
+  characters and `narration_budget` sizes scenes at 15 words — fine at 160 s (about 28 scenes,
+  `MAX_STORY_SCENES` 30), revisit after the first film; (e) `test_readiness::
+  test_a_daily_budget_below_one_film_says_the_first_film_is_refused` fails since the film
+  ceiling follows the daily budget (not the format work).

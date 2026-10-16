@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-16 — The serial's v8 form
+
+- The serial's v8 form (the Owner, 2026-10-16): a narrator opens (where, who, what is at stake) and closes; 250-430 spoken words over 90-175 s in whole sentences; the story is the showrunner's and the real day its backdrop (citations optional, a quiet day told); the review keeps the truth rule for studio facts and the 2-4 cast, the length ceiling is the Short's wall, the floor, the narration and the crowding are recommendations; the montage gives the narrator wide shots of its own.
+
 ## 2026-10-16 — The Owner's format, first increment
 
 - The Owner's format (2026-10-16): shorts 60-180 s aiming at 160 (`target_video_seconds`, `MAX_SHORT_SECONDS`, `MAX_STORY_SCENES` 30), the channels' cap 180 s (migration 0058), no punch-in (`second_framing.enabled` false), a 0.4 s breath after every shot's words kept whatever the plan said; the writer's brief asks for a story a stranger can follow from its first seconds.

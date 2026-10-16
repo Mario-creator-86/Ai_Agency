@@ -100,7 +100,9 @@ def test_an_idle_studio_writes_nothing_and_says_so(engine, staffed, settings, mo
 
     queue, _next = a_click(engine, settings)
 
-    named(queue, "liniștită")
+    # A quiet day is told too (2026-10-16): asked, told it was quiet, the non-answer named.
+    named(queue, "respins")
+    assert "liniștită" not in queue["reason"] and seen and "A quiet day" in seen[0]
     assert queue["artefacts"]["written"] == 0
     # Today holds only the seeding's own events (the workforce and the channels are created
     # today), so tomorrow's script is the only thing the click may write; nothing is filmed
@@ -128,8 +130,9 @@ def test_a_day_of_routine_alone_is_a_quiet_day_to_the_stage(engine, staffed, set
 
     outcome = run_serial_stage(engine, registry(), settings)
 
-    named(outcome, "liniștită")
-    assert outcome["artefacts"]["written"] == 0 and seen == []
+    # Routine alone is still a quiet day to the story, and a quiet day is told (2026-10-16).
+    named(outcome, "respins")
+    assert outcome["artefacts"]["written"] == 0 and "A quiet day" in seen[0]
 
 
 # ---------------------------------------------------------------------- the model --
@@ -158,7 +161,9 @@ def test_the_old_schema_without_labels_is_refused_twice_and_the_day_named(
 
     outcome = run_serial_stage(engine, registry(), settings)
 
-    named(outcome, "Episod respins", "formatul")
+    # Lines with no name are the Narrator's since 2026-10-16; the answer is still not an
+    # episode (no plan for the next one) and is refused twice, the day named.
+    named(outcome, "Episod respins")
     assert outcome["artefacts"]["refused"] == 2 and len(seen) == 2
     # The retry was told why and shown what it wrote.
     assert "YOUR PREVIOUS ANSWER WAS REFUSED" in seen[1]
@@ -235,9 +240,11 @@ def test_a_romanian_episode_is_rejected_by_the_computed_check_and_named(
     assert storyboard_count(engine) == 0
 
 
-def test_one_event_stretched_over_every_beat_is_rejected_and_named(
+def test_one_event_carrying_every_beat_is_shown_to_the_director(
     engine, staffed, settings, monkeypatch
 ):
+    """Since 2026-10-16 the story is the showrunner's and one real event may carry it: the
+    crowding is measured and shown to the Director, who decides; nothing refuses it."""
     _, ids = letters_day(engine, YESTERDAY_NOON())
     beats = beats_for([ids[0]], [SARAH, KAEL])
     reviewed: list[str] = []
@@ -247,8 +254,8 @@ def test_one_event_stretched_over_every_beat_is_rejected_and_named(
 
     outcome = run_serial_stage(engine, registry(), settings)
 
-    named(outcome, "respins de Director", "un singur eveniment")
-    assert reviewed == [] and storyboard_count(engine) == 0
+    named(outcome)
+    assert len(reviewed) == 1
 
 
 # ------------------------------------------------------------------- the calendar --
@@ -342,8 +349,14 @@ def test_the_brief_asks_for_enough_beats_to_reach_its_own_length(engine, staffed
     write_episode(engine, registry(), _log_id(engine, business_date(TZ)))
 
     (prompt,) = seen
-    floor = -(-MIN_SECONDS * WORDS_PER_SECOND // WORDS_PER_BEAT[1])
-    assert f"{int(floor)} to 8 beats" in prompt, prompt[:900]
+    from app.story.services import EPISODE_WORDS, MAX_BEATS, MIN_BEATS
+
+    # The fewest beats the brief asks for can reach its own word floor; the most can reach
+    # its ceiling.
+    assert MIN_BEATS * WORDS_PER_BEAT[1] >= EPISODE_WORDS[0]
+    assert MAX_BEATS * WORDS_PER_BEAT[1] >= EPISODE_WORDS[1]
+    assert MIN_SECONDS * WORDS_PER_SECOND <= EPISODE_WORDS[1]
+    assert f"{MIN_BEATS} to {MAX_BEATS} beats" in prompt, prompt[:900]
     assert NEXT["premise"] not in prompt  # no plan was handed: this is the first episode
 
 

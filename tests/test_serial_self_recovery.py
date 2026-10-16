@@ -43,7 +43,7 @@ from app.runbook.stages import serial_films_due
 from app.services import append_event, utc_now
 from app.story.lines import NameBook
 from app.story.models import DailyStudioLog, StoryEpisode
-from app.story.review import beat_clip_seconds, episode_checks, review_episode
+from app.story.review import beat_clip_seconds, episode_checks, failed_rules, review_episode
 from app.story.serial_stage import (
     MAX_DRAFTS_PER_DAY,
     run_serial_next_stage,
@@ -152,7 +152,7 @@ def answer_to(prompt: str, obedient: bool, title: str = "The Cut Runs Long") -> 
                     {"speaker": speakers[index % len(speakers)], "text": SPOKEN[0]},
                     {"speaker": speakers[(index + 1) % len(speakers)], "text": SPOKEN[1]},
                 ],
-                "event_ids": [cited[index % len(cited)]["id"]],
+                "event_ids": [cited[index % len(cited)]["id"]] if cited else [],
             }
         )
     return json.dumps(
@@ -314,7 +314,7 @@ def test_six_speakers_are_asked_again_with_the_reasons_and_the_obedient_draft_ke
     assert speakers == set(_listed(retry, "SPEAKERS")[:2])
     assert episode["continuity"]["write_checks"]["failed"] == []
     assert "vorbesc 6 personaje" in episode["continuity"]["write_checks"]["first_refusal"]
-    assert all(check["passed"] for check in checks_of(engine, episode["id"]).values())
+    assert failed_rules(checks_of(engine, episode["id"])) == []
 
 
 def test_a_draft_that_still_fails_is_kept_and_the_review_names_the_same_reasons(
@@ -336,8 +336,9 @@ def test_a_draft_that_still_fails_is_kept_and_the_review_names_the_same_reasons(
 
     assert review["verdict"] == "FAIL" and review["status"] == "REJECTED"
     assert calls == [] and review["model_used"] is False
-    failed = [name for name, check in review["checks"].items() if not check["passed"]]
-    assert failed == ["cast"]  # the offered speakers steer the writer; the cast rule decides
+    # The offered speakers steer the writer; the cast rule decides (the length floor and the
+    # narration are recommendations, 2026-10-16).
+    assert failed_rules(review["checks"]) == ["cast"]
     assert review["reasons"] == [review["checks"]["cast"]["reason"]]
     assert review["checks"]["cast"]["reason"] in measured["first_refusal"]
     assert len(writer.prompts) == 2
@@ -355,7 +356,13 @@ def test_the_better_of_the_two_answers_is_kept(engine, staffed, monkeypatch):
             text = answer_to(prompt, obedient=False, title="The First Answer")
         else:
             worse = json.loads(answer_to(prompt, obedient=False, title="The Second Answer"))
-            worse["beats"] = worse["beats"][:2]  # short, and no structure: more refusals
+            everyone = list(
+                dict.fromkeys(line["speaker"] for beat in worse["beats"] for line in beat["lines"])
+            )
+            worse["beats"] = worse["beats"][:2]  # no structure: one refusal more
+            worse["beats"][0]["lines"] = [
+                {"speaker": name, "text": SPOKEN[0]} for name in everyone
+            ]  # and still everyone speaks
             text = json.dumps(worse)
         return {"id": str(uuid4()), "status": "SUCCEEDED", "output_text": text}
 
@@ -398,11 +405,11 @@ def test_numbers_said_in_words_and_the_breath_between_speakers_count():
         {"speaker": "Kael (Video Editor)", "text": "Twice."},
     ]
     # "1964" is said as three words: 8 words x 0.40 s, one 0.3 s breath between the two
-    # takes, the estimate's 10 % and the scene's 0.12 s closing breath.
-    assert beat_clip_seconds(lines) == round((8 * 0.40 + 0.3) * 1.10 + 0.12, 2)
+    # takes, the estimate's 10 % and the scene's 0.4 s closing breath (2026-10-16).
+    assert beat_clip_seconds(lines) == round((8 * 0.40 + 0.3) * 1.10 + 0.4, 2)
     # One speaker's two lines are one take: no breath between them.
     alone = [{**line, "speaker": "Sarah (Director)"} for line in lines]
-    assert beat_clip_seconds(alone) == round(8 * 0.40 * 1.10 + 0.12, 2)
+    assert beat_clip_seconds(alone) == round(8 * 0.40 * 1.10 + 0.4, 2)
 
 
 def test_a_beat_longer_than_one_clip_is_refused_and_the_writer_told(engine, staffed, monkeypatch):
@@ -442,7 +449,7 @@ def test_a_beat_longer_than_one_clip_is_refused_and_the_writer_told(engine, staf
     assert checks["filmable"]["limit_seconds"] == 12.5
     assert checks["filmable"]["needed_seconds"][2] > 12.5
     assert episode["continuity"]["write_checks"]["failed"] == ["filmable"]
-    assert "14,0 s" in episode["continuity"]["write_checks"]["first_refusal"]
+    assert "14,3 s" in episode["continuity"]["write_checks"]["first_refusal"]
 
 
 def test_every_beat_inside_one_clip_passes_the_filming_check(engine, staffed, monkeypatch):
@@ -509,8 +516,8 @@ def test_a_day_out_of_drafts_gives_way_to_the_oldest_day_passed_over(
     engine, staffed, settings, monkeypatch
 ):
     older = events_on(engine, NOON_DAYS_AGO(3))
-    for days in (3, 1):
-        close_daily_log(engine, TZ, date_days_ago(days))
+    # No closed day after D-2: a quiet D-1 would be told first since 2026-10-16.
+    close_daily_log(engine, TZ, date_days_ago(3))
     refused_twice(engine, monkeypatch, settings, NOON_DAYS_AGO(2))
     hire(monkeypatch, Writer(unruly=99))
     third = run_serial_stage(engine, registry(), settings)

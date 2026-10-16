@@ -67,6 +67,9 @@ def montage_off_unless_marked(request, monkeypatch):
     montage runs with it on."""
     marked = request.node.get_closest_marker("montage") is not None
     monkeypatch.setenv("STUDIO_MONTAGE_ENABLED", "1" if marked else "0")
+    # The suite's scripts were written for 30-second shorts; production aims at 160 since
+    # 2026-10-16 (`Settings.target_video_seconds`, read from the source by its own test).
+    monkeypatch.setenv("STUDIO_TARGET_VIDEO_SECONDS", "30")
 
 
 @pytest.fixture(autouse=True)

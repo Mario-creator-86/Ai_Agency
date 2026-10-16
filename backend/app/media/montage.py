@@ -245,7 +245,14 @@ def serial_shots(
     groups: list[dict[str, Any]] = []
     for run in runs:
         seconds = _take_seconds(" ".join(str(line.get("text") or "") for line in run["lines"]))
-        if groups and seconds < MIN_TAKE_SECONDS:
+        # The narrator's run (speaker None) is a shot of its own, whole: the voice in off over
+        # the room, never a reaction and never shared with a line in the room.
+        if (
+            groups
+            and seconds < MIN_TAKE_SECONDS
+            and run["speaker"] is not None
+            and groups[-1]["speaker"] is not None
+        ):
             groups[-1]["lines"] = [*groups[-1]["lines"], *run["lines"]]
             if run["speaker"] != groups[-1]["speaker"]:
                 groups[-1]["shared"] = True
@@ -281,13 +288,16 @@ def serial_shots(
     shots: list[dict[str, Any]] = []
     for group, pieces in zip(groups, wanted, strict=True):
         others = [name for name in distinct if name != group["speaker"]]
-        listener = others[0] if others else None
+        listener = others[0] if others and group["speaker"] is not None else None
         run = {"speaker": group["speaker"], "lines": group["lines"]}
         for piece_index, piece in enumerate(
             _split_run(run, pieces) if pieces > 1 else [group["lines"]]
         ):
             reaction = piece_index % 2 == 1 and listener is not None
-            size = "reaction" if reaction else ("two_shot" if group["shared"] else "single")
+            if group["speaker"] is None:
+                size = "establishing"  # the voice in off over the room and its people
+            else:
+                size = "reaction" if reaction else ("two_shot" if group["shared"] else "single")
             shots.append(
                 {
                     "lines": piece,
@@ -300,8 +310,11 @@ def serial_shots(
     if first_beat and shots:
         shots[0]["size"] = "establishing"
     kind = str(part or "").strip().lower()
-    if kind == "button" and shots and shots[-1]["size"] in ("single", "two_shot"):
-        shots[-1]["size"] = "close"
+    if kind == "button":
+        # The last shot in the room is the close-up; a narrator's closing shot stays wide.
+        spoken = [shot for shot in shots if shot["on"] is not None]
+        if spoken and spoken[-1]["size"] in ("single", "two_shot"):
+            spoken[-1]["size"] = "close"
     for i, shot in enumerate(shots, start=1):
         shot["shot"], shot["of"] = i, len(shots)
     return shots

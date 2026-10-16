@@ -60,6 +60,7 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import re
 from typing import Any
 from uuid import uuid4
 
@@ -125,8 +126,11 @@ RUBRIC_FLOOR = 3
 FACTS_BUDGET = 14000
 #: The studio's speaking rate, the same figure the storyboard uses to time a scene.
 WORDS_PER_SECOND = 2.5
-MIN_SECONDS = 45.0
-MAX_SECONDS = 70.0
+#: The episode's length in seconds of speech (the Owner, 2026-10-16: 90-180 s, max 180): the
+#: floor is a recommendation the Director weighs, the ceiling is the Short's wall with the
+#: shots' breaths taken off.
+MIN_SECONDS = 90.0
+MAX_SECONDS = 175.0
 #: Openings that assume the viewer saw yesterday. A first beat that starts with one of these
 #: does not stand alone.
 CONTINUATION_MARKERS = (
@@ -196,25 +200,29 @@ _INSTRUCTIONS = (
     "what the computed checks measured. Every computed rule passed; what the checks only "
     'recommend and this episode is outside of is listed under "recommendations", for you to '
     "decide.\n"
-    "1. Truth. A beat may dramatise its events: jokes, pauses, reactions, compressed talk. "
-    "FAIL the episode if any beat shows an outcome that is not in the event it cites: a "
-    "decision, a verdict, a success or a failure, a publication, a hire or a departure, "
-    "money, an audience, or an ending the event leaves open; or a line that quotes what a "
-    "letter said when its event gives only the letter's subject. Name the beat and the "
-    "outcome in the reasons.\n"
-    "2. The viewer. Does the hook stand alone for someone who has never seen the serial, "
-    "with its first line heard inside the first 3 seconds and not a greeting; is there one "
-    "situation with a turn and a payoff, each beat changing something; does the button land "
-    "as the last words, ideally calling back to the hook; is the humour in the situation "
-    "rather than in explaining the studio.\n"
+    "1. Truth. The story is the showrunner's own (wants, obstacles, turns, jokes); the "
+    "facts about the studio are not. FAIL the episode if any beat invents a studio fact: a "
+    "hire or a departure, a success or a failure of the studio's work, a publication, money, "
+    "an audience, a vendor outage, a decision given to someone other than who made it, an "
+    "ending for anything an event it cites leaves open, or a line that quotes what a letter "
+    "said when its event gives only the letter's subject. Name the beat and the fact in the "
+    "reasons.\n"
+    "2. The viewer. Does the episode open with the Narrator — two or three sentences in off "
+    "that tell a stranger where we are, who is in the room and what is at stake — and close "
+    "with one Narrator sentence after the button (FAIL when either is missing, or when the "
+    "opening does not say where we are and what is at stake); does the hook's first spoken "
+    "line drop into the want or the problem; is there one situation with a turn and a "
+    "payoff, each beat changing something; are the lines whole sentences a stranger follows, "
+    "not telegraphic fragments; is the humour in the situation rather than in explaining "
+    "the studio.\n"
     "3. Voices. Does each speaker sound like their bible (register, cadence, habits, their "
     "own phrases) and like a person, not a status report.\n"
     "4. Continuity. Does it continue or close the open threads it claims to.\n"
     f"5. Recommendations. A beat outside the {WORDS_PER_BEAT[0]}-{WORDS_PER_BEAT[1]} "
-    "spoken-word band is flagged, not refused: the filmable rule has already measured that "
-    "its lines fit one clip. Keep it when it reads well at 2.5 words a second; FAIL only when "
-    "the beat would be cut off or is too fast to follow, naming the beat and its words in the "
-    "notes.\n"
+    "spoken-word band, or an episode under the recommended length, is flagged, not refused: "
+    "the montage cuts a long beat into shots. Keep it when it reads well at 2.5 words a "
+    "second; FAIL only when a beat is too fast to follow or the episode is too thin to be a "
+    "story, naming the beat and its words in the notes.\n"
     "A dramatisation is not a factual film: it makes no claims about the world and needs no "
     "sources, and you do not reject it for that.\n"
     "Score each part 1-5: 1 missing, 3 works, 5 could not be better. A PASS carries all six "
@@ -263,15 +271,12 @@ def _speaking_cast(
                 if name not in acting:
                     acting.append(name)
     low, high = SPEAKING_CAST
-    outsiders = [name for name in speakers if name not in acting] if len(acting) >= low else []
-    silent = [name for name in acting if name not in speakers] if len(acting) < low else []
+    # Since 2026-10-16 the story is the showrunner's and the day its backdrop: who speaks is
+    # the story's choice among the roster (the narrator, speaker None, is never counted);
+    # only the two-to-four rule stands. Who acts in the cited events is measured and shown.
     problems = []
     if not low <= len(speakers) <= high:
         problems.append(f"vorbesc {len(speakers)} personaje; episodul cere între {low} și {high}")
-    if outsiders:
-        problems.append("vorbesc fără să acționeze în evenimentele citate: " + ", ".join(outsiders))
-    if silent:
-        problems.append("nu vorbesc deși acționează în evenimentele citate: " + ", ".join(silent))
     return {
         "passed": not problems,
         "speakers": speakers,
@@ -305,6 +310,81 @@ def _structure(beats: list[dict], locations: list[dict]) -> dict[str, Any]:
     if nowhere:
         problems.append("locuri care nu sunt în studio: " + ", ".join(dict.fromkeys(nowhere)))
     return {"passed": not problems, "parts": parts, "reason": "; ".join(problems)}
+
+
+def _length(beats: list[dict], seconds: float) -> dict[str, Any]:
+    """The episode's beats and seconds of speech. The ceiling (MAX_BEATS, MAX_SECONDS: the
+    Short's wall) refuses; the floor (MIN_SECONDS) is a recommendation the Director weighs
+    (``advisory``), as the words-per-beat band is (2026-10-16)."""
+    within_cap = 0 < len(beats) <= MAX_BEATS and seconds <= MAX_SECONDS
+    short = within_cap and seconds < MIN_SECONDS
+    reason = ""
+    if not within_cap:
+        reason = (
+            f"{len(beats)} beat-uri și {seconds:.0f} secunde de vorbire; cel mult "
+            f"{MAX_BEATS} beat-uri și {MAX_SECONDS:.0f} secunde (zidul Short-ului)"
+        )
+    elif short:
+        reason = (
+            f"{seconds:.0f} secunde de vorbire, sub recomandarea de {MIN_SECONDS:.0f}; "
+            "decide Directoarea"
+        )
+    return {
+        "passed": within_cap and not short,
+        "advisory": short,
+        "beats": len(beats),
+        "words": round(seconds * WORDS_PER_SECOND),
+        "seconds": seconds,
+        "recommended_seconds": [MIN_SECONDS, MAX_SECONDS],
+        "reason": reason,
+    }
+
+
+def _sentences(text: str) -> int:
+    return len([part for part in re.split(r"[.!?]+", text) if part.strip()])
+
+
+def _narration(lines_by_beat: list[list[dict[str, Any]]], v3: bool) -> dict[str, Any]:
+    """The narrator's opening and closing (the Owner, 2026-10-16): the first beat opens with
+    NARRATION_OPENING_SENTENCES sentences spoken by nobody in the room (speaker None), the
+    last beat ends with NARRATION_CLOSING_SENTENCES. Measured and shown; the Director
+    decides (``advisory``): an episode written before the rule is not refused for it."""
+    from app.story.services import (  # noqa: PLC0415 - services imports the review
+        NARRATION_CLOSING_SENTENCES,
+        NARRATION_OPENING_SENTENCES,
+    )
+
+    first = lines_by_beat[0] if lines_by_beat else []
+    last = lines_by_beat[-1] if lines_by_beat else []
+    opening = 0
+    for line in first:
+        if line.get("speaker"):
+            break
+        opening += _sentences(str(line.get("text") or ""))
+    closing = 0
+    for line in reversed(last):
+        if line.get("speaker"):
+            break
+        closing += _sentences(str(line.get("text") or ""))
+    low, high = NARRATION_OPENING_SENTENCES
+    problems = []
+    if not low <= opening <= high:
+        problems.append(
+            f"naratorul deschide cu {opening} propoziții; episodul cere {low}-{high} "
+            "(unde suntem, cine e în cameră, ce e în joc)"
+        )
+    if closing != NARRATION_CLOSING_SENTENCES:
+        problems.append(
+            f"naratorul închide cu {closing} propoziții; episodul cere "
+            f"{NARRATION_CLOSING_SENTENCES}, ultimele cuvinte auzite"
+        )
+    return {
+        "passed": not problems or not v3,
+        "advisory": True,
+        "opening_sentences": opening,
+        "closing_sentences": closing,
+        "reason": "; ".join(problems) if v3 else "",
+    }
 
 
 def _beat_numbers(beats: list[dict]) -> list[int]:
@@ -451,7 +531,18 @@ def _filmable(
     the camera can film: a beat longer than its clip slowed by a quarter is refused at
     assembly after its stills, clip and voice were bought (2026-10-10, LTX-2.5 at 10 s).
     """
-    needed = [beat_clip_seconds(lines) for lines in lines_by_beat]
+    # Since 2026-10-16 the montage cuts a beat into shots of its own (`montage.serial_shots`):
+    # what must fit one clip is the longest shot of the beat, not the beat; with the montage
+    # off, the beat as before.
+    from app.media.montage import serial_shots  # noqa: PLC0415 - media imports the story
+
+    needed = [
+        max(
+            beat_clip_seconds(shot["lines"])
+            for shot in serial_shots(lines, index, part=beat.get("part"), first_beat=index == 1)
+        )
+        for index, (beat, lines) in enumerate(zip(beats, lines_by_beat, strict=True), start=1)
+    ]
     ceiling = float(limit["limit_seconds"])
     numbers = _beat_numbers(beats)
     outside = [n for n, s in zip(numbers, needed, strict=True) if s > ceiling + 1e-6]
@@ -497,15 +588,17 @@ def _concentration(beats: list[dict], day_events: int) -> dict[str, Any]:
     problems = []
     if not beats:
         problems.append("episodul nu are niciun beat de măsurat")
-    if uncited:
-        problems.append(f"beat-urile {', '.join(map(str, uncited))} nu citează niciun eveniment")
+    # Since 2026-10-16 a beat may cite nothing (the story's own beat) and one event may carry
+    # more of the story: crowding is measured and shown for the Director, not refused.
     if crowded:
         problems.append(
-            f"un singur eveniment este citat în {most} din {len(beats)} beat-uri; cel mult "
-            "jumătate, afară de ziua care are un singur eveniment"
+            f"un singur eveniment este citat în {most} din {len(beats)} beat-uri; "
+            "decide Directoarea"
         )
     return {
         "passed": not problems,
+        "advisory": bool(beats),
+        "uncited": uncited,
         "beats": len(beats),
         "citations": citations,
         "most_cited": most,
@@ -644,14 +737,13 @@ def episode_checks(
 
     checks: dict[str, dict[str, Any]] = {
         "grounding": {
-            # An episode that cites nothing is not grounded: nothing was measured.
-            "passed": bool(cited) and not missing,
+            # Since 2026-10-16 the story may cite nothing (the day is its backdrop); what is
+            # cited must be in the day's log.
+            "passed": not missing,
             "cited": len(cited),
             "missing": missing,
             "reason": (
-                f"{len(missing)} evenimente citate nu sunt în jurnalul zilei"
-                if missing
-                else ("episodul nu citează niciun eveniment" if not cited else "")
+                f"{len(missing)} evenimente citate nu sunt în jurnalul zilei" if missing else ""
             ),
         },
         "privacy": {
@@ -685,21 +777,8 @@ def episode_checks(
                 if part
             ),
         },
-        "length": {
-            "passed": 0 < len(beats) <= MAX_BEATS and MIN_SECONDS <= seconds <= MAX_SECONDS,
-            "beats": len(beats),
-            "words": words,
-            "seconds": seconds,
-            "reason": (
-                ""
-                if 0 < len(beats) <= MAX_BEATS and MIN_SECONDS <= seconds <= MAX_SECONDS
-                else (
-                    f"{len(beats)} beat-uri și {seconds:.0f} secunde de dialog; "
-                    f"ținta este cel mult {MAX_BEATS} beat-uri și "
-                    f"{MIN_SECONDS:.0f}-{MAX_SECONDS:.0f} secunde"
-                )
-            ),
-        },
+        "length": _length(beats, seconds),
+        "narration": _narration(lines_by_beat, v3),
         "words_per_beat": _words_per_beat(beats, lines_by_beat, v3),
         "concentration": _concentration(beats, len(projected)),
         "cast": cast_check,

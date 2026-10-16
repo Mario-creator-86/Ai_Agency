@@ -30,12 +30,14 @@ from test_serial_pipeline import (  # noqa: F401 - the studio fixture
     written,
 )
 
-#: Twenty-three spoken words: one over the band, 9.2 seconds at the studio's rate.
+#: Forty-eight spoken words: over the band of 15-45 (2026-10-16), 19.2 seconds at the
+#: studio's rate.
 LONG = (
     "Right, the cut runs long again, so we trim the middle, keep the hook, and send it back "
-    "before lunch today, please, Kael."
+    "before lunch today, please, Kael, because the client has already asked twice this week "
+    "where the film is, and I would rather answer with a link than with another apology."
 )
-assert len(LONG.split()) == 23
+assert len(LONG.split()) == 48
 
 
 def _event(session: Session, kind: str, episode_id: str) -> DomainEvent:
@@ -65,12 +67,13 @@ def test_a_beat_over_the_band_is_measured_as_a_recommendation_not_refused(
     checks = checks_of(engine, episode["id"])
     words = checks["words_per_beat"]
     assert words["advisory"] is True and words["passed"] is False
-    assert words["outside"] == [3] and words["per_beat"][2] == 23
-    assert "recomandarea de 8-22" in words["reason"] and "decide Directoarea" in words["reason"]
+    assert words["outside"] == [3] and words["per_beat"][2] == 48
+    assert "recomandarea de 15-45" in words["reason"] and "decide Directoarea" in words["reason"]
     assert failed_rules(checks) == []
-    assert outside_recommendations(checks) == ["words_per_beat"]
+    # The length floor and the narrator's opening are recommendations too (2026-10-16).
+    assert outside_recommendations(checks) == ["length", "narration", "words_per_beat"]
     # The brief says the band is a recommendation, and keeps the figures the writer aims for.
-    assert "Aim for 8 to 22 spoken words" in asked[0]
+    assert "Aim for 15 to 45 spoken words" in asked[0]
     assert "a recommendation the Director weighs, not a rule" in asked[0]
 
 
@@ -89,7 +92,7 @@ def test_the_director_reads_a_beat_over_the_band_and_decides(
     assert len(calls) == 1, "she was asked: a recommendation refuses nothing"
     prompt = calls[0]
     assert '"recommendations"' in prompt
-    assert '"outside": [3]' in prompt and '"recommended": [8, 22]' in prompt
+    assert '"outside": [3]' in prompt and '"recommended": [15, 45]' in prompt
     assert "5. Recommendations." in prompt and "flagged, not refused" in prompt
     assert review["checks"]["words_per_beat"]["passed"] is False
     with Session(engine) as session:
@@ -97,7 +100,11 @@ def test_the_director_reads_a_beat_over_the_band_and_decides(
         assert row.status == "DRAFT" and row.review_json["model_used"] is True
         reviewed = _event(session, "story.episode_reviewed", episode["id"])
         assert reviewed.payload["checks_failed"] == []
-        assert reviewed.payload["recommendations_outside"] == ["words_per_beat"]
+        assert reviewed.payload["recommendations_outside"] == [
+            "length",
+            "narration",
+            "words_per_beat",
+        ]
 
 
 def test_her_fail_on_such_a_beat_is_hers(
@@ -106,7 +113,7 @@ def test_her_fail_on_such_a_beat_is_hers(
     monkeypatch,
 ):
     episode = _over_the_band(engine, monkeypatch)
-    fake_director(monkeypatch, "FAIL", notes="Beat 3 is too fast to follow: 23 words.")
+    fake_director(monkeypatch, "FAIL", notes="Beat 3 is too fast to follow: 48 words.")
 
     review = review_episode(engine, registry(), episode["id"])
 
@@ -114,7 +121,7 @@ def test_her_fail_on_such_a_beat_is_hers(
     with Session(engine) as session:
         row = session.get(StoryEpisode, episode["id"])
         assert row.status == "REJECTED" and row.reviewed_by == "director"
-        assert row.notes == "Beat 3 is too fast to follow: 23 words."
+        assert row.notes == "Beat 3 is too fast to follow: 48 words."
         assert _event(session, "story.episode_rejected", episode["id"]).payload["reviewed_by"] == (
             "director"
         )

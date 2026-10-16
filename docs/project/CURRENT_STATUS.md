@@ -5,6 +5,23 @@ AGENT_SCENARIO_ACCEPTANCE later used actual Ollama Cloud calls, with normal seri
 acceptance and real GPU/media/upload still pending. Current local UI evidence is reported
 separately below and does not prove those external workflows.
 
+## The serial's v8: a narrator, a story of its own, 90-175 s (2026-10-16)
+
+Claim: the serial's v8 form, the Owner's second increment (07:05Z: «Eu nu înțeleg nimic. Ar trebui să existe o narațiune pe poveste, o introducere în scenă… Dialogul de ce este compus din 4-5 cuvinte?»). Decided by card: 90-180 s with 250-450 words (max 180, «mergem atunci ca maxim 180»), a narrator opening and closing, a story the showrunner invents with the real day as backdrop.
+
+Done (`story/services.py`, `story/review.py`, `story/serial_stage.py`, `media/serial_storyboard.py`, `media/montage.py`, `agents/editorial_judgement.py`):
+- Template `episode-v8`. `EPISODE_WORDS` (250, 430) — 430 words ≈ 172 s, under YouTube's 180 with the shots' breaths; `WORDS_PER_BEAT` (15, 45), a recommendation; `MAX_BEATS` 12; `NARRATOR_NAME` "Narrator", 2-3 opening and 1 closing sentences; `max_tokens` 12000.
+- The brief: the story is the showrunner's (want, obstacle, turn, cost), the EVENTS are the backdrop; the hook beat OPENS WITH THE NARRATOR (where we are, who, what is at stake), the button is followed by one closing narrator sentence; whole sentences, never telegraphic fragments; speakers need not act in a cited event; `event_ids` may be empty; truth rule kept for studio facts (no invented hires, outcomes, money, audience, outages, decisions, endings, letter contents). A quiet day gets its own line in the events block and is told (no more «o zi liniștită nu se povestește»).
+- Schema: a line with no speaker, or speaker "Narrator", is the narrator's (stored speaker None, read by the narrator voice, never counted in the cast); `_Beat.event_ids` optional.
+- Review: `grounding` refuses only citations the day does not hold; `concentration` advisory; `cast` keeps 2-4 only; `length` refuses past 12 beats or 175 s, the 90 s floor advisory; new `narration` check (advisory); `filmable` measures the montage's longest shot of a beat; the Director's brief judges invented studio facts and the narrator's opening and closing; the editorial judgement scores the hook on the first spoken line after the narration.
+- `day_to_tell` / `day_to_retell` / `tell_day_now` / `write_episode` tell a quiet day.
+- Storyboard target 90-180 s; the montage gives a narrator run wide shots of its own (never a reaction, never shared with a line in the room) and keeps the button's close-up on the last shot in the room; a one-shot beat keeps its size tag.
+- Also: `cost_plan.plan_film(candidates=None)` reads `STILL_CANDIDATES` at call time (the default bound at import; test_cost_plan failed since 2026-10-15); `.env.example` documents the montage settings and the 160 s short.
+
+Tested: tests/test_serial_narrator.py (4 new: narrator opens and closes and the episode reaches 90 s; an episode without its narrator is shown, not refused; past 175 s refused; the narrator's lines are wide shots); the serial pipeline, continuation, self-recovery, quality and one-click adversaries, editorial judgement, voices, montage, story, tell-now, words-per-beat, cost plan suites (tests pinned on the old rules rewritten to v8, none weakened on what still stands).
+
+Not changed / known: `test_readiness::test_a_daily_budget_below_one_film_says_the_first_film_is_refused` fails since the film ceiling follows the daily budget (not this work); the architecture's data model (11_DATA_MODEL) still says 60/70 s (decision logged; the hash update is the roadmap's).
+
 ## The format: shorts 60-180 s, no punch-in, a 0.4 s breath (2026-10-16)
 
 Claim: the Owner read «Zero Scripts, Blocked Log» and the shorts (07:05Z): «Eu nu înțeleg nimic… Dialogul de ce este compus din 4-5 cuvinte?… se vede că se taie cadrul, de ce facem asta?». The limits were ours, not the generators': 30-second shorts, serial episodes of 115-170 words, a beat held to one 10-second clip, a 15 % punch-in halfway through long scenes, and the clip cut 0.12 s after the last word. His decisions: shorts 60-180 s aiming at 160 («mergem atunci ca maxim 180»); episodes 90-180 s with 250-450 words, a narrator opening and closing, a story the showrunner invents on the real day's backdrop; no punch-in and a 0.4 s breath per shot.

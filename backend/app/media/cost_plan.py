@@ -424,7 +424,7 @@ def plan_film(
     table: PriceTable | None = None,
     stills_model: str = STILLS_MODEL,
     stills_resolution: str = STILLS_RESOLUTION,
-    candidates: int = STILL_CANDIDATES,
+    candidates: int | None = None,
     premium: tuple[str, str] = PREMIUM_REFERENCE,
     alternatives: Sequence[tuple[str | None, str]] = ALTERNATIVES,
     today: date | None = None,
@@ -448,7 +448,9 @@ def plan_film(
             prices,
             stills_model=stills_model,
             stills_resolution=stills_resolution,
-            candidates=candidates,
+            # Read when the plan is made, not when this function was defined: a default
+            # bound at import kept 2 after the Owner's one still per scene (2026-10-15).
+            candidates=STILL_CANDIDATES if candidates is None else candidates,
             override=override,
         )
 

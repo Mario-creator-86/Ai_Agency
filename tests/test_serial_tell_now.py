@@ -27,7 +27,6 @@ from app.publishing.services import seed_default_channels
 from app.services import CommandConflict
 from app.story.serial_stage import MAX_DRAFTS_PER_DAY, DayNotTold, tell_day_now
 from app.story.services import (
-    NothingHappened,
     business_date,
     close_daily_log,
     write_episode,
@@ -298,13 +297,21 @@ def test_the_owners_stop_refuses_the_press_in_the_studios_words(
     assert prompts == [] and episode_rows(engine) == []
 
 
-def test_a_quiet_day_is_a_fact_the_press_reports(engine, staffed, settings, monkeypatch):
-    quiet = close_daily_log(engine, TZ, business_date(TZ, datetime.now(UTC) - timedelta(days=3)))
-    fake_showrunner(monkeypatch, "")
+def test_a_quiet_day_is_pressed_like_any_other(engine, staffed, settings, monkeypatch):
+    """2026-10-16: the story is the showrunner's and the day its backdrop, so a quiet day is
+    told too; the press asks the showrunner, and a non-answer is a refused draft, not «a
+    quiet day»."""
+    from app.story.services import DraftRefused
 
-    with pytest.raises(NothingHappened, match="liniștită"):
+    quiet = close_daily_log(engine, TZ, business_date(TZ, datetime.now(UTC) - timedelta(days=3)))
+    prompts: list[str] = []
+    fake_showrunner(monkeypatch, "", prompts)
+
+    with pytest.raises(DraftRefused) as refused:
         press(engine, settings, quiet["id"])
 
+    assert "liniștită" not in str(refused.value)
+    assert prompts and "A quiet day" in prompts[0]
     assert episode_rows(engine) == []
 
 
@@ -396,7 +403,8 @@ def test_the_route_says_what_could_not_be_stored_as_the_write_route_does(
     quiet_day = client.post(
         f"/api/v1/story/logs/{quiet['id']}/tell", json={"command_id": str(uuid4())}, headers=headers
     )
-    assert quiet_day.status_code == 409 and "liniștită" in quiet_day.json()["detail"]
+    # A quiet day is told too (2026-10-16): the stand-in's non-answer is a refused draft.
+    assert quiet_day.status_code == 422 and "respins" in quiet_day.json()["detail"]
 
 
 def test_a_day_whose_drafts_her_reading_spent_ships_its_newest_draft_under_the_cap(

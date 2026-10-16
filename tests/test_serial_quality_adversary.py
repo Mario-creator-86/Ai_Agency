@@ -118,14 +118,21 @@ def test_a_line_nobody_speaks_and_a_speaker_with_no_bible_are_the_narrators():
         {KAEL: "kael-bible"},
     )
 
+    # Each take carries how it is said (2026-10-15): nothing here, so empty.
     assert takes == [
         {
             "speaker": None,
             "character_id": None,
             "text": "The render bay, before anyone arrives. Still quiet.",
+            "direction": "",
         },
-        {"speaker": "The Owner", "character_id": None, "text": "Morning."},
-        {"speaker": KAEL, "character_id": "kael-bible", "text": "What is the runtime?"},
+        {"speaker": "The Owner", "character_id": None, "text": "Morning.", "direction": ""},
+        {
+            "speaker": KAEL,
+            "character_id": "kael-bible",
+            "text": "What is the runtime?",
+            "direction": "",
+        },
     ]
 
 
@@ -308,9 +315,10 @@ def test_the_brief_asks_for_a_three_second_hook_and_a_button_that_calls_back(
     write_episode(engine, registry(), log["id"], str(uuid4()))
 
     brief = seen[0]
-    assert "first 3 seconds" in brief and "never a greeting" in brief
-    assert "at most 8 words" in brief
-    assert "calls back" in brief and "nothing is said after it" in brief
+    # Since 2026-10-16 the Narrator opens (where we are, who, what is at stake) and closes.
+    assert "OPENS WITH THE NARRATOR" in brief and "where we are" in brief
+    assert "ONE closing sentence of the NARRATOR" in brief
+    assert "calls back" in brief
     assert "every beat changes something" in brief.casefold()
     assert "only by its subject" in brief
     assert "never invent what it said" in brief

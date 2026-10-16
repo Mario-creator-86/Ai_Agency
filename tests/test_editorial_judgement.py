@@ -480,7 +480,12 @@ def _owner_letters(engine) -> list[AgentMessage]:
         return [
             letter
             for letter in session.scalars(select(AgentMessage))
-            if (letter.body_json or {}).get("owner_attention")
+            # Addressed to him, or redirected to the Director by his letters rule
+            # (2026-10-12, `messages.directors_matter`): the letter is written either way.
+            if (
+                (letter.body_json or {}).get("owner_attention")
+                or (letter.body_json or {}).get("redirected_from") == "Owner"
+            )
             and "Judecata editorială" in letter.subject
         ]
 
@@ -638,7 +643,9 @@ def test_a_rewrite_the_review_fails_is_scored_and_never_ships(engine, studio, se
     short = episodes["Two beats, brilliant"]
     assert short.status == "REJECTED"
     assert short.review_json["verdict"] == "FAIL"
-    assert "secunde" in short.notes  # the review's own reason, not the judgement's
+    # The review's own reason, not the judgement's: two beats miss the structure (the
+    # length floor is a recommendation since 2026-10-16).
+    assert "lipsesc părțile" in short.notes
     assert short.review_json["editorial"]["superseded_by"] == episodes["The third, watchable"].id
     assert episodes["The third, watchable"].status == "APPROVED"
     assert episodes[STATUS_MEETING].status == "REJECTED"

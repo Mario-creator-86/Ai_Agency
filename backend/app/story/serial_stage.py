@@ -142,10 +142,10 @@ def day_to_tell(session: Session, before: str) -> tuple[DailyStudioLog | None, l
     if told is not None:
         query = query.where(DailyStudioLog.business_date > told)
     quiet: list[str] = []
+    # Since 2026-10-16 a quiet day is told too (the story is the showrunner's, the day its
+    # backdrop): the newest closed day is the day to tell.
     for log in session.scalars(query.order_by(DailyStudioLog.business_date.desc())):
-        if ensure_projection(session, log):
-            return log, quiet
-        quiet.append(log.business_date)
+        return log, quiet
     return None, quiet
 
 
@@ -197,7 +197,7 @@ def day_to_retell(session: Session, before: str) -> dict[str, Any] | None:
         )
         if any(draft.status != "REJECTED" for draft in drafts):
             continue
-        if len(drafts) >= MAX_DRAFTS_PER_DAY or not ensure_projection(session, log):
+        if len(drafts) >= MAX_DRAFTS_PER_DAY:
             continue
         if drafts:
             refused.append((log, drafts))
@@ -1218,11 +1218,7 @@ def tell_day_now(
             assert log is not None  # read above, and a closed log is never deleted
             projection = ensure_projection(session, log)
             counts["projected"] = len(projection)
-        if not projection:
-            raise NothingHappened(
-                f"În {date_iso} nu s-a întâmplat nimic de povestit; o zi liniștită este un "
-                "fapt despre studio, nu un motiv de a inventa un episod."
-            )
+        # A quiet day is told too (2026-10-16): the story is the showrunner's.
         if retell:
             counts["resumed"] = "retell"
             outcome = _tell_the_day(

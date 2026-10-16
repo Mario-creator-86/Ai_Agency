@@ -355,7 +355,11 @@ _KIND_NOTES = {
         "sources and you do not judge it for being about the studio. A status meeting with "
         "clean lines is not a story: without a stake, a conflict and a change of register, the "
         "hook, the moment and the punchline score low, however neat the lines. Every line must "
-        "stand alone for someone who has never seen the serial and knows nobody in the room.\n"
+        "stand alone for someone who has never seen the serial and knows nobody in the room. "
+        "Since 2026-10-16 the episode opens with a narrator's two or three sentences in off "
+        "(where we are, who is in the room, what is at stake) and closes with one: that is "
+        "the form, not a weak hook — judge the hook on the first spoken line after them, and "
+        "the punchline on the button before the closing sentence.\n"
     ),
 }
 _SHAPE = (

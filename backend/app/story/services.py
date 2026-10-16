@@ -80,7 +80,14 @@ from app.story.projection import (
 )
 from app.wording import work_status
 
-MAX_BEATS = 8
+MAX_BEATS = 12
+#: The voice in off (the Owner, 2026-10-16): the episode opens with two or three narrated
+#: sentences — where we are, who is in the room, what is at stake — and closes with one.
+#: The writer names the speaker "Narrator"; stored as speaker None, spoken by the narrator
+#: voice (`media.speaker_voices`), never counted in the speaking cast.
+NARRATOR_NAME = "Narrator"
+NARRATION_OPENING_SENTENCES = (2, 3)
+NARRATION_CLOSING_SENTENCES = 1
 #: The showrunner's brief and answer schema. v3 (2026-09-24): lines ``{speaker, text,
 #: direction?}`` in place of free dialogue, the five-part structure, the studio's rooms, and
 #: the day, the names, the events and the serial's memory given as data. v4 (S10,
@@ -89,7 +96,11 @@ MAX_BEATS = 8
 #: The answer schema is v3's plus that one optional field, so a v3 episode reads as before.
 #: v7 (2026-10-10): the brief names the SPEAKERS (`speakers_to_offer`), and an answer is
 #: measured by the review's own checks before it is stored, with one more ask on a refusal.
-EPISODE_TEMPLATE_VERSION = "episode-v7"
+#: v8 (2026-10-16, the Owner: «Eu nu înțeleg nimic… ar trebui să existe o narațiune»): the
+#: showrunner invents the small story and the real day is its backdrop; a narrator opens and
+#: closes; 250-430 spoken words over 90-175 seconds (the montage cuts a beat into shots, so
+#: a beat no longer fits one clip); a quiet day is still told.
+EPISODE_TEMPLATE_VERSION = "episode-v8"
 #: The structure a writers' room asks of a short: in this order, the hook first and the
 #: button last; situation, turn and payoff may take more than one beat each.
 EPISODE_PARTS = ("hook", "situation", "turn", "payoff", "button")
@@ -101,12 +112,15 @@ SPEAKING_CAST = (2, 4)
 #: seven speakers each, because the writer gave a line to everyone who acts in an event it
 #: cites; it gives one to everyone it is offered, so it is offered three.
 OFFERED_SPEAKERS = 3
-#: Spoken words in one beat. A scene is at most 9 seconds on the storyboard, and 22 words
-#: are 8.8 seconds at the studio's 2.5 words a second.
-WORDS_PER_BEAT = (8, 22)
-#: Spoken words in the whole episode: 45 to 70 seconds at 2.5 words a second, the length
-#: the Director's computed check holds it to.
-EPISODE_WORDS = (115, 170)
+#: Spoken words in one beat, a recommendation: whole sentences, 6 to 18 seconds at the
+#: studio's 2.5 words a second; the montage cuts a long beat into shots (2026-10-16; until
+#: then 8-22, a beat held to one 9-second clip, and the lines read «Zero scripts. Zero
+#: approvals.»).
+WORDS_PER_BEAT = (15, 45)
+#: Spoken words in the whole episode, the narrator's included: 100 to 172 seconds at 2.5
+#: words a second — under YouTube's 180-second Shorts wall with the shots' breaths (the
+#: Owner, 2026-10-16: «90-180 s, 250-450 cuvinte», and «maxim 180»).
+EPISODE_WORDS = (250, 430)
 #: The fewest beats the brief asks for. Not the five parts alone: five beats of at most 22
 #: words are 110 words, 44 seconds, which the length check fails, so the v3 brief asked for
 #: an episode it would refuse (verifier, 2026-09-24). Six beats of 20 reach 120.
@@ -202,6 +216,7 @@ class _Line(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
+    #: A name from the roster, or NARRATOR_NAME for the voice in off.
     speaker: str = Field(min_length=1, max_length=120)
     text: str = Field(min_length=1, max_length=600)
     direction: str = Field(default="", max_length=200)
@@ -223,13 +238,16 @@ class _Line(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _as_written(cls, value: Any) -> Any:
-        # A line written as "Sarah: Fine." is read as her line; one with no name on it is not
-        # a line of this schema, and the answer is refused for it.
+        # A line written as "Sarah: Fine." is read as her line; one with no name on it is the
+        # narrator's (2026-10-16: the voice in off opens and closes the episode).
         if isinstance(value, str):
             label, rest = split_label(value)
-            return {"speaker": label or "", "text": rest}
+            return {"speaker": label or NARRATOR_NAME, "text": rest}
         if isinstance(value, dict) and not value.get("speaker"):
-            return {**value, "speaker": value.get("character") or value.get("name") or ""}
+            return {
+                **value,
+                "speaker": value.get("character") or value.get("name") or NARRATOR_NAME,
+            }
         return value
 
 
@@ -244,8 +262,9 @@ class _Beat(BaseModel):
     lines: list[_Line] = Field(min_length=1, max_length=16)
     #: Who is in the room and silent. Checked against the roster, like every speaker.
     background: list[str] = Field(default_factory=list, max_length=12)
-    #: The events this beat dramatises. At least one, and each must be in the day's log.
-    event_ids: list[str] = Field(min_length=1, max_length=10)
+    #: The day's events this beat draws on, each in the day's log; none when the beat is
+    #: the story's own (2026-10-16: the story is invented, the day is its backdrop).
+    event_ids: list[str] = Field(default_factory=list, max_length=10)
     # A scene of 330 characters where 300 were allowed threw the whole episode away.
     _clip_scene = field_validator("scene", mode="before")(joined(800))
     _clip_part = field_validator("part", mode="before")(
@@ -890,39 +909,46 @@ def get_episode(engine: Engine, episode_id: str) -> dict | None:
 #: each episode understandable to a new viewer. Until v4 the brief never said any of it.
 SHOW_TONE = (
     "Inside The Nexus is a deadpan workplace comedy about AI employees who take their jobs "
-    "completely seriously, told from their own real day. The laugh is in the gap between how "
-    "much the work matters to them and how small the moment is, in dry reactions, pauses and "
-    "playful rivalry, and in each of them being exactly themselves; mild drama is welcome, "
-    "but the joke is never on the work, never cruel and never something the day did not "
-    "hold. A stranger who has seen no other episode must be able to follow this one."
+    "completely seriously, told around their own real day. Each episode is a small story: "
+    "someone wants something, something stands in the way, something turns, and it costs or "
+    "earns them something — told in whole sentences a stranger follows, never a log read "
+    "aloud. The laugh is in the gap between how much the work matters to them and how small "
+    "the moment is, in dry reactions, pauses and playful rivalry, and in each of them being "
+    "exactly themselves; mild drama is welcome, but the joke is never on the work, never "
+    "cruel and never a fact about the studio the day did not hold. A stranger who has seen "
+    "no other episode must be able to follow this one from its first sentence."
 )
 
 _INSTRUCTIONS = """You are the showrunner of "Inside The Nexus", a vertical workplace serial \
-about the people of AMN-AI, an autonomous film studio. This is EPISODE {episode_number}. It \
-dramatises what really happened in the studio on {date}: the EVENTS below are everything \
-that happened on {date} that you may use, and nothing else did.
+about the people of AMN-AI, an autonomous film studio. This is EPISODE {episode_number}, set \
+on {date}. The story is yours to invent — who wants what today, what stands in the way, what \
+turns, what it costs or earns them — and the real day is its backdrop: the EVENTS below are \
+what actually happened in the studio on {date}, the texture and the details you may draw on; \
+when the day was quiet the story still happens, in these rooms, with these people.
 
 THE SHOW
 {tone}
 
 THE BRIEF
 1. Structure. {min_beats} to {max_beats} beats, each with a "part", in this order: "hook" \
-(the first beat only: its first line is the first thing heard, inside the first 3 seconds, \
-at most 8 words, never a greeting, a date or an introduction; it drops a stranger into the \
-middle of a want or a problem, and the picture shows who is in the room and where), \
+(the first beat only: it OPENS WITH THE NARRATOR — {opening_sentences} sentences in off, \
+speaker "Narrator", that tell a stranger where we are, who is in the room and what is at \
+stake today, said as a scene, not as an announcement; then the hook's first spoken line, \
+short, drops into the want or the problem), \
 "situation" (who wants what, and why the other one is in the way), "turn" (the event that \
 changes it: a refusal, a verdict, a letter), "payoff" (what the turn costs or earns them) \
-and "button" (the last beat only: one short line that lands the laugh or the sting, and \
-nothing is said after it; the best button calls back to the hook or to something set up \
-earlier). Situation, turn and payoff may take more than one beat each. Every beat changes \
+and "button" (the last beat only: one short line that lands the laugh or the sting, \
+followed by ONE closing sentence of the NARRATOR — the last words heard — that leaves the \
+viewer with where this leaves them; the best button calls back to the hook or to something \
+set up earlier). Situation, turn and payoff may take more than one beat each. Every beat changes \
 something: it escalates, reverses or reveals; a beat that only restates the one before it \
 is cut.
 2. Speaking cast. Only the people in SPEAKERS speak: {min_speakers} to {max_speakers} of \
-them in the whole episode, and each one who speaks acts in at least one event you cite \
-(each event's "who"), so tell the day through the events they act in. When the events you \
-cite name fewer than two people, those they name speak. Everyone else, even someone who acts \
-in an event you cite, is "background" in a room or is mentioned in a line, and says nothing.
-3. Lines. Dialogue is a list of lines, each {{"speaker": a name from ALLOWED_NAMES, "text": \
+them in the whole episode, besides the Narrator. Prefer those the day's events name; the \
+story decides. Everyone else is "background" in a room or is mentioned in a line, and says \
+nothing.
+3. Lines. Dialogue is a list of lines, each {{"speaker": a name from ALLOWED_NAMES, or \
+"Narrator" for the voice in off (only the opening and the closing narration), "text": \
 the words said aloud and nothing else, "direction": how it is said — the feeling and the \
 manner, in two to six words (surprised, half-laughing; whispering; through gritted teeth; \
 deadpan; relieved) — on EVERY line, because the voice plays it}}. A voice reads "text" \
@@ -933,10 +959,13 @@ breaks, a word repeated in disbelief; the surprise, the fear, the laugh must be 
 words themselves. Punctuate every line as speech: a full stop, a question mark or an \
 exclamation mark at its end, commas where the speaker breathes; the voice paces itself on \
 the punctuation and the captions follow it.
-4. Length. Aim for {min_words} to {max_words} spoken words in each beat (a scene holds at \
-most 9 seconds): a recommendation the Director weighs, not a rule that refuses the episode. \
-The whole episode is {min_episode_words} to {max_episode_words} spoken words, 45 to 70 \
-seconds at 2.5 words a second.
+4. Length. Aim for {min_words} to {max_words} spoken words in each beat: a recommendation \
+the Director weighs, not a rule that refuses the episode. A beat may run longer than one \
+shot: the montage cuts it into shots of a few seconds, so write whole sentences that carry \
+a thought to its end, never telegraphic fragments. The whole episode is {min_episode_words} \
+to {max_episode_words} spoken words, the Narrator's included: about {min_seconds} to \
+{max_seconds} seconds at 2.5 words a second, and never more than {max_episode_words} words \
+(past them the film is no longer a Short).
 5. Language. The title, the lines, the summary and the logline are in English. Some event \
 texts (letter subjects, titles) are in Romanian: say what they mean in English, never quote \
 the Romanian.
@@ -946,17 +975,18 @@ text in the scene: no signs, captions, labels, readable screens or documents, be
 picture cannot carry legible words.
 7. Voices. Each person talks as CAST describes them, in their own register and cadence; use \
 one of their own phrases at most once in the episode.
-8. Truth. You may dramatise: jokes, pauses, reactions, compressed dialogue, playful \
-rivalry, comic framing. You may not invent hires or departures, successes or failures, \
-audience numbers or money, vendor outages, a decision given to someone other than who made \
-it, or an ending for anything the events leave open. Never name a vendor, a model, a price \
-or an address. An event that gives a letter or a note only by its subject tells you who \
+8. Truth. The STORY is yours: wants, obstacles, jokes, pauses, reactions, turns, what it \
+costs them, playful rivalry, comic framing. The FACTS about the studio are not: you may not \
+invent hires or departures, successes or failures of the studio's work, audience numbers or \
+money, vendor outages, a decision given to someone other than who made it, or an ending for \
+anything the events leave open. Never name a vendor, a model, a price or an address. An \
+event that gives a letter or a note only by its subject tells you who \
 wrote it, to whom and about what, never what it said: play the writing, the waiting and \
 the reaction, and never invent what it said.
-9. Grounding. Each beat's "event_ids" are the ids of the events it dramatises, copied \
-exactly from EVENTS. One id that is not there refuses the whole episode, not only the beat. \
-No event is cited by more than half the beats, unless it is the only event of the day: tell \
-the day, not one moment of it stretched.
+9. Grounding. Each beat's "event_ids" are the ids of the events it draws on, copied \
+exactly from EVENTS, or an empty list when the beat is the story's own. One id that is not \
+there refuses the whole episode, not only the beat. Use the day: a beat that can stand on a \
+real event is better than one that floats.
 10. Continuity. "threads_continued" and "threads_closed" hold only ids of the OPEN THREADS \
 in PREVIOUSLY (like "T3"), or nothing. "threads_opened" is a question this episode really \
 leaves open, in one sentence, or nothing; "recurring" is a running joke or object that \
@@ -970,8 +1000,9 @@ said aloud), "open_question" (what it would answer) and "threads_to_pay_off" (id
 THREADS, or threads this episode opens, or nothing). It is a plan, not a fact: the next \
 writer keeps it only if the next day's events support it.
 13. The plan you were given. When PLAN FOR THIS EPISODE below holds one, it was written \
-with the previous episode, before this day happened: keep it only if the EVENTS support \
-it, and never bend an event to fit it. Say what you did: "plan_kept" true or false, and \
+with the previous episode, before this day happened: keep it when the story continues it \
+and the EVENTS do not contradict it; never bend an event to fit it. Say what you did: \
+"plan_kept" true or false, and \
 "plan_note" in one sentence. With no plan, "plan_kept" is null.
 
 ALLOWED_NAMES: {allowed_names}
@@ -982,10 +1013,11 @@ Answer ONLY with one JSON object in this format, nothing before or after it:
 {{"title": "<an English title, at most 60 characters>",
   "beats": [{{"part": "<hook | situation | turn | payoff | button>",
     "location": "<an id from LOCATIONS>", "scene": "<what the camera sees>",
-    "lines": [{{"speaker": "<a name from ALLOWED_NAMES>", "text": "<the words said aloud>",
+    "lines": [{{"speaker": "<a name from ALLOWED_NAMES, or Narrator>",
+      "text": "<the words said aloud>",
       "direction": "<an optional acting note>"}}],
     "background": ["<a silent name from ALLOWED_NAMES>"],
-    "event_ids": ["<an id from EVENTS>"]}}],
+    "event_ids": ["<an id from EVENTS, or none>"]}}],
   "summary": "<one paragraph: what happened in this episode>",
   "logline": "<one sentence for a stranger: who wants what today, without the button>",
   "threads_continued": [], "threads_closed": [], "threads_opened": [], "recurring": [],
@@ -1016,16 +1048,17 @@ FINAL SPOKEN-LENGTH CHECK, including on a rewrite:
 Only words inside lines[].text count; scene descriptions, directions, summaries and plans \
 do not fill the spoken duration. Count each beat and the total before returning your JSON: \
 {min_words} to {max_words} spoken words per beat (recommended) and {min_episode_words} to \
-{max_episode_words} across the episode (the rule). The hook's first line is short, but the whole \
-hook beat still meets its word range: another person may answer it. The button is one line \
-within that same range. Expand the intervening dialogue with grounded reactions and \
-consequences, without adding events or repeating filler. A collection of very short \
-punchlines is too short even when it has enough beats. Return the episode JSON only, \
-without your counts or calculation."""
+{max_episode_words} across the episode, the Narrator's sentences included (the rule; the \
+upper bound is the Short's wall). The hook's first spoken line is short, but the whole hook \
+beat still meets its word range: the narration opens it and another person may answer. The \
+button is one line, then the Narrator's one closing sentence. Expand the intervening \
+dialogue with reactions and consequences in whole sentences, without inventing studio facts \
+or repeating filler. A collection of very short punchlines is too short even when it has \
+enough beats. Return the episode JSON only, without your counts or calculation."""
 
-#: How much of a refused draft or answer the next brief shows: enough for every beat of an
-#: eight-beat episode, not so much that the day's events are crowded out.
-_REJECTED_CHARS = 8000
+#: How much of a refused draft or answer the next brief shows: enough for every beat of a
+#: twelve-beat episode of 430 words, not so much that the day's events are crowded out.
+_REJECTED_CHARS = 14000
 
 #: What a model writes when it copies the format instead of filling it: the v2 brief's own
 #: examples ("o întrebare nouă", "T1" with no thread open), and the usual fillers.
@@ -1120,6 +1153,14 @@ def _events_block(
         )
         for item in projection
     ]
+    if not rows:
+        # A quiet day is told too (2026-10-16): the story is the showrunner's, the studio
+        # and its people the backdrop; nothing about the studio's work is invented.
+        rows.append(
+            f"(A quiet day: no public event was recorded on {date_iso}. The story is yours — "
+            "these rooms, these people, a want and a turn of their own; invent nothing about "
+            "the studio's work, its money or its audience.)"
+        )
     if not_shown:
         rows.append(
             f"({not_shown} more public events of {date_iso} are not listed: routine and "
@@ -1180,8 +1221,8 @@ def _parse_episode(raw: str) -> _Episode:
         return _EPISODE.validate_python(data)
     except ValidationError as exc:
         raise DraftRefused(
-            "Episodul nu respectă formatul cerut: fiecare beat are nevoie de scenă, de replici "
-            "cu vorbitor și text, și de cel puțin un eveniment citat.",
+            "Episodul nu respectă formatul cerut: fiecare beat are nevoie de scenă și de "
+            "replici cu vorbitor (un nume din listă sau Narrator) și text.",
             raw,
         ) from exc
 
@@ -1397,6 +1438,11 @@ def _judge_the_plan(session: Session, judged: dict[str, Any], by_episode_id: str
     earlier.continuity_json = continuity
 
 
+def is_narrator(speaker: Any) -> bool:
+    """Whether a written speaker is the voice in off (NARRATOR_NAME, any case)."""
+    return str(speaker or "").strip().lower() == NARRATOR_NAME.lower()
+
+
 def _episode_from_answer(
     raw: str,
     names: NameBook,
@@ -1424,7 +1470,9 @@ def _episode_from_answer(
         # Casting someone who was not there is the same failure as citing an event that did
         # not happen — it puts a person in a room the record says they were not in. A name
         # written short ("Sarah") is the roster's own name, not a stranger.
-        written = [line.speaker for line in beat.lines] + list(beat.background)
+        written = [line.speaker for line in beat.lines if not is_narrator(line.speaker)] + list(
+            beat.background
+        )
         strangers = [name for name in written if names.canonical(name) is None]
         if strangers:
             raise EpisodeNotGrounded(
@@ -1438,6 +1486,8 @@ def _episode_from_answer(
         # was filmed in another's voice without a word (verifier, 2026-09-24). Which of the
         # two the model meant is not knowable here, so the answer goes back with the reason.
         for line in beat.lines:
+            if is_narrator(line.speaker):
+                continue
             label, _rest = split_label(line.text, names)
             if label and names.canonical(label) != names.canonical(line.speaker):
                 raise DraftRefused(
@@ -1451,7 +1501,10 @@ def _episode_from_answer(
             for line in beat.lines
             if (
                 cleaned := clean_line(
-                    names.canonical(line.speaker), line.text, line.direction, names
+                    None if is_narrator(line.speaker) else names.canonical(line.speaker),
+                    line.text,
+                    line.direction,
+                    names,
                 )
             )
         ]
@@ -1633,11 +1686,8 @@ def write_episode(
         if log is None:
             raise StoryError(f"Jurnalul {log_id} nu există")
         projection = ensure_projection(session, log)
-        if not projection:
-            raise NothingHappened(
-                f"În {log.business_date} nu s-a întâmplat nimic de povestit. "
-                "O zi liniștită este un fapt despre studio, nu un motiv de a inventa un episod."
-            )
+        # A quiet day is still told (2026-10-16): the story is the showrunner's, the day its
+        # backdrop; `_events_block` says the day was quiet.
         roster = list(log.roster_json or [])
         allowed_events = {item["event_id"]: item for item in projection}
         state = session.get(ContinuityState, 1)
@@ -1704,6 +1754,11 @@ def write_episode(
             max_speakers=SPEAKING_CAST[1],
             min_words=WORDS_PER_BEAT[0],
             max_words=WORDS_PER_BEAT[1],
+            min_seconds=int(EPISODE_WORDS[0] / 2.5),
+            max_seconds=int(EPISODE_WORDS[1] / 2.5),
+            opening_sentences=(
+                f"{NARRATION_OPENING_SENTENCES[0]} or {NARRATION_OPENING_SENTENCES[1]}"
+            ),
             allowed_names=json.dumps(names.names, ensure_ascii=False),
             speakers=json.dumps(offered, ensure_ascii=False),
             roster="\n".join(cast_lines),
@@ -1724,7 +1779,7 @@ def write_episode(
             EPISODE_TEMPLATE_VERSION,
             correlation,
             summary=f"Scriu episodul {episode_number} al serialului pentru ziua {date_iso}.",
-            max_tokens=7200,
+            max_tokens=12000,
             temperature=0.7,
             emit_message=False,
         )
