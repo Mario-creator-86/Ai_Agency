@@ -5,6 +5,38 @@ AGENT_SCENARIO_ACCEPTANCE later used actual Ollama Cloud calls, with normal seri
 acceptance and real GPU/media/upload still pending. Current local UI evidence is reported
 separately below and does not prove those external workflows.
 
+## Kael's loop: the composer follows the plan; quiet YouTube checks (2026-10-16)
+
+**Claim.** The Owner, 2026-10-16 22:20 local, watching the live studio:
+- «De ce Kael nu rezolvă?» Card: «repară acum».
+- A screenshot of «canal YouTube verificat» rows: «Alertele acestea nu le vreau. Vreau să rămână verificarea dar să nu apară aici».
+
+**Done:**
+- **The serial composer follows the scene's plan** (b7d2ef9, 01081bd, 7b633dd, 3f41319 on amn-pr1). The Director refused Kael's rewrites of 87c05891 scenes 1 and 6 for words he cannot change:
+  - the fixed life sentence: hands gesture, heads turn, lamp flickers;
+  - «Their faces stay expressive»;
+  - the establishing «Sarah small in the middle distance» beside a hand-by-hand action.
+
+  Now:
+  - the people's movement is said only when the plan leaves them free;
+  - the room's life is said only when the plan doesn't keep it still;
+  - the plan's expression is said and held;
+  - an establishing or wide still leads with the room and a small figure, keeping what a hand rests on but not the hand detail;
+  - the locks and the attribution follow;
+  - GUARD_VERSION is 4, so a scene held as TOOL_DEFECT on the old words gets its rounds back;
+  - a recomposed scene is decided on the layer whose words changed;
+  - the register says a motion-only recompose keeps its picture.
+- **A routine YouTube check is no event** (fd806a0, 020cd34). The check still runs and stamps the connection. youtube.verified is written only when something changed: reconnection, an error cleared, another channel, a rename.
+
+**Tested** (main, temp folders on E:):
+- composer, ladder, events feed and YouTube tests: 148 passed;
+- serial, montage, prompt compiler, still gate and stills tests: 461 passed. 1 failed, the pre-existing Nepal 127-word still prompt test.
+- ruff is clean. mypy has the same 21 pre-existing errors.
+
+**Known:** the penthouse room sentence («the desk carries only the lamp») conflicts with the folder, as it did before; 87c05891 scene 6's expression does not fit under the 1,000-character cap beside its long ending, which already names it.
+
+**Next:** the Owner starts the server. Watch 87c05891 scenes 1 and 6 through the ladder.
+
 ## Review fixes, context by task, two renders, the voice's own pause (2026-10-16)
 
 **Claim.** The Owner wants the day's work finished and tested before the server starts again: «Aștept să faci toate modificările și testul și după îmi spui și pornim serverul».

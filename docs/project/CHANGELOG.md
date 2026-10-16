@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-16 — The composer follows the plan; quiet YouTube checks
+
+- The serial composer's fixed sentences follow the scene's plan: gestures only for free speakers, room life only when the room may move, the plan's expression held, establishing stills built around the room. GUARD_VERSION 4.
+- A routine YouTube channel check that changed nothing writes no event.
+
 ## 2026-10-16 — Review fixes, context by task, two renders, the voice's own pause
 
 Today's afternoon and evening work, on top of the morning's montage and serial v8 (amn-pr1, 06d59b2..):
