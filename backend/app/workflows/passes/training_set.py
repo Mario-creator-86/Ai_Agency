@@ -14,6 +14,12 @@ seconds, the resolution, the model, the series look's version and who approved i
 Nothing is trained here and nothing is bought: the training itself is his card, when the
 serial has about `MILESTONE_CLIPS` approved clips (one STATUS letter then, once). A take
 whose file is gone is left out; a take written once is never written twice.
+
+A take kept under the Owner's renders cap is not one the gates let through: a still the gate
+refused that stands as the scene's picture because nothing more may be bought, or a clip kept
+the same way (approved by `assembler.CAP_APPROVER`, unless the Owner approved it himself
+since). It is not written, and a row of one already in the manifest is not counted towards
+the milestone: a LoRA would learn the faults the gates refused (2026-10-16).
 """
 
 from __future__ import annotations
@@ -75,7 +81,11 @@ def collect_training_samples(context: WatchdogContext) -> dict[str, Any]:
     from app.agents.messages import post_message  # noqa: PLC0415
     from app.db import lock_for_write  # noqa: PLC0415
     from app.factual.models import ScriptDraft  # noqa: PLC0415
-    from app.media.assembler import still_fields, take_hash  # noqa: PLC0415 - a large module
+    from app.media.assembler import (  # noqa: PLC0415 - a large module
+        CAP_APPROVER,
+        still_fields,
+        take_hash,
+    )
     from app.media.models import SceneTake, Storyboard, StoryboardScene  # noqa: PLC0415
     from app.models import DomainEvent  # noqa: PLC0415
     from app.services import append_event, utc_now  # noqa: PLC0415
@@ -93,6 +103,8 @@ def collect_training_samples(context: WatchdogContext) -> dict[str, Any]:
         for take in takes:
             if str(take.id) in known or not take.path or not Path(str(take.path)).is_file():
                 continue
+            if take.approved_by == CAP_APPROVER:
+                continue  # kept under the renders cap, not let through by a gate
             board_id = str(take.storyboard_id)
             if board_id not in boards:
                 board = session.get(Storyboard, board_id)
@@ -149,7 +161,11 @@ def collect_training_samples(context: WatchdogContext) -> dict[str, Any]:
                 handle.write(json.dumps(row, ensure_ascii=False) + "\n")
     rows = read_manifest(path)
     clips = sum(
-        1 for row in rows if row.get("serial") and row.get("kind") in ("test_shot", "motion")
+        1
+        for row in rows
+        if row.get("serial")
+        and row.get("kind") in ("test_shot", "motion")
+        and row.get("approved_by") != CAP_APPROVER
     )
     milestone = False
     if added or clips >= MILESTONE_CLIPS:
