@@ -31,13 +31,20 @@ import re
 from typing import Any
 
 from app.media.film_length import (
+    FACTUAL,
+    FilmLength,
+    Timing,
     factual_cut_words,
     factual_film_length,
     film_timing,
     longest_factual_films,
     montage_options,
+    narrator_profile,
     review_ceiling_seconds,
+    timing,
+    words_within,
 )
+from app.media.pauses import speech_seconds
 from app.wording import count, decimal
 
 #: The dimensions an idea is judged on, and how much each decides. Twelve equal numbers would
@@ -182,14 +189,15 @@ STORY_BEATS = (
 )
 
 
-def length_ceiling_seconds() -> float:
-    """The longest film the length check accepts, whatever the target: the Shorts wall less
-    the margin the estimate keeps under it (`film_length.review_ceiling_seconds`)."""
-    return review_ceiling_seconds(MAX_SHORT_SECONDS)
+def length_ceiling_seconds(when: Timing | None = None) -> float:
+    """The longest film the length check accepts against the wall, whatever the target: the
+    Shorts wall (`film_length.review_ceiling_seconds`: under the pause rules the estimate holds
+    its own margin; with them off, the wall less the legacy margin)."""
+    return review_ceiling_seconds(MAX_SHORT_SECONDS, when)
 
 
 def _even_draft(words: int, scenes: int) -> list[dict[str, Any]]:
-    """The brief's own shape: ``scenes`` filmed scenes carrying ``words`` evenly spread."""
+    """LEGACY: the brief's own shape: ``scenes`` filmed scenes carrying ``words`` evenly spread."""
     base, extra = divmod(max(0, int(words)), max(1, int(scenes)))
     return [
         {"narration": " ".join(["word"] * (base + (1 if index < extra else 0))), "kind": "LIVE"}
@@ -197,20 +205,35 @@ def _even_draft(words: int, scenes: int) -> list[dict[str, Any]]:
     ]
 
 
+def beat_purposes(scenes: int) -> list[str]:
+    """The brief's story shape over ``scenes`` scenes: each scene's purpose by where it falls
+    in the film (STORY_BEATS), so the estimate counts the changes of part a draft that follows
+    the beat table makes (a PARAGRAPH pause at each, `pauses.boundary_class`)."""
+    purposes: list[str] = []
+    for index in range(max(0, int(scenes))):
+        middle = (index + 0.5) / max(1, int(scenes))
+        name = next(
+            (name for name, start, end in STORY_BEATS if start <= middle < end), STORY_BEATS[-1][0]
+        )
+        purposes.append(name.split(" ")[0].strip())
+    return purposes
+
+
 def _words_within(seconds: float, scenes: int, options: Any) -> int:
-    """The most words ``scenes`` evenly written scenes may carry while the film the montage
-    cuts from them lasts at most ``seconds``. The film only grows with its words (a scene's
-    shots only multiply), so this is a bisection over the words, from one a scene."""
+    """LEGACY: the most words ``scenes`` evenly written scenes may carry while the film the
+    montage cuts from them lasts at most ``seconds``. The film only grows with its words (a
+    scene's shots only multiply), so this is a bisection over the words, from one a scene."""
     if scenes <= 0 or seconds <= 0:
         return 0
+    plain = Timing()
 
     def film(words: int) -> float:
-        return factual_film_length(_even_draft(words, scenes), settings=options).seconds
+        return factual_film_length(_even_draft(words, scenes), settings=options, when=plain).seconds
 
     low = scenes  # one word a scene: below this a scene would be silent, timed by its plan
     if film(low) > seconds:
         return 0
-    high = low + int(seconds / film_timing()["seconds_per_word"]) + 1  # words alone run over
+    high = low + int(seconds / film_timing(plain)["seconds_per_word"]) + 1
     while high - low > 1:
         middle = (low + high) // 2
         if film(middle) <= seconds:
@@ -221,10 +244,10 @@ def _words_within(seconds: float, scenes: int, options: Any) -> int:
 
 
 def _words_within_band(seconds: float, scenes: int, low: int, high: int, options: Any) -> int:
-    """The most words EVERY draft inside the brief's band may carry (at most ``scenes``
-    scenes of ``low``-``high`` words) while its film lasts at most ``seconds``: the worst shape
-    the band allows (`film_length.longest_factual_films`), not the even one. ``scenes * high``
-    when no draft inside the band can pass ``seconds`` at all."""
+    """LEGACY: the most words EVERY draft inside the brief's band may carry (at most
+    ``scenes`` scenes of ``low``-``high`` words) while its film lasts at most ``seconds``: the
+    worst shape the band allows (`film_length.longest_factual_films`), not the even one.
+    ``scenes * high`` when no draft inside the band can pass ``seconds`` at all."""
     most = 0
     for words, film in enumerate(longest_factual_films(scenes, low, high, settings=options)):
         # Rounded as `factual_film_length` rounds the estimate the length check compares.
@@ -234,7 +257,7 @@ def _words_within_band(seconds: float, scenes: int, low: int, high: int, options
     return most
 
 
-def narration_budget(target_seconds: float) -> dict[str, Any]:
+def narration_budget(target_seconds: float, *, when: Timing | None = None) -> dict[str, Any]:
     """How much narration a film of this length affords — and how many scenes that is.
 
     The writer used to be told the total words and nothing else, while the same brief offered
@@ -243,48 +266,91 @@ def narration_budget(target_seconds: float) -> dict[str, Any]:
     check refused a film that was otherwise sound. The arithmetic belongs in the brief, not in
     the writer's head: this returns the total, the window the check will actually allow, the
     number of scenes the budget affords, and what one scene may weigh.
+
+    Every number is the one estimate's (`film_length.factual_film_length`, the very estimate
+    the length check applies). Since 2026-10-16 («pauza vocii», the Owner) a film is its words
+    at the narrator's own measured rate plus the pauses the storyboard will freeze between its
+    writer's scenes (the voice's full stop, its longer pause at a change of part), the
+    montage's cuts inside a scene adding nothing; its words are held under the wall with the
+    estimate's margin. The target is priced on the brief's own shape (its scene count, the words
+    spread evenly, the parts of the beat table); the most words on the worst shape a draft can
+    take (a change of part at every join), so that every draft keeping the brief is a film the
+    check accepts. With the pause rules off, the legacy pricing (a breath after every shot).
     """
     target = max(float(target_seconds), 0.0)
-
-    # A film is its words plus its breaths, and since 2026-10-16 a breath is the montage's:
-    # every shot with words keeps LEGACY_SPOKEN_TAIL_SECONDS, and a scene of fifteen words or
-    # more is cut into two or three shots. The brief used to price 0.35 s per writer's scene, and a
-    # script written to its ceiling became a 194 s film. The words are now priced on the film
-    # the montage cuts from them (`film_length.factual_film_length`, the very estimate the
-    # length check applies), for the brief's own shape: its scene count, the words spread
-    # evenly. The scene count is settled first, from the words alone.
-    outer = min(target * (1.0 + DURATION_TOLERANCE), length_ceiling_seconds()) if target else 0.0
-    spoken = target * WORDS_PER_SECOND
+    when = when or timing(FACTUAL)
+    numbers = film_timing(when)
+    rate = 1.0 / float(numbers["seconds_per_word"]) if when.paused else WORDS_PER_SECOND
+    wall = length_ceiling_seconds(when)
+    outer = min(target * (1.0 + DURATION_TOLERANCE), wall) if target else 0.0
+    spoken = target * rate
     # Three scenes is the fewest that can hold a hook, a middle and a payoff; beyond the cap
     # the film is a list again. Between those, the length decides.
     scenes = max(3, min(MAX_STORY_SCENES, int(round(spoken / WORDS_PER_SCENE)))) if target else 0
     options = montage_options()
-    ceiling = _words_within(outer, scenes, options)
-    # A target past the ceiling (a short asked longer than the wall) aims at the ceiling.
-    total = min(_words_within(target, scenes, options), ceiling)
     floor = target * (1.0 - DURATION_TOLERANCE)
-    # The fewest words whose film reaches the floor: one more than the most that stay under it.
-    fewest = _words_within(floor - 1e-6, scenes, options) + 1 if scenes else 0
+    if when.paused:
+        purposes = beat_purposes(scenes)
+        longest = target * (1.0 + DURATION_TOLERANCE)
+
+        def within_check(film: FilmLength) -> bool:
+            return film.seconds <= longest + 1e-9 and film.against_wall <= wall + 1e-9
+
+        ceiling = (
+            words_within(within_check, scenes, settings=options, when=when, worst=True)
+            if target
+            else 0
+        )
+        total = (
+            min(
+                words_within(
+                    lambda film: film.seconds <= target + 1e-9,
+                    scenes,
+                    settings=options,
+                    when=when,
+                    purposes=purposes,
+                ),
+                ceiling,
+            )
+            if target
+            else 0
+        )
+        # The fewest words whose film reaches the floor: one more than the most under it.
+        fewest = (
+            words_within(
+                lambda film: film.seconds < floor - 1e-6,
+                scenes,
+                settings=options,
+                when=when,
+                purposes=purposes,
+            )
+            + 1
+            if scenes
+            else 0
+        )
+    else:
+        ceiling = _words_within(outer, scenes, options)
+        # A target past the ceiling (a short asked longer than the wall) aims at the ceiling.
+        total = min(_words_within(target, scenes, options), ceiling)
+        fewest = _words_within(floor - 1e-6, scenes, options) + 1 if scenes else 0
     per_scene = total / scenes if scenes else 0.0
     low = max(6, int(per_scene * 0.8))
     high = int(per_scene * 1.2) + 1
     # The band is a promise too: every draft that keeps it must be a film the length check
     # accepts. At 160 s the band was 10-16 while the montage cuts a scene of fifteen words into
-    # two shots, and 23 scenes of fifteen with the rest at ten (399 words, all inside it) were
-    # 51 shots and 184 s, refused for following the brief (the review of 2026-10-16). So the
-    # band stops under the cut whenever the words a scene aims at do, which keeps a scene the
-    # brief describes one shot and one breath; and if a draft inside the band could still pass
-    # the ceiling (a short asked at the wall, a scene count where the frames add up, a band
-    # the cut lies inside), the ceiling comes down to what its worst shape allows.
+    # two shots (the review of 2026-10-16). The band stops under the cut whenever the words a
+    # scene aims at do, which keeps a scene the brief describes one shot (one still, one clip).
+    # With the pause rules off, a draft inside the band could still pass the ceiling (every
+    # shot a breath, every row rounded on its own), and the ceiling comes down to what its
+    # worst shape allows; under them the ceiling is already the worst shape's.
     cut = factual_cut_words(options)
     if cut is not None and per_scene <= cut - 1:
         high = min(high, cut - 1)
-    if scenes and low <= high:
+    if not when.paused and scenes and low <= high:
         band = _words_within_band(outer, scenes, low, high, options)
         if band < scenes * high:
             ceiling = min(ceiling, band)
             total = min(total, ceiling)
-    timing = film_timing()
     return {
         "target_seconds": round(target, 1),
         "max_seconds": round(outer, 1),
@@ -292,13 +358,16 @@ def narration_budget(target_seconds: float) -> dict[str, Any]:
         "max_words": ceiling,
         "min_words": fewest,
         "scenes": scenes,
-        # The rate and the breath the words were priced at, for the brief to say.
-        "words_per_second": round(1.0 / timing["seconds_per_word"], 2),
-        "breath_seconds": timing["breath_seconds"],
+        # The rate and the pauses the words were priced at, for the brief to say.
+        "words_per_second": round(rate, 2),
+        "breath_seconds": numbers["breath_seconds"],
+        "section_seconds": numbers["section_seconds"],
+        "beat_seconds": numbers["beat_seconds"],
+        "paused": bool(numbers["paused"]),
         "words_per_scene_low": low,
         "words_per_scene_high": high,
-        # From this many words the montage cuts a scene into two or three shots, each with
-        # its breath (None: it never does); the brief says so.
+        # From this many words the montage cuts a scene into two or three shots (None: it
+        # never does); the brief says so.
         "cut_words": cut,
         "beats": [
             (name, round(target * start, 1), round(target * end, 1))
@@ -404,7 +473,23 @@ def expected_seconds(scenes: list[dict[str, Any]] | str, *, beats: bool = True) 
 
     Accepts the scene list or one block of text. Scene changes add a beat, because a viewer
     needs a moment to see where they are — "fast" and "incomprehensible" are not the same.
+
+    The one estimate (`film_length`): under the pause rules a block of text is its words at
+    the narrator's own median rate, and a scene list the film the montage cuts from it, the
+    pauses the storyboard will freeze between its scenes included (``beats``; without them,
+    its words alone). With the rules off, WORDS_PER_SECOND and SCENE_BEAT_SECONDS.
     """
+    when = timing(FACTUAL)
+    narrator = narrator_profile(when)
+    if narrator is not None:
+        if isinstance(scenes, str):
+            return round(speech_seconds(scenes, narrator), 2)
+        if beats:
+            return round(factual_film_length(scenes, when=when).seconds, 2)
+        said = " ".join(
+            str(scene.get("narration") or scene.get("voiceover_segment") or "") for scene in scenes
+        )
+        return round(speech_seconds(said, narrator), 2)
     if isinstance(scenes, str):
         words = len(scenes.split())
         return round(words / WORDS_PER_SECOND, 2)
@@ -618,33 +703,53 @@ def duration_check(
     scenes: list[dict[str, Any]], target_seconds: float, tolerance: float = DURATION_TOLERANCE
 ) -> dict[str, Any]:
     """Whether the film cut from these scenes has a realistic length: within the tolerance of
-    its target, and never past the Shorts wall less the estimate's margin.
+    its target, and never past the Shorts wall.
 
-    Measured on the film the montage will cut, as the assembler will time it
-    (`film_length.factual_film_length`): the words at the studio's rate plus the breath after
-    every shot. Until 2026-10-16 it was the words plus 0.35 s per writer's scene, and a script
-    it passed at 179 s became a 194 s film once its 28 scenes were cut into 56 shots."""
-    film = factual_film_length(scenes)
+    Measured on the film the montage will cut, as the studio will time it
+    (`film_length.factual_film_length`, the one estimate): the words at the narrator's own
+    rate, plus the pauses the storyboard will freeze between the writer's scenes (the voice's
+    full stop, a longer one at a change of part, a writer's marked silence); the wall is held
+    against the same film with the estimate's margin on its words (``against_wall``). Until
+    2026-10-16 it was the words plus 0.35 s per writer's scene, and a script it passed at 179 s
+    became a 194 s film once its 28 scenes were cut into 56 shots, each with a breath."""
+    when = timing(FACTUAL)
+    film = factual_film_length(scenes, when=when)
+    numbers = film_timing(when)
     lowest = target_seconds * (1 - tolerance)
-    ceiling = length_ceiling_seconds()
+    ceiling = length_ceiling_seconds(when)
     highest = min(target_seconds * (1 + tolerance), ceiling)
-    timing = film_timing()
-    wall = (
-        f" (zidul de {MAX_SHORT_SECONDS:.0f} s al unui Short, minus o marjă de "
-        f"{MAX_SHORT_SECONDS - ceiling:.0f} s pentru estimare)"
-        if highest >= ceiling
-        else ""
-    )
+    wall = ""
+    if highest >= ceiling or film.against_wall > ceiling:
+        wall = (
+            f" (zidul de {MAX_SHORT_SECONDS:.0f} s al unui Short; estimarea îl ține cu o marjă de "
+            f"{MAX_SHORT_SECONDS - ceiling:.0f} s)"
+            if not numbers["paused"]
+            else f" (zidul de {MAX_SHORT_SECONDS:.0f} s al unui Short, măsurat cu marja "
+            f"estimării: {film.against_wall:.1f}s)"
+        )
+    if numbers["paused"]:
+        how = (
+            f"narațiunea, la {decimal(1.0 / numbers['seconds_per_word'], 1)} cuvinte/secundă, "
+            f"plus pauzele vocii între scene ({decimal(numbers['breath_seconds'], 2)} s, "
+            f"{decimal(numbers['section_seconds'], 2)} s la o schimbare de parte; montajul taie "
+            f"scenele în {count(film.rows, 'cadru', 'cadre')} pe cuvintele lor, fără nicio "
+            "pauză în plus)"
+        )
+    else:
+        how = (
+            f"narațiunea, la {decimal(1.0 / numbers['seconds_per_word'], 1)} cuvinte/secundă, "
+            f"plus respirația de {decimal(numbers['breath_seconds'], 1)} s de după fiecare "
+            f"cadru (montajul taie scenele în {count(film.rows, 'cadru', 'cadre')})"
+        )
     return {
         **_check(
-            target_seconds <= 0 or lowest <= film.seconds <= highest,
-            f"Filmul ar dura {film.seconds:.1f}s: narațiunea, la "
-            f"{decimal(1.0 / timing['seconds_per_word'], 1)} cuvinte/secundă, plus respirația de "
-            f"{decimal(timing['breath_seconds'], 1)} s de după fiecare cadru (montajul taie "
-            f"scenele în {count(film.rows, 'cadru', 'cadre')}), față de ținta de "
+            target_seconds <= 0
+            or (lowest <= film.seconds <= highest and film.against_wall <= ceiling + 1e-9),
+            f"Filmul ar dura {film.seconds:.1f}s: {how}, față de ținta de "
             f"{target_seconds:.0f}s. Intervalul acceptat este {lowest:.0f}-{highest:.0f}s{wall}.",
         ),
         "estimated_seconds": film.seconds,
+        "wall_seconds": film.against_wall,
         "shots": film.rows,
     }
 

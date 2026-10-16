@@ -128,11 +128,13 @@ OFFERED_SPEAKERS = 3
 WORDS_PER_BEAT = (15, 45)
 #: Spoken words in the whole episode, the narrator's included (the Owner, 2026-10-16:
 #: «90-180 s, 250-450 cuvinte», and «maxim 180»). The ceiling is what the film the montage
-#: cuts from them can carry under YouTube's 180-second wall: every shot keeps a 0.4 s breath
-#: after its words (`assembler.LEGACY_SPOKEN_TAIL_SECONDS`), and 390 words cut into 23-43 shots
-#: estimate at 167-177 s (`media.film_length.serial_film_length`, measured 2026-10-16 on 6-12
-#: beats of 2-4 lines). It was 430: 35 shots of those words came out at 189 s, past the wall
-#: quality control refuses after every still, clip and voice was bought.
+#: cuts from them can carry under YouTube's 180-second wall: under the legacy timing every shot
+#: kept a 0.4 s breath after its words, and 390 words cut into 23-43 shots estimated at
+#: 167-177 s (measured 2026-10-16 on 6-12 beats of 2-4 lines). It was 430: 35 shots of those
+#: words came out at 189 s, past the wall quality control refuses after every still, clip and
+#: voice was bought. Since «pauza vocii» (2026-10-16) the review measures the episode in its
+#: speakers' own voices and pauses (`media.film_length.serial_film_length`), and refuses on
+#: that film, not on this count.
 EPISODE_WORDS = (250, 390)
 #: The same episode in seconds of speech at 2.5 words a second, as the brief states it and the
 #: review measures it (`story.review.MIN_SECONDS`, `MAX_SECONDS`): the floor is the Owner's
@@ -996,15 +998,14 @@ exclamation, an interjection, a pause marked by an ellipsis or a dash where the 
 breaks, a word repeated in disbelief; the surprise, the fear, the laugh must be in the \
 words themselves. Punctuate every line as speech: a full stop, a question mark or an \
 exclamation mark at its end, commas where the speaker breathes; the voice paces itself on \
-the punctuation and the captions follow it.
+the punctuation and the captions follow it.{beat_note}
 4. Length. Aim for {min_words} to {max_words} spoken words in each beat: a recommendation \
 the Director weighs, not a rule that refuses the episode. A beat may run longer than one \
 shot: the montage cuts it into shots of a few seconds, so write whole sentences that carry \
 a thought to its end, never telegraphic fragments. The whole episode is {min_episode_words} \
 to {max_episode_words} spoken words, the Narrator's included: at 2.5 words a second, at \
 least {min_seconds} and at most {max_seconds} seconds of speech, and never more than \
-{max_episode_words} words. Every shot keeps a breath after its words, so past them the \
-film is no longer a Short; many very short lines make many shots, and their breaths add up.
+{max_episode_words} words. {pause_note}
 5. Language. The title, the lines, the summary and the logline are in English. Some event \
 texts (letter subjects, titles) are in Romanian: say what they mean in English, never quote \
 the Romanian.
@@ -1094,6 +1095,46 @@ button is one line, then the Narrator's one closing sentence. Expand the interve
 dialogue with reactions and consequences in whole sentences, without inventing studio facts \
 or repeating filler. A collection of very short punchlines is too short even when it has \
 enough beats. Return the episode JSON only, without your counts or calculation."""
+
+
+def _beat_note() -> str:
+    """The one sentence on the writer's marked silence (the Owner, 2026-10-16, «pauza
+    vocii»): a direction that asks for a silence becomes a real one, in the band the pause
+    rules set for a BEAT, where it stood, at most one in a beat and never before the
+    punchline. Empty while the marks are off (a direction is then only the voice's hint)."""
+    from app.media import pauses  # noqa: PLC0415 - media reads the story
+
+    rules = pauses.active_rules()
+    if rules is None or not rules.switch("marked_beats"):
+        return ""
+    return (
+        ' A direction that asks for a silence ("(beat)", "pause") becomes a real silence of '
+        f"{rules.beat_floor_seconds:g} to {rules.beat_ceiling_seconds:g} seconds where it stands "
+        "(before the line, after it, or inside it where you put it), at most one in a beat and "
+        "never before the button's punchline: use it only where the silence says something."
+    )
+
+
+def _pause_note() -> str:
+    """What the pauses between the lines add to the film, in the estimate's own numbers
+    (`film_length.film_timing`): since «pauza vocii» a speaker change is the conversational
+    gap and a beat's end the narrator's paragraph pause, never a breath after every shot."""
+    from app.media import pauses  # noqa: PLC0415 - media reads the story
+    from app.media.film_length import SERIAL, film_timing, timing  # noqa: PLC0415
+
+    rules = pauses.active_rules()
+    if rules is None:
+        return (
+            "Every shot keeps a breath after its words, so past them the film is no longer a "
+            "Short; many very short lines make many shots, and their breaths add up."
+        )
+    numbers = film_timing(timing(SERIAL))
+    return (
+        "Past them the film is no longer a Short: between two speakers the voices pause about "
+        f"{rules.turn_seconds:.2f} seconds and at a beat's end about "
+        f"{numbers['section_seconds']:.2f}, and many very short lines add many pauses."
+    )
+
 
 #: How much of a refused draft or answer the next brief shows: enough for every beat of a
 #: twelve-beat episode of 430 words, not so much that the day's events are crowded out.
@@ -1850,6 +1891,8 @@ def write_episode(
             max_words=WORDS_PER_BEAT[1],
             min_seconds=int(EPISODE_SECONDS[0]),
             max_seconds=int(EPISODE_SECONDS[1]),
+            beat_note=_beat_note(),
+            pause_note=_pause_note(),
             opening_sentences=(
                 f"{NARRATION_OPENING_SENTENCES[0]} or {NARRATION_OPENING_SENTENCES[1]}"
             ),

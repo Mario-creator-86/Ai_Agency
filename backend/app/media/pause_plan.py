@@ -107,6 +107,46 @@ def _board_plan(session: Any, board: Any, *, serial: bool) -> dict[str, Any] | N
         return None
 
 
+def serial_voice_keys(
+    session: Any, bibles: Mapping[str, Any]
+) -> tuple[str | None, dict[str, str | None]]:
+    """The voices an episode's render would speak in, before it has a storyboard (the serial
+    review's estimate, «pauza vocii»): the narrator's (the serial channel's voice purpose) and
+    each speaker's, by the name the lines use (``bibles``: name -> the character's bible), as
+    `speaker_voices.speaker_voice` resolves it (a voice of their own, the cast's proposal, else
+    the narrator's). Database reads only; (None, {}) when they cannot be resolved here, and the
+    estimate times the voices by their pools."""
+    try:
+        from sqlalchemy import select  # noqa: PLC0415
+
+        from app.media.production_policy import resolve_purpose  # noqa: PLC0415
+        from app.media.speaker_voices import load_voice_cast, speaker_voice  # noqa: PLC0415
+        from app.publishing.models import ChannelRecord  # noqa: PLC0415
+        from app.story.services import SERIES_KEY  # noqa: PLC0415
+
+        channel = session.scalars(
+            select(ChannelRecord)
+            .where(ChannelRecord.channel_type == "OFFICE_SERIAL")
+            .order_by(ChannelRecord.created_at)
+        ).first()
+        narrator = resolve_purpose(session, "voice", channel=channel, series_key=SERIES_KEY)
+        cast = load_voice_cast()
+        keys = {
+            str(name): resolved_voice_key(
+                session,
+                speaker_voice(
+                    session, narrator, bible, cast, channel=channel, series_key=SERIES_KEY
+                ),
+            )
+            for name, bible in bibles.items()
+            if name
+        }
+        return resolved_voice_key(session, narrator), keys
+    except Exception as exc:  # noqa: BLE001 - an estimate on the pools rather than none
+        logger.warning("serial_voices_unresolved", extra={"error": type(exc).__name__})
+        return None, {}
+
+
 def board_wall(session: Any, board: Any, rules: pauses.PauseRules) -> float:
     """The board's wall: its channel's Shorts maximum (the type's default when the channel
     states none), never past the rules' cap (`pauses.wall_seconds`)."""

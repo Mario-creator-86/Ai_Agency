@@ -56,12 +56,14 @@ PROFILE = ModelCapability(
 
 
 def words(count: int) -> str:
-    return " ".join(["word"] * count)
+    """``count`` spoken words, one sentence, as a writer ends every scene."""
+    return " ".join(["word"] * count) + "."
 
 
-#: 28 spoken words: 11.2 s estimated, + 0.12 s breath + 10% margin = 12.458 s of clip (the
-#: NASA film's scene 4), 24.6% over a 10 s clip. 30 words: 13.333 s, 33% over.
-FITS_SLOWED = words(28)
+#: 27 spoken words: 10.8 s estimated at the narrator's high rate (pinned: 0.40 s), + 10%
+#: margin + the 0.49 s full stop the shot holds after them («pauza vocii») = 12.375 s of clip,
+#: 23.75% over a 10 s clip (the NASA film's scene 4 was 24.6%). 30 words: 13.708 s, 37% over.
+FITS_SLOWED = words(27)
 TOO_LONG = words(30)
 
 
@@ -90,7 +92,7 @@ def test_a_scene_up_to_a_quarter_over_the_longest_clip_is_planned_at_that_clip(
 
     plan = motion_plan(engine, storyboard_id, capabilities=[PROFILE])
     scene = by_scene(plan)[2]
-    assert scene["seconds"] == 12.458
+    assert scene["seconds"] == 12.375
     assert scene["status"] == "PLANNED", scene["reason_ro"]
     # The clip actually bought, at its price: 10 s, never the 13 s the words alone would ask.
     assert scene["billed_seconds"] == 10
@@ -100,10 +102,10 @@ def test_a_scene_up_to_a_quarter_over_the_longest_clip_is_planned_at_that_clip(
     sheet = build_sheet(engine, storyboard_id, capabilities=[PROFILE], read_live=False)
     motion = sheet["scenes"][1]["motion"]
     assert motion["status"] == "PLANNED" and motion["billed_seconds"] == 10
-    assert motion["slowed"] == {"clip_seconds": 10, "needed_seconds": 12.458, "percent": 25}
+    assert motion["slowed"] == {"clip_seconds": 10, "needed_seconds": 12.375, "percent": 24}
     assert (
-        "Scena cere 12,5 s, peste cele 10 s pe care seedance2_5 le filmează într-un cadru: "
-        "clipul de 10 s se încetinește local la asamblare (cu până la 25%), 0 USD."
+        "Scena cere 12,4 s, peste cele 10 s pe care seedance2_5 le filmează într-un cadru: "
+        "clipul de 10 s se încetinește local la asamblare (cu până la 24%), 0 USD."
     ) in motion["reason_ro"]
     assert not sheet["lint_blocked"]
     assert "Așteaptă Proprietarul" not in str(sheet["footer"]["summary_ro"])
@@ -113,7 +115,9 @@ def test_a_scene_up_to_a_quarter_over_the_longest_clip_is_planned_at_that_clip(
 def test_the_test_shot_and_the_motion_step_buy_and_price_the_longest_clip(
     engine: Engine, tmp_path: Path
 ) -> None:
-    storyboard_id = a_board(engine, tmp_path, [FITS_SLOWED, FITS_SLOWED])
+    # 26 words a scene: each is followed by the narrator's longer pause (a change of part after
+    # the HOOK, the film's END: 0.767 s), 12.208 s of clip.
+    storyboard_id = a_board(engine, tmp_path, [words(26), words(26)])
     account = Account(10_000)
     models = Models(SpyVideo("seedance2_5", account))
     spy = models.spies["seedance2_5"]
@@ -142,11 +146,11 @@ def test_a_scene_no_clip_carries_even_slowed_blocks_the_film_before_anything_is_
     assert motion["status"] == "NEEDS_OWNER"
     assert motion["too_long"] == {
         "model_id": "seedance2_5",
-        "seconds": 13.333,
+        "seconds": 13.708,
         "longest_seconds": 10,
         "limit_seconds": 12.5,
         "reason_ro": (
-            "Scena 2 cere un cadru de 13,3 s; seedance2_5 filmează cel mult 10 s într-un "
+            "Scena 2 cere un cadru de 13,7 s; seedance2_5 filmează cel mult 10 s într-un "
             "cadru, iar studioul îl încetinește local cu cel mult 25% (12,5 s). Nu se cumpără "
             "nimic pentru film: Directorul rescrie povestea cu scena împărțită în scene mai "
             "scurte."
@@ -253,7 +257,16 @@ def test_the_story_review_refuses_a_scene_one_clip_cannot_carry_with_its_seconds
     # so a scene's clip may be at most 6.25 s once slowed).
     connect(engine, tmp_path, monkeypatch)
     topic_id = a_topic(engine)
-    fitting = a_script(engine, topic_id)
+    # The good script with its third scene a little shorter: its 13 words before a change of
+    # part (the narrator's 0.767 s pause after them) would ask 6.5 s of a 5 s clip, which no
+    # clip of the model carries even slowed; eleven fit.
+    fitting_scenes = [
+        {**scene, "narration": "That is because the address was set aside before the web."}
+        if scene["scene_number"] == 3
+        else dict(scene)
+        for scene in GOOD_SCENES
+    ]
+    fitting = a_script(engine, topic_id, scenes=fitting_scenes)
     assert review_story(engine, None, fitting, str(uuid4()), target_seconds=20)["verdict"] == (
         "PASS"
     )
@@ -271,9 +284,10 @@ def test_the_story_review_refuses_a_scene_one_clip_cannot_carry_with_its_seconds
     )
     assert refused["verdict"] == "REVISE"
     assert refused["failed"] == ["every_scene_fits_one_clip"]
-    # 23 spoken words: 9.2 s + 0.12 s breath + 10% margin, on whole frames: 10.25 s.
+    # 23 spoken words: 9.2 s at the narrator's high rate + 10% margin + the 0.767 s pause after
+    # them (a change of part), on whole frames: 10.92 s.
     assert (
-        "Scena 3 cere un cadru de 10,25 s (23 de cuvinte rostite); LTX-2.5 filmează cel mult "
+        "Scena 3 cere un cadru de 10,92 s (23 de cuvinte rostite); LTX-2.5 filmează cel mult "
         "5 s într-un cadru, iar studioul îl încetinește local cu cel mult 25% (6,25 s). "
         "Împarte scena în două scene, fiecare cu imaginea ei, sau scurtează-i narațiunea."
     ) in refused["notes"]

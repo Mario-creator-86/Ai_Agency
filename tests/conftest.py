@@ -51,6 +51,26 @@ def _two_still_candidates_as_the_suite_was_written():
 
 
 @pytest.fixture(autouse=True)
+def pinned_voice_profiles(request, monkeypatch):
+    """The voices the suite is timed by («pauza vocii», 2026-10-16), pinned the way
+    STILL_CANDIDATES is: every estimate, freeze and render reads
+    `pause_timing.PINNED_VOICE_PROFILES`, never the kept takes of the test's own media folder,
+    so a kept take never moves a test's numbers; the tests derive them through the rules' own
+    formulas (`pause_timing.pause`). A test marked measured_voices measures the voices itself."""
+    if request.node.get_closest_marker("measured_voices") is not None:
+        return
+    import copy
+
+    from app.media import pauses
+    from pause_timing import PINNED_VOICE_PROFILES
+
+    def pinned(media_root=None, *, rules, write=True):
+        return copy.deepcopy(PINNED_VOICE_PROFILES)
+
+    monkeypatch.setattr(pauses, "load_profiles", pinned)
+
+
+@pytest.fixture(autouse=True)
 def shipped_music_library(monkeypatch):
     """Every test reads the music library the release ships (empty), never the Owner's own
     library beside his files (config/music/, 2026-10-11): what a film does without music,

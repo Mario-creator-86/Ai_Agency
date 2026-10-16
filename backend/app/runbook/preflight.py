@@ -1114,7 +1114,7 @@ def _montage_day(engine: Engine, settings: Settings, films: int) -> dict[str, An
     price a part."""
     import math  # noqa: PLC0415
 
-    from app.media.assembler import LEGACY_SPOKEN_TAIL_SECONDS, TRANSITION_SECONDS  # noqa: PLC0415
+    from app.media.assembler import TRANSITION_SECONDS  # noqa: PLC0415
     from app.media.cost_plan import (  # noqa: PLC0415
         STILL_CANDIDATES,
         STILLS_RESOLUTION,
@@ -1123,6 +1123,7 @@ def _montage_day(engine: Engine, settings: Settings, films: int) -> dict[str, An
         price_shot,
         price_still,
     )
+    from app.media.film_length import film_timing  # noqa: PLC0415
     from app.media.montage import montage_settings  # noqa: PLC0415
     from app.media.shooting_sheet import price_table_for  # noqa: PLC0415
 
@@ -1137,11 +1138,13 @@ def _montage_day(engine: Engine, settings: Settings, films: int) -> dict[str, An
         return None
     try:
         still = price_still(table.stills_model, STILLS_RESOLUTION, STILL_CANDIDATES, table=table)
-        # A row's clip holds its words, the breath after them and the dissolve into the next.
+        # A row's clip holds its words, the pause after them (the one estimate's: the voice's
+        # full stop between two writer's scenes, `film_length.film_timing`; none after a cut
+        # inside a take, so this prices every row as a scene's last) and the dissolve.
         clip = price_shot(
             video,
             str(getattr(settings, "motion_resolution", "1080p")),
-            shot + LEGACY_SPOKEN_TAIL_SECONDS + TRANSITION_SECONDS,
+            shot + float(film_timing()["breath_seconds"]) + TRANSITION_SECONDS,
             table=table,
         )
     except (UnpricedError, KeyError):

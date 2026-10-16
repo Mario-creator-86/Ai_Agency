@@ -572,7 +572,7 @@ LUNGIMEA — ținta, nu o cămașă de forță:
 - ce nu merge e un film care nu mai e un short: peste {max_words} de cuvinte în total
   ({max_seconds:.0f} secunde) povestea se rescrie mai scurtă.
 Se măsoară filmul pe care îl taie montajul, nu numerele pe care le scrii tu în
-"duration_seconds": textul rostit, plus o respirație de {breath} s după fiecare cadru, {cuts}.
+"duration_seconds": textul rostit, {measured_as}, {cuts}.
 O scenă de 25 de cuvinte pare scurtă și nu este: sunt zece secunde.
 
 {cost}{judgement}Răspunde EXCLUSIV cu un obiect JSON valid, fără text în plus:
@@ -593,7 +593,7 @@ FOLLOW|SERIES|COMMENT", "scenes": [{{"narration": "...", "visual": "...", "purpo
   o pauză (…) înainte de răspuns, un cuvânt repetat a mirare; cu semne de punctuație ca în
   vorbire: punct, semnul întrebării sau al exclamării la sfârșitul fiecărei propoziții, virgule
   unde respiră vocea; vocea își ia ritmul și emoția din punctuație, iar subtitrările o urmează.
-
+{beat_note}
 {measured}AFIRMAȚII VERIFICATE (singura sursă de fapte permisă):
 """
 
@@ -751,15 +751,28 @@ def _write_instructions(
     return _WRITE_INSTRUCTIONS.format(
         duration=int(budget["target_seconds"]),
         wps=decimal(budget["words_per_second"], 1),
-        breath=decimal(budget["breath_seconds"], 1),
+        # How the film is measured, in the estimate's own numbers (`film_length.film_timing`):
+        # since «pauza vocii» (2026-10-16) the voice's own pauses between scenes, never a
+        # breath after every shot.
+        measured_as=(
+            f"plus pauza vocii între două scene ({decimal(budget['breath_seconds'], 2)} s, "
+            f"{decimal(budget['section_seconds'], 2)} s când se schimbă partea poveștii)"
+            if budget["paused"]
+            else f"plus o respirație de {decimal(budget['breath_seconds'], 1)} s după fiecare cadru"
+        ),
         # The word count the montage cuts at, said outright: a scene one word past the band
-        # is a shot and a breath more, which the length check counts.
+        # is a shot more (a still and a clip), which the plan pays for.
         cuts=(
             f"iar o scenă de {budget['cut_words']} cuvinte sau mai multe se taie în două-trei "
-            "cadre, fiecare cu respirația lui"
+            + (
+                "cadre pe cuvintele ei, fără nicio pauză în plus"
+                if budget["paused"]
+                else "cadre, fiecare cu respirația lui"
+            )
             if budget["cut_words"]
             else "iar fiecare scenă rămâne un singur cadru"
         ),
+        beat_note=_beat_note(budget),
         words=budget["total_words"],
         max_words=budget["max_words"],
         scenes=budget["scenes"],
@@ -774,6 +787,22 @@ def _write_instructions(
         title_chars=TITLE_CHARS,
         hook_words=HOOK_WORDS,
         measured=measured,
+    )
+
+
+def _beat_note(budget: dict[str, Any]) -> str:
+    """The one sentence on the writer's marked silence (the Owner, 2026-10-16, «pauza
+    vocii»): a «…» at the very end of a scene's narration becomes a real silence, in the band
+    the pause rules set (`pauses.target` for a BEAT), at most one in a part of the story. Empty
+    while the marks are off: then a «…» is only a hint to the voice."""
+    band = budget.get("beat_seconds")
+    if not band:
+        return ""
+    low, high = band
+    return (
+        "  Un „…” pus chiar la sfârșitul narațiunii unei scene devine o tăcere adevărată de "
+        f"{decimal(low, 1)}-{decimal(high, 1)} s înainte de scena următoare, cel mult una într-o "
+        "parte a poveștii: pune-l numai unde tăcerea spune ceva.\n"
     )
 
 

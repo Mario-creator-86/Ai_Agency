@@ -807,13 +807,18 @@ def test_a_scene_lasts_its_words_and_its_full_breath_and_a_silent_card_one_beat(
     timeline plans after each scene's words, so the timeline no longer shrinks the breaths to
     keep the film within 0.9 s of its narration (six scenes kept about 0.11 s each and every
     cut felt rushed). A silent composed scene lasts at most what QC allows its kind
-    (qc.MAX_SILENT_CARD_SECONDS); a writer's longer plan is cut to it, not failed."""
+    (qc.MAX_SILENT_CARD_SECONDS); a writer's longer plan is cut to it, not failed.
+
+    This is the LEGACY timing, of a film built before «pauza vocii» (2026-10-16): one breath
+    after every scene. A film built under the pause rules holds each scene's own frozen pause,
+    every cut on the frame nearest it (the end of this test)."""
     from app.media import assembler
     from app.media.assembler import LEGACY_SPOKEN_TAIL_SECONDS, TIMELINE_FPS, scene_spans
     from app.media.qc import MAX_SILENT_CARD_SECONDS
 
     # 0.12 s since 2026-10-02, after each take's own silence is trimmed (audit Q4); 0.4 s
-    # since 2026-10-16 (the Owner: the movement must finish before the cut).
+    # since 2026-10-16 (the Owner: the movement must finish before the cut), and only for a
+    # film built before the pause rules since the same day.
     assert LEGACY_SPOKEN_TAIL_SECONDS == 0.4
     assert not hasattr(assembler, "FILM_OVER_NARRATION_SECONDS")
 
@@ -860,6 +865,20 @@ def test_a_scene_lasts_its_words_and_its_full_breath_and_a_silent_card_one_beat(
     assert whole_frames(spans)
     # A card with words is narration: its words and a breath, like any scene.
     assert scene_spans([6.0], [2.0], kinds=["DATA_CARD"]) == pytest.approx([up(2.4)])
+
+    # Under the pause rules: each scene its words and the pause frozen after them (0.0 after a
+    # cut inside a take), the silent cards as before, every cut on the frame nearest its exact
+    # time, so the film never drifts from its voice: the total is the exact one, to a frame.
+    paused = scene_spans(
+        [5.0, 5.0, 3.0, 5.0],
+        [4.0, 3.2, 0.0, 4.1],
+        kinds=["LIVE", "LIVE", "BLACK", "LIVE"],
+        pauses=[0.0, 0.767, None, 0.49],
+    )
+    assert whole_frames(paused)
+    exact = 4.0 + (3.2 + 0.767) + MAX_SILENT_CARD_SECONDS["BLACK"] + (4.1 + 0.49)
+    assert abs(sum(paused) - exact) <= 0.5 / TIMELINE_FPS + 1e-9
+    assert paused[0] == pytest.approx(round(4.0 * TIMELINE_FPS) / TIMELINE_FPS)
 
 
 class AlignedVoice:

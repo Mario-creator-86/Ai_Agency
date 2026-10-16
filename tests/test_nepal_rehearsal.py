@@ -45,6 +45,7 @@ from app.media.models import (
 from app.media.toolchain import find_ffmpeg, find_ffprobe
 from app.models import DomainEvent, OwnerPolicy
 from app.services import utc_now
+from pause_timing import freeze_film, pause
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -554,7 +555,8 @@ def test_a_paid_clip_shorter_than_its_scene_is_named_and_never_claimed_used(
 
     2026-10-01 (TIMELINE_24_CAPTIONS): a scene lasts its words plus a breath, not its plan,
     so the fixture's 3.0 s clip is made shorter than its scene by the scene's words: a 4.2 s
-    narration on scene 1."""
+    narration on scene 1. Since «pauza vocii» (2026-10-16) the film is rebuilt with its pauses
+    frozen, and the breath is the narrator's own pause after the HOOK (a change of part)."""
     import re
 
     from app.media.rehearsal import rehearse
@@ -579,6 +581,7 @@ def test_a_paid_clip_shorter_than_its_scene_is_named_and_never_claimed_used(
             )
         ).one()
         scene.duration_seconds = 4.0
+    freeze_film(engine, storyboard_id)
 
     result = rehearse(
         engine,
@@ -595,10 +598,12 @@ def test_a_paid_clip_shorter_than_its_scene_is_named_and_never_claimed_used(
     assert hero.get("reused_take") is not True
     row = result["adoption"]["sheet"]["scenes"][0]
     assert row["motion"]["used"] is False
-    # The shot the clip had to fill: the scene's words (4.2 s) on whole frames.
+    # The shot the clip had to fill: the scene's words (4.2 s) and the narrator's pause after
+    # them (a change of part, 0.767 s), on a frame of the timeline.
     shot = re.search(r"e mai scurt decât scena \((\d+),(\d\d) s\)", row["line_ro"])
     assert shot is not None, row["line_ro"]
-    assert 4.2 <= float(f"{shot.group(1)}.{shot.group(2)}") <= 4.4
+    held = 4.2 + pause("PARAGRAPH")
+    assert held - 1 / 24 <= float(f"{shot.group(1)}.{shot.group(2)}") <= held + 0.2
     assert "se folosește" not in row["line_ro"]
 
 
@@ -936,10 +941,12 @@ def test_the_sheet_before_a_render_measures_a_clip_against_the_timelines_own_spa
     engine, tmp_path, vendors
 ):
     """Before a render the sheet foresaw a clip's span as max(plan, words) + 0.4 s, the
-    formula from before the 24 fps timeline. The film lasts each scene's words plus a breath
-    (scene_spans), so a 3 s hero clip under a 5 s plan and 1.6 s of words fills its scene,
-    and the sheet must not call it too short before the render proves otherwise."""
-    from app.media.assembler import scene_joins, scene_spans, shot_spans
+    formula from before the 24 fps timeline. The film lasts each scene's words plus the pause
+    frozen after them (scene_spans; «pauza vocii», the narrator's own pause at that boundary),
+    so a 3 s hero clip under a 5 s plan and 1.6 s of words fills its scene, and the sheet must
+    not call it too short before the render proves otherwise."""
+    from app.media.assembler import scene_joins, scene_spans, scene_view, shot_spans
+    from app.media.film_length import frozen_rows
     from app.media.rehearsal import adopt_existing_files
 
     folder = media_folder(tmp_path / "media")
@@ -951,6 +958,18 @@ def test_the_sheet_before_a_render_measures_a_clip_against_the_timelines_own_spa
             )
         ).one()
         scene.duration_seconds = 5.0
+    freeze_film(engine, storyboard_id)
+    with Session(engine) as session:
+        views = [
+            scene_view(row)
+            for row in session.scalars(
+                select(StoryboardScene)
+                .where(StoryboardScene.storyboard_id == storyboard_id)
+                .order_by(StoryboardScene.scene_index)
+            )
+        ]
+    plans = frozen_rows(views)
+    assert plans is not None
 
     adopted = adopt_existing_files(
         engine,
@@ -964,7 +983,7 @@ def test_the_sheet_before_a_render_measures_a_clip_against_the_timelines_own_spa
     rows = {row["scene_index"]: row for row in adopted["sheet"]["scenes"]}
     spoken = [float(rows[n]["voice"]["seconds"]) for n in range(1, 7)]
     planned = [5.0] + [PLANNED_SECONDS] * 5
-    spans = scene_spans(planned, spoken)
+    spans = scene_spans(planned, spoken, pauses=[plan.share for plan in plans])
     scenes = [
         {"scene_index": n, "duration_seconds": span, "transition_in": "CUT"}
         for n, span in enumerate(spans, start=1)
@@ -973,8 +992,10 @@ def test_the_sheet_before_a_render_measures_a_clip_against_the_timelines_own_spa
     hero = rows[1]["motion"]
     assert hero["scene_seconds"] == pytest.approx(round(spans[0], 3))
     assert hero["span"] == pytest.approx(round(shots[0], 3))
-    # The old formula's 5.4 s would have left the paid clip out.
-    assert hero["span"] < 2.0
+    # 1.6 s of words and the 0.767 s pause after the HOOK: the 3 s clip covers it. The old
+    # formula's 5.4 s would have left the paid clip out.
+    assert hero["span"] == pytest.approx(round(round((1.6 + pause("PARAGRAPH")) * 24) / 24, 3))
+    assert hero["span"] < 3.0
     assert hero["used"] is True
     assert "(seedance2_5, 3,00 s) se folosește" in rows[1]["line_ro"]
     assert vendors == []

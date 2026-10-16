@@ -404,18 +404,21 @@ def test_numbers_said_in_words_and_the_breath_between_speakers_count():
         {"speaker": "Sarah (Director)", "text": "In 1964 we shipped it."},
         {"speaker": "Kael (Video Editor)", "text": "Twice."},
     ]
-    # "1964" is said as three words: 8 words x 0.40 s, one 0.3 s breath between the two
-    # takes, the estimate's 10 % and the scene's 0.4 s closing breath (2026-10-16).
-    assert beat_clip_seconds(lines) == round((8 * 0.40 + 0.3) * 1.10 + 0.4, 2)
-    # One speaker's two lines are one take: no breath between them.
+    # "1964" is said as three words: 8 words at the cast's high rate (0.375 s, pinned), the
+    # estimate's 10 %, the speaker change between the two takes (the conversational gap,
+    # 0.236 s) and the longest pause a shot can be followed by (the film's END, the narrator's
+    # paragraph pause, 0.767 s), on whole frames («pauza vocii», 2026-10-16).
+    assert beat_clip_seconds(lines) == round(104 / 24, 3)
+    assert 8 * 0.375 * 1.10 + 0.236 + 0.767 <= 104 / 24 < 8 * 0.375 * 1.10 + 1.003 + 1 / 24
+    # One speaker's two lines are one take: no turn between them.
     alone = [{**line, "speaker": "Sarah (Director)"} for line in lines]
-    assert beat_clip_seconds(alone) == round(8 * 0.40 * 1.10 + 0.4, 2)
+    assert beat_clip_seconds(alone) == round(98 / 24, 3)
 
 
 def test_a_beat_longer_than_one_clip_is_refused_and_the_writer_told(engine, staffed, monkeypatch):
-    """22 written words pass the words-per-beat rule; four years said in words (30 spoken)
-    and the breaths between three takes make the beat 14 s, longer than a 10 s clip slowed
-    by a quarter (12.5 s)."""
+    """22 written words pass the words-per-beat rule; four years said in words (30 spoken),
+    the two speaker changes between three takes and the pause at the beat's end make the beat
+    13.3 s, longer than a 10 s clip slowed by a quarter (12.5 s)."""
     from app.story import services
 
     a_motion_model(engine, longest=10)
@@ -449,7 +452,7 @@ def test_a_beat_longer_than_one_clip_is_refused_and_the_writer_told(engine, staf
     assert checks["filmable"]["limit_seconds"] == 12.5
     assert checks["filmable"]["needed_seconds"][2] > 12.5
     assert episode["continuity"]["write_checks"]["failed"] == ["filmable"]
-    assert "14,3 s" in episode["continuity"]["write_checks"]["first_refusal"]
+    assert "13,3 s" in episode["continuity"]["write_checks"]["first_refusal"]
 
 
 def test_every_beat_inside_one_clip_passes_the_filming_check(engine, staffed, monkeypatch):

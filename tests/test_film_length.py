@@ -1,12 +1,18 @@
 """The film's length against YouTube's 180 s wall, measured before anything is bought
 (the adversarial review of 2026-10-16, findings 2, 9, 14-16, 18-20 and 28).
 
-The montage cuts a writer's scene or a beat into shots, and every shot with words keeps a
+The montage cuts a writer's scene or a beat into shots, and every shot with words kept a
 0.4 s breath rounded up to a frame. The reviews priced 0.35 s a writer's scene (factual) or
 5 s in all (serial), so scripts they passed came out at 185-195 s and quality control
-refused them after every still, clip and voice was bought. Each test here measures the film
-the way the assembler times it (`assembler.scene_spans` over the takes), never through the
-estimate it checks.
+refused them after every still, clip and voice was bought.
+
+Since «pauza vocii» (the Owner, 2026-10-16) a film is said one take per writer's scene and per
+speaker's run, the montage cutting the picture inside a take for nothing, and between two
+takes the voice's own pause at that boundary, frozen when the storyboard is built. Each test
+here lays the film out the way the render does (`pause_plan.voice_layout`, over takes said at
+the pinned voices' median rates and the pauses `pauses.freeze` plans), never through the
+estimate it checks (`film_length`), and the reviews hold the estimate against the wall with the
+margin on its words (``FilmLength.against_wall``).
 """
 
 from __future__ import annotations
@@ -19,9 +25,9 @@ from app.factual.editorial import MAX_SHORT_SECONDS, narration_budget, story_che
 from app.media import qc
 from app.media.assembler import SECONDS_PER_SPOKEN_WORD, scene_spans, spoken_words, whole_frames
 from app.media.montage import factual_shots, serial_shots
-from app.media.speaker_voices import SPEAKER_GAP_SECONDS, speaker_segments
 from app.media.toolchain import EDGE_KEEP_SECONDS
 from app.story.review import failed_rules
+from pause_timing import MEDIAN, PINNED_VOICE_PROFILES
 from test_serial_pipeline import (  # noqa: F401 - staffed is a fixture
     KAEL,
     SARAH,
@@ -52,6 +58,56 @@ def _factual(counts: list[int]) -> list[dict]:
     ]
 
 
+def _factual_worst(counts: list[int]) -> list[dict]:
+    """The same words with a change of part at every join: the longest film they make."""
+    return [
+        {"narration": _text(n, offset=i), "purpose": ("HOOK", "PAYOFF")[i % 2]}
+        for i, n in enumerate(counts)
+    ]
+
+
+#: The pinned cast's median rate (`pause_timing.PINNED_VOICE_PROFILES`).
+CHARACTER_MEDIAN = 0.34
+
+
+def _laid_out(sides: list[dict], owners: list[int], rows: int, *, serial: bool) -> float:
+    """The film the render lays out (`pause_plan.voice_layout`) from these sides: the joins
+    planned as the storyboard freezes them (`pauses.freeze`), one take per voice take (a cut
+    inside it adds nothing), each side said at its pinned voice's median rate, each take
+    followed by its planned pause, every cut on a frame of the timeline."""
+    from app.media import pause_plan, pauses
+
+    rules = pauses.load_rules()
+    frozen = pauses.freeze(
+        sides,
+        serial=serial,
+        rules=rules,
+        knobs=pauses.channel_pauses("serial" if serial else "factual", rules),
+        profiles=PINNED_VOICE_PROFILES,
+        narrator_voice=None,
+    )
+    takes: list[dict] = []
+    units: list[list] = [[] for _ in range(rows)]
+    for index, side in enumerate(sides):
+        said = spoken_words(side["text"]) * (CHARACTER_MEDIAN if side.get("speaker") else MEDIAN)
+        if not said:
+            continue
+        joined = index > 0 and frozen.pauses[index - 1]["class"] == "IN_TAKE" and takes
+        if not joined:
+            takes.append({"seconds": 0.0, "pad": 0.0})
+        unit = pause_plan.Unit(len(takes) - 1, takes[-1]["seconds"], said)
+        units[owners[index]].append(unit)
+        takes[-1]["seconds"] += said
+        takes[-1]["pad"] = float(frozen.pauses[index]["seconds"])
+    layout = pause_plan.voice_layout(
+        [row or 3.0 for row in units],
+        [pause_plan.TakeJoin(take["seconds"], take["pad"]) for take in takes],
+        fps=24,
+        cut_in_pause=1.0,
+    )
+    return sum(layout.spans)
+
+
 def _even(words: int, scenes: int) -> list[int]:
     base, extra = divmod(words, scenes)
     return [base + (1 if i < extra else 0) for i in range(scenes)]
@@ -63,9 +119,9 @@ def _take(text: str) -> float:
     return spoken_words(text) * SECONDS_PER_SPOKEN_WORD + 2 * EDGE_KEEP_SECONDS
 
 
-def _assembled_factual(scenes: list[dict]) -> float:
-    """The film the assembler would time: each LIVE scene cut by the montage, each shot its
-    take plus the breath on whole frames (`scene_spans`)."""
+def _legacy_assembled_factual(scenes: list[dict]) -> float:
+    """The film the assembler timed before the pause rules: each LIVE scene cut by the
+    montage, each shot its take plus the legacy breath on whole frames (`scene_spans`)."""
     planned: list[float] = []
     spoken: list[float | None] = []
     for number, scene in enumerate(scenes, start=1):
@@ -75,30 +131,74 @@ def _assembled_factual(scenes: list[dict]) -> float:
     return sum(scene_spans(planned, spoken))
 
 
-def _assembled_serial(beats: list[tuple[list[dict], str]]) -> tuple[float, int]:
-    """An episode as the assembler would time it: each beat cut by the montage, each shot
-    its speakers' takes with the gap between two of them, plus the breath (`scene_spans`)."""
-    planned: list[float] = []
-    spoken: list[float | None] = []
-    for number, (lines, part) in enumerate(beats, start=1):
-        for shot in serial_shots(lines, number, part=part, first_beat=number == 1):
-            takes = speaker_segments(shot["lines"])
-            planned.append(3.0)
-            spoken.append(
-                sum(_take(take["text"]) for take in takes)
-                + SPEAKER_GAP_SECONDS * max(0, len(takes) - 1)
+def _assembled_factual(scenes: list[dict]) -> float:
+    """The film the render would lay out: each LIVE scene cut by the montage into shots of one
+    take (`pause_plan.factual_side`, its writer's scene its take), the pauses between the
+    writer's scenes as the storyboard freezes them (`_laid_out`)."""
+    from app.media import pauses
+    from app.media.pause_plan import factual_side
+
+    rules = pauses.load_rules()
+    sides: list[dict] = []
+    for number, scene in enumerate(scenes, start=1):
+        for shot in factual_shots(scene["narration"], number, live=True):
+            sides.append(
+                factual_side(
+                    shot["narration"],
+                    scene=number,
+                    purpose=scene.get("purpose"),
+                    kind="LIVE",
+                    planned_seconds=3.0,
+                    rules=rules,
+                )
             )
-    return sum(scene_spans(planned, spoken)), len(spoken)
+    return _laid_out(sides, list(range(len(sides))), len(sides), serial=False)
 
 
-def test_the_wall_is_one_number_and_the_reviews_keep_a_margin_under_it():
-    from app.media.film_length import SHORTS_WALL_SECONDS, review_ceiling_seconds
+def _assembled_serial(beats: list[tuple[list[dict], str]]) -> tuple[float, int]:
+    """An episode as the render would lay it out: each beat's lines marked and named for their
+    voice takes (`pause_plan.serial_lines`), cut by the montage, each shot its speakers' runs
+    (`pause_plan.serial_row_sides`), the joins as the storyboard freezes them (`_laid_out`)."""
+    from app.media import pauses
+    from app.media.pause_plan import serial_lines, serial_row_sides
+
+    rules = pauses.load_rules()
+    named = serial_lines([said for said, _ in beats], [part for _, part in beats], rules)
+    sides: list[dict] = []
+    owners: list[int] = []
+    rows = 0
+    for number, (lines, (_, part)) in enumerate(zip(named, beats, strict=True), start=1):
+        for shot in serial_shots(lines, number, part=part, first_beat=number == 1):
+            found, _runs = serial_row_sides(shot["lines"], beat=number)
+            sides += found
+            owners += [rows] * len(found)
+            rows += 1
+    return _laid_out(sides, owners, rows, serial=True), rows
+
+
+def test_the_wall_is_one_number_and_the_estimate_carries_its_margin():
+    from app.media.film_length import (
+        SHORTS_WALL_SECONDS,
+        Timing,
+        factual_film_length,
+        review_ceiling_seconds,
+    )
 
     assert SHORTS_WALL_SECONDS == qc.SHORTS_MAX_LIMIT_SECONDS == MAX_SHORT_SECONDS == WALL
-    assert review_ceiling_seconds() == 177.0
-    # A channel the Owner sets lower is held under its own number, never above the wall.
-    assert review_ceiling_seconds(150) == 147.0
-    assert review_ceiling_seconds(240) == 177.0
+    # Under the pause rules the reviews hold the film against the wall itself...
+    assert review_ceiling_seconds() == 180.0
+    # ...a channel the Owner sets lower under its own number, never above the wall...
+    assert review_ceiling_seconds(150) == 150.0
+    assert review_ceiling_seconds(240) == 180.0
+    # ...the margin being the estimate's own: its words with NARRATION_ESTIMATE_MARGIN.
+    film = factual_film_length(_factual([20, 20, 20]))
+    assert film.against_wall == pytest.approx(
+        film.spoken_seconds * 1.1 + film.pause_seconds, abs=1e-3
+    )
+    assert film.seconds == pytest.approx(film.spoken_seconds + film.pause_seconds, abs=1e-3)
+    # With the rules off, the legacy estimate is held 3 s under the wall, as before.
+    assert review_ceiling_seconds(when=Timing()) == 177.0
+    assert review_ceiling_seconds(150, Timing()) == 147.0
 
 
 # ------------------------------------------------------------------------- factual (14, 2, 28)
@@ -108,27 +208,28 @@ def test_the_wall_is_one_number_and_the_reviews_keep_a_margin_under_it():
 def test_a_factual_draft_at_the_briefs_maximum_is_a_film_under_the_wall():
     budget = narration_budget(160)
     assert budget["target_seconds"] == 160.0 and 26 <= budget["scenes"] <= 30
-    assert budget["max_seconds"] <= WALL - 2
+    assert budget["max_seconds"] <= WALL
 
     at_target = _factual(_even(budget["total_words"], budget["scenes"]))
-    at_most = _factual(_even(budget["max_words"], budget["scenes"]))
-    # Written to the brief's own numbers, the film the assembler would cut stays under the
+    # The most words on the longest shape a draft can take: a change of part at every join.
+    at_most = _factual_worst(_even(budget["max_words"], budget["scenes"]))
+    # Written to the brief's own numbers, the film the render would lay out stays under the
     # wall, and the review accepts both.
-    assert _assembled_factual(at_target) <= 160.0 + 1e-6
-    assert _assembled_factual(at_most) <= budget["max_seconds"] + 1e-6 < WALL
+    assert _assembled_factual(at_target) <= 160.0 + 1 / 24
+    assert _assembled_factual(at_most) <= WALL
     for draft in (at_target, at_most):
         assert story_checks(title="t", scenes=draft, story={}, target_seconds=160)[
             "duration_is_realistic"
         ]["passed"]
 
-    # Ten words over the brief's ceiling, in the same shape: the film passes the margin and
-    # the review refuses it, before a still is bought.
-    longer = _factual(_even(budget["max_words"] + 10, budget["scenes"]))
+    # Ten words over the brief's ceiling, in the same shape: with the estimate's margin on its
+    # words the film passes the wall and the review refuses it, before a still is bought.
+    longer = _factual_worst(_even(budget["max_words"] + 10, budget["scenes"]))
     check = story_checks(title="t", scenes=longer, story={}, target_seconds=160)[
         "duration_is_realistic"
     ]
-    assert not check["passed"]
-    assert "ținta de 160s" in check["reason"] and "80-177s" in check["reason"]
+    assert not check["passed"] and check["wall_seconds"] > WALL
+    assert "ținta de 160s" in check["reason"] and "80-180s" in check["reason"]
     assert "zidul de 180 s" in check["reason"]
 
 
@@ -200,12 +301,13 @@ def test_the_band_stops_under_the_montages_cut_and_the_brief_names_it():
     assert len(factual_shots(_text(cut - 1), 2, live=True)) == 1
     assert len(factual_shots(_text(cut), 2, live=True)) == 2
     # A scene the brief describes is one shot, and the band still holds the target's words.
+    # (Under the pause rules the most words may sit inside the band: a draft keeps both, and
+    # the most words are priced on the longest shape a draft can take.)
     assert budget["words_per_scene_high"] == cut - 1
     assert (
         budget["scenes"] * budget["words_per_scene_low"]
         <= budget["total_words"]
-        <= budget["scenes"] * budget["words_per_scene_high"]
-        <= budget["max_words"]
+        <= min(budget["max_words"], budget["scenes"] * budget["words_per_scene_high"])
     )
     # The reviewer's drafts are no longer inside the band: each has a scene at the cut.
     for counts in ([15] * 23 + [14] + [10] * 4, [16] * 19 + [15] + [10] * 8, [15] * 26):
@@ -234,17 +336,22 @@ def test_with_the_montage_off_the_brief_cuts_no_scene():
 @pytest.mark.montage
 def test_the_review_measures_the_film_as_the_montage_cuts_it():
     """The finding's case: 25 scenes of 17 words were read at 171.9 s and passed; the montage
-    cuts each into two shots, and the film is about 190 s."""
+    cut each into two shots, each with its breath, and the film was about 190 s. Under the
+    pause rules a cut inside a writer's scene adds nothing: the film is its words and the
+    narrator's pauses between the scenes (about 169 s), and held against the wall with the
+    estimate's margin on its words it passes it, so the review refuses it before a still is
+    bought."""
     draft = _factual([17] * 25)
     film = _assembled_factual(draft)
-    assert film > WALL
+    assert _legacy_assembled_factual(draft) > WALL > film
 
     check = story_checks(title="t", scenes=draft, story={}, target_seconds=160)[
         "duration_is_realistic"
     ]
-    assert not check["passed"]
     assert check["shots"] == 50
-    assert check["estimated_seconds"] == pytest.approx(film, abs=0.05)
+    assert check["estimated_seconds"] == pytest.approx(film, abs=1 / 24)
+    assert check["wall_seconds"] > WALL
+    assert not check["passed"]
     assert "50 de cadre" in check["reason"]
 
 
@@ -336,33 +443,63 @@ def test_a_twelve_beat_episode_at_the_briefs_maximum_is_a_film_under_the_wall():
     from app.story.services import EPISODE_SECONDS
 
     estimate = serial_film_length([said for said, _ in episode], [part for _, part in episode])
-    assert estimate.rows == shots and estimate.seconds == pytest.approx(film, abs=1e-3)
+    assert estimate.rows == shots and estimate.seconds == pytest.approx(film, abs=1 / 24)
+    assert estimate.against_wall <= WALL
     # The brief and the review read the same numbers.
     assert (MIN_SECONDS, MAX_SECONDS) == EPISODE_SECONDS == (90.0, EPISODE_WORDS[1] / 2.5)
 
 
 @pytest.mark.montage
-def test_an_episode_cut_into_too_many_shots_is_refused_under_the_word_ceiling(
+def test_an_episode_of_slow_voices_is_refused_under_the_word_ceiling(
     engine,
     staffed,  # noqa: F811 - the fixture, imported
     monkeypatch,
 ):
-    """Under the brief's words, but seven four-word lines a beat: each line is a shot, and
-    86 breaths take the film past the wall. The review measures the film, not the words."""
+    """Under the brief's words, but said by two voices that measured slow (0.46 s a word,
+    as Kael and Dr. Aris measure 0.43-0.44): the episode is a film past the wall. The review
+    measures the film in its speakers' own voices («pauza vocii»), not the words; it used to
+    be the 86 breaths of seven four-word lines a beat, which a cut no longer adds."""
+    import copy
+
+    from app.media import pause_plan, pauses
     from app.story.services import EPISODE_WORDS
+
+    slow = {
+        "pool": "character",
+        "takes": 9,
+        "classes": {
+            "SENTENCE": {"median": 0.3, "p25": 0.24, "n": 9},
+            "CLAUSE": {"median": 0.24, "p25": 0.19, "n": 9},
+            "DASH": {"median": 0.35, "p25": 0.18, "n": 9},
+        },
+        "rate": {
+            "seconds_per_word": 0.46,
+            "take_median_seconds_per_word": 0.46,
+            "take_median_words_per_second": 2.17,
+            "take_p25_words_per_second": 2.0,
+        },
+    }
+    measured = copy.deepcopy(PINNED_VOICE_PROFILES)
+    measured["voices"] = {"TEST:v1:sarah": dict(slow), "TEST:v1:kael": dict(slow)}
+    monkeypatch.setattr(pauses, "load_profiles", lambda *a, **k: copy.deepcopy(measured))
+    monkeypatch.setattr(
+        pause_plan,
+        "serial_voice_keys",
+        lambda _session, _bibles: (None, {SARAH: "TEST:v1:sarah", KAEL: "TEST:v1:kael"}),
+    )
 
     _, ids = letters_day(engine)
     beats = beats_for(ids, [SARAH, KAEL], count=12)
-    short = (
-        "We cut it again.",
-        "Then the number moves.",
-        "Not before lunch, Kael.",
-        "Give me ten minutes.",
+    said = (
+        "We cut the whole second act again today.",
+        "Then the number moves and the client sees it.",
+        "Not before lunch, Kael, the board reads it.",
+        "Give me ten minutes and the cut runs clean.",
     )
     for index, beat in enumerate(beats):
         beat["lines"] = [
-            {"speaker": (SARAH, KAEL)[(index + i) % 2], "text": short[(index + i) % 4]}
-            for i in range(7)
+            {"speaker": (SARAH, KAEL)[(index + i) % 2], "text": said[(index + i) % 4]}
+            for i in range(3)
         ]
     beats[0]["lines"] = [
         {
@@ -382,19 +519,21 @@ def test_an_episode_cut_into_too_many_shots_is_refused_under_the_word_ceiling(
 
     length = checks["length"]
     assert length["words"] <= EPISODE_WORDS[1]
-    assert length["film_seconds"] > length["ceiling_seconds"] == 177.0
+    assert length["wall_seconds"] > length["ceiling_seconds"] == 180.0
     assert "length" in failed_rules(checks)
-    assert "zidul Short-ului" in length["reason"] and "cadre" in length["reason"]
+    assert "zidul de 180 s al Short-ului" in length["reason"] and "cadre" in length["reason"]
 
 
 # ------------------------------------------------------------------------- quality control (19)
 
 
-def test_the_slack_never_takes_a_film_past_youtubes_wall():
+def test_the_wall_is_exactly_the_channels_maximum_never_past_youtubes():
+    # «Pauza vocii» (2026-10-16): the film's last word is held for its planned END and the
+    # render fits every pause under min(the channel's maximum, 180 s); no slack past it.
     assert qc.shorts_length_ceiling(180) == 180.0
-    # Below the wall the container's rounding is still forgiven.
-    assert qc.shorts_length_ceiling(150) == 151.0
-    assert qc.shorts_length_ceiling(179.5) == 180.0
+    assert qc.shorts_length_ceiling(150) == 150.0
+    assert qc.shorts_length_ceiling(179.5) == 179.5
+    assert qc.shorts_length_ceiling(240) == 180.0
 
 
 # ------------------------------------------------------------- the length budget's rounding (16)
@@ -491,11 +630,12 @@ def test_a_long_live_scene_is_measured_by_its_longest_shot(engine, monkeypatch):
     assert "Scena 2" in refused["reason"] and "cele 3 cadre" in refused["reason"]
     assert "Scena 1 " not in refused["reason"]
 
-    # With the montage off a scene is one clip, measured whole, as before.
+    # With the montage off a scene is one clip, measured whole: 28 words at the narrator's
+    # high rate with the 10% margin and the film's END held after them, 13.125 s.
     monkeypatch.setenv("STUDIO_MONTAGE_ENABLED", "0")
     whole = scene_clip_check(engine, [scene])
     assert whole is not None and whole["passed"] is False
-    assert "Scena 1 cere un cadru de 12,75 s" in whole["reason"]
+    assert "Scena 1 cere un cadru de 13,12 s" in whole["reason"]
 
 
 # ----------------------------------------------------------------------- editorial QC (20)

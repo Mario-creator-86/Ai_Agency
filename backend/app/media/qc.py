@@ -932,12 +932,12 @@ def production_path_verdict(
 
 #: The shortest film YouTube treats as a Short worth publishing here.
 SHORTS_MIN_SECONDS = 10.0
-#: What a measured length may run past the channel's maximum: the container's own rounding
-#: and the last breath after the final word, never a second scene. Never past YouTube's own
-#: limit (`shorts_length_ceiling`): with the channels at 180 since 2026-10-16 the slack would
-#: have moved the wall itself, and a 180.9 s film is not a Short.
-SHORTS_LENGTH_SLACK_SECONDS = 1.0
 #: The longest a channel may set: YouTube's own limit for vertical Shorts since 2024-10-15.
+#: Since «pauza vocii» (the Owner, 2026-10-16) it is the wall itself, with no slack: the film's
+#: last word is held for its planned END pause, every pause is planned and frozen, and the
+#: render fits them under min(the channel's maximum, this) (`pauses.wall_seconds`). Until then
+#: a measured film could run SHORTS_LENGTH_SLACK_SECONDS (1.0 s) past the channel's maximum,
+#: and a 181 s film passed.
 SHORTS_MAX_LIMIT_SECONDS = 180
 #: Per channel type, when the film's channel row carries no value of its own.
 SHORTS_MAX_BY_CHANNEL_TYPE = {"MAIN_FACTUAL": 180, "OFFICE_SERIAL": 180}
@@ -945,9 +945,10 @@ SHORTS_MAX_BY_CHANNEL_TYPE = {"MAIN_FACTUAL": 180, "OFFICE_SERIAL": 180}
 
 def shorts_length_ceiling(max_seconds: float) -> float:
     """The longest measured film quality control accepts on a channel that takes
-    ``max_seconds``: the channel's maximum plus SHORTS_LENGTH_SLACK_SECONDS, never past
-    SHORTS_MAX_LIMIT_SECONDS (the Owner, 2026-10-16: «maxim 180»)."""
-    return min(float(max_seconds) + SHORTS_LENGTH_SLACK_SECONDS, float(SHORTS_MAX_LIMIT_SECONDS))
+    ``max_seconds``: exactly the wall, min(the channel's maximum, SHORTS_MAX_LIMIT_SECONDS)
+    (the Owner, 2026-10-16: «maxim 180»), the one the pause rules fit the film under
+    (`pauses.wall_seconds`)."""
+    return min(float(max_seconds), float(SHORTS_MAX_LIMIT_SECONDS))
 
 
 def shorts_max_seconds(session: Session, media_asset_id: str) -> int:
@@ -1634,16 +1635,15 @@ WARN_VIDEO_BITRATE = 8_000_000
 #: How much longer than its narration, its planned breaths and its silent cards a film may
 #: run (film_length_budget).
 DURATION_OVER_NARRATION_SECONDS = 1.0
-#: The breath the timeline plans after each scene's words: the assembler's
-#: LEGACY_SPOKEN_TAIL_SECONDS, read from production['timeline']['spoken_tail_seconds'] when
-#: the render recorded it. The film used to be held within narration + 1.0 s, so the
-#: timeline shrank every breath to keep under 0.9 s: six speaking scenes kept about 0.11 s
-#: each and every cut felt rushed. A breath the writer planned is part of the film, not film
-#: over the narration. This is the fallback for a render that did not record its breath;
-#: renders since 2026-10-02 record 0.12 s, taken after the vendor's silence was trimmed from
-#: each take, and that recorded value is what counts (the narration they record is the
-#: trimmed words, so nothing is counted twice). A film timed by its frozen pauses (2026-10-16)
-#: records each scene's own pad instead (`_recorded_pads`).
+#: LEGACY: the breath a timeline planned after each scene's words before «pauza vocii»: the
+#: assembler's LEGACY_SPOKEN_TAIL_SECONDS, read from production['timeline']['spoken_tail_seconds']
+#: when the render recorded it (0.12 s from 2026-10-02, 0.4 s on 2026-10-16), this value only
+#: for a render that recorded none. The film used to be held within narration + 1.0 s, so the
+#: timeline shrank every breath to keep under 0.9 s: six speaking scenes kept about 0.11 s each
+#: and every cut felt rushed. A pause the film planned is part of the film, not film over the
+#: narration. A film timed by its frozen pauses (the Owner, 2026-10-16) records each join's
+#: planned pause instead (``spans[].pause.planned``, `_recorded_pauses`): the voice's own pause
+#: at that kind of boundary, from the last letter of one take to the first sound of the next.
 BREATH_SECONDS = 0.35
 #: The scenes the studio composes itself: never filmed, never sent to a model.
 COMPOSED_KINDS = ("DATA_CARD", "TITLE_CARD", "BLACK")
@@ -3403,10 +3403,22 @@ def timeline_spans(
     return out
 
 
-def _recorded_pads(timeline: Any) -> dict[int, float] | None:
-    """Per scene, the silence the render added after its words and between its own takes
-    (``spans[].pause``: ``pad`` and each inner ``pad``), for a film timed by its frozen
-    pauses; None for a film recorded before them."""
+def _planned_of(record: Any) -> float:
+    """One recorded join's planned pause (``planned``), else the pad the render wrote (a record
+    with no plan of its own)."""
+    if not isinstance(record, dict):
+        return 0.0
+    planned = _seconds(record.get("planned"))
+    if planned is None:
+        planned = _seconds(record.get("pad"))
+    return max(0.0, planned or 0.0)
+
+
+def _recorded_pauses(timeline: Any) -> dict[int, float] | None:
+    """Per scene, the pauses the film planned after its words and between its own takes
+    (``spans[].pause``: ``planned``, and each inner ``planned``; the ``pad`` where a record has
+    no plan), for a film timed by its frozen pauses («pauza vocii»); None for a film recorded
+    before them. A silent card's own length is its pause and is counted as a card."""
     spans = timeline.get("spans") if isinstance(timeline, dict) else None
     if not isinstance(spans, list) or not spans:
         return None
@@ -3415,12 +3427,11 @@ def _recorded_pads(timeline: Any) -> dict[int, float] | None:
         pause = span.get("pause") if isinstance(span, dict) else None
         if not isinstance(pause, dict):
             return None
-        added = _seconds(pause.get("pad")) or 0.0
+        planned = _planned_of(pause)
         for inner in pause.get("inner") or []:
-            if isinstance(inner, dict):
-                added += _seconds(inner.get("pad")) or 0.0
+            planned += _planned_of(inner)
         try:
-            found[int(span["scene_index"])] = round(added, 4)
+            found[int(span["scene_index"])] = round(planned, 4)
         except (KeyError, TypeError, ValueError):
             return None
     return found
@@ -3432,8 +3443,12 @@ def film_length_budget(
     """What the film may last beyond its words, read from the render's own record.
 
     - the narration: every scene's recorded words (narration_seconds_of);
-    - the breaths: the breath the timeline plans after each speaking scene's words
-      (production['timeline']['spoken_tail_seconds'], else BREATH_SECONDS);
+    - the pauses: for a film timed by its frozen pauses («pauza vocii», 2026-10-16) every
+      join's planned pause, after a scene's words and between its own takes
+      (``spans[].pause.planned``, `_recorded_pauses`: 0 for a cut inside a take, whose pause is
+      the voice's own and inside its words); for a film recorded before them the legacy breath
+      after each speaking scene (production['timeline']['spoken_tail_seconds'], else
+      BREATH_SECONDS);
     - the frame rounding: the timeline rounds each speaking scene's words and breath UP to a
       whole frame (`assembler.scene_spans`), so each may run up to one frame past them. It is
       read from the recorded spans (what each span ran past its words and its breath, at most
@@ -3456,9 +3471,11 @@ def film_length_budget(
     )
     breath = recorded_tail if recorded_tail is not None and recorded_tail >= 0 else BREATH_SECONDS
     # A film timed by its frozen pauses («pauza vocii», 2026-10-16) recorded, per scene, the
-    # silence the render added after its words (``pause.pad``, and between its own takes):
-    # each speaking scene's breath is that, never a constant.
-    pads = _recorded_pads(timeline)
+    # pauses it planned after its words and between its own takes (``pause.planned``): each
+    # speaking scene's breath is those, never a constant. The narration it recorded is each
+    # row's words from its start to its take's trimmed end, so a pause heard longer than its
+    # plan (a kept tail past it) runs over, as it should.
+    pads = _recorded_pauses(timeline)
     speaking = sum(
         1
         for span in spans
@@ -4099,12 +4116,16 @@ def span_picture_qc(
 
 #: The picture is read at this width: enough for luma levels, motion and cuts, and quick.
 EDITORIAL_WIDTH = 270
-#: The longest silence allowed inside the narration, measured at -45 dB on the voice track,
-#: beyond the pause the timeline planned there: since 2026-10-16 every shot keeps a 0.4 s
-#: breath after its words (`assembler.LEGACY_SPOKEN_TAIL_SECONDS`), and the silence at a cut is
-#: that breath plus the takes' kept edges and a frame of rounding; only what runs past the
-#: recorded breath is dead air (`_planned_pauses`).
+#: LEGACY: the longest silence allowed inside the narration of a film timed before «pauza
+#: vocii», measured at -45 dB on the voice track, beyond the breath the timeline planned there
+#: (`_planned_pauses`). A film timed by its frozen pauses is measured against its plan
+#: (`_frozen_silences`): a join is dead air when the silence heard there runs past its planned
+#: pause by the rules' dead_air_tolerance and a frame, any other silence when it runs past the
+#: rules' join ceiling (1.2 s), both read from config/pause_rules.json.
 MAX_NARRATION_SILENCE_SECONDS = 0.25
+#: The shortest silence read on the voice track of a film timed by its frozen pauses: the
+#: detector's own resolution, so an interruption's or a turn's pause is measured too.
+FROZEN_SILENCE_MIN_SECONDS = 0.1
 #: How far from a recorded span boundary a measured silence may sit and still be that
 #: boundary's breath: the detector's own resolution and a kept edge of the next take.
 PAUSE_BOUNDARY_TOLERANCE_SECONDS = 0.1
@@ -4308,8 +4329,9 @@ def _planned_pauses(production: Mapping[str, Any]) -> list[tuple[float, float]]:
 def average_shot_limit(production: Mapping[str, Any], settings: Any | None = None) -> float:
     """The longest average shot editorial QC lets pass without a note. With the montage off,
     MAX_AVERAGE_SHOT_SECONDS. With it on, a montage shot: ``montage_shot_seconds`` of words and
-    half a shot more (MONTAGE_SHOT_TOLERANCE), plus the breath the timeline recorded after
-    them (else the assembler's)."""
+    half a shot more (MONTAGE_SHOT_TOLERANCE), plus the pause a shot holds after them: the mean
+    of a frozen film's planned pauses («pauza vocii»), else the breath the timeline recorded,
+    else the legacy one."""
     from app.media.montage import montage_settings  # noqa: PLC0415 - read when measured
 
     options = montage_settings(settings)
@@ -4319,6 +4341,11 @@ def average_shot_limit(production: Mapping[str, Any], settings: Any | None = Non
     breath = (
         _seconds(timeline.get("spoken_tail_seconds")) if isinstance(timeline, Mapping) else None
     )
+    pauses = _recorded_pauses(timeline)
+    if pauses:
+        # A film timed by its frozen pauses: the mean pause a shot of it holds after its words
+        # (a cut inside a take holds none).
+        breath = sum(pauses.values()) / len(pauses)
     if breath is None:
         # The assembler reads qc: imported when measured.
         from app.media.assembler import LEGACY_SPOKEN_TAIL_SECONDS  # noqa: PLC0415
@@ -4339,13 +4366,73 @@ def _voice_source(film: Path, production: Mapping[str, Any]) -> Path:
     return film
 
 
+def _frozen_joins(production: Mapping[str, Any]) -> list[tuple[float, float]] | None:
+    """Where a film timed by its frozen pauses planned a pause between two takes, and how long:
+    (where the picture cut, the planned seconds) for every join after a scene's words and
+    between its own takes (``spans[].pause`` and its ``inner``), a cut inside a take and a
+    silent card excepted; None for a film recorded before them."""
+    timeline = production.get("timeline")
+    spans = timeline.get("spans") if isinstance(timeline, Mapping) else None
+    if not isinstance(spans, list) or not spans:
+        return None
+    joins: list[tuple[float, float]] = []
+    for span in spans:
+        pause = span.get("pause") if isinstance(span, Mapping) else None
+        if not isinstance(pause, Mapping):
+            return None
+        for record in [pause, *[r for r in pause.get("inner") or [] if isinstance(r, Mapping)]]:
+            if str(record.get("class") or "") in ("IN_TAKE", "CARD"):
+                continue
+            at = _seconds(record.get("cut_at"))
+            if at is not None:
+                joins.append((at, _planned_of(record)))
+    return joins
+
+
+def _silence_limits() -> tuple[float, float, float]:
+    """(the dead-air tolerance, the join ceiling, the frame) a frozen film's silences are read
+    against: the pause rules' own (config/pause_rules.json), else the published research
+    values the rules hold (0.2, 1.2 s), the frame of the 24 fps timeline."""
+    from app.media import pauses  # noqa: PLC0415 - read when measured
+
+    rules = pauses.active_rules()
+    tolerance = rules.dead_air_tolerance if rules is not None else 0.2
+    ceiling = rules.join_ceiling_seconds if rules is not None else 1.2
+    return tolerance, ceiling, 1.0 / 24
+
+
+def _frozen_limit(
+    start: float, end: float, joins: Sequence[tuple[float, float]]
+) -> tuple[float, float | None]:
+    """The longest a silence from ``start`` to ``end`` may last in a film timed by its frozen
+    pauses, and the pause planned there: at a join (its cut within the boundary tolerance of
+    the silence), the planned pause x (1 + dead_air_tolerance) + one frame; anywhere else the
+    rules' join ceiling (None planned)."""
+    tolerance, ceiling, frame = _silence_limits()
+    near = [
+        planned
+        for at, planned in joins
+        if start - PAUSE_BOUNDARY_TOLERANCE_SECONDS <= at <= end + PAUSE_BOUNDARY_TOLERANCE_SECONDS
+    ]
+    if near:
+        planned = max(near)
+        return planned * (1.0 + tolerance) + frame, planned
+    return ceiling, None
+
+
 def _narration_silences(
     ffmpeg: str, film: Path, production: Mapping[str, Any], duration: float
 ) -> list[tuple[float, float]] | None:
     """The silences inside the narration: after its first word, before its last, not on a
-    silent card, and longer than the breath the timeline planned where they fall (a silence
-    across a span's end counts only what runs past that span's breath by
-    MAX_NARRATION_SILENCE_SECONDS or more). None when the sound could not be read."""
+    silent card, and longer than the pause the timeline planned where they fall. A film timed
+    by its frozen pauses («pauza vocii») is read against its plan (`_frozen_limit`: a join's
+    planned pause with the rules' tolerance and a frame, the join ceiling inside a take); a film
+    timed before them against its recorded breath (a silence across a span's end counts only
+    what runs past that span's breath by MAX_NARRATION_SILENCE_SECONDS or more). None when the
+    sound could not be read."""
+    joins = _frozen_joins(production)
+    if joins is not None:
+        return _frozen_silences(ffmpeg, film, production, duration, joins)
     spans = silence_spans(
         ffmpeg,
         _voice_source(film, production),
@@ -4377,6 +4464,42 @@ def _narration_silences(
             continue  # the breath the timeline planned after a shot's words
         inner.append((start, end))
     return inner
+
+
+def _frozen_silences(
+    ffmpeg: str,
+    film: Path,
+    production: Mapping[str, Any],
+    duration: float,
+    joins: Sequence[tuple[float, float]],
+) -> list[tuple[float, float]] | None:
+    """The dead air of a film timed by its frozen pauses: every silence on its voice track
+    after the first word and before the last, not on a silent card, longer than its
+    `_frozen_limit`."""
+    spans = silence_spans(
+        ffmpeg,
+        _voice_source(film, production),
+        threshold_db=NARRATION_SILENCE_DB,
+        min_seconds=FROZEN_SILENCE_MIN_SECONDS,
+    )
+    if spans is None:
+        return None
+    beats = _silent_beats(production)
+    dead: list[tuple[float, float]] = []
+    for position, (start, end) in enumerate(spans):
+        if start <= 0.02:
+            continue  # before the first word
+        if position == len(spans) - 1 and end >= duration - 0.05:
+            continue  # after the last word
+        overlap = max(
+            (min(end, b_end) - max(start, b_start) for b_start, b_end in beats), default=0.0
+        )
+        if overlap >= 0.5 * (end - start):
+            continue  # a silent card: the pause is the scene
+        limit, _planned = _frozen_limit(start, end, joins)
+        if end - start > limit + 1e-6:
+            dead.append((start, end))
+    return dead
 
 
 def _grade_outliers(production: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -4441,14 +4564,35 @@ def editorial_problems(
     longest_silence = max((end - start for start, end in silences or []), default=0.0)
     if silences:
         start, end = max(silences, key=lambda span: span[1] - span[0])
-        problem(
-            "dead_air",
-            f"O tăcere de {_ro_number(end - start, 2)} s în mijlocul narațiunii (la "
-            f"{_ro_number(start)} s; cel mult {_ro_number(MAX_NARRATION_SILENCE_SECONDS, 2)} s): "
-            "în golurile vocii spectatorul pleacă.",
-            seconds=round(end - start, 3),
-            at=round(start, 3),
-        )
+        joins = _frozen_joins(production)
+        if joins is not None:
+            # Against the film's own plan («pauza vocii»): the pause planned at that cut, or
+            # the join ceiling inside a take.
+            limit, planned = _frozen_limit(start, end, joins)
+            where = (
+                f"la tăietura unde pauza plănuită e de {_ro_number(planned, 2)} s"
+                if planned is not None
+                else "în mijlocul unei replici"
+            )
+            problem(
+                "dead_air",
+                f"O tăcere de {_ro_number(end - start, 2)} s {where} (la {_ro_number(start)} s; "
+                f"cel mult {_ro_number(limit, 2)} s): în golurile vocii spectatorul pleacă.",
+                seconds=round(end - start, 3),
+                at=round(start, 3),
+                limit=round(limit, 3),
+                planned=planned,
+            )
+        else:
+            problem(
+                "dead_air",
+                f"O tăcere de {_ro_number(end - start, 2)} s în mijlocul narațiunii (la "
+                f"{_ro_number(start)} s; cel mult "
+                f"{_ro_number(MAX_NARRATION_SILENCE_SECONDS, 2)} s): "
+                "în golurile vocii spectatorul pleacă.",
+                seconds=round(end - start, 3),
+                at=round(start, 3),
+            )
 
     tail = [i for i, t in enumerate(trace.times) if t >= trace.duration - END_WINDOW_SECONDS]
     black_end = _longest_run([trace.yavg[i] <= BLACK_YAVG for i in tail], step)

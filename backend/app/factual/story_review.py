@@ -437,6 +437,47 @@ def scene_clip_check(engine: Engine, scenes: list[dict[str, Any]]) -> dict[str, 
     }
 
 
+def film_wall_check(session: Session, scenes: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Whether the film cut from these scenes stays under its channel's wall: min(the factual
+    channel's Shorts maximum, 180 s) (`pauses.wall_seconds`), the film estimated as the
+    storyboard will freeze it, its words held with the estimate's margin
+    (`film_length.FilmLength.against_wall`). None with the pause rules off: the length check
+    holds the legacy wall then (`editorial.duration_check`)."""
+    from app.media import pauses as pause_rules  # noqa: PLC0415
+    from app.media.film_length import FACTUAL, timing  # noqa: PLC0415
+    from app.media.qc import SHORTS_MAX_BY_CHANNEL_TYPE  # noqa: PLC0415 - qc reads us
+    from app.publishing.models import ChannelRecord  # noqa: PLC0415
+
+    when = timing(FACTUAL)
+    if not when.paused:
+        return None
+    channel = session.scalars(
+        select(ChannelRecord)
+        .where(ChannelRecord.channel_type == "MAIN_FACTUAL")
+        .order_by(ChannelRecord.created_at)
+    ).first()
+    stated = getattr(channel, "shorts_max_seconds", None)
+    wall = pause_rules.wall_seconds(
+        float(stated) if stated else SHORTS_MAX_BY_CHANNEL_TYPE.get("MAIN_FACTUAL"), when.rules
+    )
+    film = factual_film_length(scenes, when=when)
+    passed = film.against_wall <= wall + 1e-9
+    return {
+        "passed": passed,
+        "wall_seconds": wall,
+        "estimated_seconds": film.seconds,
+        "with_margin_seconds": film.against_wall,
+        "reason": (
+            f"Filmul ar dura {decimal(film.seconds, 1)} s ({decimal(film.against_wall, 1)} s cu "
+            f"marja estimării), sub zidul de {decimal(wall, 0)} s al canalului."
+            if passed
+            else f"Filmul ar dura {decimal(film.seconds, 1)} s, iar cu marja estimării "
+            f"{decimal(film.against_wall, 1)} s, peste zidul de {decimal(wall, 0)} s al "
+            "canalului: mai puține cuvinte."
+        ),
+    }
+
+
 def review_story(
     engine: Engine,
     registry: Any,
@@ -475,6 +516,11 @@ def review_story(
         fits = scene_clip_check(engine, list(script.scenes_json or []))
         if fits is not None:
             checks["every_scene_fits_one_clip"] = fits
+        # «Pauza vocii» (the Owner, 2026-10-16): the film against its channel's own wall,
+        # computed before a still is bought; a script past it is refused, no model asked.
+        wall = film_wall_check(session, list(script.scenes_json or []))
+        if wall is not None:
+            checks["film_fits_the_wall"] = wall
         earlier = session.scalar(
             select(StoryReview).where(StoryReview.script_id == script_id).limit(1)
         )

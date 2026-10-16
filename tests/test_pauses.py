@@ -324,6 +324,7 @@ def test_the_speech_rate_high_end_is_the_takes_first_quartile_or_the_spread(rule
     assert slow.seconds_per_word_high > slow.seconds_per_word
 
 
+@pytest.mark.measured_voices
 def test_the_profiles_are_cached_beside_the_films_and_measured_again_when_a_take_is_kept(
     tmp_path, rules, monkeypatch
 ):
@@ -352,6 +353,7 @@ def test_the_profiles_are_cached_beside_the_films_and_measured_again_when_a_take
     assert pauses.PROFILE_CACHE_NAME in ignored
 
 
+@pytest.mark.measured_voices
 def test_reading_without_write_leaves_no_cache(tmp_path, rules):
     folder = tmp_path / "film-1" / "narration"
     folder.mkdir(parents=True)

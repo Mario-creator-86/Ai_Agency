@@ -912,7 +912,9 @@ def test_his_too_short_clip_gets_his_question_and_is_retired_only_after_his_yes(
 ):
     """His card of 2026-10-10: a clip too short for its words beyond the 25% a clip may be
     slowed is redone only as his question. Scene 3 of a babcf272-like film is his own approved
-    clip and needs 29%: the studio raises his question (also where his rule and mode would let
+    clip and needs 35% (its words, the narrator's full stop after them as the pause rules freeze
+    it, and the dissolve into scene 4): the studio raises his question (also where his rule and
+    mode would let
     the redo buy unasked), nothing is retired or bought while it waits, and once he said yes
     the redo raised again spends his yes, buys the clip at its length and retires his."""
     from app.economy.budget import BudgetCommand, set_budget
@@ -973,7 +975,7 @@ def test_his_too_short_clip_gets_his_question_and_is_retired_only_after_his_yes(
         assert "Proprietarul a aprobat el însuși clipul" in scene["redo"]["reason_ro"]
     (question,) = redo_questions()
     assert question.id == scene["redo"]["approval_id"]
-    assert "ar trebui încetinit cu 29%" in str(question.evidence)
+    assert "ar trebui încetinit cu 35%" in str(question.evidence)
     assert "Studioul propune refacerea mișcării la 7 s." in str(question.evidence)
     # Asking touched nothing of his: nothing bought, nothing retired.
     assert models.posts() == 0 and account.shots == 0

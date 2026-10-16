@@ -81,10 +81,15 @@ from app.agents.messages import post_message
 from app.agents.services import run_agent_task
 from app.factual.sanitizer import wrap_in_inert_boundary
 from app.media.film_length import (
+    SERIAL,
     SHORTS_WALL_SECONDS,
     FilmLength,
+    Timing,
     review_ceiling_seconds,
+    serial_clips,
     serial_film_length,
+    shot_clip_seconds,
+    timing,
 )
 from app.providers.registry import ProviderRegistry
 from app.publishing.models import ChannelRecord
@@ -327,16 +332,23 @@ def _structure(beats: list[dict], locations: list[dict]) -> dict[str, Any]:
     return {"passed": not problems, "parts": parts, "reason": "; ".join(problems)}
 
 
-def _length(beats: list[dict], seconds: float, film: FilmLength | None = None) -> dict[str, Any]:
+def _length(
+    beats: list[dict],
+    seconds: float,
+    film: FilmLength | None = None,
+    when: Timing | None = None,
+) -> dict[str, Any]:
     """The episode's beats, seconds of speech and the film the montage cuts from them. The
     ceilings refuse: MAX_BEATS, MAX_SECONDS of speech (the brief's own words), and the film's
-    estimate (``film``, `film_length.serial_film_length`: every shot's words plus its breath)
-    past the Short's wall less the estimate's margin (`film_length.review_ceiling_seconds`).
-    The floor (MIN_SECONDS) is a recommendation the Director weighs (``advisory``), as the
-    words-per-beat band is (2026-10-16)."""
-    ceiling = review_ceiling_seconds()
+    estimate (``film``, `film_length.serial_film_length`: since «pauza vocii» each speaker's
+    words at their own voice's rate and the pauses the storyboard will freeze between them, a
+    speaker change, a beat's end, a marked beat) past the Short's wall, held against it with
+    the estimate's margin (`film_length.review_ceiling_seconds`). The floor (MIN_SECONDS) is a
+    recommendation the Director weighs (``advisory``), as the words-per-beat band is
+    (2026-10-16)."""
+    ceiling = review_ceiling_seconds(SHORTS_WALL_SECONDS, when)
     words_fit = 0 < len(beats) <= MAX_BEATS and seconds <= MAX_SECONDS
-    fits_wall = film is None or film.seconds <= ceiling
+    fits_wall = film is None or film.against_wall <= ceiling + 1e-9
     within_cap = words_fit and fits_wall
     short = within_cap and seconds < MIN_SECONDS
     reason = ""
@@ -347,7 +359,14 @@ def _length(beats: list[dict], seconds: float, film: FilmLength | None = None) -
                 f"{len(beats)} beat-uri și {seconds:.0f} secunde de vorbire; cel mult "
                 f"{MAX_BEATS} beat-uri și {MAX_SECONDS:.0f} secunde (zidul Short-ului)"
             )
-        if film is not None and not fits_wall:
+        if film is not None and not fits_wall and film.wall_seconds is not None:
+            problems.append(
+                f"tăiat în {count(film.rows, 'cadru', 'cadre')}, cu vocea fiecăruia în ritmul "
+                f"ei și pauzele dintre replici, filmul ar dura {film.seconds:.0f} secunde "
+                f"({film.against_wall:.0f} cu marja estimării), peste zidul de "
+                f"{ceiling:.0f} s al Short-ului: mai puține cuvinte"
+            )
+        elif film is not None and not fits_wall:
             problems.append(
                 f"tăiat în {count(film.rows, 'cadru', 'cadre')}, fiecare cu respirația lui, "
                 f"filmul ar dura {film.seconds:.0f} secunde, peste cele {ceiling:.0f} pe care le "
@@ -369,6 +388,7 @@ def _length(beats: list[dict], seconds: float, film: FilmLength | None = None) -
         "recommended_seconds": [MIN_SECONDS, MAX_SECONDS],
         # The film as the montage will cut and time it, against the wall it must stay under.
         "film_seconds": film.seconds if film is not None else None,
+        "wall_seconds": film.against_wall if film is not None else None,
         "shots": film.rows if film is not None else None,
         "ceiling_seconds": ceiling,
         "reason": reason,
@@ -536,30 +556,23 @@ def motion_clip_limit(session: Session) -> dict[str, Any] | None:
     }
 
 
-def beat_clip_seconds(lines: list[dict[str, Any]]) -> float:
-    """The clip one beat's lines need, sized as the motion plan sizes a clip for words not
-    yet voiced (`assembler.clip_plan`, an ESTIMATED narration): the words as the voice says
-    them (`spoken_words`: a number is said in words) at SECONDS_PER_SPOKEN_WORD, a
-    SPEAKER_GAP_SECONDS breath between two speakers' takes (`speaker_segments`), the
-    estimate's margin and the scene's closing breath. A serial scene cuts to the next one
-    (`storyboard_from_episode`), so no dissolve is added.
+def beat_clip_seconds(lines: list[dict[str, Any]], *, when: Timing | None = None) -> float:
+    """The clip one shot's lines need on their own, sized as the motion plan sizes a clip for
+    words not yet voiced (the one estimate, `film_length.shot_clip_seconds`): each speaker's
+    words at their voice's high rate with the estimate's margin, the pauses between their runs
+    (a speaker change, an interruption), and the longest pause that can follow the shot (a
+    beat's end), on whole frames. A serial scene cuts to the next one
+    (`storyboard_from_episode`), so no dissolve is added. With the pause rules off, the legacy
+    SECONDS_PER_SPOKEN_WORD, SPEAKER_GAP_SECONDS and the closing breath.
     """
-    from app.media.assembler import (  # noqa: PLC0415 - the assembler is heavy; read when measured
-        LEGACY_SPOKEN_TAIL_SECONDS,
-        NARRATION_ESTIMATE_MARGIN,
-        SECONDS_PER_SPOKEN_WORD,
-        spoken_words,
-    )
-    from app.media.speaker_voices import SPEAKER_GAP_SECONDS, speaker_segments  # noqa: PLC0415
-
-    takes = speaker_segments(lines)
-    said = sum(spoken_words(take["text"]) for take in takes) * SECONDS_PER_SPOKEN_WORD
-    said += SPEAKER_GAP_SECONDS * max(0, len(takes) - 1)
-    return round(said * (1 + NARRATION_ESTIMATE_MARGIN) + LEGACY_SPOKEN_TAIL_SECONDS, 2)
+    return shot_clip_seconds(lines, when=when)
 
 
 def _filmable(
-    beats: list[dict], lines_by_beat: list[list[dict[str, Any]]], limit: dict[str, Any]
+    beats: list[dict],
+    lines_by_beat: list[list[dict[str, Any]]],
+    limit: dict[str, Any],
+    when: Timing | None = None,
 ) -> dict[str, Any]:
     """Every beat said within one clip of the serial's motion model (`motion_clip_limit`).
 
@@ -570,16 +583,10 @@ def _filmable(
     """
     # Since 2026-10-16 the montage cuts a beat into shots of its own (`montage.serial_shots`):
     # what must fit one clip is the longest shot of the beat, not the beat; with the montage
-    # off, the beat as before.
-    from app.media.montage import serial_shots  # noqa: PLC0415 - media imports the story
-
-    needed = [
-        max(
-            beat_clip_seconds(shot["lines"])
-            for shot in serial_shots(lines, index, part=beat.get("part"), first_beat=index == 1)
-        )
-        for index, (beat, lines) in enumerate(zip(beats, lines_by_beat, strict=True), start=1)
-    ]
+    # off, the beat as before. Each shot is sized in the episode, as the storyboard will
+    # freeze its pauses (`film_length.serial_clips`).
+    clips = serial_clips(lines_by_beat, [beat.get("part") for beat in beats], when=when)
+    needed = [max(shots) if shots else 0.0 for shots in clips]
     ceiling = float(limit["limit_seconds"])
     numbers = _beat_numbers(beats)
     outside = [n for n, s in zip(numbers, needed, strict=True) if s > ceiling + 1e-6]
@@ -695,7 +702,8 @@ def episode_checks(
     beats = list(episode.beats_json or [])
     cited = list(episode.grounded_event_ids_json or [])
     roster_rows = list(log.roster_json or [])
-    names = NameBook(roster_rows, bibles_for_roster(session, roster_rows))
+    roster_bibles = bibles_for_roster(session, roster_rows)
+    names = NameBook(roster_rows, roster_bibles)
     # A v3 beat has its lines; a v2 beat's free dialogue is read into lines the same way the
     # storyboard reads it, so a name or a stage direction is never counted as speech.
     lines_by_beat = [beat_lines(beat, names) for beat in beats]
@@ -745,6 +753,9 @@ def episode_checks(
 
     words = sum(_words(spoken_text(lines)) for lines in lines_by_beat)
     seconds = round(words / WORDS_PER_SECOND, 1)
+    # The film is estimated in the voices the render would speak it in (database reads only):
+    # each speaker's own rate and pauses, the narrator's («pauza vocii», 2026-10-16).
+    when = _serial_timing(session, roster_bibles)
 
     roster = [str(m.get("display_name")) for m in roster_rows if m.get("lifecycle") == "ACTIVE"]
     if v3:
@@ -817,7 +828,8 @@ def episode_checks(
         "length": _length(
             beats,
             seconds,
-            serial_film_length(lines_by_beat, [beat.get("part") for beat in beats]),
+            serial_film_length(lines_by_beat, [beat.get("part") for beat in beats], when=when),
+            when,
         ),
         "narration": _narration(lines_by_beat, v3),
         "words_per_beat": _words_per_beat(beats, lines_by_beat, v3),
@@ -843,8 +855,21 @@ def episode_checks(
     # A v2 episode is filmed whole by one voice and was never told the rule; a studio with
     # no motion model, or one whose longest clip nothing states, has nothing to measure.
     if v3 and (limit := motion_clip_limit(session)) is not None:
-        checks["filmable"] = _filmable(beats, lines_by_beat, limit)
+        checks["filmable"] = _filmable(beats, lines_by_beat, limit, when)
     return checks
+
+
+def _serial_timing(session: Session, bibles: Any) -> Timing:
+    """The serial estimate's timing: the pause rules, the serial's knobs, the measured voices,
+    and the narrator's and each speaker's voice as the render would resolve them
+    (`pause_plan.serial_voice_keys`); with the rules off, the legacy timing."""
+    from app.media import pauses as pause_rules  # noqa: PLC0415
+    from app.media.pause_plan import serial_voice_keys  # noqa: PLC0415
+
+    if pause_rules.active_rules() is None:
+        return timing(SERIAL)
+    narrator, speakers = serial_voice_keys(session, bibles if isinstance(bibles, dict) else {})
+    return timing(SERIAL, narrator=narrator, speakers=speakers)
 
 
 def draft_checks(

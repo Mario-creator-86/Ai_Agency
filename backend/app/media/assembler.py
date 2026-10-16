@@ -37,7 +37,7 @@ from sqlalchemy.orm import Session
 from app.config import ROOT
 from app.db import lock_for_write
 from app.factual.editorial import dangles
-from app.media import music_library, pause_plan
+from app.media import film_length, music_library, pause_plan
 from app.media import pauses as pause_rules
 from app.media.balance_rule import (
     DEFAULT_MARGIN,
@@ -4906,8 +4906,12 @@ def spoken_words(text: str) -> int:
     return said
 
 
-def estimated_narration_seconds(text: str) -> float:
-    """How long the studio's voice will take to say ``text``, before it is voiced."""
+def estimated_narration_seconds(text: str, voice: Any = None) -> float:
+    """How long the voice will take to say ``text``, before it is voiced: the high rate a
+    clip is bought for of ``voice`` (a `pauses.VoiceProfile`: the voice a film's pauses were
+    frozen with, «pauza vocii»), else the legacy SECONDS_PER_SPOKEN_WORD."""
+    if voice is not None:
+        return pause_rules.speech_seconds(text, voice, high=True)
     return round(spoken_words(text) * SECONDS_PER_SPOKEN_WORD, 3)
 
 
@@ -5001,7 +5005,14 @@ def narration_readings(
     2026-10-10 (review): a dialogue scene's takes are in two voices, and the reading wanted
     every part from ONE voice: such a scene stayed ESTIMATED even after a render measured it,
     the sheet said «Pregătit» for a clip every render refused, and its redo was priced at the
-    estimate, below what the refusal said its words need."""
+    estimate, below what the refusal said its words need.
+
+    A film timed by its frozen pauses («pauza vocii», 2026-10-16) is read by
+    `_frozen_readings`: its words from the start of its take to its last letter, the pause
+    after them being its frozen pause, never the vendor's own trailing silence."""
+    plans = film_length.frozen_rows(scenes)
+    if plans is not None:
+        return _frozen_readings(session, storyboard_id, scenes, plans)
     wanted: dict[int, tuple[str, str]] = {}
     for scene in scenes:
         words = " ".join(str(scene.get("voiceover_segment") or "").split())
@@ -5079,6 +5090,173 @@ def narration_readings(
     return readings
 
 
+def _take_pieces(
+    kept: Mapping[str, Any], units: Sequence[str], vendor_seconds: float, cut_in_pause: float
+) -> list[tuple[float, float]]:
+    """(seconds, least) of each unit's words in one kept take, as the render cuts and trims it
+    under the pause rules. A unit inside the take: from where its shot starts (the picture cut
+    before it, `pause_plan.take_cuts`, or the take's first letter less the head the trim keeps)
+    to the next cut, measured. The take's last unit: at most to the vendor's end (``seconds``:
+    the trim may keep a breath after the words, it never cuts a sound), at least to its last
+    letter and the edge the trim keeps (``least``); the silence after it is the row's frozen
+    pause. Untimed: each unit its share of the vendor's length, the shortest a quarter less
+    (FASTEST_SPOKEN_SHARE), the last the trim's most less (UNTIMED_TRIM_MAX_SECONDS)."""
+    from app.media.toolchain import EDGE_KEEP_SECONDS  # noqa: PLC0415
+
+    raw = kept.get("raw_response")
+    words = pause_plan.take_words(raw if isinstance(raw, dict) else None, kept.get("word_timings"))
+    count = len(units)
+    vendor = float(vendor_seconds)
+    if count == 1:
+        if not words:
+            return [(round(vendor, 3), round(max(0.0, vendor - UNTIMED_TRIM_MAX_SECONDS), 3))]
+        head = max(0.0, words[0].first - EDGE_KEEP_SECONDS)
+        least = min(vendor, words[-1].last + EDGE_KEEP_SECONDS) - head
+        return [(round(vendor - head, 3), round(max(0.0, least), 3))]
+    cuts = pause_plan.take_cuts(units, vendor, words, cut_in_pause=cut_in_pause)
+    pieces: list[tuple[float, float]] = []
+    if cuts.timed and words:
+        head = max(0.0, words[0].first - EDGE_KEEP_SECONDS)
+        letters = min(vendor, words[-1].last + EDGE_KEEP_SECONDS)
+        for position in range(count):
+            start = cuts.offsets[position] if position else head
+            if position + 1 < count:
+                seconds = round(max(0.0, cuts.offsets[position + 1] - start), 3)
+                pieces.append((seconds, seconds))
+            else:
+                pieces.append(
+                    (round(max(0.0, vendor - start), 3), round(max(0.0, letters - start), 3))
+                )
+        return pieces
+    for position in range(count):
+        start = cuts.offsets[position]
+        end = cuts.offsets[position + 1] if position + 1 < count else vendor
+        seconds = round(max(0.0, end - start), 3)
+        least = (
+            max(0.0, seconds - UNTIMED_TRIM_MAX_SECONDS)
+            if position + 1 == count
+            else seconds * FASTEST_SPOKEN_SHARE
+        )
+        pieces.append((seconds, round(least, 3)))
+    return pieces
+
+
+def _frozen_readings(
+    session: Session,
+    storyboard_id: str,
+    scenes: Sequence[dict[str, Any]],
+    plans: Sequence[film_length.RowPause],
+) -> dict[int, NarrationReading]:
+    """Per row with words of a film timed by its frozen pauses («pauza vocii»), its
+    `NarrationReading`: its words from where its shot starts to its last letter, the silence
+    after them being the row's frozen pause (`film_length.RowPause`), never the vendor's own
+    trailing silence, which the render's trim cuts.
+
+    NARRATION_RENDERED when the newest render measured the row (``audio_seconds``) from takes
+    that all still hold the board's words as they are now. Else NARRATION_MEASURED from the
+    kept takes: a take said over several rows (one voice group, `voice_takes`) cut at its rows'
+    words on its own timing (`_take_pieces`), as the render cuts it; a row's own takes, every
+    part present, end to end (the joins between them are the row's frozen inner pauses). Else
+    NARRATION_ESTIMATED: its words at its voice's high rate (`estimated_narration_seconds`),
+    the shortest at FASTEST_SPOKEN_SHARE of it."""
+    texts = {
+        int(scene["scene_index"]): " ".join(str(scene.get("voiceover_segment") or "").split())
+        for scene in scenes
+    }
+    if not any(texts.values()):
+        return {}
+    beta = plans[0].beta if plans else 1.0
+    rows = session.scalars(
+        select(SceneTake)
+        .where(
+            SceneTake.storyboard_id == storyboard_id,
+            SceneTake.kind == NARRATION_KIND,
+            SceneTake.status.in_(REUSABLE_TAKE_STATUSES),
+        )
+        .order_by(SceneTake.created_at)
+    ).all()
+    # The newest reading of each row wins: the takes come oldest first.
+    grouped: dict[int, tuple[float, float]] = {}
+    by_part: dict[tuple[int, int, str], dict[int, tuple[float, float]]] = {}
+    current: set[str] = set()
+    for row in rows:
+        if not row.path:
+            continue
+        path = Path(row.path)
+        try:
+            kept = json.loads(_sidecar(path).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(kept, dict) or not path.is_file():
+            continue
+        seconds = kept.get("duration_seconds")
+        if isinstance(seconds, bool) or not isinstance(seconds, int | float) or seconds <= 0:
+            seconds = row.seconds
+        if not isinstance(seconds, int | float) or seconds <= 0:
+            continue
+        said_over = kept.get("rows")
+        if isinstance(said_over, list) and len(said_over) > 1 and kept.get("take_text_sha256"):
+            numbers = [int(number) for number in said_over]
+            units = [texts.get(number) or "" for number in numbers]
+            if not all(units) or kept["take_text_sha256"] != _text_sha(" ".join(units)):
+                continue
+            current.add(row.id)
+            for number, piece in zip(
+                numbers, _take_pieces(kept, units, float(seconds), beta), strict=True
+            ):
+                grouped[number] = piece
+            continue
+        index = int(row.scene_number)
+        words = texts.get(index)
+        if not words or kept.get("scene_text_sha256") != _text_sha(words):
+            continue
+        current.add(row.id)
+        parts = max(1, int(kept.get("parts") or 1))
+        part = int(kept.get("part") or 0)
+        (piece,) = _take_pieces(kept, [words], float(seconds), beta)
+        by_part.setdefault((index, parts, str(kept.get("voice_key") or "")), {})[part] = piece
+        by_part.setdefault((index, parts, ""), {})[part] = piece
+    # A row said in several takes (a speaker each) is its takes end to end and the joins the
+    # render lays between them: its frozen inner pauses (in the row's share), and its pause
+    # after for any join it holds no record of (`_unit_join`), counted here.
+    plan_of = {int(scene["scene_index"]): plan for scene, plan in zip(scenes, plans, strict=True)}
+    complete: dict[int, list[tuple[float, float]]] = {}
+    for (index, parts, _voice), found in by_part.items():
+        if all(part in found for part in range(parts)):
+            plan = plan_of.get(index)
+            unrecorded = max(0, parts - 1 - (plan.joins if plan else 0))
+            joined = unrecorded * (plan.after if plan else 0.0)
+            complete.setdefault(index, []).append(
+                (
+                    sum(found[part][0] for part in range(parts)) + joined,
+                    sum(found[part][1] for part in range(parts)) + joined,
+                )
+            )
+    rendered = _rendered_narration(session, storyboard_id) if current else {}
+    readings: dict[int, NarrationReading] = {}
+    for scene, plan in zip(scenes, plans, strict=True):
+        index = int(scene["scene_index"])
+        words = texts.get(index) or ""
+        if not words:
+            continue
+        measured = rendered.get(index)
+        if measured is not None and measured[1] <= current:
+            readings[index] = NarrationReading(measured[0], NARRATION_RENDERED, measured[0])
+        elif index in grouped:
+            seconds, least = grouped[index]
+            readings[index] = NarrationReading(seconds, NARRATION_MEASURED, min(seconds, least))
+        elif complete.get(index):
+            longest = max(seconds for seconds, _least in complete[index])
+            shortest = min(least for _seconds, least in complete[index])
+            readings[index] = NarrationReading(longest, NARRATION_MEASURED, min(longest, shortest))
+        else:
+            estimate = estimated_narration_seconds(words, plan.voice)
+            readings[index] = NarrationReading(
+                estimate, NARRATION_ESTIMATED, round(estimate * FASTEST_SPOKEN_SHARE, 3)
+            )
+    return readings
+
+
 def scene_narration_lengths(
     session: Session, storyboard_id: str, scenes: Sequence[dict[str, Any]]
 ) -> dict[int, tuple[float, str]]:
@@ -5101,11 +5279,19 @@ def expected_shot_spans(
         lengths[int(scene["scene_index"])][0] if int(scene["scene_index"]) in lengths else None
         for scene in scenes
     ]
+    # A film timed by its frozen pauses: each row holds its share of them, every cut on a
+    # frame of the cumulative timeline, as the render lays it (`scene_spans` with pauses).
+    plans = film_length.frozen_rows(scenes)
     timed = [
         {**scene, "duration_seconds": span}
         for scene, span in zip(
             scenes,
-            scene_spans(planned, spoken, kinds=[scene_kind_of(scene) for scene in scenes]),
+            scene_spans(
+                planned,
+                spoken,
+                kinds=[scene_kind_of(scene) for scene in scenes],
+                pauses=[plan.share for plan in plans] if plans is not None else None,
+            ),
             strict=True,
         )
     ]
@@ -5132,6 +5318,10 @@ def clip_plan(
     lengths = scene_narration_lengths(session, storyboard_id, scenes)
     joins = scene_joins(list(scenes))
     floors = _refused_spans(session, storyboard_id, scenes)
+    # A film timed by its frozen pauses («pauza vocii»): each clip holds its row's share of
+    # them (the pause after a take's last row, nothing after a cut inside a take), never the
+    # legacy breath after every row.
+    plans = film_length.frozen_rows(scenes)
     sizes: dict[int, dict[str, Any]] = {}
     for position, scene in enumerate(scenes):
         if is_composed(scene):
@@ -5148,7 +5338,12 @@ def clip_plan(
         if found is not None:
             said, source = found
             dissolve = joins[position + 1] if position + 1 < len(joins) else 0.0
-            voiced = _voiced_clip_seconds(said, source, dissolve)
+            voiced = _voiced_clip_seconds(
+                said,
+                source,
+                dissolve,
+                pause=plans[position].share if plans is not None else None,
+            )
             entry["spoken_seconds"] = round(said, 3)
             if voiced > planned:
                 entry.update(seconds=voiced, source=source)
@@ -5161,36 +5356,32 @@ def clip_plan(
     return sizes
 
 
-def _voiced_clip_seconds(said: float, source: str, dissolve: float) -> float:
-    """The clip ``said`` seconds of words need: the words, the breath, the dissolve into the
+def _voiced_clip_seconds(
+    said: float, source: str, dissolve: float, *, pause: float | None = None
+) -> float:
+    """The clip ``said`` seconds of words need: the words, the silence the shot holds after
+    them (``pause``: the row's share of its frozen pauses, `film_length.RowPause.share`; the
+    legacy LEGACY_SPOKEN_TAIL_SECONDS for a film built before them), the dissolve into the
     next scene and the margin of where the length comes from (``source``), on whole frames."""
     margin = (
         said * NARRATION_ESTIMATE_MARGIN
         if source == NARRATION_ESTIMATED
         else MEASURED_NARRATION_MARGIN_SECONDS
     )
-    return round(whole_frames(said + LEGACY_SPOKEN_TAIL_SECONDS + dissolve + margin, up=True), 3)
+    held = LEGACY_SPOKEN_TAIL_SECONDS if pause is None else max(0.0, float(pause))
+    return round(whole_frames(said + held + dissolve + margin, up=True), 3)
 
 
 def script_clip_seconds(scenes: Sequence[dict[str, Any]]) -> dict[int, float]:
-    """Per filmed scene of a script (by position, from 1, as its storyboard numbers them), the
-    clip `clip_plan` will buy for it before a word is voiced: its words estimated, plus the
-    breath, the dissolve into the next scene and the estimate's margin; never shorter than a
-    plan the scene states. What the story review reads a scene's length against its motion
-    model's longest clip by (2026-10-10, film 6fe6a577)."""
-    joins = scene_joins(list(scenes))
-    sizes: dict[int, float] = {}
-    for position, scene in enumerate(scenes):
-        if is_composed(scene):
-            continue
-        said = estimated_narration_seconds(
-            str(scene.get("narration") or scene.get("voiceover_segment") or "")
-        )
-        dissolve = joins[position + 1] if position + 1 < len(joins) else 0.0
-        voiced = _voiced_clip_seconds(said, NARRATION_ESTIMATED, dissolve) if said > 0 else 0.0
-        planned = motion_seconds(scene) if scene.get("duration_seconds") else 0.0
-        sizes[position + 1] = max(voiced, planned)
-    return sizes
+    """Per filmed row of a script (by position, from 1, as its storyboard numbers them), the
+    clip `clip_plan` will buy for it before a word is voiced: the one estimate's
+    (`film_length.factual_clips`): its words at the narrator's high rate with the estimate's
+    margin, the share of the pauses the storyboard will freeze around it, the dissolve into the
+    next row; never shorter than a plan the row states. What the story review reads a scene's
+    length against its motion model's longest clip by (2026-10-10, film 6fe6a577). ``scenes``
+    are the storyboard's rows as `film_length.factual_rows` cuts them (with the montage off,
+    the script's scenes)."""
+    return film_length.factual_clips(scenes)
 
 
 def _words_sha(scene: dict[str, Any]) -> str:
@@ -5253,7 +5444,9 @@ def clip_fits(clip_seconds: float | None, span: float) -> bool:
 
 
 def _percent_longer(clip_seconds: float, span: float) -> int:
-    return math.ceil((float(span) / float(clip_seconds) - 1.0) * 100 - 1e-6)
+    # Read to a thousandth of a percent first: a span laid on the timeline is rounded to the
+    # microsecond, and 6.7500003 s against 5.0 s is the 35% the sheet reads, not 36%.
+    return math.ceil(round((float(span) / float(clip_seconds) - 1.0) * 100, 3) - 1e-6)
 
 
 def clip_short_words(
@@ -5414,6 +5607,16 @@ def assembly_readiness(
     least_spans = expected_shot_spans(
         scenes, {index: (said.least, said.source) for index, said in narration.items()}
     )
+    # A film timed by its frozen pauses: a clip a little short of its span is still cut in
+    # when the pause after the row's words can give up the difference toward its floor, as the
+    # render reads it (`_clip_slowdowns`, its ``fit_span``): one readiness.
+    plans = film_length.frozen_rows(scenes)
+    if plans is not None:
+        for scene, plan in zip(scenes, plans, strict=True):
+            index = int(scene["scene_index"])
+            if plan.room > 0 and index in spans:
+                spans[index] = round(spans[index] - plan.room, 6)
+                least_spans[index] = round(least_spans[index] - plan.room, 6)
     readings: list[dict[str, Any]] = []
     for scene in scenes:
         if scene_kind_of(scene) != LIVE_KIND:
