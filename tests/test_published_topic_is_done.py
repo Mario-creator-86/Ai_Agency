@@ -9,6 +9,8 @@ no subject, script or film was made for the day: the factual channel was deadloc
 
 A topic is now read by its current script (the newest draft no editorial judgement superseded,
 as `script_work` already reads it), and a topic with any film out is neither live nor stalled.
+«Out» is an upload the channel confirmed, read as `film_is_closed` reads it: a gate refusal or
+a failed upload on an older render, or on another draft's, leaves the topic owing its film.
 Nothing here asks a model or a provider.
 """
 
@@ -129,8 +131,18 @@ def _board(engine, script_id: str, *, at: float, status: str = "APPROVED") -> st
     return board_id
 
 
-def _render(engine, board_id: str, *, verdict: str | None, published: bool = False) -> str:
-    """A finished render of the board, its QC verdict, and its publication when ``published``."""
+def _render(
+    engine,
+    board_id: str,
+    *,
+    verdict: str | None,
+    published: bool = False,
+    status: str = "PUBLISHED",
+    remote_video_id: str | None = "yt-speed-of-light",
+    remote_upload_status: str | None = None,
+) -> str:
+    """A finished render of the board, its QC verdict, and, when ``published``, a publication
+    row in ``status`` (a confirmed upload unless told otherwise)."""
     asset_id = str(uuid4())
     finished = datetime.now(UTC).isoformat()
     with Session(engine) as session, session.begin():
@@ -187,9 +199,10 @@ def _render(engine, board_id: str, *, verdict: str | None, published: bool = Fal
                     description="d",
                     tags_json=[],
                     privacy_status="private",
-                    status="PUBLISHED",
+                    status=status,
                     idempotency_key=str(uuid4()),
-                    remote_video_id="yt-speed-of-light",
+                    remote_video_id=remote_video_id,
+                    remote_upload_status=remote_upload_status,
                     created_at=finished,
                     published_at=finished,
                 )
@@ -264,6 +277,128 @@ def test_a_published_film_on_an_older_storyboard_of_the_same_script_finishes_the
     _board(engine, script, at=900, status="REJECTED")
 
     assert _production(engine) == ([], [])
+
+
+# ------------------------------------------------------------------ only a confirmed upload is out
+
+#: Every status a publication row is written in. Only the first three, with a remote video id,
+#: put a film on the channel (`film_is_closed`); the rest left nothing certain there.
+PUBLICATION_STATUSES = (
+    "PUBLISHED",
+    "SCHEDULED",
+    "REMOTE_CONFIRMED",
+    "PUBLISHED_SIMULATED",
+    "REMOTE_UNKNOWN",
+    "STARTED",
+    "DRAFT_INTENT",
+    "VALIDATED",
+    "FAILED_RETRYABLE",
+    "NEEDS_RECONCILIATION",
+    "BLOCKED_GATE",
+    "FAILED_FINAL",
+)
+
+
+def test_an_older_render_the_gate_refused_does_not_finish_a_topic_whose_new_render_waits(engine):
+    """Review of 502f407, case (a): one storyboard, an older render that passed QC and that the
+    publishing gate refused (BLOCKED_GATE, nothing on the channel), and a newer render waiting
+    for its QC verdict. The topic still owes that film: live, and no new subject is chosen
+    beside it. Any publication row used to count as «out» on every render of the topic."""
+    topic = _topic(engine)
+    script = _draft(engine, topic, at=0, status="APPROVED", review="PASS")
+    board = _board(engine, script, at=60)
+    _render(
+        engine, board, verdict="PASSED", published=True, status="BLOCKED_GATE", remote_video_id=None
+    )
+    _render(engine, board, verdict=None)
+    candidate = _candidate(engine)
+
+    with Session(engine) as session:
+        assert stages.topics_with_a_published_film(session) == set()
+    assert _production(engine) == ([topic], [])
+
+    chosen = stages._selection(engine)
+
+    assert "deja în producție" in chosen["reason"], chosen
+    assert chosen["artefacts"]["topic_id"] == topic, chosen
+    with Session(engine) as session:
+        assert session.get(TopicIdea, candidate).status == "PROPOSED"
+
+
+def test_a_film_youtube_refused_does_not_finish_a_topic_whose_replacement_is_owed(engine):
+    """Review of 502f407, case (b): the first film's upload failed for good (FAILED_FINAL,
+    YouTube's «rejected»: nothing on the channel), and a replacement draft is APPROVED with a
+    storyboard not rendered yet (a story repair of a film `film_is_closed` does not close).
+    The replacement is owed: the topic is live, and the day does not start a second film."""
+    topic = _topic(engine)
+    first = _draft(engine, topic, at=0, status="APPROVED", review="PASS")
+    first_board = _board(engine, first, at=60)
+    _render(
+        engine,
+        first_board,
+        verdict="PASSED",
+        published=True,
+        status="FAILED_FINAL",
+        remote_video_id="yt-refused",
+        remote_upload_status="rejected",
+    )
+    second = _draft(engine, topic, at=600, status="APPROVED", review="PASS")
+    _board(engine, second, at=660)
+    candidate = _candidate(engine)
+
+    with Session(engine) as session:
+        from app.media.shooting_sheet import film_is_closed
+
+        assert film_is_closed(session, first_board) is False
+        assert stages.topics_with_a_published_film(session) == set()
+    assert _production(engine) == ([topic], [])
+
+    chosen = stages._selection(engine)
+
+    assert chosen["artefacts"]["topic_id"] == topic, chosen
+    with Session(engine) as session:
+        assert session.get(TopicIdea, candidate).status == "PROPOSED"
+
+
+def test_a_film_is_out_for_its_topic_exactly_when_it_is_closed_for_production(engine):
+    """`topics_with_a_published_film` reads an upload as `film_is_closed` does: every
+    publication status, with a remote video id, without one, and with an empty one. A film
+    closed for production finishes its topic; any other row leaves the topic to its film."""
+    from app.media.shooting_sheet import film_is_closed
+
+    boards: dict[str, tuple[str, str, str | None]] = {}
+    for status in PUBLICATION_STATUSES:
+        for remote in ("yt-1", None, ""):
+            topic = _topic(engine, title=f"{status} {remote!r}")
+            script = _draft(engine, topic, at=0, status="APPROVED", review="PASS")
+            # An older storyboard carries the row; the current one waits for its render, so
+            # only `topics_with_a_published_film` can finish the topic.
+            board = _board(engine, script, at=10)
+            _render(
+                engine,
+                board,
+                verdict="PASSED",
+                published=True,
+                status=status,
+                remote_video_id=remote,
+            )
+            _board(engine, script, at=20)
+            boards[topic] = (board, status, remote)
+
+    with Session(engine) as session:
+        closed = {
+            topic for topic, (board, _, _) in boards.items() if film_is_closed(session, board)
+        }
+        out = stages.topics_with_a_published_film(session)
+
+    assert out == closed
+    assert sorted((boards[topic][1], boards[topic][2]) for topic in out) == [
+        ("PUBLISHED", "yt-1"),
+        ("REMOTE_CONFIRMED", "yt-1"),
+        ("SCHEDULED", "yt-1"),
+    ]
+    live, stalled = _production(engine)
+    assert sorted(live) == sorted(set(boards) - out) and stalled == []
 
 
 # ------------------------------------------------------------------ the current script

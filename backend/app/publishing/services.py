@@ -178,6 +178,12 @@ LIVE_PUBLICATION_STATES = [
     "SCHEDULED",
 ]
 
+#: Statuses of an upload the channel confirmed: with a remote video id, a film that is out, or
+#: booked to go out (the reading `media.shooting_sheet.film_is_closed` gives an upload). Every
+#: other row (a gate refusal, an upload that failed or YouTube refused, an intent not yet run,
+#: a retry, a simulated run) left nothing certain on the channel; the film may still be owed.
+CONFIRMED_UPLOAD_STATES = ("PUBLISHED", "SCHEDULED", "REMOTE_CONFIRMED")
+
 
 def film_identity(session: Session, media_asset_id: str) -> tuple[str | None, str | None]:
     """Which film a rendered file belongs to: its script, and the storyboard it was shot from.

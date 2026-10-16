@@ -154,6 +154,7 @@ from app.providers.registry import ProviderRegistry
 from app.publishing.licence_release import mark_held_for_licence
 from app.publishing.models import ChannelRecord, PublicationRecord
 from app.publishing.services import (
+    CONFIRMED_UPLOAD_STATES,
     LIVE_PUBLICATION_STATES,
     REMOTE_REJECTED_STATES,
     ROUTE_SELECTED,
@@ -852,10 +853,16 @@ def topic_scripts(session: Session) -> dict[str, ScriptDraft]:
 
 
 def topics_with_a_published_film(session: Session) -> set[str]:
-    """The topics with a film out: a render of one of their storyboards, of any of their
-    drafts, whose output asset has a publication record (the reading `topics_in_production`
-    always gave a published film). The asset is matched, never a title the publisher may
-    have changed."""
+    """The topics with a film out: a finished render of one of their storyboards, of any of
+    their drafts, whose output asset the channel confirmed (`CONFIRMED_UPLOAD_STATES` with a
+    remote video id). The asset is matched, never a title the publisher may have changed.
+
+    Only a confirmed upload, read as `media.shooting_sheet.film_is_closed` reads one: this
+    finishes the topic whichever draft, storyboard or render the film came from, so it must
+    not take a row that left nothing on the channel. A gate refusal (BLOCKED_GATE) or a failed
+    upload (FAILED_FINAL, YouTube's «rejected» among them) is offered again by `_publish`, or
+    repaired with a replacement script and storyboard; read as «out», it let the day choose a
+    new subject beside a film still owed, and two films were made and paid for side by side."""
     return {
         str(topic_id)
         for topic_id in session.scalars(
@@ -866,7 +873,13 @@ def topics_with_a_published_film(session: Session) -> set[str]:
                 PublicationRecord,
                 PublicationRecord.media_asset_id == VideoRenderJob.output_asset_id,
             )
-            .where(ScriptDraft.topic_id.is_not(None))
+            .where(
+                ScriptDraft.topic_id.is_not(None),
+                VideoRenderJob.status == "COMPLETED",
+                PublicationRecord.status.in_(CONFIRMED_UPLOAD_STATES),
+                PublicationRecord.remote_video_id.is_not(None),
+                PublicationRecord.remote_video_id != "",
+            )
             .distinct()
         )
     }
@@ -892,8 +905,11 @@ def topics_in_production(session: Session) -> tuple[list[str], list[str]]:
     Done whichever of its drafts the film came from (2026-10-16): the topic used to be read by
     its newest draft alone, and a rewrite written after the published one (the editorial
     judgement's lower-scored versions) held the factual channel «în producție» with nothing
-    owed. A topic is read by its current script (`topic_scripts`), and one with any film out
-    (`topics_with_a_published_film`) is neither live nor stalled.
+    owed. A topic is read by its current script (`topic_scripts`), and one whose film the
+    channel confirmed, from any of its drafts (`topics_with_a_published_film`), is neither live
+    nor stalled. Any other publication row finishes the topic only on the newest render of its
+    current storyboard, as it always did; on an older render, or on another draft's, it says
+    nothing about the film the topic still owes.
     """
     selected = list(session.scalars(select(TopicIdea).where(TopicIdea.status == "SELECTED")))
     if not selected:
@@ -916,16 +932,23 @@ def topics_in_production(session: Session) -> tuple[list[str], list[str]]:
         select(QualityControlReport).order_by(QualityControlReport.verified_at)
     ):
         verdicts[verdict_row.media_asset_id] = verdict_row.status  # the newest per asset
+    # Any publication row on the newest render of the current storyboard finishes the topic, as
+    # it always did; on every other render only a confirmed upload does (`done`, above).
+    published = set(session.scalars(select(PublicationRecord.media_asset_id)))
     rejected = _viewing_rejected(session)
     live: list[str] = []
     stalled: list[str] = []
     for topic in selected:
         if topic.id in done:
-            continue  # a film of it is out; this topic is finished, neither live nor stuck
+            continue  # the channel has a film of it; finished, neither live nor stuck
         script = scripts.get(topic.id)
         board = boards.get(script.id) if script else None
         last = jobs.get(board.id) if board else None
-        if board is not None and board.status == "REJECTED":
+        if (
+            board is not None
+            and board.status == "REJECTED"
+            and (last is None or last.output_asset_id not in published)
+        ):
             # Closed by the Director (a film she retired after it stood still, or a viewing
             # she refused): nothing more is owed on it, and the topic must not hold the
             # studio. It used to count as in production until a render COMPLETED (A4).
@@ -944,6 +967,8 @@ def topics_in_production(session: Session) -> tuple[list[str], list[str]]:
             live.append(topic.id)  # writing, storyboarding or rendering still owed
             continue
         verdict = verdicts.get(last.output_asset_id)
+        if last.output_asset_id in published:
+            continue  # the film is out; this topic is finished, neither live nor stuck
         if last.output_asset_id in rejected:
             stalled.append(topic.id)  # the Director said no; the departments hold the notes
         elif verdict == "PASSED":
