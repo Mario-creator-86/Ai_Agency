@@ -143,7 +143,8 @@ buy_motion whose own answers contradict it (text seen, more than one picture, pl
 matched, a violation named) does not pass: the answers win over the summary.
 
 What happens next is `next_step`: a passing still buys motion; a still that should have
-been a card is routed to the local compositor; a failing still is re-rolled at most twice,
+been a card is routed to the local compositor; a failing still is re-rolled while the
+Owner's renders cap leaves room (`renders_cap.max_rerolls`: the cap less the first render),
 with its violations rewritten as positive words the image model obeys
 (`positive_instruction`), and then goes to the Owner. A block that is only "could not
 measure" is never re-rolled: buying another still does not install a detector. Before any
@@ -179,7 +180,9 @@ from app.media.fix_check import (
 from app.media.markings import markings_ro, named
 from app.media.picture_qc import StillJudgement, judge_still
 from app.media.qc import PANEL_BAND_SHARE, flat_band, still_is_degenerate
+from app.media.renders_cap import max_rerolls
 from app.media.toolchain import find_ffmpeg
+from app.wording import count as count_ro
 
 #: The width every picture check measures at: the final film's width.
 MEASURE_WIDTH = 1080
@@ -206,8 +209,10 @@ SHARPNESS_SCORE_SPAN = 100
 MOTION_BLUR_ANISOTROPY = 2.5
 #: Mean CIELAB distance to the look's named colours above which the palette is flagged.
 PALETTE_WARN_DELTA_E = 30.0
-#: How many times a failing still is bought again before the Owner decides.
-MAX_REROLLS = 2
+# How many times a failing still is bought again before the Owner decides is not a constant
+# here: it is the renders cap less the first render, read when a step decides
+# (`renders_cap.max_rerolls`, `Settings.renders_per_layer`; the Owner, 2026-10-16: two renders).
+
 #: How many times a still that repeats a corrected mistake is bought again on the same words,
 #: when it also missed its plan (one that showed its plan is never: its words are rewritten).
 PERSISTS_REROLLS = 1
@@ -1317,16 +1322,22 @@ def next_step(report: StillReport, *, rerolls_done: int, words_correct: bool = F
             f"imaginea {how} «{_excerpt(persisted.get('finding'), 120)}»: {words} nu au "
             "corectat-o.",
         )
-    if rerolls_done < MAX_REROLLS:
+    allowed = max_rerolls()
+    if rerolls_done < allowed:
         return NextStep(
             "reroll",
             positive_instruction(report.violations, report.expected_markings),
-            f"Scena {report.scene}: imaginea se reface ({rerolls_done + 1}/{MAX_REROLLS}): {first}",
+            f"Scena {report.scene}: imaginea se reface ({rerolls_done + 1}/{allowed}): {first}",
         )
+    done = (
+        f"după {count_ro(allowed, 'refacere', 'refaceri')}"
+        if allowed
+        else "la singura randare permisă"
+    )
     return NextStep(
         "needs_owner",
         positive_instruction(report.violations),
-        f"Scena {report.scene}: după {MAX_REROLLS} refaceri imaginea tot nu trece ({first}). "
+        f"Scena {report.scene}: {done} imaginea tot nu trece ({first}). "
         "Decide Proprietarul pe foaia de filmare.",
     )
 

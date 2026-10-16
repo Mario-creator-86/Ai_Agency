@@ -2676,8 +2676,10 @@ def film_ceiling_micros(
 
     An explicit film budget wins. Otherwise the Owner's active daily budget is the film's
     ceiling too; shared daily/monthly reservations still bound each actual purchase. Without
-    an active daily budget, retain the motion-plus-stills configuration fallback."""
-    from app.media.still_gate import MAX_REROLLS  # noqa: PLC0415 - still_gate reaches qc
+    an active daily budget, retain the motion-plus-stills configuration fallback: the motion
+    budget and every scene's still as many times as the Owner's renders cap allows it
+    (`renders_cap.renders_per_layer`)."""
+    from app.media.renders_cap import renders_per_layer  # noqa: PLC0415 - as still_gate was
 
     chosen = _settings_of(settings)
     figure = getattr(chosen, "film_budget_usd", None)
@@ -2702,7 +2704,7 @@ def film_ceiling_micros(
     except (UnpricedError, KeyError):
         per_scene = 0
     stills = credits_to_micros(
-        per_scene * (1 + MAX_REROLLS) * DEFAULT_CEILING_SCENES, prices.credit_usd
+        per_scene * renders_per_layer(settings) * DEFAULT_CEILING_SCENES, prices.credit_usd
     )
     return round(motion_usd * 1_000_000) + stills, "implicit"
 

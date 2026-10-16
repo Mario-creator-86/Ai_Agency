@@ -75,6 +75,7 @@ from app.media.picture_qc import (
     judge_clip,
 )
 from app.media.prompt_lint import bible_face_rule
+from app.media.renders_cap import clip_retries, renders_of_ro
 from app.media.schemas import QCReportView
 from app.media.toolchain import (
     LOUDNESS_TARGET_LUFS,
@@ -1596,8 +1597,10 @@ MOVE_FIXTURE: dict[str, str | None] = {
 #: largest frame-to-frame change is 4.9.
 CUT_SPIKE_RATIO = 8.0
 CUT_SPIKE_MIN_YDIF = 12.0
-#: One retry per failing clip, on the same model, with seed + 1, inside the approved cap.
-MAX_CLIP_RETRIES = 1
+# A failing clip's retries (on the same model, with seed + 1, inside the approved cap) are
+# read when it is decided: one, while the Owner's renders cap leaves a second render of the
+# motion, none at a cap of one (`renders_cap.clip_retries`, `Settings.renders_per_layer`).
+
 #: A frame whose YDIF is under this repeats the one before it. Measured: a 24 fps Nepal clip
 #: converted to 30 fps has exactly 20% such frames; the clips as delivered, none (their
 #: slowest frame reads 0.12).
@@ -2593,12 +2596,17 @@ def clip_retry_decision(
             f"«{_cut_words(persisted.get('finding'), 120)}»: {words} nu au corectat-o. Nu se "
             "cumpără o reluare pe aceleași cuvinte; Directoarea rescrie mișcarea.",
         )
-    if retries_done >= MAX_CLIP_RETRIES:
+    if retries_done >= clip_retries():
         return ClipRetry(
             "ESCALATE",
             None,
-            f"Scena {report.scene}: clipul a picat controlul și după reluare; nu se mai "
-            "cumpără. Decide Proprietarul pe foaia de filmare.",
+            f"Scena {report.scene}: clipul a picat controlul"
+            + (
+                " și după reluare"
+                if retries_done
+                else f"; plafonul Proprietarului ({renders_of_ro('mișcării')}) nu lasă o reluare"
+            )
+            + "; nu se mai cumpără. Decide Proprietarul pe foaia de filmare.",
         )
     blocking = [item for item in report.checks if item.blocking]
     if blocking and all(item.status == "NOT_RUN" for item in blocking):

@@ -388,13 +388,14 @@ def cap_still_reached(
     stopped by a restart before anything was asked and one cancelled after a second; counted by
     what they made (`runbook.stages._paid_redo_rounds`, each round in its own window), the
     scene stood at two. A card raised on a count that was wrong is moot, not his to answer."""
+    from app.media.renders_cap import paid_redos_per_scene  # noqa: PLC0415 - as the stages
     from app.runbook.stages import _paid_redo_rounds  # noqa: PLC0415 - runbook imports us
 
     if settings is None:
         return True
     rounds = _paid_redo_rounds(session, storyboard_id)
     allowed = redo_allowance(session, storyboard_id)
-    per_scene = int(getattr(settings, "film_max_paid_redos_per_scene", 1)) + allowed
+    per_scene = paid_redos_per_scene(settings) + allowed
     per_film = int(getattr(settings, "film_max_paid_redos", 2)) + allowed
     if sum(rounds.values()) >= per_film:
         return True

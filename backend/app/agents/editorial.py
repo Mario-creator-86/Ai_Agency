@@ -466,7 +466,7 @@ def frames_for(
 
 def accepted_under_cap(session: Session, media_asset_id: str) -> dict[str, Any] | None:
     """The Director's newest QC decision on this film when it ACCEPTED the film — under the
-    Owner's cap (`runbook.stages.RENDERS_PER_LAYER`) or on her own judgement of the
+    Owner's renders cap (`media.renders_cap`) or on her own judgement of the
     findings — else None: such a film is published as it stands, and her viewing writes
     notes, not a veto. 2026-10-15 12:20Z, the Owner: «orice iese, chiar dacă pică, Directorul
     se uită peste ce avem, și publică!»; 17:36Z, a4ecf40a: she accepted the film after QC

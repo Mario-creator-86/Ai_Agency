@@ -26,6 +26,7 @@ from app.economy import repurchase_gate as gate
 from app.economy.budget import BudgetCommand, set_budget
 from app.economy.services import record_provider_cost
 from app.media.models import SceneTake, VideoRenderJob
+from app.media.renders_cap import paid_redos_per_scene
 from app.media.toolchain import find_ffmpeg
 from app.models import ApprovalRequest, OwnerPolicy
 from app.providers.base import GenerateResult
@@ -248,7 +249,7 @@ def test_nadia_reads_the_corrected_redo_with_its_figures_and_her_approve_buys(
     assert data["redos_bought"] == {
         "this_scene": 0,
         "this_film": 0,
-        "cap_per_scene": settings.film_max_paid_redos_per_scene,
+        "cap_per_scene": paid_redos_per_scene(settings),
         "cap_per_film": settings.film_max_paid_redos,
     }
     assert [take["take_id"] for take in data["paid_before_for_this_layer"]] == [film["clip"]]

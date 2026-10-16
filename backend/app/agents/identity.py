@@ -80,11 +80,24 @@ STANDING_RULES = (
     "subscription costs nothing. Buy once, on words the Director approved; never ask the "
     "studio to make a picture or a clip again on the same words, and never waste what is "
     "already paid for when it serves the story (the Owner, 2026-10-15).",
-    "A picture or a clip of a scene is made at most three times. Past that, nothing is made "
-    "again: the Director looks at everything the scene has, chooses what is closest to the "
-    "plan, and the film is published as it stands; what stayed below standard is a lesson "
-    "for the next film, never a reason to withhold a publication (the Owner, 2026-10-15).",
+    "A picture or a clip of a scene is made at most {renders_times}, the first render "
+    "included. Past that, nothing is made again: the Director looks at everything the scene "
+    "has, chooses what is closest to the plan, and the film is published as it stands; what "
+    "stayed below standard is a lesson for the next film, never a reason to withhold a "
+    "publication (the Owner, 2026-10-15; the number, 2026-10-16).",
 )
+#: The place in `STANDING_RULES` where the Owner's renders cap is said, filled when the
+#: identity is composed (`standing_rules`): the number is his setting, never written here.
+RENDERS_TIMES = "{renders_times}"
+
+
+def standing_rules() -> tuple[str, ...]:
+    """The standing rules as every agent is told them, the Owner's renders cap said with the
+    number his settings hold now (`media.renders_cap`, `Settings.renders_per_layer`)."""
+    from app.media.renders_cap import times_en  # noqa: PLC0415 - media reaches the agents
+
+    said = times_en()
+    return tuple(rule.replace(RENDERS_TIMES, said) for rule in STANDING_RULES)
 
 
 class RoleContract(BaseModel):
@@ -951,7 +964,7 @@ def compose_identity(
         else:
             lines.append("WHAT YOU REMEMBER: nothing recorded that this work needs.")
     lines.append("STANDING RULES:")
-    lines.extend(f"- {rule}" for rule in STANDING_RULES)
+    lines.extend(f"- {rule}" for rule in standing_rules())
     system = "\n".join(lines)
     told: list[MemoryRecord] = [
         *policies,

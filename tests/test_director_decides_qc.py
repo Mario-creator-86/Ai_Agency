@@ -62,6 +62,7 @@ from app.media.models import (
     StoryboardScene,
     VideoRenderJob,
 )
+from app.media.renders_cap import renders_per_layer
 from app.media.services import seed_default_character_bibles
 from app.models import ApprovalRequest, DomainEvent, OwnerPolicy
 from app.providers.base import GenerateResult, HealthResult
@@ -4763,7 +4764,7 @@ def test_a_scene_at_the_renders_cap_is_not_bought_again_and_the_film_ships_as_it
     (repair,) = done["repairs"]
     assert repair["limited"] and repair["limited"][0]["scene_index"] == 5
     assert repair["limited"][0]["renders"] == {"still": repair["limited"][0]["renders"]["still"]}
-    assert repair["limited"][0]["renders"]["still"] >= stages.RENDERS_PER_LAYER
+    assert repair["limited"][0]["renders"]["still"] >= renders_per_layer()
     assert "card_id" not in repair and repair["ship"]["limited"]
     decided = events(engine, DECISION_EVENT)[-1].payload
     assert decided["decision"] == "ACCEPT" and decided["outcome"] == "ACCEPTED"
@@ -4832,7 +4833,7 @@ def test_a_motion_continuing_its_stills_round_is_still_under_the_renders_cap(
     assert done["outcome"] == "ACCEPTED" and done["passed_asset"] == film["asset"]
     (repair,) = done["repairs"]
     assert repair["limited"] and repair["limited"][0]["scene_index"] == 5
-    assert repair["limited"][0]["renders"]["motion"] >= stages.RENDERS_PER_LAYER
+    assert repair["limited"][0]["renders"]["motion"] >= renders_per_layer()
     decided = events(engine, DECISION_EVENT)[-1].payload
     assert decided["decision"] == "ACCEPT" and decided["accepted_under_cap"]["limited"] == [5]
 

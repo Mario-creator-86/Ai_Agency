@@ -520,7 +520,9 @@ def test_a_still_redo_buys_one_pair_and_invalidates_only_scene_3s_motion(engine,
 
     plan = redo_plan(engine, storyboard_id, "still", 3)
     assert plan["action"] == REDO_ACTION and plan["model_id"] == "seedream5_pro"
-    assert plan["credits"] == 18 and plan["cap_credits"] == 54
+    # Scene 3's still was made once: the redo holds the rounds the renders cap still leaves
+    # it (the suite's three, tests/conftest.py, less the one made), never a render past it.
+    assert plan["credits"] == 18 and plan["cap_credits"] == 36 and plan["max_rerolls"] == 1
     assert plan["replaces"] == [stills_before[3].id]
     assert plan["invalidates"] == [shots[3]]
 

@@ -72,6 +72,23 @@ def montage_off_unless_marked(request, monkeypatch):
     monkeypatch.setenv("STUDIO_TARGET_VIDEO_SECONDS", "30")
 
 
+#: The renders cap the suite's fixtures, caps and counts were written on (`renders_cap`).
+SUITE_RENDERS_PER_LAYER = 3
+
+
+@pytest.fixture(autouse=True)
+def three_renders_unless_marked(request, monkeypatch):
+    """Production makes a shot's picture, or its motion, at most twice since 2026-10-16 (the
+    Owner: «limităm acum la 2 randări … maxim încă o randare», `Settings.renders_per_layer`);
+    the suite's fixtures, caps, re-roll counts and repair rounds were written on three, and
+    keep them (STUDIO_RENDERS_PER_LAYER=3), the way STILL_CANDIDATES and the montage are
+    pinned. A test marked ``renders_per_layer(n)`` runs at ``n``; the production default is
+    read from the settings model by `test_renders_cap`."""
+    marker = request.node.get_closest_marker("renders_per_layer")
+    value = int(marker.args[0]) if marker is not None and marker.args else SUITE_RENDERS_PER_LAYER
+    monkeypatch.setenv("STUDIO_RENDERS_PER_LAYER", str(value))
+
+
 @pytest.fixture(autouse=True)
 def quick_final_encode(request, monkeypatch):
     """The film's final encode on the veryfast preset, unless the test is about the encode.

@@ -4175,6 +4175,7 @@ def _authorize_delivery_retry(
         _paid_attempts,
         max_paid_attempts_per_scene,
     )
+    from app.media.renders_cap import renders_per_layer, renders_ro  # noqa: PLC0415
     from app.media.shooting_sheet import film_is_closed  # noqa: PLC0415
     from app.providers.runpod.jobs import GenerationJob  # noqa: PLC0415
 
@@ -4249,6 +4250,15 @@ def _authorize_delivery_retry(
         attempts = _paid_attempts(
             [row for row in scene_takes(session, board, index) if row.kind in kinds], group
         )
+        if attempts >= renders_per_layer():
+            # The Owner's renders cap (2026-10-16, «maxim încă o randare»): a retry of the
+            # delivery would be one more render of the layer, and none is bought past it.
+            result["reason"] = (
+                f"Directoarea a preluat livrarea; stratul are deja {renders_ro(attempts)}, "
+                f"plafonul Proprietarului fiind de {renders_ro()}: nu se mai cumpără o reluare. "
+                "Numărul de încercări plătite se păstrează."
+            )
+            return result
         if attempts >= max_paid_attempts_per_scene():
             result["reason"] = (
                 "Directoarea a preluat eșecurile repetate de livrare; trebuie remediat "

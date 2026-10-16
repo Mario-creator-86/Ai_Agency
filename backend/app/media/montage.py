@@ -9,7 +9,7 @@ A filmed scene (a narration line of a factual short, a beat of the serial) is cu
 shots of about `Settings.montage_shot_seconds` each, at most `montage_max_shots_per_scene`:
 each shot becomes an ordinary storyboard scene with its own still, its own clip and its own
 camera move, so the sheet, the stills stage, the assembler, quality control and the renders
-cap read nothing new (a shot is a row; the cap of three renders a layer counts per row). The
+cap read nothing new (a shot is a row; the renders cap, `renders_cap`, counts per row). The
 shots of one scene are tied by a tag kept on the scene's ``prompt_json["beat"]``:
 ``{"scene_number": k, "shot": i, "of": n, "size": ...}`` — ``scene_number`` is the writer's
 scene the shot belongs to (the fact-checked script is never rewritten), so the prompt agent

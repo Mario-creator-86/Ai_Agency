@@ -79,10 +79,10 @@ from app.media.qc import (
     flat_band,
     still_is_degenerate,
 )
+from app.media.renders_cap import max_rerolls
 from app.media.still_gate import (
     ALL_CHECKS,
     FINE_DETAIL_KEPT_MAX,
-    MAX_REROLLS,
     MOTION_BLUR_ANISOTROPY,
     POSITIVE_WORDS,
     SHARPNESS_FLOOR,
@@ -1082,7 +1082,7 @@ def test_a_panel_band_blocks_the_still_and_is_rerolled_with_one_continuous_photo
     step = next_step(report, rerolls_done=0)
     assert step.action == "reroll"
     assert "one single continuous photograph filling the whole frame" in step.instruction
-    assert next_step(report, rerolls_done=MAX_REROLLS).action == "needs_owner"
+    assert next_step(report, rerolls_done=max_rerolls()).action == "needs_owner"
 
 
 @needs_ffmpeg
@@ -1191,7 +1191,7 @@ def test_a_failing_still_is_rerolled_twice_with_a_positive_instruction_then_goes
     )
     failed = decide(fixture(4), plan(4), checks, clean_verdict(4), environment="TEST")
 
-    assert MAX_REROLLS == 2
+    assert max_rerolls() == 2  # the suite's three renders (conftest)
     first = next_step(failed, rerolls_done=0)
     second = next_step(failed, rerolls_done=1)
     third = next_step(failed, rerolls_done=2)

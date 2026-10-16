@@ -140,6 +140,7 @@ from app.media.prompt_agent import (
     write_shot_prompts,
 )
 from app.media.qc import evaluate_media_qc, rights_verdict
+from app.media.renders_cap import paid_redos_per_scene, renders_per_layer, renders_ro
 from app.media.serial_storyboard import describe_serial_shots
 from app.media.services import generate_storyboard_from_script
 from app.models import DomainEvent
@@ -1852,8 +1853,8 @@ def _ladder_scenes(
     First, free: a refused still the gate's local checks stopped is judged again by today's
     gate (`stills_stage.rejudge_refused_stills`); one it passes is the scene's picture and the
     scene is listed on ``film["rejudged"]``. Then a refused scene whose picture has had its
-    three renders is not rewritten: what it has stands under the Owner's cap
-    (`stills_stage.settle_scene_under_cap`) and the scene is listed on
+    renders, or whose motion has had its renders, is not rewritten: what it has stands under
+    the Owner's cap (`stills_stage.settle_scene_under_cap`) and the scene is listed on
     ``film["settled_under_cap"]`` instead, so the walk goes on.
 
     ``act=False`` only reads the refused scenes and changes nothing (`_ladders_stop`)."""
@@ -4215,8 +4216,9 @@ def _edit_and_qc(
 # the sound remastered) and a scene's paid redo (a new picture, new motion) were applied by
 # code, every scene the report named: the paid ones only through `redo_scene`, whose purchase
 # passes `may_act` for media.scene_redo with the redo's own plan_hash (his paid-media rule, the
-# mode, the budgets, the film's ceiling, the lease), within `film_max_paid_redos_per_scene` and
-# `film_max_paid_redos`.
+# mode, the budgets, the film's ceiling, the lease), within the paid redos per scene
+# (`renders_cap.paid_redos_per_scene`: what the Owner's renders cap leaves, or his lower
+# `film_max_paid_redos_per_scene`) and `film_max_paid_redos`.
 #
 # 2026-10-10 (film babcf272, report d4ea68d2). That mechanical repair redid scenes 1 and 2
 # unasked: the report had read the studio's own burned-in subtitles as «text or a logo» on
@@ -4652,12 +4654,13 @@ def _film_of(engine: Engine, asset_id: str) -> dict[str, Any]:
         return {"storyboard_id": job.storyboard_id if job is not None else None}
 
 
-#: The Owner, 2026-10-15 12:20Z: «Randările odată făcute, de maxim 3x pentru fiecare imagine sau
-#: mișcare». A scene's stills, and its shots, are made at most this many times (the first
-#: purchase, the re-rolls and the paid redos all counted, `_renders_made`): past it nothing of
-#: that layer is bought for the scene again, and the best take there is stands.
-RENDERS_PER_LAYER = 3
-#: ...and a failed report's repair is bought at most this many times (`_report_repair_rounds`:
+# The Owner, 2026-10-15 12:20Z: «Randările odată făcute, de maxim 3x pentru fiecare imagine sau
+# mișcare»; 2026-10-16 ~12:00Z: «limităm acum la 2 randări … maxim încă o randare». A scene's
+# stills, and its shots, are made at most `Settings.renders_per_layer` times, read now through
+# `renders_cap.renders_per_layer` (the first purchase, the re-rolls, the retries and the paid
+# redos all counted, `_renders_made`): past it nothing of that layer is bought for the scene
+# again, and the best take there is stands.
+#: A failed report's repair is bought at most this many times (`_report_repair_rounds`:
 #: her BOUGHT_WAITING decisions on it). Past either limit her list is not bought and the film
 #: ships as it stands: «Nu putem să ne învârtim la nesfârșit la același subiect, cheltuim toți
 #: banii și fără să publicăm!» — her ACCEPT under the cap (`director_qc.accepted_by_cap`),
@@ -4682,6 +4685,22 @@ def _renders_made(session: Session, storyboard_id: str) -> dict[tuple[int, str],
             continue
         by_scene.setdefault((int(row.scene_number), layer), []).append(row)
     return {key: _paid_attempts(rows, key[1]) for key, rows in by_scene.items()}
+
+
+def _over_renders(
+    renders: dict[tuple[int, str], int], scene: int, layers: list[str], cap: int
+) -> dict[str, int]:
+    """The layers of ``layers`` the scene may not buy again under the Owner's renders cap
+    (layer -> renders made): a layer made ``cap`` times, and the picture when the scene's
+    motion has had its renders (a new still could not be animated)."""
+    over = {
+        layer: renders.get((scene, layer), 0)
+        for layer in layers
+        if renders.get((scene, layer), 0) >= cap
+    }
+    if "still" in layers and renders.get((scene, "motion"), 0) >= cap:
+        over.setdefault("motion", renders.get((scene, "motion"), 0))
+    return over
 
 
 def _report_repair_rounds(session: Session, report_id: str) -> int:
@@ -4715,7 +4734,7 @@ def _redo_allowance(
             session, storyboard_id, str(reading.get("media_asset_id") or "")
         )
     limits = {
-        "per_scene": int(getattr(settings, "film_max_paid_redos_per_scene", 1)),
+        "per_scene": paid_redos_per_scene(settings),
         "per_film": int(getattr(settings, "film_max_paid_redos", 2)),
         "spent": spent,
         "open_motion": sorted(open_rounds),
@@ -6205,8 +6224,9 @@ def _apply_repairs(
 
     with Session(engine) as session:
         allowed_more = redo_allowance(session, storyboard_id)
-    per_scene = int(getattr(settings, "film_max_paid_redos_per_scene", 1)) + allowed_more
+    per_scene = paid_redos_per_scene(settings) + allowed_more
     per_film = int(getattr(settings, "film_max_paid_redos", 2)) + allowed_more
+    renders_cap = renders_per_layer(settings)
     paid: dict[int, list[str]] = {}
     for proposal in proposals:
         if (
@@ -6237,13 +6257,11 @@ def _apply_repairs(
             renders = _renders_made(session, storyboard_id)
         # Only her motion after the scene's new still continues the still's round.
         continues = open_round if paid[scene] == ["motion"] else None
-        # The Owner's cap of 2026-10-15: three renders a layer a scene, two bought repairs
-        # a report; past it the scene keeps the best take it has (`RENDERS_PER_LAYER`).
-        over_renders = {
-            redo: renders.get((scene, redo), 0)
-            for redo in paid[scene]
-            if renders.get((scene, redo), 0) >= RENDERS_PER_LAYER
-        }
+        # The Owner's cap (2026-10-15; since 2026-10-16 two renders a layer a scene,
+        # `renders_cap`), two bought repairs a report; past it the scene keeps the best take
+        # it has. A new picture needs a render of the motion left: no clip could be made
+        # from it, and the clip it retires is what the film has.
+        over_renders = _over_renders(renders, scene, paid[scene], renders_cap)
         # A motion that continues its still's round is not a new round, but it is a render:
         # three shots of the scene made, the fourth is not bought (22:21Z, f06808c9 scene 4:
         # the continuation skipped the cap, the Accountant refused it on the cap's own words,
@@ -6262,7 +6280,7 @@ def _apply_repairs(
                     "per_scene": per_scene,
                     "per_film": per_film,
                     "renders": over_renders,
-                    "renders_cap": RENDERS_PER_LAYER,
+                    "renders_cap": renders_cap,
                     "report_rounds": report_rounds,
                     "report_rounds_cap": REPAIR_ROUNDS_PER_REPORT,
                 }
@@ -6279,6 +6297,22 @@ def _apply_repairs(
             # first walk did.
             if corrected.get("layer") == "still" and "still" not in paid[scene]:
                 paid[scene].insert(0, "still")
+                # The picture the correction turned to is a render like any other: never one
+                # past the Owner's cap, the scene's or its motion's (2026-10-16).
+                over_renders = _over_renders(renders, scene, paid[scene], renders_cap)
+                if over_renders:
+                    result["limited"].append(
+                        {
+                            "scene_index": scene,
+                            "per_scene": per_scene,
+                            "per_film": per_film,
+                            "renders": over_renders,
+                            "renders_cap": renders_cap,
+                            "report_rounds": report_rounds,
+                            "report_rounds_cap": REPAIR_ROUNDS_PER_REPORT,
+                        }
+                    )
+                    continue
         elif continues is None:
             # She looks at the scene once more before anything is bought for it (2026-10-12):
             # free, and the purchase is not. The motion that continues a new still was looked
@@ -6636,8 +6670,8 @@ def _apply_repairs(
         result["ship"] = {
             "limited": list(result["limited"]),
             "reason_ro": (
-                "plafonul Proprietarului (2026-10-15): cel mult "
-                f"{RENDERS_PER_LAYER} randări pe imagine sau mișcare pe scenă și "
+                "plafonul Proprietarului: cel mult "
+                f"{renders_ro(renders_cap)} pe imagine sau mișcare pe scenă și "
                 f"{REPAIR_ROUNDS_PER_REPORT} refaceri cumpărate pe raport; se publică ce avem, "
                 "Directoarea alege ce este cel mai apropiat de plan."
             ),

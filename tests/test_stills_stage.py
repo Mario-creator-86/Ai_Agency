@@ -35,7 +35,7 @@ from app.media.faces import FaceCount, count_faces, detector_available
 from app.media.models import SceneTake, Storyboard, StoryboardScene
 from app.media.picture_qc import StillJudgement, StillVerdict
 from app.media.prompt_lint import LintScene, has_block, lint_film
-from app.media.still_gate import MAX_REROLLS
+from app.media.renders_cap import max_rerolls
 from app.media.stills_stage import (
     FIGURE_ONE,
     STILL_RATIO,
@@ -442,7 +442,7 @@ def test_the_stage_refuses_without_an_approval_bound_to_the_current_plan_hash(en
     adapter, judge = SpyStills(), SpyJudge()
     plan = stills_plan(engine, storyboard_id)
     assert plan["cost_credits"] == 4 * 18
-    assert plan["cap_credits"] == 4 * 18 * (1 + MAX_REROLLS)
+    assert plan["cap_credits"] == 4 * 18 * (1 + max_rerolls())
 
     # No answer yet: the Owner is asked about exactly this plan, and nothing is bought.
     with pytest.raises(StillsStageRefused) as first:

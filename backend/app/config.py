@@ -291,8 +291,9 @@ class Settings(BaseSettings):
     #: Owner last decided about it on the shooting sheet, whatever its prompt
     #: (STUDIO_MAX_PAID_ATTEMPTS_PER_SCENE). Past it the scene waits for him: a scene that
     #: fails is not bought again every day, and a prompt rewritten every day is not a new
-    #: allowance every day. 3 covers one stills request and its two re-rolls, or a shot, its
-    #: technical retry and clip QC's retry.
+    #: allowance every day. 3 covers a shot, its technical retry (a request that made
+    #: nothing) and clip QC's retry; the renders cap (`renders_per_layer`) binds before it on
+    #: what was made.
     max_paid_attempts_per_scene: int = Field(default=3, ge=1, le=20)
 
     #: How many days a factual film may stand still before the Director retires it
@@ -313,10 +314,21 @@ class Settings(BaseSettings):
     #: same takes) are applied without a limit of their own, once per failed film. 0 turns the
     #: paid redos off. The Owner, 2026-10-11: a film is redone until QC passes and only money
     #: stops it, so the defaults are the most these allow; the money gates decide the rest.
-    #: The Owner, 2026-10-15: three renders a layer a scene in all (the first purchase and
-    #: two paid redos; `runbook.stages.RENDERS_PER_LAYER` counts them whatever the route).
-    film_max_paid_redos_per_scene: int = Field(default=2, ge=0, le=5)
+    #: Unset (None), the per-scene figure is what the renders cap leaves after the first
+    #: purchase (`renders_per_layer` - 1, `media.renders_cap.paid_redos_per_scene`); a number
+    #: the Owner sets only lowers it, never past the cap, which counts every render whatever
+    #: the route (the first purchase, the re-rolls, the retries and the paid redos).
+    film_max_paid_redos_per_scene: int | None = Field(default=None, ge=0, le=5)
     film_max_paid_redos: int = Field(default=20, ge=0, le=20)
+
+    #: How many times one layer of one shot — its picture, its motion — is made, the first
+    #: purchase included (STUDIO_RENDERS_PER_LAYER); past it nothing of that layer is bought
+    #: again, the Director keeps what is closest to the plan and the film is published as it
+    #: stands. The Owner, 2026-10-15: three. The Owner, 2026-10-16 ~12:00Z, the montage's shots
+    #: being longer and dearer: «limităm acum la 2 randări, pentru că sunt mai lungi și mai
+    #: costisitoare, maxim încă o randare». Read at call time through
+    #: `media.renders_cap.renders_per_layer`, never copied into a constant.
+    renders_per_layer: int = Field(default=2, ge=1, le=5)
 
     #: Montage (the Owner, 2026-10-16, after a Seedance fan film of 150 shots: «o mică poveste,
     #: mișcare, efecte cinematice»): a filmed scene is cut into shots of about
