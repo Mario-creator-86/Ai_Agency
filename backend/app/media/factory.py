@@ -787,6 +787,12 @@ def render_plan(engine: Engine, vault: CredentialVault, storyboard_id: str) -> d
                     "speaker": take["speaker"],
                     "character_id": take["character_id"],
                     "text": take["text"],
+                    # How the words are said (the writer's acting note): the assembler sends
+                    # it with the words for the voice to play. It never enters the take's
+                    # identity (`assembler.narration_key`), so a changed note re-buys no take
+                    # already paid for (the Owner, 2026-10-16). Before this the plan carried
+                    # it and the built take dropped it: no note ever reached the voice.
+                    "direction": str(take.get("direction") or ""),
                     "adapter": cache[key],
                     "voice_source": voice.get("speaker_source"),
                 }

@@ -569,3 +569,50 @@ def test_a_lines_direction_rides_with_the_take_and_the_voice_plays_it():
     assert performance_terms("whispering", "eleven_multilingual_v2") == ("", EXPRESSIVE_SETTINGS)
     assert performance_terms("", "eleven_v3") == ("", {})
     assert performance_terms(None, None) == ("", {})
+
+
+def test_a_lines_direction_reaches_the_built_take_and_the_voice_without_a_new_identity(
+    engine, staffed, client, headers, voices, monkeypatch, tmp_path
+):
+    """The side defect of 2026-10-16: the plan carried each take's acting note and
+    `factory.render_plan` dropped it from the takes it built, so no note ever reached the
+    voice. The note now rides with the built take to the voice; it is no part of the take's
+    identity (`narration_key`), so a changed note buys no take already paid for."""
+    from app.media.assembler import assemble_video_job, narration_fields
+    from app.media.serial_storyboard import storyboard_from_episode
+
+    use_cast(monkeypatch, tmp_path, {"Kael Video Editor": voices["first"]})
+    _, ids = letters_day(engine)
+    beats = beats_for(ids, [KAEL, SARAH], count=3)
+    beats[0]["lines"][0]["direction"] = "through gritted teeth"
+    episode = written(engine, monkeypatch, beats)
+    decide_episode(engine, episode["id"], True, "")
+    board_id = storyboard_from_episode(engine, episode["id"], str(uuid4()))
+    planned = planned_for(engine, board_id)
+
+    built = planned["voice_segments_for_scene"]({"scene_index": 1})
+    assert [take["direction"] for take in built] == ["through gritted teeth", ""]
+
+    asked: list[tuple[str, dict]] = []
+    original = RecordingVoice.synthesize
+
+    async def listening(self, text: str, **kwargs: Any):
+        asked.append((text, dict(kwargs.get("extra") or {})))
+        return await original(self, text, **kwargs)
+
+    monkeypatch.setattr(RecordingVoice, "synthesize", listening)
+    assemble_video_job(
+        engine,
+        board_id,
+        str(uuid4()),
+        storage_root=tmp_path / "media",
+        tts_adapter=None,
+        tts_adapter_for_scene=planned["tts_for_scene"],
+        voice_segments_for_scene=planned["voice_segments_for_scene"],
+        production_plan=planned["plan"],
+    )
+    kael = [extra for text, extra in asked if text == SPOKEN[0]]
+    assert kael and kael[0].get("direction") == "through gritted teeth"
+    # The take's identity is its words, its voice and its neighbours: no acting note.
+    fields = narration_fields(SPOKEN[0], built[0]["adapter"])
+    assert "direction" not in json.dumps(fields)
