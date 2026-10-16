@@ -306,6 +306,14 @@ def test_the_vendors_silence_is_trimmed_and_no_cut_carries_dead_air(
     longest = max(pause["planned"] for pause in joins[:-1])
     assert all(b - a <= longest + 1 / 24 + 0.01 for a, b in inside), (inside, joins)
     assert all(b - a <= 1.2 for a, b in inside), inside
+    # Measured on the voice track, never read back from the record: at every cut between two
+    # takes the silence the meter hears is the pause planned there, to within a frame and the
+    # detector's resolution, neither shorter nor longer (the voice's tone runs whole between
+    # cuts, so each silence inside the track is one join).
+    assert len(inside) == len(joins) - 1, (inside, joins)
+    for pause, (start, end) in zip(joins[:-1], inside, strict=True):
+        assert start - 0.01 <= pause["cut_at"] <= end + 1 / 24 + 0.01, (pause, start, end)
+        assert end - start == pytest.approx(pause["planned"], abs=1 / 24 + 0.01), (pause, start)
 
 
 @requires_ffmpeg

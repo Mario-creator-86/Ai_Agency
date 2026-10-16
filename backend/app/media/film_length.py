@@ -20,9 +20,12 @@ estimate every reader of a film's length uses, built on those rules:
   (`pauses.freeze` over the same sides), each voice at its own measured rate (`speech_seconds`):
   `factual_film_length`, `serial_film_length`, and each row's clip (`factual_clips`,
   `serial_clips`: the words at the voice's high rate plus the estimate's margin, the share of
-  the pauses the row's shot holds, the dissolve, on whole frames up, `pauses.row_estimate`);
+  the pauses the row's shot holds, the voice's own pause at a cut inside its take
+  (`in_take_holds`), the dissolve, on whole frames up, `pauses.row_estimate`);
 - a STORYBOARD already built (the motion plan, the sheet, the render's pre-check): its own
-  frozen pauses and the voices they were frozen from (`frozen_rows`), never a constant;
+  frozen pauses and the voices they were frozen from (`frozen_rows`: each speaker's part at
+  its own voice's rate), never a constant, whatever the rules say now (`is_frozen`); a film
+  frozen over its wall buys nothing (`wall_refusal`);
 - the WALL: min(the channel's Shorts maximum, 180 s) (`pauses.wall_seconds`). The script is
   held under it with the speech's margin (``FilmLength.wall_seconds``: the words at the median
   rate plus NARRATION_ESTIMATE_MARGIN, the pauses unfitted, the cards); the render keeps the
@@ -59,9 +62,12 @@ from app.media.montage import factual_shots, montage_settings, serial_shots
 
 logger = logging.getLogger(__name__)
 
-#: YouTube's Shorts wall: the longest a vertical film may be and still be a Short. The same
+#: YouTube's Shorts limit: the longest a vertical film may be and still be a Short. The same
 #: number as `qc.SHORTS_MAX_LIMIT_SECONDS` and `editorial.MAX_SHORT_SECONDS` (a test holds the
 #: three equal; this module cannot import quality control, which imports the editorial rules).
+#: The wall with the pause rules off; under them the wall is the channel's maximum, never past
+#: the rules' own cap (config/pause_rules.json studio.wall_cap_seconds, `pauses.wall_seconds`),
+#: the one the storyboard is frozen and the render fitted under (`review_ceiling_seconds`).
 SHORTS_WALL_SECONDS = 180.0
 #: With the pause rules off, how far under the wall the reviews hold the legacy estimate: about
 #: one standard deviation of the takes' pace over a film at the ceiling. Under the rules the
@@ -256,12 +262,16 @@ def film_timing(when: Timing | None = None) -> dict[str, Any]:
 
 
 def review_ceiling_seconds(wall: float = SHORTS_WALL_SECONDS, when: Timing | None = None) -> float:
-    """The longest estimate a review accepts against the wall (never past YouTube's): under the
-    pause rules the wall itself, the estimate carrying its own margin (``wall_seconds``); with
-    them off, the wall less WALL_MARGIN_SECONDS."""
-    paused = when.paused if when is not None else pause_rules.active_rules() is not None
+    """The longest estimate a review accepts against ``wall`` (the channel's, as the reviews
+    read it, `pause_plan.channel_wall`): under the pause rules the wall itself, never past the
+    rules' cap (`pauses.wall_seconds`, what the storyboard is frozen and the render fitted
+    under), the estimate carrying its own margin (``wall_seconds``); with them off, the wall
+    less WALL_MARGIN_SECONDS, never past YouTube's limit."""
+    rules = when.rules if when is not None else pause_rules.active_rules()
+    if rules is not None:
+        return round(pause_rules.wall_seconds(float(wall), rules), 1)
     bounded = min(float(wall), SHORTS_WALL_SECONDS)
-    return round(bounded if paused else bounded - WALL_MARGIN_SECONDS, 1)
+    return round(bounded - WALL_MARGIN_SECONDS, 1)
 
 
 def montage_options(settings: Any = None) -> SimpleNamespace:
@@ -362,10 +372,13 @@ def factual_sides(rows: Sequence[Mapping[str, Any]], when: Timing) -> list[dict[
     return sides
 
 
-def _frozen(sides: Sequence[Mapping[str, Any]], when: Timing, *, serial: bool) -> Any:
+def _frozen(
+    sides: Sequence[Mapping[str, Any]], when: Timing, *, serial: bool, fallbacks: bool = True
+) -> Any:
     """The joins of ``sides`` classed and timed exactly as the storyboard will freeze them,
     before the wall's compression (the estimate is held against the wall with its margin; the
-    compression is the render's reserve)."""
+    compression is the render's reserve); with ``fallbacks``, a cut inside a take carries the
+    voice's own pause there (`pauses.freeze`), what a clip is sized for."""
     return pause_rules.freeze(
         sides,
         serial=serial,
@@ -373,6 +386,7 @@ def _frozen(sides: Sequence[Mapping[str, Any]], when: Timing, *, serial: bool) -
         knobs=when.knobs,
         profiles=when.profiles,
         narrator_voice=when.narrator,
+        fallbacks=fallbacks,
     )
 
 
@@ -393,7 +407,7 @@ def _paused_length(
     speaking_rows: int,
     rows: int,
 ) -> FilmLength:
-    frozen = _frozen(sides, when, serial=serial)
+    frozen = _frozen(sides, when, serial=serial, fallbacks=False)
     estimate = frozen.estimate
     # A row with no words that is no card (a silent LIVE shot) keeps its plan on the timeline.
     silent = sum(
@@ -444,11 +458,50 @@ def _dissolves(rows: Sequence[Mapping[str, Any]]) -> list[float]:
 
 
 def _clip(
-    speech: float, inner: float, out: float, into: float, beta: float, dissolve: float
+    speech: float,
+    inner: float,
+    out: float,
+    into: float,
+    beta: float,
+    dissolve: float,
+    held: float = 0.0,
 ) -> float:
     legacy = _legacy()
-    seconds = speech + inner + beta * out + (1.0 - beta) * into + dissolve
+    seconds = speech + inner + beta * out + (1.0 - beta) * into + dissolve + held
     return round(float(legacy.whole_frames(seconds, legacy.fps, up=True)), 3)
+
+
+def in_take_holds(records: Sequence[Any], beta: float, slide: int) -> list[float]:
+    """Per side (each record is the join after one), the voice's own pause its shot holds at
+    a picture cut inside its take: a cut inside a take adds no silence, but the voice pauses
+    there as it always does (at a full stop, its own sentence pause: the record's
+    ``fallback``, the join it would be were the sides voiced apart), and the cut falls
+    ``cut_in_pause`` into that pause (1.0: the outgoing shot holds it all, the incoming none);
+    an L-cut (``picture_slide_words``) cuts after it, so the outgoing shot holds it all. What
+    a clip is sized for before the voice exists, which measures the words alone; a voiced
+    take measures the pause with its words. 0.0 where the join is no cut inside a take."""
+    holds = [0.0] * len(records)
+    for index, record in enumerate(records):
+        if not isinstance(record, Mapping) or record.get("class") != pause_rules.IN_TAKE:
+            continue
+        fallback = record.get("fallback")
+        seconds = fallback.get("seconds") if isinstance(fallback, Mapping) else None
+        if isinstance(seconds, bool) or not isinstance(seconds, int | float) or seconds <= 0:
+            continue
+        outgoing = 1.0 if slide > 0 else max(0.0, min(1.0, float(beta)))
+        holds[index] += outgoing * float(seconds)
+        if index + 1 < len(records):
+            holds[index + 1] += (1.0 - outgoing) * float(seconds)
+    return [round(value, 4) for value in holds]
+
+
+def _joined(records: Sequence[Any]) -> list[bool]:
+    """Per side, whether it goes on in the take the side before it is said in (the join
+    before it is a cut inside a take)."""
+    return [False] + [
+        isinstance(record, Mapping) and record.get("class") == pause_rules.IN_TAKE
+        for record in records[:-1]
+    ]
 
 
 def factual_clips(
@@ -458,9 +511,13 @@ def factual_clips(
     motion plan will buy for it before a word is voiced: its words at the narrator's high
     rate plus the estimate's margin, the share of the pauses its shot holds (``cut_in_pause``
     of the pause after it on a take's last row, the rest of the pause before it on a take's
-    first), the dissolve into the next row, on whole frames up; never shorter than a plan the
-    row states. A cut inside one take adds nothing. ``rows`` are storyboard rows
-    (`factual_rows`) or, with the montage off, the script's scenes themselves."""
+    first), the voice's own pause at a cut inside its take (`in_take_holds`), the dissolve
+    into the next row, on whole frames up; never shorter than a plan the row states. A cut
+    inside one take adds no silence, and an L-cut's words are the outgoing row's
+    (`pause_plan.slid_units`). ``rows`` are storyboard rows (`factual_rows`) or, with the
+    montage off, the script's scenes themselves."""
+    from app.media.pause_plan import slid_units  # noqa: PLC0415 - pause_plan reads qc
+
     when = when or timing(FACTUAL)
     if not when.paused:
         return _legacy_clips(rows)
@@ -468,12 +525,17 @@ def factual_clips(
     sides = factual_sides(rows, when)
     frozen = _frozen(sides, when, serial=False)
     beta = float(when.knobs.cut_in_pause)
+    slide = int(when.knobs.picture_slide_words)
+    holds = in_take_holds(frozen.pauses, beta, slide)
+    texts = slid_units(
+        [str(side.get("text") or "") for side in sides], _joined(frozen.pauses), slide
+    )
     joins = _dissolves(rows)
     sizes: dict[int, float] = {}
     for position, (row, side) in enumerate(zip(rows, sides, strict=True)):
         if scene_kind(row) in CARD_KINDS:
             continue
-        said = str(side.get("text") or "")
+        said = texts[position]
         out = float(frozen.pauses[position]["seconds"])
         into = float(frozen.pauses[position - 1]["seconds"]) if position else 0.0
         dissolve = joins[position + 1] if position + 1 < len(joins) else 0.0
@@ -482,7 +544,7 @@ def factual_clips(
             speech = pause_rules.speech_seconds(
                 said, voice_of(side, when), high=True, margin=float(legacy.margin)
             )
-            voiced = _clip(speech, 0.0, out, into, beta, dissolve)
+            voiced = _clip(speech, 0.0, out, into, beta, dissolve, holds[position])
         stated = row.get("duration_seconds")
         planned = (
             _motion_seconds(float(stated)) if isinstance(stated, int | float) and stated else 0.0
@@ -578,8 +640,11 @@ def serial_clips(
 ) -> list[list[float]]:
     """Per beat, the clip each of its shots needs before a word is voiced: each run's words at
     its voice's high rate plus the estimate's margin, the joins between the shot's own runs,
-    the share of the pauses before and after it the shot holds; on whole frames up. A serial
-    shot cuts to the next one, so no dissolve is added."""
+    the share of the pauses before and after it the shot holds, the voice's own pause at a
+    cut inside a speaker's take (`in_take_holds`; an L-cut's words are the outgoing shot's);
+    on whole frames up. A serial shot cuts to the next one, so no dissolve is added."""
+    from app.media.pause_plan import slid_units  # noqa: PLC0415 - pause_plan reads qc
+
     when = when or timing(SERIAL)
     beats = len(lines_by_beat)
     if not when.paused:
@@ -600,24 +665,30 @@ def serial_clips(
     sides, owners = _serial_sides(rows, when)
     frozen = _frozen(sides, when, serial=True)
     beta = float(when.knobs.cut_in_pause)
+    slide = int(when.knobs.picture_slide_words)
+    holds = in_take_holds(frozen.pauses, beta, slide)
+    texts = slid_units(
+        [str(side.get("text") or "") for side in sides], _joined(frozen.pauses), slide
+    )
     clips: list[list[float]] = [[] for _ in range(beats)]
     for position, (beat, _shot) in enumerate(rows):
         mine = [i for i, owner in enumerate(owners) if owner == position]
         first, last = mine[0], mine[-1]
         speech = sum(
             pause_rules.speech_seconds(
-                str(sides[i].get("text") or ""),
+                texts[i],
                 voice_of(sides[i], when),
                 high=True,
                 margin=float(legacy.margin),
             )
             for i in mine
-            if str(sides[i].get("text") or "").strip()
+            if texts[i].strip()
         )
         inner = sum(float(frozen.pauses[i]["seconds"]) for i in mine[:-1])
         out_pause = float(frozen.pauses[last]["seconds"])
         into = float(frozen.pauses[first - 1]["seconds"]) if first else 0.0
-        clips[beat - 1].append(_clip(speech, inner, out_pause, into, beta, 0.0))
+        held = sum(holds[i] for i in mine)
+        clips[beat - 1].append(_clip(speech, inner, out_pause, into, beta, 0.0, held))
     return clips
 
 
@@ -677,7 +748,15 @@ class RowPause:
     (the render's join where the row holds more takes than inner records,
     `assembler._unit_join`). ``room`` is what that pause may give up, in whole frames, toward
     its floor before the row's clip is called too short (`assembler._clip_slowdowns`): none
-    for a marked beat, a card or a join with no planned silence."""
+    for a marked beat, a card or a join with no planned silence.
+
+    Before its words are voiced the row is read as `factual_clips` and `serial_clips` read it
+    (the one estimate, the Owner's decision 10): ``speech`` is its words at each speaker's own
+    high rate (each part of a row said by two voices at its own voice's, from the words the
+    freeze counted on each; the slowest voice for the whole row when the words changed since),
+    an L-cut's words counted on the shot they are said under (``slide``); ``held`` is the
+    voice's own pause its shot holds at a cut inside its take (`in_take_holds`), which a
+    voiced take measures with its words."""
 
     voice: pause_rules.VoiceProfile | None
     out: float
@@ -687,6 +766,9 @@ class RowPause:
     joins: int = 0
     after: float = 0.0
     room: float = 0.0
+    speech: float | None = None
+    held: float = 0.0
+    slide: int = 0
 
     @property
     def share(self) -> float:
@@ -695,35 +777,27 @@ class RowPause:
         return round(self.beta * self.out + (1.0 - self.beta) * self.into + self.inner, 4)
 
 
-def _row_join(record: Any, grouped: bool) -> float:
+def _row_join(record: Any) -> float:
     """A frozen join's planned seconds as the render lays it: a cut inside one take adds
-    nothing, unless the take is voiced row by row after all (the voice groups off), when it
-    is the join it would be voiced alone (``fallback``)."""
-    if not isinstance(record, Mapping):
+    nothing (the film's voice groups, frozen with it, are what the render follows)."""
+    if not isinstance(record, Mapping) or record.get("class") == pause_rules.IN_TAKE:
         return 0.0
-    chosen: Mapping[str, Any] = record
-    if record.get("class") == pause_rules.IN_TAKE:
-        fallback = record.get("fallback")
-        if grouped or not isinstance(fallback, Mapping):
-            return 0.0
-        chosen = fallback
-    seconds = chosen.get("seconds")
-    return float(seconds) if isinstance(seconds, int | float) else 0.0
+    seconds = record.get("seconds")
+    if isinstance(seconds, bool) or not isinstance(seconds, int | float):
+        return 0.0
+    return float(seconds)
 
 
-def _room(record: Mapping[str, Any], out: float, beta: float, rules: Any) -> float:
+def _room(record: Mapping[str, Any], out: float, beta: float) -> float:
     """What a row's pause after may give up for a short clip, in whole frames of the timeline:
-    its planned seconds down to its frozen floor, at most the share the row's shot holds; none
-    for a class never compressed or with no planned silence (as the render's room)."""
+    its planned seconds down to its frozen floor (a class never compressed was frozen with its
+    floor at its seconds), at most the share the row's shot holds; none for a marked beat, a
+    card or a join with no planned silence (as the render's room, `assembler._lay_out_voice`)."""
     cls = str(record.get("class") or "")
-    if out <= 0 or cls in rules.never_compressed or cls in pause_rules.EDGES_ONLY:
-        return 0.0
-    if cls == pause_rules.BEAT:
+    if out <= 0 or cls in pause_rules.EDGES_ONLY or cls in (pause_rules.BEAT, pause_rules.CARD):
         return 0.0
     floor = record.get("floor")
-    if isinstance(record.get("fallback"), Mapping) and cls == pause_rules.IN_TAKE:
-        floor = record["fallback"].get("floor")
-    lowest = float(floor) if isinstance(floor, int | float) else out
+    lowest = float(floor) if isinstance(floor, int | float) and not isinstance(floor, bool) else out
     fps = int(_legacy().fps)
     seconds = max(0.0, min(beta * out, out - lowest))
     return float(int(seconds * fps + 1e-6)) / fps
@@ -741,24 +815,71 @@ def _profile_of(views: Sequence[Mapping[str, Any]]) -> Mapping[str, Any]:
     return found if isinstance(found, Mapping) else {}
 
 
-def frozen_rows(views: Sequence[Mapping[str, Any]]) -> list[RowPause] | None:
-    """Each row's `RowPause` of a storyboard timed by its frozen pauses (every row carries
-    ``pause_after``, as `assembler.scene_view` reads it, and the rules are in use); None for a
-    film built before them, which keeps the legacy timing. The voices and the knobs are the
-    ones the film froze (``pause_profile`` on its first row), never measured again."""
-    rules = pause_rules.active_rules()
-    if rules is None or not views:
-        return None
-    if not all(isinstance(view.get("pause_after"), Mapping) for view in views):
-        return None
+def is_frozen(views: Sequence[Mapping[str, Any]]) -> bool:
+    """Whether a storyboard is timed by its frozen pauses: every row carries the pause frozen
+    when it was built (``pause_after``, as `assembler.scene_view` reads it). Whatever the pause
+    rules say now: a film is timed by the numbers it was built with, and switching the rules
+    off (or a rules file that no longer reads) never re-times it, nor re-buys its takes (the
+    Owner's decision 8, 2026-10-16). A film built before them keeps the legacy timing."""
+    return bool(views) and all(isinstance(view.get("pause_after"), Mapping) for view in views)
+
+
+def film_knobs(views: Sequence[Mapping[str, Any]]) -> dict[str, Any] | None:
+    """The channel's knobs a frozen film is laid out by: the ones it froze (``pause_profile``
+    on its first row), else its channel's as the rules state them (in use or not); None when
+    neither can be read."""
     profile = _profile_of(views)
-    knobs = profile.get("knobs") if isinstance(profile.get("knobs"), Mapping) else {}
-    beta_raw = knobs.get("cut_in_pause") if isinstance(knobs, Mapping) else None
-    if isinstance(beta_raw, int | float) and not isinstance(beta_raw, bool):
-        beta = float(beta_raw)
-    else:
-        serial = str(profile.get("channel") or "") == SERIAL
-        beta = pause_rules.channel_pauses(SERIAL if serial else FACTUAL, rules).cut_in_pause
+    knobs = profile.get("knobs")
+    beta = knobs.get("cut_in_pause") if isinstance(knobs, Mapping) else None
+    if isinstance(beta, int | float) and not isinstance(beta, bool):
+        slide = knobs.get("picture_slide_words") if isinstance(knobs, Mapping) else 0
+        return {
+            "cut_in_pause": max(0.0, min(1.0, float(beta))),
+            "picture_slide_words": int(slide) if isinstance(slide, int) and slide > 0 else 0,
+        }
+    rules = pause_rules.readable_rules()
+    if rules is None:
+        return None
+    serial = str(profile.get("channel") or "") == SERIAL
+    channel = pause_rules.channel_pauses(SERIAL if serial else FACTUAL, rules)
+    return {
+        "cut_in_pause": channel.cut_in_pause,
+        "picture_slide_words": channel.picture_slide_words,
+    }
+
+
+def _side_words(
+    records: Sequence[Mapping[str, Any]], said: str, moved_out: int, moved_in: int
+) -> list[int] | None:
+    """Each part of a row's words as the freeze counted them (``words`` on each join record),
+    an L-cut's words moved; None when they no longer add up to the row's words."""
+    words = [
+        int(record["words"])
+        for record in records
+        if isinstance(record.get("words"), int) and not isinstance(record.get("words"), bool)
+    ]
+    if not words or len(words) != len(records):
+        return None
+    if sum(words) != int(_legacy().spoken_words(said)):
+        return None
+    words[0] = max(0, words[0] - moved_out)
+    words[-1] += moved_in
+    return words
+
+
+def frozen_rows(views: Sequence[Mapping[str, Any]]) -> list[RowPause] | None:
+    """Each row's `RowPause` of a storyboard timed by its frozen pauses (`is_frozen`); None for
+    a film built before them, which keeps the legacy timing. The voices and the knobs are the
+    ones the film froze (``pause_profile`` on its first row), never measured again."""
+    if not is_frozen(views):
+        return None
+    knobs = film_knobs(views)
+    if knobs is None:
+        return None
+    beta = float(knobs["cut_in_pause"])
+    slide = int(knobs["picture_slide_words"])
+    profile = _profile_of(views)
+    rules = pause_rules.active_rules() or pause_rules.readable_rules()
     frozen_voices: dict[str, pause_rules.VoiceProfile] = {}
     raw_voices = profile.get("voices")
     for name, entry in raw_voices.items() if isinstance(raw_voices, Mapping) else []:
@@ -771,12 +892,14 @@ def frozen_rows(views: Sequence[Mapping[str, Any]]) -> list[RowPause] | None:
     narrator_key = profile.get("narrator")
     measured: Mapping[str, Any] | None = None
 
-    def voice(key: Any) -> pause_rules.VoiceProfile:
+    def voice(key: Any) -> pause_rules.VoiceProfile | None:
         nonlocal measured
         if key is not None and str(key) in frozen_voices:
             return frozen_voices[str(key)]
         if narrator_key is not None and str(narrator_key) in frozen_voices:
             return frozen_voices[str(narrator_key)]
+        if rules is None:
+            return None
         if measured is None:
             try:
                 measured = pause_rules.load_profiles(rules=rules)
@@ -784,29 +907,97 @@ def frozen_rows(views: Sequence[Mapping[str, Any]]) -> list[RowPause] | None:
                 measured = {}
         return pause_rules.voice_profile(str(key) if key else None, rules=rules, profiles=measured)
 
-    grouped = rules.switch("voice_groups")
+    from app.media.pause_plan import slid_to  # noqa: PLC0415 - pause_plan reads qc
+
+    afters = [dict(view.get("pause_after") or {}) for view in views]
+    texts = [" ".join(str(view.get("voiceover_segment") or "").split()) for view in views]
+    holds = in_take_holds(afters, beta, slide)
+    # The words an L-cut moves from the start of each row to the row before it (the two said
+    # in one take): how many, counted as the voice says them.
+    moved = [0] * len(views)
+    if slide > 0:
+        for index in range(1, len(views)):
+            words = texts[index].split()
+            if afters[index - 1].get("class") == pause_rules.IN_TAKE and words and texts[index - 1]:
+                taken = words[: slid_to(0, len(words), slide)]
+                moved[index] = int(_legacy().spoken_words(" ".join(taken)))
     plans: list[RowPause] = []
     previous_out = 0.0
-    for view in views:
-        after = view.get("pause_after") or {}
+    for index, view in enumerate(views):
+        after = afters[index]
         inner_records = [r for r in view.get("inner_pauses") or [] if isinstance(r, Mapping)]
-        said = " ".join(str(view.get("voiceover_segment") or "").split())
-        out = _row_join(after, grouped)
-        voices = [voice(r.get("voice_key")) for r in [*inner_records, after]] if said else []
+        said = texts[index]
+        out = _row_join(after)
+        records = [*inner_records, after]
+        voices = [voice(r.get("voice_key")) for r in records] if said else []
+        known = [v for v in voices if v is not None]
+        slowest = max(known, key=lambda v: v.seconds_per_word_high) if known else None
+        moved_in = moved[index + 1] if index + 1 < len(views) else 0
+        speech: float | None = None
+        if said and slowest is not None:
+            parts = _side_words(records, said, moved[index], moved_in)
+            if parts is not None and all(v is not None for v in voices):
+                speech = round(
+                    sum(
+                        pause_rules.speech_seconds(count, part_voice, high=True)
+                        for count, part_voice in zip(parts, voices, strict=True)
+                        if part_voice is not None
+                    ),
+                    3,
+                )
+            else:
+                said_words = max(0, int(_legacy().spoken_words(said)) - moved[index] + moved_in)
+                speech = pause_rules.speech_seconds(said_words, slowest, high=True)
         plans.append(
             RowPause(
-                voice=max(voices, key=lambda v: v.seconds_per_word_high) if voices else None,
+                voice=slowest,
                 out=out,
                 into=previous_out,
-                inner=round(sum(_row_join(r, grouped) for r in inner_records), 4),
+                inner=round(sum(_row_join(r) for r in inner_records), 4),
                 beta=beta,
                 joins=len(inner_records),
-                after=_row_join(after, False),
-                room=_room(after, out, beta, rules),
+                after=_row_join(
+                    after.get("fallback")
+                    if after.get("class") == pause_rules.IN_TAKE
+                    and isinstance(after.get("fallback"), Mapping)
+                    else after
+                ),
+                room=_room(after, out, beta),
+                speech=speech,
+                held=holds[index] if said else 0.0,
+                slide=slide,
             )
         )
         previous_out = out
     return plans
+
+
+def wall_refusal(views: Sequence[Mapping[str, Any]]) -> str | None:
+    """Why nothing may be bought for a film frozen over its wall, in the Owner's words: its
+    storyboard was frozen (`pause_plan.freeze_rows`) with even every pause at its floor longer
+    than its channel's wall (``pause_profile.wall.fits`` false), so quality control would
+    refuse the film at the wall after every still, voice and clip were paid for. None for a
+    film that fits, or one built before the pause rules (the review held it then)."""
+    profile = _profile_of(views) if is_frozen(views) else {}
+    wall = profile.get("wall") if isinstance(profile, Mapping) else None
+    if not isinstance(wall, Mapping) or wall.get("fits") is not False:
+        return None
+    return over_the_wall_words(
+        float(wall.get("estimate") or 0.0),
+        float(wall.get("wall") or 0.0),
+        float(wall.get("over_seconds") or 0.0),
+        measured=False,
+    )
+
+
+def over_the_wall_words(seconds: float, wall: float, over: float, *, measured: bool) -> str:
+    """A film longer than its wall even with every pause at its floor, in the Owner's words."""
+    what = "măsurat cu vocea înregistrată" if measured else "estimat la construirea scenariului"
+    return (
+        f"Filmul, {what}, ar dura {seconds:.1f} s chiar cu fiecare pauză scurtată până la "
+        f"podeaua ei: cu {over:.1f} s peste zidul de {wall:.0f} s al canalului. Nu se cumpără "
+        "nimic pentru el (controlul de calitate l-ar refuza la zid): textul trebuie scurtat."
+    )
 
 
 # --------------------------------------------------------------------------- the legacy timing

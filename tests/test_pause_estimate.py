@@ -75,8 +75,16 @@ def test_a_takes_last_row_holds_its_pause_and_a_cut_inside_it_none(engine):
     assert all(plan.beta == 1.0 for plan in plans)
     assert [plan.share for plan in plans] == [plan.out for plan in plans]
 
+    # A cut inside the take adds no silence, but the outgoing shot holds the voice's own pause
+    # there (the join it would be voiced alone, ``fallback``): what the clip is bought for
+    # before the take exists, as `film_length.factual_clips` sizes it (review of 2026-10-16).
+    for i in hook[:-1]:
+        assert plans[i].held == pytest.approx(views[i]["pause_after"]["fallback"]["seconds"])
+    assert plans[hook[-1]].held == 0.0
+
     # The motion plan buys each clip for its words at the narrator's high rate with the
-    # margin, and for the pause its shot holds: nothing inside the take, the pause at its end.
+    # margin, and for the pause its shot holds: the voice's own inside the take, the frozen
+    # pause at its end.
     with Session(engine) as session:
         sizes = clip_plan(session, board, views)
         readings = narration_readings(session, board, views)
@@ -86,7 +94,8 @@ def test_a_takes_last_row_holds_its_pause_and_a_cut_inside_it_none(engine):
         assert reading.source == NARRATION_ESTIMATED
         words = len(str(views[i]["voiceover_segment"]).split())
         assert reading.seconds == pytest.approx(round(words * HIGH, 3), abs=0.005)
-        voiced = round(whole_frames(reading.seconds * (1 + MARGIN) + plans[i].out, up=True), 3)
+        held = plans[i].out + plans[i].held
+        voiced = round(whole_frames(reading.seconds * (1 + MARGIN) + held, up=True), 3)
         assert sizes[index]["seconds"] == max(voiced, sizes[index]["planned_seconds"])
 
 
@@ -113,7 +122,8 @@ def test_a_film_built_before_the_rules_is_no_frozen_film(engine, tmp_path):
 def test_a_take_said_over_rows_is_read_per_row_by_its_own_word_timing(engine, tmp_path):
     """Before a render measured them, the rows of a kept take said over several shots are
     read on the take's own alignment, as the render cuts it: each row to the next picture cut,
-    the take's last row to its last letter at least and to the vendor's end at most."""
+    the take's last row to its last letter and the edge the trim keeps, never to the vendor's
+    end of file (its stretched final "."), which the trim cuts away (review of 2026-10-16)."""
     board = _factual_board(
         engine, [_scene(1, "HOOK", LONG), _scene(2, "ENDING", "Reserved on purpose, by it.")]
     )
@@ -135,8 +145,8 @@ def test_a_take_said_over_rows_is_read_per_row_by_its_own_word_timing(engine, tm
         # The render lays each row on the frame nearest its cut: within a frame.
         assert reading.seconds == pytest.approx(rendered[index], abs=FRAME)
     last = readings[hook[-1]]
-    assert last.source == NARRATION_MEASURED and last.least < last.seconds
-    assert last.least - FRAME <= rendered[hook[-1]] <= last.seconds + FRAME
+    assert last.source == NARRATION_MEASURED and last.least == last.seconds
+    assert last.seconds == pytest.approx(rendered[hook[-1]], abs=FRAME)
 
 
 # -------------------------------------------------------------------------- the one estimate

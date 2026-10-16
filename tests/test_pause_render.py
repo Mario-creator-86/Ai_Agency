@@ -288,3 +288,41 @@ def test_a_film_built_before_the_rules_keeps_the_legacy_breath(engine, tmp_path,
     timeline = render["production"]["timeline"]
     assert timeline["spoken_tail_seconds"] == 0.4
     assert "pause" not in timeline["spans"][0]
+
+
+@requires_ffmpeg
+@pytest.mark.montage
+def test_a_film_over_its_wall_at_the_render_gives_up_its_pauses_in_order(
+    engine, tmp_path, monkeypatch
+):
+    """The Owner's decision 9 at the render: a film whose measured voice runs past its wall
+    gives up its pauses toward their floors, one factor for the whole ladder, a marked beat
+    and a card never; the film then fits the wall and the timeline says so (review of
+    2026-10-16: nothing tested this at the render)."""
+    board = _factual_board(
+        engine,
+        [
+            _scene(1, "HOOK", LONG),
+            _scene(2, "DEVELOPMENT", "The registry keeps a short list of names it never sells."),
+            _scene(3, "ENDING", "Reserved on purpose, by the registry itself."),
+        ],
+    )
+    first = _render(engine, board, SpacedVoice(), tmp_path)
+    natural = float(first["production"]["timeline"]["film_seconds"])
+    assert first["production"]["timeline"]["pause_profile"]["render_wall_factors"] is None
+    wall = round(natural - 0.3, 3)
+    monkeypatch.setattr(pause_plan, "board_wall", lambda session, board, rules: wall)
+    again = SpacedVoice()
+    render = _render(engine, board, again, tmp_path / "again")
+    assert again.heard == []  # the takes are the ones paid for
+    timeline = render["production"]["timeline"]
+    assert timeline["film_seconds"] <= wall + 1e-6
+    assert timeline["pause_profile"]["render_wall"] == wall
+    factors = timeline["pause_profile"]["render_wall_factors"]
+    assert factors is not None and min(factors) < 1.0
+    squeezed = [span["pause"] for span in timeline["spans"] if span["pause"].get("wall_k")]
+    assert squeezed, "the pauses gave the wall its seconds"
+    for pause in squeezed:
+        assert pause["class"] not in (pauses.BEAT, pauses.CARD, pauses.IN_TAKE)
+        assert pause["floor"] - 1e-3 <= pause["planned"]
+        assert pause["heard"] == pytest.approx(pause["planned"], abs=FRAME)

@@ -4370,10 +4370,12 @@ def _frozen_joins(production: Mapping[str, Any]) -> list[tuple[float, float]] | 
     """Where a film timed by its frozen pauses planned a pause between two takes, and how long:
     (where the picture cut, the planned seconds) for every join after a scene's words and
     between its own takes (``spans[].pause`` and its ``inner``), a cut inside a take and a
-    silent card excepted; None for a film recorded before them."""
+    silent card excepted. A join with no silence of its own (an interruption) is planned as the
+    kept edges it is heard as (`assembler._lay_out_voice`). None for a film recorded before
+    them, or one whose limits cannot be read (`_silence_limits`): it is read as a legacy film."""
     timeline = production.get("timeline")
     spans = timeline.get("spans") if isinstance(timeline, Mapping) else None
-    if not isinstance(spans, list) or not spans:
+    if not isinstance(spans, list) or not spans or _silence_limits(production) is None:
         return None
     joins: list[tuple[float, float]] = []
     for span in spans:
@@ -4389,26 +4391,45 @@ def _frozen_joins(production: Mapping[str, Any]) -> list[tuple[float, float]] | 
     return joins
 
 
-def _silence_limits() -> tuple[float, float, float]:
+def _silence_limits(production: Mapping[str, Any]) -> tuple[float, float, float] | None:
     """(the dead-air tolerance, the join ceiling, the frame) a frozen film's silences are read
-    against: the pause rules' own (config/pause_rules.json), else the published research
-    values the rules hold (0.2, 1.2 s), the frame of the 24 fps timeline."""
-    from app.media import pauses  # noqa: PLC0415 - read when measured
+    against: the limits the film was frozen with (``timeline.pause_profile.limits``, from
+    config/pause_rules.json when its storyboard was built), else the rules file's own (in use
+    or not), and one frame of the film's recorded timeline. None when they cannot be read: no
+    number is made up here, and the film is read as a legacy one."""
+    timeline = production.get("timeline")
+    timeline = timeline if isinstance(timeline, Mapping) else {}
+    fps = _seconds(timeline.get("fps"))
+    if fps is None or fps <= 0:
+        return None
+    profile = timeline.get("pause_profile")
+    limits = profile.get("limits") if isinstance(profile, Mapping) else None
+    tolerance = _seconds(limits.get("dead_air_tolerance")) if isinstance(limits, Mapping) else None
+    ceiling = _seconds(limits.get("join_ceiling_seconds")) if isinstance(limits, Mapping) else None
+    if tolerance is None or ceiling is None:
+        from app.media import pauses  # noqa: PLC0415 - read when measured
 
-    rules = pauses.active_rules()
-    tolerance = rules.dead_air_tolerance if rules is not None else 0.2
-    ceiling = rules.join_ceiling_seconds if rules is not None else 1.2
-    return tolerance, ceiling, 1.0 / 24
+        rules = pauses.readable_rules()
+        if rules is None:
+            return None
+        tolerance, ceiling = rules.dead_air_tolerance, rules.join_ceiling_seconds
+    return tolerance, ceiling, 1.0 / fps
 
 
 def _frozen_limit(
-    start: float, end: float, joins: Sequence[tuple[float, float]]
+    start: float,
+    end: float,
+    joins: Sequence[tuple[float, float]],
+    production: Mapping[str, Any],
 ) -> tuple[float, float | None]:
     """The longest a silence from ``start`` to ``end`` may last in a film timed by its frozen
     pauses, and the pause planned there: at a join (its cut within the boundary tolerance of
     the silence), the planned pause x (1 + dead_air_tolerance) + one frame; anywhere else the
-    rules' join ceiling (None planned)."""
-    tolerance, ceiling, frame = _silence_limits()
+    join ceiling (None planned), both the film's own (`_silence_limits`)."""
+    limits = _silence_limits(production)
+    if limits is None:  # `_frozen_joins` reads no joins without them
+        raise ValueError("the film's silence limits cannot be read")
+    tolerance, ceiling, frame = limits
     near = [
         planned
         for at, planned in joins
@@ -4496,7 +4517,7 @@ def _frozen_silences(
         )
         if overlap >= 0.5 * (end - start):
             continue  # a silent card: the pause is the scene
-        limit, _planned = _frozen_limit(start, end, joins)
+        limit, _planned = _frozen_limit(start, end, joins, production)
         if end - start > limit + 1e-6:
             dead.append((start, end))
     return dead
@@ -4568,7 +4589,7 @@ def editorial_problems(
         if joins is not None:
             # Against the film's own plan («pauza vocii»): the pause planned at that cut, or
             # the join ceiling inside a take.
-            limit, planned = _frozen_limit(start, end, joins)
+            limit, planned = _frozen_limit(start, end, joins, production)
             where = (
                 f"la tăietura unde pauza plănuită e de {_ro_number(planned, 2)} s"
                 if planned is not None

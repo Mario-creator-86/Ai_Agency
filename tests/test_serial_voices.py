@@ -249,12 +249,61 @@ def test_a_two_speaker_beat_is_two_takes_in_two_voices_and_one_caption_track(
     assert [t["voice_id"] for t in takes] == [voices["first"], voices["second"]]
     assert [t["voice_source"] for t in takes] == ["voice_cast_proposal", "character_binding"]
     # Between the two speakers the frozen turn (`pause_plan`, «pauza vocii» 2026-10-16): the
-    # conversational gap, the pad the render adds being the turn less what the trim kept.
+    # conversational gap (Stivers 2009, 0.236 s, clamped to [its floor, Kael's own full stop:
+    # the cast's pool, 0.28 s, as the suite pins it]), the pad the render adds being the turn
+    # less what the trim kept, and the silence heard there the turn, to within a frame.
+    from app.media import pauses
+    from pause_timing import PINNED_VOICE_PROFILES
+
+    rules = pauses.load_rules()
+    cast = pauses.voice_profile(
+        None, rules=rules, profiles=PINNED_VOICE_PROFILES, pool=pauses.CHARACTER_POOL
+    )
+    expected = pauses.target(
+        pauses.TURN,
+        out=cast,
+        inn=cast,
+        narrator=cast,
+        knobs=pauses.channel_pauses("serial", rules),
+        rules=rules,
+    )
+    assert expected == pytest.approx(rules.turn_seconds)
     (turn,) = production["timeline"]["spans"][0]["pause"]["inner"]
-    assert turn["class"] == "TURN" and turn["pad"] >= 0
-    assert turn["heard"] == pytest.approx(turn["keep_tail"] + turn["pad"] + turn["head"], abs=1e-3)
+    assert turn["class"] == "TURN" and turn["planned"] == pytest.approx(expected)
+    laid = pauses.render_pad(turn["planned"], turn["keep_tail"], turn["head"])
+    assert turn["pad"] == pytest.approx(laid, abs=1e-3)
+    assert turn["heard"] == pytest.approx(turn["planned"], abs=1 / 24)
     spoken = sum(t["audio_seconds"] for t in takes) + turn["pad"]
     assert first["audio_seconds"] == pytest.approx(spoken, abs=0.002)
+
+    # Read back from this render (RENDERED), each row's words and its share of the frozen
+    # pauses make exactly the span the render cut, the turn and the kept edges counted once
+    # (review of 2026-10-16: the render's audio held them and the share added them again).
+    from app.media.assembler import (
+        NARRATION_RENDERED,
+        expected_shot_spans,
+        narration_readings,
+        scene_view,
+    )
+    from app.media.models import StoryboardScene
+
+    with Session(engine) as session:
+        views = [
+            scene_view(row)
+            for row in session.scalars(
+                select(StoryboardScene)
+                .where(StoryboardScene.storyboard_id == board_id)
+                .order_by(StoryboardScene.scene_index)
+            )
+        ]
+        readings = narration_readings(session, board_id, views)
+    assert {reading.source for reading in readings.values()} == {NARRATION_RENDERED}
+    expected = expected_shot_spans(
+        views, {index: (reading.seconds, reading.source) for index, reading in readings.items()}
+    )
+    for span in production["timeline"]["spans"]:
+        laid = span["end"] - span["start"]
+        assert expected[span["scene_index"]] == pytest.approx(laid, abs=1e-4), span
 
     # One caption track, and it follows the speakers.
     srt = Path(production["captions"]["srt"])
@@ -617,6 +666,46 @@ def test_a_lines_direction_reaches_the_built_take_and_the_voice_without_a_new_id
     )
     kael = [extra for text, extra in asked if text == SPOKEN[0]]
     assert kael and kael[0].get("direction") == "through gritted teeth"
-    # The take's identity is its words, its voice and its neighbours: no acting note.
+    bought = len(asked)
+    assert bought > 0
+
+    # The writer changes the acting note after the takes were paid for. The note reaches the
+    # built take, but the take's identity is its words, its voice and its neighbours, never
+    # its note (the Owner's decision 6): a second render hears nothing and buys nothing, and
+    # the sheet prices no character.
+    from app.factual.models import ScriptDraft
+    from app.media.assembler import narration_to_buy
+    from app.media.models import Storyboard
+
+    with Session(engine) as session, session.begin():
+        board = session.get(Storyboard, board_id)
+        script = session.get(ScriptDraft, board.script_draft_id)
+        stored = json.loads(json.dumps(script.scenes_json))
+        stored[0]["lines"][0]["direction"] = "softly, almost a whisper"
+        script.scenes_json = stored
+    again = planned_for(engine, board_id)
+    rebuilt = again["voice_segments_for_scene"]({"scene_index": 1})
+    assert rebuilt[0]["direction"] == "softly, almost a whisper"
+    assert (
+        narration_to_buy(
+            engine,
+            board_id,
+            tts_adapter_for_scene=again["tts_for_scene"],
+            voice_segments_for_scene=again["voice_segments_for_scene"],
+        )
+        == 0
+    )
+    assemble_video_job(
+        engine,
+        board_id,
+        str(uuid4()),
+        storage_root=tmp_path / "media-again",
+        tts_adapter=None,
+        tts_adapter_for_scene=again["tts_for_scene"],
+        voice_segments_for_scene=again["voice_segments_for_scene"],
+        production_plan=again["plan"],
+    )
+    assert len(asked) == bought, asked[bought:]
+    # The identity itself, as the render computes it, holds no note.
     fields = narration_fields(SPOKEN[0], built[0]["adapter"])
     assert "direction" not in json.dumps(fields)

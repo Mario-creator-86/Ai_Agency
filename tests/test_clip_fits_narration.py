@@ -607,10 +607,10 @@ def test_the_sheet_is_not_ready_while_scene_3_is_too_short_for_its_measured_word
         }
     assert readings[3]["ok"] is False and readings[3]["code"] == CLIP_SHORT
     assert readings[3]["clip_seconds"] == 5.0 and readings[3]["span_source"] == NARRATION_MEASURED
-    # 157 frames of words and the full stop after them and the 8-frame dissolve, less the 3
-    # frames the full stop may give up toward its floor (0.34 s) for a short clip, as the
-    # render reads it: 6.75 s.
-    assert math.isclose(readings[3]["span"], round((157 + 8 - 3) / 24, 3))
+    # 157 frames of words and the full stop after them and the 8-frame dissolve: 6.875 s.
+    # Even with the 3 frames the full stop may give up toward its floor (0.34 s) the clip
+    # cannot be slowed into it, so the span is read whole, as the render refuses it.
+    assert math.isclose(readings[3]["span"], round((157 + 8) / 24, 3))
     assert readings[4]["how"] == "shot"
     # Scene 1's 5.0 s clip under 4.885 s of words and the 0.767 s change of part (136 frames,
     # 131 once the pause gives up its 5 frames) and scene 2's 6.0 s clip under 6.06 + 0.49 s
@@ -623,7 +623,7 @@ def test_the_sheet_is_not_ready_while_scene_3_is_too_short_for_its_measured_word
     assert step["ready"] is False
     (blocked,) = step["blocked"]
     assert blocked["scene_index"] == 3 and blocked["code"] == CLIP_SHORT
-    assert "35%" in step["blocked_ro"] and step["blocked_ro"].count("Scena 3: clipul are") == 1
+    assert "38%" in step["blocked_ro"] and step["blocked_ro"].count("Scena 3: clipul are") == 1
     assert any("se încetinește local" in note for note in step["notes_ro"])
 
     # His press refuses before a word is bought again, and the refusal is recorded.
@@ -690,8 +690,8 @@ def test_a_refused_scene_gets_its_paid_redo_at_the_right_length_asked_never_boug
     (question,) = [row for row in approvals(engine) if row.action == "media.scene_redo"]
     assert question.id == redo["approval_id"]
     # His question says why, with the seconds, and the length the redo buys.
-    assert "ar trebui încetinit cu 35%" in str(question.evidence)
-    assert "Mișcarea scenei se reface la cel puțin 6,75 s." in str(question.evidence)
+    assert "ar trebui încetinit cu 38%" in str(question.evidence)
+    assert "Mișcarea scenei se reface la cel puțin 6,88 s." in str(question.evidence)
     assert "Studioul propune refacerea mișcării la 7 s." in str(question.evidence)
     (proposed,) = events(engine, CLIP_REDO_PROPOSED_EVENT)
     assert proposed.payload["scene_index"] == 3 and proposed.payload["billed_seconds"] == 7
@@ -779,6 +779,52 @@ def test_a_5_s_clip_under_a_59_s_span_is_slowed_locally_and_the_film_is_assemble
 
 
 @requires_ffmpeg
+def test_a_clip_just_past_the_slow_down_is_cut_in_once_its_pause_gives_up_frames(
+    engine: Engine, settings: Any, tmp_path: Path
+) -> None:
+    """«Pauza vocii» at the render (review of 2026-10-16: only the helper was tested): a clip
+    too short to be slowed into its span is cut in when the pause after the words gives up the
+    frames it needs toward its floor, and only those; the timeline, the voice and the record
+    say so, and the film is shorter by them."""
+    words = "A field that gives every particle its mass."
+    storyboard_id = a_board(engine, tmp_path, [words])
+    in_environment(engine, "PRODUCTION")
+    take_id = a_shot_take(engine, storyboard_id, 1, 5.0, a_clip(tmp_path / "motion.mp4", 5.0))
+    # 5.65 s of words and the 0.767 s END: about 154 frames, 28% past the 5 s clip. The END may
+    # give up 10 frames toward its floor (0.34 s); the few the clip needs let it in, slowed by
+    # at most 25%.
+    said = 5.65
+    film = assemble_from_takes(
+        engine,
+        storyboard_id,
+        str(uuid4()),
+        storage_root=tmp_path / "media",
+        tts_adapter=ToneVoice({words: said}),
+        environment="PRODUCTION",
+        settings=settings,
+    )
+    production = film["production"]
+    (entry,) = [e for e in production["scenes"] if e["scene_index"] == 1]
+    motion = entry["motion"]
+    assert motion["take_id"] == take_id and motion["reused_take"] is True
+    have = float(motion["clip_seconds"])
+    frames = round(float(motion["pause_shrunk_seconds"]) * 24)
+    before = float(motion["to_seconds"]) + frames / 24  # the span the words and END made
+    assert not clip_fits(have, before)
+    # Only the frames the clip needs, never the whole room: one fewer and it would not fit.
+    assert 0 < frames <= 10
+    assert not clip_fits(have, before - (frames - 1) / 24)
+    assert clip_fits(have, before - frames / 24) and motion["slowed_by"] <= 1.25 + 1e-9
+    (span,) = production["timeline"]["spans"]
+    pause_record = span["pause"]
+    assert pause_record["shrunk_for_clip"] == pytest.approx(frames / 24, abs=1e-4)
+    assert pause_record["heard"] == pytest.approx(pause("END") - frames / 24, abs=1 / 24)
+    assert pause_record["heard"] >= pause_record["floor"] - 1e-3
+    assert film["duration_seconds"] == pytest.approx(before - frames / 24, abs=1e-3)
+    assert production["fallback_gate"]["owner_chosen"] == []
+
+
+@requires_ffmpeg
 def test_a_slowed_shot_whose_interpolation_crashes_is_blended_and_the_film_still_made(
     engine: Engine, settings: Any, tmp_path: Path, monkeypatch: Any
 ) -> None:
@@ -854,8 +900,9 @@ def test_measured_at_the_render_scene_3_is_refused_recorded_and_the_sheet_agrees
         )
 
     assert refused.value.scenes == [3]
-    # The same reading as the sheet's: 162 frames, 35% past the clip.
-    assert "35%" in refused.value.message_ro
+    # The same reading as the sheet's: 165 frames, 38% past the clip (the full stop gives up
+    # no frame: even its 3 would not let the clip in, so the span is read whole).
+    assert "38%" in refused.value.message_ro
     (event,) = events(engine, ASSEMBLY_REFUSED_EVENT)
     assert event.payload["stage"] == "render" and event.payload["job_id"]
     (scene,) = event.payload["scenes"]
@@ -992,37 +1039,32 @@ def test_babcf272_rebuilt_under_the_pause_rules_assembles_with_scene_3_slowed(
     """The live film, hard cuts and all, rebuilt under the pause rules: its render trims each
     take to its last letter, and scene 3's 5.0 s clip under 5.046 s of words and the 0.49 s
     full stop (a 5.542 s span) is slowed 11% at 0 USD, no redo is raised, and the assembly is
-    ready. Before any render its takes' own lengths (the stretched stop and all) may still be
-    too long for the clip: it is ready at risk, the render measures for 0 USD."""
+    ready. Before any render its kept takes are read to their last letter as the trim cuts
+    them, never to the vendor's stretched stop (review of 2026-10-16): the sheet reads the
+    film the render will cut, the same spans and the same slow-downs."""
     storyboard_id = babcf272_as_it_is(engine, tmp_path, rendered=rendered)
     in_environment(engine, "PRODUCTION")
     readings = readiness_of(engine, storyboard_id)
     assert all(item["ok"] for item in readings.values()), readings
     # The words to their last letter and the pause after them: 4.43 + 0.767 (after the HOOK),
     # 5.08, 5.046 and 5.731 each + 0.49, 7.483 + 0.767 (the END): cuts at frames 125, 258,
-    # 391, 541 and 739; less what each pause may give up toward its floor for a short clip
-    # (5 frames after the HOOK, 3 at a full stop, 10 at the END), as the render reads it.
-    trimmed = {1: 5.0, 2: 5.417, 3: 5.417, 4: 6.125, 5: 7.833}
-    if rendered:
-        assert {n: item["span"] for n, item in readings.items()} == trimmed
-        assert {item["span_source"] for item in readings.values()} == {NARRATION_RENDERED}
-        assert readings[3]["how"] == "slowed" and readings[3]["slowed_by"] == 1.0833
-        assert [readings[n]["how"] for n in (1, 2, 4, 5)] == ["shot"] * 4
-    else:
-        # The vendor's lengths: 6.06 s and the full stop are 154 frames once the pause gives
-        # way, 28% past scene 3's clip, while its words to their last letter fit it slowed: at
-        # risk, never a redo.
-        assert {item["span_source"] for item in readings.values()} == {NARRATION_MEASURED}
-        assert readings[3]["how"] == "at_risk" and readings[3]["span"] == round(154 / 24, 3)
-        assert [readings[n]["how"] for n in (1, 2, 4, 5)] == ["slowed", "slowed", "shot", "shot"]
+    # 391, 541 and 739. No pause gives up a frame: every clip fits its whole span once slowed
+    # (the render gives a pause up only for a clip past the 25% slow-down, `_clip_slowdowns`),
+    # so the sheet reads the spans and the slow-downs the render makes (scene 1's 120 frames
+    # under 125, scene 3's under 133).
+    spans = {1: 5.208, 2: 5.542, 3: 5.542, 4: 6.25, 5: 8.25}
+    assert {n: item["span"] for n, item in readings.items()} == spans
+    source = NARRATION_RENDERED if rendered else NARRATION_MEASURED
+    assert {item["span_source"] for item in readings.values()} == {source}
+    assert readings[3]["how"] == "slowed" and readings[3]["slowed_by"] == 1.1083
+    assert readings[1]["how"] == "slowed" and readings[1]["slowed_by"] == 1.0417
+    assert [readings[n]["how"] for n in (2, 4, 5)] == ["shot"] * 3
+    assert not any(item["pause_given_seconds"] for item in readings.values())
     sheet = build_sheet(engine, storyboard_id, capabilities=[SEEDANCE], read_live=False)
     step = sheet["steps"]["assemble"]
     assert step["ready"] is True and step["blocked"] == []
-    if rendered:
-        slowed = "Scena 3: clipul de 5,0 s se încetinește local"
-        assert any(note.startswith(slowed) for note in step["notes_ro"])
-    else:
-        assert any("Scena 3: clipul de 5,0 s poate fi prea scurt" in n for n in step["notes_ro"])
+    slowed = "Scena 3: clipul de 5,0 s se încetinește local"
+    assert any(note.startswith(slowed) for note in step["notes_ro"])
 
 
 def test_a_scene_said_by_two_voices_is_measured_and_its_redo_covers_both(
@@ -1047,10 +1089,13 @@ def test_a_scene_said_by_two_voices_is_measured_and_its_redo_covers_both(
     scenes = scenes_of(engine, storyboard_id)
     with Session(engine) as session:
         seconds, source = scene_narration_lengths(session, storyboard_id, scenes)[1]
-    # Both speakers and the join the render lays between their takes: the scene's frozen
+    # Both speakers, each to its last word and the edge the trim keeps (never the vendor's
+    # end of file), and the join the render lays between their takes: the scene's frozen
     # pause after (the film's END, 0.767 s; a narrator's scene holds no record of a join of
     # its own, `assembler._unit_join`).
-    assert source == NARRATION_MEASURED and math.isclose(seconds, 3.6 + pause("END") + 3.4)
+    assert source == NARRATION_MEASURED
+    said = 3.5 + EDGE + pause("END") + 3.3 + EDGE
+    assert math.isclose(seconds, said, abs_tol=1e-3)
     (reading,) = readiness_of(engine, storyboard_id).values()
     # Even its timed words (3.53 + 0.767 + 3.33 s, and the END) are 67% past the clip: certain.
     assert reading["ok"] is False and reading["code"] == CLIP_SHORT
@@ -1164,15 +1209,15 @@ def test_voiced_words_not_yet_rendered_are_read_by_their_timed_words_never_a_dea
     in_environment(engine, "PRODUCTION")
     for index in (1, 2):
         a_shot_take(engine, storyboard_id, index, 5.0, tmp_path / f"shot_{index}.mp4")
-    # 6.0 s from the vendor and the 0.767 s pause after the HOOK, less the 5 frames it may give
-    # up (157 frames, 31% past the clip); its last letter ends at 5.4 s, which with the edge the
-    # trim keeps is 144 frames (20%).
+    # 6.0 s from the vendor and the 0.767 s pause after the HOOK would be 31% past the clip;
+    # its last letter ends at 5.4 s, where the trim cuts it with the edge it keeps: 149 frames,
+    # 24%, slowed (the vendor's stretched stop is never counted, review of 2026-10-16).
     a_narration_take(engine, storyboard_id, tmp_path, 1, 6.0, words_end=5.9, letters_end=5.4)
     # 6.6 s from the vendor, its last letter at 6.2 s: with the film's END, 32% even trimmed.
     a_narration_take(engine, storyboard_id, tmp_path, 2, 6.6, words_end=6.5, letters_end=6.2)
     readings = readiness_of(engine, storyboard_id)
     assert readings[1]["span_source"] == NARRATION_MEASURED
-    assert readings[1]["ok"] is True and readings[1]["how"] == "at_risk"
+    assert readings[1]["ok"] is True and readings[1]["how"] == "slowed"
     assert readings[2]["ok"] is False and readings[2]["code"] == CLIP_SHORT
     sheet = build_sheet(engine, storyboard_id, capabilities=[SEEDANCE], read_live=False)
     assert [b["scene_index"] for b in sheet["steps"]["assemble"]["blocked"]] == [2]

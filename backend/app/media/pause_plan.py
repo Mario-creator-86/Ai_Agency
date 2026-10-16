@@ -147,17 +147,14 @@ def serial_voice_keys(
         return None, {}
 
 
-def board_wall(session: Any, board: Any, rules: pauses.PauseRules) -> float:
-    """The board's wall: its channel's Shorts maximum (the type's default when the channel
-    states none), never past the rules' cap (`pauses.wall_seconds`)."""
+def _channel_maximum(session: Any, kind: str, channel: Any = None) -> float | None:
+    """The Shorts maximum of the channel (``channel``, else the first of type ``kind``): its
+    own value, else its type's default (`qc.SHORTS_MAX_BY_CHANNEL_TYPE`)."""
     from sqlalchemy import select  # noqa: PLC0415
 
     from app.media.qc import SHORTS_MAX_BY_CHANNEL_TYPE  # noqa: PLC0415
     from app.publishing.models import ChannelRecord  # noqa: PLC0415
-    from app.publishing.services import channel_type_for_storyboard  # noqa: PLC0415
 
-    kind = channel_type_for_storyboard(board)
-    channel = session.get(ChannelRecord, board.channel_id) if board.channel_id else None
     if channel is None:
         channel = session.scalars(
             select(ChannelRecord)
@@ -167,9 +164,36 @@ def board_wall(session: Any, board: Any, rules: pauses.PauseRules) -> float:
     if channel is not None:
         kind = channel.channel_type
     stated = getattr(channel, "shorts_max_seconds", None)
-    return pauses.wall_seconds(
-        float(stated) if stated else SHORTS_MAX_BY_CHANNEL_TYPE.get(kind), rules
-    )
+    default = SHORTS_MAX_BY_CHANNEL_TYPE.get(kind)
+    if stated:
+        return float(stated)
+    return float(default) if default else None
+
+
+def channel_wall(session: Any, kind: str, rules: pauses.PauseRules | None) -> float:
+    """The wall a film of a channel of type ``kind`` (MAIN_FACTUAL, OFFICE_SERIAL) is held
+    under, the same one its storyboard is frozen and its render fitted under (`board_wall`):
+    the channel's Shorts maximum, never past the rules' cap (`pauses.wall_seconds`); with the
+    rules off, never past YouTube's own limit (`qc.SHORTS_MAX_LIMIT_SECONDS`), as quality
+    control holds it. What the reviews refuse a script against, before a still is bought."""
+    from app.media.qc import SHORTS_MAX_LIMIT_SECONDS  # noqa: PLC0415
+
+    maximum = _channel_maximum(session, kind)
+    if rules is None:
+        limit = float(SHORTS_MAX_LIMIT_SECONDS)
+        return min(maximum, limit) if maximum else limit
+    return pauses.wall_seconds(maximum, rules)
+
+
+def board_wall(session: Any, board: Any, rules: pauses.PauseRules) -> float:
+    """The board's wall: its channel's Shorts maximum (the type's default when the channel
+    states none), never past the rules' cap (`pauses.wall_seconds`)."""
+    from app.publishing.models import ChannelRecord  # noqa: PLC0415
+    from app.publishing.services import channel_type_for_storyboard  # noqa: PLC0415
+
+    kind = channel_type_for_storyboard(board)
+    channel = session.get(ChannelRecord, board.channel_id) if board.channel_id else None
+    return pauses.wall_seconds(_channel_maximum(session, kind, channel), rules)
 
 
 # --------------------------------------------------------------------------- the serial lines
@@ -391,6 +415,8 @@ def freeze_rows(
             logger.warning("voice_profiles_unread", extra={"error": type(exc).__name__})
             profiles = None
     wall = board_wall(session, board, rules)
+    # A cut inside a take carries the join it would be were the row voiced on its own
+    # (``fallback``: a take with no word timing; the voice's own pause the shot holds there).
     frozen = pauses.freeze(
         sides,
         serial=serial,
@@ -400,22 +426,6 @@ def freeze_rows(
         narrator_voice=narrator,
         wall=wall,
     )
-    alone = pauses.freeze(
-        [{**side, "take": None} for side in sides],
-        serial=serial,
-        rules=rules,
-        knobs=knobs,
-        profiles=profiles,
-        narrator_voice=narrator,
-        wall=wall,
-    )
-    for record, single in zip(frozen.pauses, alone.pauses, strict=True):
-        if record["class"] == pauses.IN_TAKE:
-            # The join this cut would be were the row voiced on its own (a take with no word
-            # timing, or the voice groups switched off at the render).
-            record["fallback"] = {
-                key: single[key] for key in ("class", "seconds", "floor") if key in single
-            }
     profile = {
         **frozen.snapshot,
         "channel": SERIAL if serial else FACTUAL,
@@ -508,6 +518,34 @@ def _key(word: str) -> str:
     return "".join(char for char in str(word).casefold() if char.isalnum())
 
 
+def slid_to(position: int, count: int, slide: int) -> int:
+    """The word an L-cut of ``slide`` words moves a picture cut to, from the next unit's first
+    word (at ``position``, of ``count`` words): never past its last word, so every shot keeps
+    a word of its own."""
+    return min(position + max(0, int(slide)), position + count - 1)
+
+
+def slid_units(texts: Sequence[str], joined: Sequence[bool], slide: int) -> list[str]:
+    """Each unit's words as its shot says them under an L-cut of ``slide`` words
+    (``picture_slide_words``, `take_cuts`): where unit i goes on in the take unit i-1 is said
+    in (``joined[i]``), its first words (`slid_to`) are said under unit i-1's picture and are
+    that shot's. Every estimate of a clip reads the words this way, as the render cuts them;
+    with no slide the units are as given."""
+    words = [str(text or "").split() for text in texts]
+    if slide <= 0:
+        return [" ".join(unit) for unit in words]
+    moved = [0] * len(words)
+    for index in range(1, len(words)):
+        if index < len(joined) and joined[index] and words[index] and words[index - 1]:
+            moved[index] = slid_to(0, len(words[index]), slide)
+    out: list[str] = []
+    for index, unit in enumerate(words):
+        kept = unit[moved[index] :]
+        taken = words[index + 1][: moved[index + 1]] if index + 1 < len(words) else []
+        out.append(" ".join([*kept, *taken]))
+    return out
+
+
 @dataclass(frozen=True)
 class TakeCuts:
     """Where each unit (a row's words, or a speaker's part of them) of one take begins inside
@@ -533,9 +571,11 @@ def take_cuts(
     placed on the take's own word timing: between the last word of a unit and the first of the
     next, at ``cut_in_pause`` of the voice's own pause there (1.0: on the next unit's first
     letter, the outgoing shot holding the whole pause), moved ``picture_slide_words`` words
-    into the next unit for an L-cut. A vendor tag before the words (a model that reads an
-    acting note as «[surprised] ») is skipped. Without a timing that matches the words the
-    cuts fall at each unit's share of the take's characters."""
+    into the next unit for an L-cut: the words said before the cut are then the outgoing
+    shot's, its captions and its clip (`slid_units`), never the next one's at its start. A
+    vendor tag before the words (a model that reads an acting note as «[surprised] ») is
+    skipped. Without a timing that matches the words the cuts fall at each unit's share of
+    the take's characters."""
     texts = [" ".join(str(unit or "").split()) for unit in units]
     counts = [len(text.split()) for text in texts]
     timed = list(words or [])
@@ -548,21 +588,26 @@ def take_cuts(
     if timed and len(timed) == expected and all(counts):
         offsets = [0.0]
         gaps: list[float | None] = []
+        # Each unit's first word on the picture: its own first word, or, after an L-cut, the
+        # word the cut slid to (the words before it are said under the outgoing shot).
+        bounds = [0]
         position = counts[0]
         for count in counts[1:]:
             before, after = timed[position - 1], timed[position]
             gap = max(0.0, after.first - before.last)
             cut = before.last + max(0.0, min(1.0, cut_in_pause)) * gap
+            first = position
             if picture_slide_words > 0:
-                slid = min(position + picture_slide_words, position + count - 1)
-                cut = max(cut, timed[slid].first)
+                first = slid_to(position, count, picture_slide_words)
+                cut = max(cut, timed[first].first)
             offsets.append(round(min(max(cut, offsets[-1]), duration), 4))
             gaps.append(round(gap, 4))
+            bounds.append(first)
             position += count
         gaps.append(None)
+        bounds.append(len(timed))
         sliced: list[tuple[dict[str, Any], ...] | None] = []
-        position = 0
-        for index, count in enumerate(counts):
+        for index in range(len(counts)):
             begin = offsets[index]
             sliced.append(
                 tuple(
@@ -571,10 +616,9 @@ def take_cuts(
                         "start": round(max(0.0, word.start - begin), 4),
                         "end": round(max(0.0, word.end - begin), 4),
                     }
-                    for word in timed[position : position + count]
+                    for word in timed[bounds[index] : bounds[index + 1]]
                 )
             )
-            position += count
         return TakeCuts(tuple(offsets), tuple(sliced), tuple(gaps), True)
     characters = [len(text) for text in texts]
     total = sum(characters) or 1
@@ -618,7 +662,9 @@ class Layout:
     """The film's voice laid out under its pictures: each row's span on whole frames of the
     cumulative timeline (``spans``) and its start (``starts``), the silence written before
     the voice's first take (``lead``) and after each take (``pads``), and where each take
-    begins on the track (``take_starts``)."""
+    begins on the track (``take_starts``). ``exact`` is each row's span before its cuts were
+    put on frames: what its words and its share of the pauses add up to, which a reading of
+    the row's words is taken from (`assembler._lay_out_voice`)."""
 
     spans: list[float]
     starts: list[float]
@@ -626,6 +672,7 @@ class Layout:
     pads: list[float]
     take_starts: list[float]
     cut_at: list[float]
+    exact: list[float] = field(default_factory=list)
 
 
 def voice_layout(
@@ -683,6 +730,8 @@ def voice_layout(
     end_snapped = round(clock * fps) / fps
     bounds = [*snapped, end_snapped]
     spans = [max(0.0, round(b - a, 6)) for a, b in zip(bounds, bounds[1:], strict=False)]
+    unsnapped = [*starts_exact, clock]
+    exact = [max(0.0, round(b - a, 6)) for a, b in zip(unsnapped, unsnapped[1:], strict=False)]
     placed: list[float] = []
     pads: list[float] = []
     for k in range(len(takes)):
@@ -706,6 +755,7 @@ def voice_layout(
         pads=pads,
         take_starts=[round(p, 4) for p in placed],
         cut_at=[round(s, 4) for s in snapped],
+        exact=exact,
     )
 
 
@@ -716,7 +766,11 @@ def shrink_frames(have: float, need: float, room: float, fps: int, fits: Any) ->
     if fits(have, need):
         return 0
     most = int(math.floor(max(0.0, room) * fps + 1e-6))
+    # A span on the timeline is a whole number of frames, rounded to the microsecond: counted
+    # in frames, so the rounding never costs the film a frame more than the clip needs.
+    whole = round(need * fps)
+    start = whole / fps if abs(need * fps - whole) < 1e-3 else need
     for frames in range(1, most + 1):
-        if fits(have, need - frames / fps):
+        if fits(have, start - frames / fps):
             return frames
     return -1

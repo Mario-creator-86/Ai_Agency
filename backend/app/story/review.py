@@ -337,16 +337,19 @@ def _length(
     seconds: float,
     film: FilmLength | None = None,
     when: Timing | None = None,
+    wall: float = SHORTS_WALL_SECONDS,
 ) -> dict[str, Any]:
     """The episode's beats, seconds of speech and the film the montage cuts from them. The
     ceilings refuse: MAX_BEATS, MAX_SECONDS of speech (the brief's own words), and the film's
     estimate (``film``, `film_length.serial_film_length`: since «pauza vocii» each speaker's
     words at their own voice's rate and the pauses the storyboard will freeze between them, a
     speaker change, a beat's end, a marked beat) past the Short's wall, held against it with
-    the estimate's margin (`film_length.review_ceiling_seconds`). The floor (MIN_SECONDS) is a
-    recommendation the Director weighs (``advisory``), as the words-per-beat band is
-    (2026-10-16)."""
-    ceiling = review_ceiling_seconds(SHORTS_WALL_SECONDS, when)
+    the estimate's margin (`film_length.review_ceiling_seconds`), against ``wall``: the serial
+    channel's own Shorts maximum, never past the rules' cap (`pause_plan.channel_wall`), the
+    wall its storyboard is frozen and its render fitted under, and quality control holds it to.
+    The floor (MIN_SECONDS) is a recommendation the Director weighs (``advisory``), as the
+    words-per-beat band is (2026-10-16)."""
+    ceiling = review_ceiling_seconds(wall, when)
     words_fit = 0 < len(beats) <= MAX_BEATS and seconds <= MAX_SECONDS
     fits_wall = film is None or film.against_wall <= ceiling + 1e-9
     within_cap = words_fit and fits_wall
@@ -370,7 +373,8 @@ def _length(
             problems.append(
                 f"tăiat în {count(film.rows, 'cadru', 'cadre')}, fiecare cu respirația lui, "
                 f"filmul ar dura {film.seconds:.0f} secunde, peste cele {ceiling:.0f} pe care le "
-                f"primește zidul Short-ului ({SHORTS_WALL_SECONDS:.0f} s, minus o marjă pentru "
+                f"primește zidul Short-ului ({min(wall, SHORTS_WALL_SECONDS):.0f} s, minus o "
+                "marjă pentru "
                 "estimare): mai puține cuvinte, sau mai puține replici și mai lungi"
             )
         reason = "; ".join(problems)
@@ -830,6 +834,7 @@ def episode_checks(
             seconds,
             serial_film_length(lines_by_beat, [beat.get("part") for beat in beats], when=when),
             when,
+            _serial_wall(session, when),
         ),
         "narration": _narration(lines_by_beat, v3),
         "words_per_beat": _words_per_beat(beats, lines_by_beat, v3),
@@ -857,6 +862,15 @@ def episode_checks(
     if v3 and (limit := motion_clip_limit(session)) is not None:
         checks["filmable"] = _filmable(beats, lines_by_beat, limit, when)
     return checks
+
+
+def _serial_wall(session: Session, when: Timing | None) -> float:
+    """The serial channel's wall, as its storyboard is frozen and its render fitted under it
+    (`pause_plan.channel_wall`: the OFFICE_SERIAL channel's Shorts maximum, never past the
+    rules' cap, or YouTube's limit with the rules off)."""
+    from app.media.pause_plan import channel_wall  # noqa: PLC0415
+
+    return channel_wall(session, "OFFICE_SERIAL", when.rules if when is not None else None)
 
 
 def _serial_timing(session: Session, bibles: Any) -> Timing:

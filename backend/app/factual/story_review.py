@@ -443,23 +443,13 @@ def film_wall_check(session: Session, scenes: list[dict[str, Any]]) -> dict[str,
     storyboard will freeze it, its words held with the estimate's margin
     (`film_length.FilmLength.against_wall`). None with the pause rules off: the length check
     holds the legacy wall then (`editorial.duration_check`)."""
-    from app.media import pauses as pause_rules  # noqa: PLC0415
     from app.media.film_length import FACTUAL, timing  # noqa: PLC0415
-    from app.media.qc import SHORTS_MAX_BY_CHANNEL_TYPE  # noqa: PLC0415 - qc reads us
-    from app.publishing.models import ChannelRecord  # noqa: PLC0415
+    from app.media.pause_plan import channel_wall  # noqa: PLC0415 - pause_plan reads qc
 
     when = timing(FACTUAL)
     if not when.paused:
         return None
-    channel = session.scalars(
-        select(ChannelRecord)
-        .where(ChannelRecord.channel_type == "MAIN_FACTUAL")
-        .order_by(ChannelRecord.created_at)
-    ).first()
-    stated = getattr(channel, "shorts_max_seconds", None)
-    wall = pause_rules.wall_seconds(
-        float(stated) if stated else SHORTS_MAX_BY_CHANNEL_TYPE.get("MAIN_FACTUAL"), when.rules
-    )
+    wall = channel_wall(session, "MAIN_FACTUAL", when.rules)
     film = factual_film_length(scenes, when=when)
     passed = film.against_wall <= wall + 1e-9
     return {

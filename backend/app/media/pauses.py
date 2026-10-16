@@ -315,6 +315,18 @@ def active_rules(path: Path | None = None) -> PauseRules | None:
     return rules if rules.in_use else None
 
 
+def readable_rules(path: Path | None = None) -> PauseRules | None:
+    """The rules when the file is there and readable, in use or not; None otherwise. What a
+    film already frozen reads its formulas from (the wall's compression stages, a voice it did
+    not freeze): its own numbers were frozen with it, and a later change of the rules, even
+    switching them off, never re-times it (the Owner's decision 8, 2026-10-16)."""
+    try:
+        return load_rules(path)
+    except PauseRulesError as exc:
+        logger.warning("pause_rules_unreadable", extra={"error": str(exc)})
+        return None
+
+
 def switch(name: str, path: Path | None = None) -> bool:
     """Whether one of the rules' switches is on (off when the rules are not in use)."""
     rules = active_rules(path)
@@ -1303,8 +1315,10 @@ def snapshot(
     rules: PauseRules,
     profile_cache_key: str | None = None,
 ) -> dict[str, Any]:
-    """Every number a film's pauses were frozen from: the rules' version, the channel's knobs
-    and each voice's profile (production.timeline.pause_profile)."""
+    """Every number a film's pauses were frozen from: the rules' version, the channel's knobs,
+    each voice's profile, the switches as they stood (the trim the film is cut by) and the
+    limits quality control reads its silences against (production.timeline.pause_profile): a
+    film is timed and judged by these, whatever the rules say later."""
     return {
         "rule_version": rules.version,
         "rules_status": rules.status,
@@ -1312,6 +1326,11 @@ def snapshot(
         "narrator": narrator.key,
         "profile_key": profile_cache_key,
         "voices": {key: voice.as_dict() for key, voice in sorted(voices.items())},
+        "switches": {name: rules.switch(name) for name in sorted(rules.switches)},
+        "limits": {
+            "dead_air_tolerance": rules.dead_air_tolerance,
+            "join_ceiling_seconds": rules.join_ceiling_seconds,
+        },
     }
 
 
@@ -1325,13 +1344,22 @@ def freeze(
     narrator_voice: str | None,
     wall: float | None = None,
     margin: float = 0.0,
+    fallbacks: bool = True,
 ) -> Frozen:
     """Each side's join planned and frozen: its class (`boundary_class`), its seconds
     (`target`, with the short-sentence guard), its floor, whether a writer marked it, the voice
-    whose pause it is and the rules' version. At most the rules' marks a section (a factual
-    section, a serial beat) become a BEAT, the first ones. With ``wall``, the joins are fitted
+    whose pause it is, how many words the side says (``words``: each speaker's part of a row
+    is sized at its own voice's rate, `film_length.frozen_rows`) and the rules' version. At
+    most the rules' marks a section (a factual section, a serial beat) become a BEAT, the
+    first ones; a serial mark is counted in the beat it was written in (a «(beat)» before a
+    beat's first line is that beat's, not the one before). With ``wall``, the joins are fitted
     under it (`fit_to_wall`) against the film's speech (the voices' median rates plus
-    ``margin``) and cards."""
+    ``margin``) and cards.
+
+    With ``fallbacks``, a cut inside a take (IN_TAKE) carries the join it would be were its
+    sides voiced apart (``fallback``: class, seconds, floor): the render's join when the take
+    is voiced row by row after all, and the voice's own pause there, which the outgoing shot
+    holds (`film_length`)."""
     resolved: dict[str, VoiceProfile] = {}
 
     def voice(key: str | None, pool: str | None) -> VoiceProfile:
@@ -1356,7 +1384,14 @@ def freeze(
         inn = sides[index + 1] if index + 1 < len(sides) else None
         boundary = boundary_class(out, inn, serial=serial, rules=rules)
         cls, dropped = boundary.cls, boundary.mark_dropped
-        where = out.get("scene") if serial else section
+        where: Any = section
+        if serial:
+            # The beat the writer's mark was written in: a mark before the next side's line
+            # is the next beat's (`pause_plan.serial_lines` keeps one a beat on that count).
+            marked_in = (
+                inn is not None and bool(inn.get("mark_before")) and not out.get("mark_after")
+            )
+            where = (inn or {}).get("scene") if marked_in else out.get("scene")
         if cls == BEAT:
             used = marks.get(where, 0)
             if used >= rules.marks_per_section:
@@ -1384,6 +1419,7 @@ def freeze(
             "floor": floor(cls, seconds, out=speaker, inn=listener, narrator=narrator, rules=rules),
             "marked": boundary.marked,
             "voice_key": speaker.key if speaker else None,
+            "words": _words(_text(out)) if speaker else 0,
             "rule_version": rules.version,
         }
         if cls == BEAT:
@@ -1411,6 +1447,23 @@ def freeze(
             "over_seconds": fit.over_seconds,
             "fits": fit.fits,
         }
+    if fallbacks and any(record["class"] == IN_TAKE for record in records):
+        alone = freeze(
+            [{**side, "take": None} for side in sides],
+            serial=serial,
+            rules=rules,
+            knobs=knobs,
+            profiles=profiles,
+            narrator_voice=narrator_voice,
+            wall=wall,
+            margin=margin,
+            fallbacks=False,
+        )
+        for record, single in zip(records, alone.pauses, strict=True):
+            if record["class"] == IN_TAKE:
+                record["fallback"] = {
+                    key: single[key] for key in ("class", "seconds", "floor") if key in single
+                }
     voices: dict[str, VoiceProfile] = {}
     for profile in resolved.values():
         name = profile.key if profile.key not in voices else f"{profile.key}|{profile.pool}"

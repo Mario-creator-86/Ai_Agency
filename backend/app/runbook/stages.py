@@ -3201,6 +3201,7 @@ def _assemble_from_takes(
     )
     from app.economy.services import format_micros  # noqa: PLC0415
     from app.media.assembler import (  # noqa: PLC0415 - media imports runbook
+        FilmOverTheWall,
         RenderEngineUnavailable,
         RenderStopped,
         TakesMissing,
@@ -3261,6 +3262,12 @@ def _assemble_from_takes(
             settings=settings,
             registry=registry,
         )
+    except FilmOverTheWall as exc:
+        # Longer than its wall even at every pause's floor («pauza vocii»): held before the
+        # sound is mastered; the voice the render bought for it is costed.
+        failed = _record_failed_attempt(engine, storyboard_id, correlation)
+        _release(engine, reservation_id, f"peste zid: {exc}"[:120], correlation)
+        return {"status": "HELD", "reason": str(exc), "costs_recorded": failed}
     except TakesMissing as exc:
         _release(engine, reservation_id, f"preluări lipsă: {exc}"[:120], correlation)
         return {"status": "HELD", "reason": str(exc)}
@@ -3667,7 +3674,12 @@ def _media_films(
     waited a day behind the factual one, or taken its place.
     """
     from app.economy.credits import credit_balances, record_credit_spend
-    from app.media.assembler import RenderEngineUnavailable, RenderStopped, assemble_video_job
+    from app.media.assembler import (
+        FilmOverTheWall,
+        RenderEngineUnavailable,
+        RenderStopped,
+        assemble_video_job,
+    )
     from app.media.factory import (
         PaidVendorRefused,
         abandon_unfinished_renders,
@@ -4115,6 +4127,25 @@ def _media_films(
                 assets=produced,
                 **error_fields(exc),
             )
+        except FilmOverTheWall as exc:
+            # Not a fault: the film is longer than its channel's wall even with every pause at
+            # its floor («pauza vocii», 2026-10-16), refused before anything more was bought
+            # for it. What its render had already bought (its voice) is costed, the hold goes
+            # back, and its words must be shortened before it is made.
+            failed_cost = _record_failed_attempt(engine, storyboard_id, correlation)
+            _release(engine, reservation_id, f"peste zid: {error_words(exc)}"[:120], correlation)
+            refused.append(
+                {
+                    "storyboard_id": storyboard_id,
+                    "error": str(exc)[:200],
+                    "error_class": type(exc).__name__,
+                    "said": error_words(exc),
+                    "costs_recorded": failed_cost,
+                }
+            )
+            costs_recorded += failed_cost
+            logger.info("render_over_the_wall", extra={"storyboard_id": storyboard_id})
+            continue
         except ReferenceRequired as exc:
             # Not a vendor's refusal and not a fault: the studio refusing to invent the face
             # of a character whose look the Owner locked. The film is not made, so what was

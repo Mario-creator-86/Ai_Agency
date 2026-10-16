@@ -1026,9 +1026,28 @@ def test_a_real_film_is_24_fps_within_a_second_of_its_words_with_captions_in_the
     # Within a second of the narration: the planned six seconds are not padded with silence.
     narration = sum(scene["audio_seconds"] for scene in production["scenes"])
     # The pauses are the film's own, frozen when it was built (the Owner's «pauza vocii»,
-    # 2026-10-16): the silence the render added after each scene's words is its pad.
+    # 2026-10-16): each join plans the pause frozen on its row, the render pads it less what
+    # the trim kept (`pauses.render_pad`, within the frame its cut is rounded to), and the
+    # silence heard there is that pause; the silence the render added is the pads.
+    from app.media.assembler import scene_view
+    from app.media.models import StoryboardScene
+    from app.media.pauses import render_pad
+
+    with Session(engine) as session:
+        frozen = {
+            row.scene_index: scene_view(row)["pause_after"]
+            for row in session.scalars(
+                select(StoryboardScene).where(StoryboardScene.storyboard_id == sb_id)
+            )
+        }
+    for span in production["timeline"]["spans"]:
+        pause = span["pause"]
+        assert pause["planned"] == pytest.approx(frozen[span["scene_index"]]["seconds"])
+        assert pause["planned"] <= 1.2
+        laid = render_pad(pause["planned"], pause["keep_tail"], pause["head"])
+        assert pause["pad"] == pytest.approx(laid, abs=1 / TIMELINE_FPS)
+        assert pause["heard"] == pytest.approx(pause["planned"], abs=1 / TIMELINE_FPS)
     breaths = sum(span["pause"]["pad"] for span in production["timeline"]["spans"])
-    assert all(span["pause"]["planned"] <= 1.2 for span in production["timeline"]["spans"])
     assert probe["duration_seconds"] <= narration + breaths + 1.0, (
         probe["duration_seconds"],
         narration,
