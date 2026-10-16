@@ -1267,9 +1267,22 @@ def rejudge_refused_stills(
     `scene_rewrite.scene_waits` stopped the ladder from asking her again — the episode could
     not start («Directoarea nu a putut încă rescrie scena 8», ×14). A still the gate now
     passes, local checks then the look, is APPROVED by the gate; one it refuses keeps its
-    refusal in today's words. Returns True when a still was approved."""
+    refusal in today's words. Returns True when a still was approved.
+
+    Only a still made on the scene's CURRENT words and reference is judged again: one made on
+    words the ladder has rewritten since can never be the scene's picture (`usable_take`
+    reads the take's identity), so approving it moved nothing and the walk stopped at the
+    same scene again. With no model registry nothing is judged and no take is touched: the
+    look would answer «nu a fost privită», and that non-answer, written on the take, stripped
+    the local-stop mark for good (the shooting-sheet letter called the ladder without the
+    registry). A refusal the ladder had already sent to the Director's rewrite
+    (`REWRITE_PHRASE`) stays hers when the gate refuses the still again, so the serial does
+    not re-roll the same words; the take's job keeps its quality note, the verdict being the
+    same."""
     from app.services import studio_environment, utc_now  # noqa: PLC0415 - it imports media
 
+    if registry is None or not registry.registered_ids():
+        return False
     bible, scenes = _read_scenes(engine, storyboard_id)
     scene = next((entry for entry in scenes if entry.index == int(scene_index)), None)
     if scene is None or scene.kind != LIVE_KIND or scene.reuse is not None:
@@ -1289,6 +1302,7 @@ def rejudge_refused_stills(
                 .order_by(SceneTake.created_at.desc())
             )
             if LOCAL_STOP_MARK in str(row.failure_detail or "")
+            and take_hash(scene.identity, row.model_id) == row.prompt_hash
             and row.path
             and Path(str(row.path)).is_file()
         ][:MAX_REJUDGED]
@@ -1311,6 +1325,11 @@ def rejudge_refused_stills(
             measure=measure,
             ffmpeg_path=ffmpeg_path,
         )
+        looked = report.judgement is not None and report.judgement.status == "MEASURED"
+        if not looked and not any(check.blocking for check in report.checks):
+            # Nobody judged it today (no model that sees, no 1080 px copy): the take keeps
+            # its refusal and its mark, for a ladder stop that has eyes.
+            continue
         _event(
             engine,
             REJUDGED_EVENT,
@@ -1335,14 +1354,20 @@ def rejudge_refused_stills(
                     row.failure_detail = None
                     row.updated_at = utc_now()
             return True
-        # Refused again, in today's words: the Director's next look reads today's reasons.
+        # Refused again, in today's words: the Director's next look reads today's reasons. A
+        # refusal already sent to her rewrite keeps its content phrase first (`refusal_kind`
+        # would read today's blur or panels as TECHNICAL and the serial would re-roll the words
+        # her ladder holds back); the job's quality note is left, the verdict being the same.
         with Session(engine) as session, session.begin():
             lock_for_write(session)
             row = session.get(SceneTake, take_id)
             if row is not None:
-                row.failure_detail = ("; ".join(report.reasons_ro) or "respinsă")[:500]
+                today = "; ".join(report.reasons_ro) or "respinsă"
+                was = " ".join(str(row.failure_detail or "").split())
+                row.failure_detail = (
+                    _rewrite_marked(today) if was.startswith(REWRITE_PHRASE) else today[:500]
+                )
                 row.updated_at = utc_now()
-                sync_take_quality(session, row, accepted=False, reason="; ".join(report.reasons_ro))
     return False
 
 
@@ -1549,10 +1574,19 @@ def _mark_for_rewrite(engine: Engine, verdicts: list[tuple[str, StillReport]]) -
             detail = " ".join(str(row.failure_detail or "").split())
             if detail.startswith(REWRITE_PHRASE):
                 continue
-            row.failure_detail = (
-                f"{REWRITE_PHRASE}: runda nu se mai cumpără pe aceleași cuvinte, Directoarea "
-                f"le rescrie; {detail or 'respinsă'}"
-            )[:500]
+            row.failure_detail = _rewrite_marked(detail)
+
+
+def _rewrite_marked(detail: str) -> str:
+    """A refused take's detail led by the content phrase (`still_gate.REWRITE_PHRASE`), within
+    the take's 500 characters: the ladder reads it as a content refusal whatever follows."""
+    detail = " ".join(str(detail or "").split())
+    if detail.startswith(REWRITE_PHRASE):
+        return detail[:500]
+    return (
+        f"{REWRITE_PHRASE}: runda nu se mai cumpără pe aceleași cuvinte, Directoarea "
+        f"le rescrie; {detail or 'respinsă'}"
+    )[:500]
 
 
 def _settle_round(

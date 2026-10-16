@@ -14949,6 +14949,12 @@ def _rebuild_film(
     from (its recorded sha256), or nothing is built. The film's own sound is copied in. The
     film it came from is left untouched; the result is a new asset with its own render record,
     whose manifest says what it was remade from and what it cost.
+
+    The rejoin is the film's final encode, and is held to quality control's bitrate floor the
+    way the render's is (`encode_to_floor`): a dark, nearly still film the render had to
+    tighten (7c26a7ce «Speed of Light», 4.4 Mbps at CRF 17) came out under the floor again
+    from a plain CRF 17 rejoin, right after its redo was bought. The manifest's ``encode`` is
+    the redo's own reading, never the film's it was copied from.
     """
     film = _latest_film(engine, storyboard_id)
     if film is None:
@@ -15124,11 +15130,17 @@ def _rebuild_film(
         grain=int(graded.get("grain") or 0),
         lut=lut,
     )
-    joined = _run_ffmpeg(
-        command,
-        folder,
-        carry=((srt.name, CAPTION_FONTS_DIR) if captions else ()) + ((lut,) if lut else ()),
-    )
+    try:
+        joined, encode = encode_to_floor(
+            ffmpeg_exe,
+            command,
+            folder,
+            output,
+            carry=((srt.name, CAPTION_FONTS_DIR) if captions else ()) + ((lut,) if lut else ()),
+        )
+    except RenderEngineUnavailable as exc:
+        output.unlink(missing_ok=True)
+        raise SceneRedoRefused("ENCODE_FAILED", str(exc)) from exc
     total = sum(float(item["duration_seconds"]) for item in timeline)
     picture = _video_stream_seconds(ffmpeg_exe, output) if output.is_file() else None
     if joined.returncode != 0 or picture is None or picture + 1.0 < total:
@@ -15157,6 +15169,7 @@ def _rebuild_film(
         card_record=card_record,
         motion_record=motion_record,
     )
+    production["encode"] = encode
     loudness = (production.get("audio") or {}).get("loudness")
     if isinstance(loudness, dict):
         loudness["output"] = _loudness_readings(measure_loudness(ffmpeg_exe, output))

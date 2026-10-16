@@ -2750,12 +2750,19 @@ def _sheet_letter(
     film: dict[str, Any],
     plan_cost: dict[str, Any] | None,
     correlation: str,
+    *,
+    registry: ProviderRegistry | None = None,
+    settings: Settings | None = None,
 ) -> str | None:
     """The Owner's letter about one film stopped on its staircase: the sheet in words.
 
     Written once per film, sheet, stair and reason: the same day run again, or tomorrow's
     run finding the same question standing, writes nothing new. Deterministic: the sheet's
     own facts, never a model's account of them.
+
+    ``registry`` and ``settings`` are the day's, for the ladder's free re-judge of a refused
+    still (`_ladder_scenes`): without them the gate's look answered «nu a fost privită» and
+    that non-answer replaced the still's refusal, so it was never judged with eyes again.
     """
     from app.agents.messages import post_message  # noqa: PLC0415
     from app.decisions.sources import film_budget  # noqa: PLC0415
@@ -2789,7 +2796,9 @@ def _sheet_letter(
         # His own «Oprește GPU acum» stopped the step (2026-10-12): his card in «Decizii» says
         # it once for every film; a letter per film would repeat his own press back to him.
         return None
-    if status in LADDER_REFUSALS and _ladder_scenes(engine, storyboard_id, film):
+    if status in LADDER_REFUSALS and _ladder_scenes(
+        engine, storyboard_id, film, registry=registry, settings=settings
+    ):
         # Quality control's refusal of a scene is the Director's to answer — her ladder in
         # the walk, the `ladder_retry` pass after it — never a letter to the Owner
         # (2026-10-12, 08:10, «The Zero Script Club» scene 3 after two re-rolls: «Foaia de
@@ -3349,7 +3358,15 @@ def _media_staircase(
                 waiting.append(f"«{title}»: {reason}")
         else:
             held.append(f"{storyboard_id[:8]}: {reason}")
-        _sheet_letter(engine, storyboard_id, film, plan_cost, correlation)
+        _sheet_letter(
+            engine,
+            storyboard_id,
+            film,
+            plan_cost,
+            correlation,
+            registry=registry,
+            settings=settings,
+        )
 
     # The day's one letter about every standing question, as on the legacy path.
     if asked_correlation:
