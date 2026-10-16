@@ -101,13 +101,19 @@ PROCESS_STARTED_AT = utc_now()
 TASK_RESUMED_EVENT = "workflow.task_resumed"
 #: How long after its interruption a film's continuation is still the studio's to resume.
 RESUME_CONTINUATION_HOURS = 6
-#: Task types a dead process's claim never goes back to the queue for. A day run again from
-#: its start chooses a second subject and buys a second film (REL-03): its claim is closed as
-#: the sweep closes a lapsed one, DEAD_LETTER INTERRUPTED (`interrupt_orphaned_claims`), the
-#: worker closes the day INTERRUPTED at its stage (`runbook.services.interrupt_task_day`), and
-#: the watchdog resumes that run from where it stopped (`passes.resume_interrupted_day`).
+#: Task types a dead process's claim goes back to the queue for only while their run has not
+#: begun (`DAY_STARTED_EVENT`). A day run again from its start chooses a second subject and
+#: buys a second film (REL-03): once begun, its claim is closed as the sweep closes a lapsed
+#: one, DEAD_LETTER INTERRUPTED (`interrupt_orphaned_claims`), the worker closes the day
+#: INTERRUPTED at its stage (`runbook.services.interrupt_task_day`), and the watchdog resumes
+#: that run from where it stopped (`passes.resume_interrupted_day`). Not yet begun, it has
+#: bought nothing and has no run to resume, so it is given back and starts (review 2026-10-16).
 #: The name is `runbook.services.DAILY_RUN_TASK`, written out: the runbook imports this module.
-NEVER_RELEASED = ("DAILY_RUN",)
+RELEASED_UNTIL_BEGUN = ("DAILY_RUN",)
+#: A day's run has begun: `runbook.services._begin_run` writes this event, carrying the task's
+#: id as its correlation, in one transaction with the run's row, after the free preflight and
+#: before the first stage. Written out for the same reason as `RELEASED_UNTIL_BEGUN`.
+DAY_STARTED_EVENT = "runbook.daily_run_started"
 
 
 # ---------------------------------------------------------------------------
@@ -425,19 +431,20 @@ def release_orphaned_claims(
     again, and the walk that had just accepted «Speed of Light» under the cap stood CLAIMED,
     the film unpublished, until its lease lapsed and it was dead-lettered.
 
-    A day (`NEVER_RELEASED`) is never given back: review 2026-10-16, the Owner's GO left
-    CLAIMED by a killed process was queued again here, claimed a second time and run from its
-    start — a second subject, a second film — while its first run stood RUNNING with half a
-    film bought. `interrupt_orphaned_claims` closes it instead."""
+    A day whose run has begun (`RELEASED_UNTIL_BEGUN`) is not given back: review 2026-10-16,
+    the Owner's GO left CLAIMED by a killed process was queued again here, claimed a second
+    time and run from its start — a second subject, a second film — while its first run stood
+    RUNNING with half a film bought. `interrupt_orphaned_claims` closes it instead. A day
+    killed before its run began (in the handler's reads or the free preflight) is given back
+    like any task: it bought nothing, and closed it would have no run to resume."""
     now_str = utc_now()
-    orphaned = _orphaned(started_at) & TaskQueueItem.task_type.not_in(NEVER_RELEASED)
     with Session(engine) as session:
-        if session.scalars(select(TaskQueueItem.id).where(orphaned).limit(1)).first() is None:
+        if not _orphans(session, started_at, days_begun=False):
             return 0
     released = 0
     with Session(engine) as session, session.begin():
         lock_for_write(session)
-        for task in session.scalars(select(TaskQueueItem).where(orphaned)):
+        for task in _orphans(session, started_at, days_begun=False):
             previous_token = task.lease_token
             task.status = "QUEUED"
             task.lease_token = None
@@ -454,7 +461,12 @@ def release_orphaned_claims(
                     "task_type": task.task_type,
                     "attempts": task.attempts,
                     "previous_lease_token": previous_token,
-                    "reason": "procesul care o rula s-a oprit; lucrătorul nou o reia",
+                    "reason": (
+                        "procesul care o rula s-a oprit înainte ca ziua să înceapă, fără să "
+                        "cumpere ceva; lucrătorul nou o pornește"
+                        if task.task_type in RELEASED_UNTIL_BEGUN
+                        else "procesul care o rula s-a oprit; lucrătorul nou o reia"
+                    ),
                 },
                 correlation_id or str(uuid4()),
             )
@@ -471,25 +483,49 @@ def _orphaned(started_at: str | None) -> Any:
     return orphaned
 
 
+def _orphans(session: Session, started_at: str | None, *, days_begun: bool) -> list[TaskQueueItem]:
+    """The tasks a dead process left leased (`_orphaned`) that the release gives back
+    (``days_begun`` False: every one but a day whose run began) or that the close closes
+    (True: those days). A day's run began when its start event carries the task's id
+    (`DAY_STARTED_EVENT`); asked only of an orphaned day, so a pass with no dead process's
+    claim reads no event."""
+    tasks = session.scalars(select(TaskQueueItem).where(_orphaned(started_at))).all()
+    return [
+        task
+        for task in tasks
+        if (task.task_type in RELEASED_UNTIL_BEGUN and _run_begun(session, task.id)) is days_begun
+    ]
+
+
+def _run_begun(session: Session, task_id: str) -> bool:
+    """Whether the day this task runs wrote its row: its start event, carrying the task's id,
+    is written with the row in one transaction (`runbook.services._begin_run`)."""
+    started = select(DomainEvent.sequence).where(
+        DomainEvent.event_type == DAY_STARTED_EVENT, DomainEvent.correlation_id == task_id
+    )
+    return session.scalars(started.limit(1)).first() is not None
+
+
 def interrupt_orphaned_claims(engine: Engine, *, started_at: str | None = None) -> list[dict]:
-    """Every day (`NEVER_RELEASED`) a dead process left leased, closed now the way
-    `sweep_interrupted_tasks` closes a lapsed one — DEAD_LETTER INTERRUPTED, one
-    `TASK_INTERRUPTED_EVENT` — instead of waiting up to an hour for its lease to lapse; the
-    tasks, for the worker to close their days and tell the Owner (`announce_interrupted`).
-    Orphaned as in `release_orphaned_claims` (``started_at``). Its run is then resumed from the
-    stage it stopped in (`passes.resume_interrupted_day`): the stages it completed are
-    replayed from their record, so nothing is bought twice.
+    """Every day (`RELEASED_UNTIL_BEGUN`) a dead process left leased after its run began,
+    closed now the way `sweep_interrupted_tasks` closes a lapsed one — DEAD_LETTER
+    INTERRUPTED, one `TASK_INTERRUPTED_EVENT` — instead of waiting up to an hour for its lease
+    to lapse; the tasks, for the worker to close their days and tell the Owner
+    (`announce_interrupted`). Orphaned as in `release_orphaned_claims` (``started_at``). Its
+    run is then resumed from the stage it stopped in (`passes.resume_interrupted_day`): the
+    stages it completed are replayed from their record, so nothing is bought twice. A day
+    killed before its run began is not closed here but given back (`release_orphaned_claims`):
+    with no run, nothing would resume it, though its letter says it will (review 2026-10-16).
 
     Not behind the autonomy stop, like the sweep: it starts nothing and spends nothing."""
-    orphaned = _orphaned(started_at) & TaskQueueItem.task_type.in_(NEVER_RELEASED)
     with Session(engine) as session:
-        if session.scalars(select(TaskQueueItem.id).where(orphaned).limit(1)).first() is None:
+        if not _orphans(session, started_at, days_begun=True):
             return []
     now_str = utc_now()
     closed: list[dict] = []
     with Session(engine) as session, session.begin():
         lock_for_write(session)
-        for task in session.scalars(select(TaskQueueItem).where(orphaned)):
+        for task in _orphans(session, started_at, days_begun=True):
             renewed_at = task.updated_at
             closed.append(
                 _interrupt(

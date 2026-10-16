@@ -1,9 +1,11 @@
 """What a dead process left is taken up by the studio itself (2026-10-16 06:07:53Z): the
 leases it held are given back on every worker pass, not only at the start whose own release
 had failed on the database the stopping process still held; and a film's continuation it
-interrupted is queued again, once, instead of waiting for the Owner's hand. A day it left is
-never given back (run again whole it would buy a second film): it is closed INTERRUPTED, for
-its run to be resumed from its stage (review 2026-10-16)."""
+interrupted is queued again, once, instead of waiting for the Owner's hand. A day it left
+after its run began is never given back (run again whole it would buy a second film): it is
+closed INTERRUPTED, for its run to be resumed from its stage; one it left before its run began
+bought nothing and has no run to resume, so it is given back like any task (review
+2026-10-16)."""
 
 from __future__ import annotations
 
@@ -52,6 +54,23 @@ def _task(engine, *, status: str, updated_minutes_ago: float, storyboard: str, *
 def _row(engine, task_id: str) -> TaskQueueItem:
     with Session(engine) as session:
         return session.get(TaskQueueItem, task_id)
+
+
+def _run_begun(engine, task_id: str) -> None:
+    """The day's start event, carrying its task's id, as `runbook.services._begin_run` writes
+    it with the run's row after the free preflight: what a process killed after that leaves."""
+    from app.services import append_event
+
+    with Session(engine) as session, session.begin():
+        append_event(
+            session,
+            "runbook.daily_run_started",
+            "daily_run",
+            str(uuid4()),
+            1,
+            {"date": datetime.now(UTC).date().isoformat()},
+            task_id,
+        )
 
 
 def test_a_lease_from_before_this_process_began_is_given_back_on_the_pass(engine):
@@ -136,7 +155,9 @@ def test_a_day_a_dead_process_left_claimed_is_closed_not_given_back(engine):
     """Review 2026-10-16: the release gave a DAILY_RUN back to the queue like any task, and a
     day run again from its start chooses a second subject and buys a second film. It is
     closed INTERRUPTED instead — at the start (every leased task is an orphan) and on the
-    pass (one leased before this process began) — for its run to be resumed from its stage."""
+    pass (one leased before this process began) — for its run to be resumed from its stage.
+    A day killed before its run began is given back instead: closed, nothing would resume it,
+    though the letter about it says it will."""
     started = _stamp(5)
     day = _task(
         engine,
@@ -166,10 +187,34 @@ def test_a_day_a_dead_process_left_claimed_is_closed_not_given_back(engine):
         lease_token="worker_main:this-process",
         lease_expires_at=_stamp(-50),
     )
+    # Killed in the preflight: the GO had bought nothing and written no run.
+    unbegun = _task(
+        engine,
+        status="CLAIMED",
+        updated_minutes_ago=10,
+        storyboard="",
+        task_type="DAILY_RUN",
+        payload={"manual": True},
+        lease_token="worker_main:dead-in-preflight",
+        lease_expires_at=_stamp(-50),
+    )
+    _run_begun(engine, day)
+    _run_begun(engine, alive)
 
-    assert release_orphaned_claims(engine, started_at=started) == 1
+    assert release_orphaned_claims(engine, started_at=started) == 2
     assert _row(engine, walk).status == "QUEUED"
-    assert _row(engine, day).status == "CLAIMED", "a day is never queued again"
+    assert _row(engine, day).status == "CLAIMED", "a day whose run began is never queued again"
+    given_back = _row(engine, unbegun)
+    assert given_back.status == "QUEUED" and given_back.lease_token is None
+    assert given_back.attempts == 1
+    with Session(engine) as session:
+        released = {
+            event.aggregate_id: event.payload["reason"]
+            for event in session.scalars(
+                select(DomainEvent).where(DomainEvent.event_type == "workflow.task_released")
+            )
+        }
+    assert set(released) == {walk, unbegun} and "înainte ca ziua să înceapă" in released[unbegun]
 
     from app.workflows.services import TASK_INTERRUPTED_EVENT, interrupt_orphaned_claims
 

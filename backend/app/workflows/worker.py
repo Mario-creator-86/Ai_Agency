@@ -741,12 +741,13 @@ def _tell_continue_interrupted(engine: Engine, task: dict[str, Any]) -> str:
 
 
 def close_orphaned_days(engine: Engine, *, started_at: str | None = None) -> list[dict[str, Any]]:
-    """A day a dead process left leased, closed instead of queued again: its task
-    DEAD_LETTER INTERRUPTED (`interrupt_orphaned_claims`, ``started_at`` as in
+    """A day a dead process left leased after its run began, closed instead of queued again:
+    its task DEAD_LETTER INTERRUPTED (`interrupt_orphaned_claims`, ``started_at`` as in
     `release_orphaned_claims`), its run INTERRUPTED at the stage it was in and the Owner told
     (`announce_interrupted`); the watchdog then resumes that run from its stage
     (`passes.resume_interrupted_day`). Run again whole, it would choose a second subject and
-    buy a second film (review 2026-10-16). What was told."""
+    buy a second film (review 2026-10-16). One killed before its run began is not here: the
+    release gave it back to the queue, with no letter. What was told."""
     return announce_interrupted(engine, interrupt_orphaned_claims(engine, started_at=started_at))
 
 
@@ -772,8 +773,8 @@ def worker_pass(
     if shutdown_requested(engine):
         return {"triggered": [], "ran": [], "mail": idle, "interrupted": []}
     # What a dead process left: its leases given back (the start's own release may have
-    # failed on a database the stopping process still held, 06:07:53Z 2026-10-16); a day is
-    # closed instead, since run again from its start it would buy a second film.
+    # failed on a database the stopping process still held, 06:07:53Z 2026-10-16); a day whose
+    # run began is closed instead, since run again from its start it would buy a second film.
     released = resumed = 0
     closed: list[dict[str, Any]] = []
     try:

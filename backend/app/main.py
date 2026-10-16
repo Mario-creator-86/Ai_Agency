@@ -421,10 +421,10 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
                 recover_interrupted_sheet_runs, engine, started_at=process_started
             )
             # The tasks a dead worker left CLAIMED go back to the queue now, not when their
-            # hour-long lease lapses (2026-10-15 20:08Z, two walks of 7c26a7ce). A day is not
-            # given back but closed INTERRUPTED, and the watchdog resumes its run from the
-            # stage it stopped in: run again whole it would buy a second film (review
-            # 2026-10-16).
+            # hour-long lease lapses (2026-10-15 20:08Z, two walks of 7c26a7ce). A day whose
+            # run began is not given back but closed INTERRUPTED, and the watchdog resumes its
+            # run from the stage it stopped in: run again whole it would buy a second film
+            # (review 2026-10-16). One killed before its run began bought nothing: it goes back.
             try:
                 released = await asyncio.to_thread(release_orphaned_claims, engine)
                 if released:

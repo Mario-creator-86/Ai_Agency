@@ -1080,6 +1080,8 @@ def test_a_lapsed_task_with_no_attempts_left_is_interrupted_not_reclaimed_and_to
     queued = enqueue_task(engine, DAILY_RUN, {"manual": True}, max_attempts=1)
     claimed = claim_task(engine, "worker_that_died", lease_duration_seconds=1)
     assert claimed is not None and claimed["id"] == queued["id"]
+    # The dead worker had begun the day: its row was written, so it has a run to resume.
+    run_id = _day_begun(engine, queued["id"])
     _lapse(engine, queued["id"])
 
     # The queue never hands it out again: it had its one attempt.
@@ -1112,6 +1114,67 @@ def test_a_lapsed_task_with_no_attempts_left_is_interrupted_not_reclaimed_and_to
     assert len(told) == 1, "one letter, not one per pass"
     letter = f"{told[0].subject} {told[0].body_text}"
     assert "întreruptă" in letter and "reiau singur" in letter
+    with Session(engine) as session:
+        assert session.get(DailyRun, run_id).status == "INTERRUPTED"
+
+
+def _day_begun(engine, task_id: str) -> str:
+    """The day's row and start event, written as `execute_daily_run` writes them after its
+    free preflight (`runbook.services._begin_run`): what a process killed in a stage leaves."""
+    from app.runbook.services import _begin_run, _stage
+
+    run_id = str(uuid4())
+    _begin_run(
+        engine,
+        run_id=run_id,
+        date_iso=datetime.now(UTC).date().isoformat(),
+        preflight={"status": "READY"},
+        stages=[_stage("preflight", "COMPLETED", "pregătit")],
+        started_at=datetime.now(UTC).isoformat(),
+        payload={},
+        correlation_id=task_id,
+    )
+    return run_id
+
+
+def test_a_go_a_dead_process_left_claimed_before_its_run_began_is_run_not_dead_lettered(
+    engine, settings, vault, monkeypatch
+):
+    """Review 2026-10-16: the Owner's GO, killed after its claim and before its run's row was
+    written (the handler's reads, the media setup, the free preflight: nothing bought), was
+    dead-lettered INTERRUPTED like a day cut off in a stage, with a letter saying «o reiau
+    singur»; with no run, the watchdog's resume found nothing and the GO was lost. Its run
+    never began, so it is given back to the queue and run once, and the Owner is told nothing."""
+    from app.workflows.passes import WatchdogContext
+    from app.workflows.passes.resume_interrupted_day import resume_interrupted_days
+    from app.workflows.services import claim_task
+
+    _autonomy(engine, False)
+    calls: list[dict[str, Any]] = []
+
+    def day(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        calls.append(kwargs)
+        return {"status": "COMPLETED", "id": str(uuid4())}
+
+    monkeypatch.setattr("app.workflows.worker.execute_daily_run", day)
+    queued = enqueue_task(engine, DAILY_RUN, {"manual": True}, max_attempts=1)
+    claimed = claim_task(engine, "worker_that_died", lease_duration_seconds=3600)
+    assert claimed is not None and claimed["id"] == queued["id"]
+
+    # The next process began after the dead one's claim; the lease still has an hour.
+    monkeypatch.setattr("app.workflows.worker.PROCESS_STARTED_AT", datetime.now(UTC).isoformat())
+    handlers = build_task_handlers(engine, settings, vault, None)
+    first = worker_pass(engine, handlers)
+    resume_interrupted_days(WatchdogContext(engine, settings, "wd"))
+    second = worker_pass(engine, handlers)
+
+    assert first["interrupted"] == [] and second["interrupted"] == []
+    assert [item["task_id"] for item in first["ran"]] == [queued["id"]], first["ran"]
+    assert second["ran"] == []
+    assert len(calls) == 1 and calls[0]["correlation_id"] == queued["id"]
+    (task,) = _tasks(engine)
+    assert task.status == "COMPLETED", (task.status, task.error_detail)
+    assert _letters(engine, "day_interrupted") == []
 
 
 def test_a_lapsed_task_with_attempts_left_is_still_reclaimed_by_the_queue(engine):
