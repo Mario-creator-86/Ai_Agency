@@ -5,6 +5,14 @@ AGENT_SCENARIO_ACCEPTANCE later used actual Ollama Cloud calls, with normal seri
 acceptance and real GPU/media/upload still pending. Current local UI evidence is reported
 separately below and does not prove those external workflows.
 
+## The final encode keeps to the bitrate floor (2026-10-16)
+
+Claim: the final encode keeps to quality control's bitrate floor. 05:35Z, 7c26a7ce «Speed of Light» (dark lab, nearly still picture, 24 fps) came out of CRF 17 at 4.4 Mbps; quality control failed the film under its 6 Mbps floor, and the only free fix (`_reencode_from_takes`, same takes, same settings) could only have made the same file again before `FREE_FIX_USED` and the Director's acceptance under the cap.
+
+Done: `assembler.encode_to_floor` runs the final encode, measures its video bitrate (`qc.probe_media_file`) and makes it again at `FLOOR_CRF_STEPS` (12, 8, 4) while under `qc.MIN_VIDEO_BITRATE`; `final_video_args(fps, crf=FINAL_CRF)`; the encode's record (`crf`, `video_bit_rate`, `tightened`) is kept in `production["encode"]`. A failed run is returned as it is. 0 credits: local CPU only.
+
+Tested: tests/test_encode_spec.py (new `test_the_final_encode_is_made_again_tighter_until_it_meets_the_bitrate_floor`), test_conftest_switches, test_assembler_concat, test_sheet_assemble, test_scene_takes, test_render_gate, test_clip_qc, test_redo_resume_spends_his_yes: green. test_director_decides_qc::test_a_refused_rejoin_keeps_her_decision_waiting_and_is_tried_again fails on the retry's letter (a second BOUGHT_WAITING letter), unrelated to the encoder — being checked on a clean HEAD worktree; see the roadmap.
+
 ## A clip refused for a still at the renders cap stands under the cap (2026-10-16)
 
 **Claim:** 7c26a7ce at 04:11–04:21Z: the stills of scenes 1–3 kept under the Owner's renders cap carried a window the model keeps drawing; every clip made from them was refused by clip QC for the picture's fault («The still itself is wrong… re-animating the same still reproduces the same defects») and sent back to a still that could not be bought again; scene 5's clip passed. The film stood still between two caps.

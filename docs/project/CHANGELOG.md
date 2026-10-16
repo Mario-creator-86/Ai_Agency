@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-16 — Final encode meets its floor
+
+- The final encode keeps to quality control's bitrate floor: `assembler.encode_to_floor` measures the film it made and tightens the CRF in steps (17 → 12 → 8 → 4) while the average video bitrate is under `qc.MIN_VIDEO_BITRATE`; the encode's record is in `production["encode"]` (7c26a7ce, 05:35Z: 4.4 Mbps, the free re-encode could only repeat it).
+
 ## 2026-10-16 — A refused scene at its three renders is settled before the ladder
 
 - `media/stills_stage.py`, `runbook/stages.py`: a scene quality control refused whose picture has had its three renders is settled under the Owner's cap before the Director's ladder (`settle_scene_under_cap`: the newest refused still on disk as its picture when none is approved; the newest refused shot on disk as its clip when the shots too had their three), the ladder skips it (`film["settled_under_cap"]`) and the walk goes on — 7c26a7ce scenes 1-2 stopped every walk at «Directoarea nu a putut încă rescrie» (05:20Z). Test in `test_stills_renders_cap.py`. Known: `test_director_delivery_routing` has the audit-fake failure of the staircase test.

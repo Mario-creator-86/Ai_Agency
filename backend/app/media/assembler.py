@@ -1598,6 +1598,60 @@ def _shot_frames(ffmpeg_exe: str, path: Path) -> int | None:
     return frames if isinstance(frames, int) and frames > 0 else None
 
 
+def _video_bit_rate(ffmpeg_exe: str, path: Path) -> int | None:
+    """The finished film's average video bitrate as quality control measures it, or None."""
+    from app.media.qc import probe_media_file  # noqa: PLC0415
+
+    rate = probe_media_file(path, ffmpeg_exe).get("video_bit_rate")
+    return int(rate) if isinstance(rate, int | float) and rate > 0 else None
+
+
+def _with_crf(args: Sequence[str], crf: int) -> list[str]:
+    """The same encoder arguments at another CRF."""
+    out = list(args)
+    out[out.index("-crf") + 1] = str(int(crf))
+    return out
+
+
+def encode_to_floor(
+    ffmpeg_exe: str,
+    command_args: Sequence[str],
+    work_dir: Path,
+    output_mp4: Path,
+    *,
+    carry: Sequence[str] = (),
+    floor: int | None = None,
+) -> tuple[subprocess.CompletedProcess[str], dict[str, Any]]:
+    """The final encode, made again at each of FLOOR_CRF_STEPS in turn while the film comes
+    out under quality control's bitrate floor: the encoder keeps to the floor it is measured
+    against, instead of quality control refusing the film and the free re-encode making the
+    same file again. Returns the last run and the encode's record (``crf``, ``video_bit_rate``,
+    and ``tightened``: every reading that fell short). A failed run is returned as it is."""
+    if floor is None:
+        from app.media.qc import MIN_VIDEO_BITRATE  # noqa: PLC0415
+
+        floor = int(MIN_VIDEO_BITRATE)
+    args = list(command_args)
+    crf = int(args[args.index("-crf") + 1]) if "-crf" in args else FINAL_CRF
+    record: dict[str, Any] = {"crf": crf, "video_bit_rate": None, "floor": floor, "tightened": []}
+    steps = [step for step in FLOOR_CRF_STEPS if step < crf]
+    while True:
+        res = run_encoder(args, work_dir, carry=tuple(carry))
+        if res.returncode != 0 or not output_mp4.is_file() or output_mp4.stat().st_size == 0:
+            return res, record
+        rate = _video_bit_rate(ffmpeg_exe, output_mp4)
+        record["crf"], record["video_bit_rate"] = crf, rate
+        if rate is None or rate >= floor or not steps:
+            return res, record
+        record["tightened"].append({"crf": crf, "video_bit_rate": rate})
+        logger.info(
+            "final_encode_under_floor",
+            extra={"crf": crf, "video_bit_rate": rate, "floor": floor, "next_crf": steps[0]},
+        )
+        crf = steps.pop(0)
+        args = _with_crf(args, crf)
+
+
 def _video_stream_seconds(ffmpeg_exe: str, path: Path) -> float | None:
     """How long the picture actually lasts, or None when it cannot be measured."""
     from app.media.qc import probe_media_file  # noqa: PLC0415
@@ -1652,7 +1706,17 @@ INTERMEDIATE_VIDEO_ARGS: tuple[str, ...] = (
 )
 
 
-def final_video_args(fps: int = TIMELINE_FPS) -> list[str]:
+#: The finished film's quality setting, and the tighter ones tried in turn when the encode
+#: comes out under quality control's bitrate floor (`qc.MIN_VIDEO_BITRATE`, 6 Mbps). A film
+#: of dark, nearly still picture at 24 fps needs few bits at CRF 17 (2026-10-16 05:35Z,
+#: 7c26a7ce «Speed of Light»: 4.4 Mbps, quality control failed the film for it, and the free
+#: re-encode from the same takes could only have made the same file again). More bits into a
+#: dark picture are not wasted: its gradients keep more steps.
+FINAL_CRF = 17
+FLOOR_CRF_STEPS: tuple[int, ...] = (12, 8, 4)
+
+
+def final_video_args(fps: int = TIMELINE_FPS, crf: int = FINAL_CRF) -> list[str]:
     """The finished film's video encode, in full.
 
     H.264 High at level 4.2 (1080x1920 at up to 60 fps), CRF 17 on the slow preset with a
@@ -1660,6 +1724,7 @@ def final_video_args(fps: int = TIMELINE_FPS) -> list[str]:
     picture; the Nepal film had 2.6 Mbps. Two B-frames, a keyframe every half second and no
     scene-cut keyframes, so the platform's re-encode finds a regular GOP. 4:2:0, BT.709
     limited range, and the index at the front of the file so playback starts at once.
+    ``crf`` is tightened by `encode_to_floor` when the film comes out under the floor.
     """
     return [
         "-c:v",
@@ -1671,7 +1736,7 @@ def final_video_args(fps: int = TIMELINE_FPS) -> list[str]:
         "-preset",
         "slow",
         "-crf",
-        "17",
+        str(int(crf)),
         "-maxrate",
         "14M",
         "-bufsize",
@@ -7627,12 +7692,15 @@ def assemble_video_job(
             str(output_mp4),
         ]
     try:
-        res = run_encoder(
+        res, encode = encode_to_floor(
+            ffmpeg_exe,
             command_args,
             work_dir,
+            output_mp4,
             carry=((CAPTIONS_ASS_NAME, CAPTION_FONTS_DIR) if captions else ())
             + ((lut_name,) if lut_name else ()),
         )
+        production["encode"] = encode
         log_output = f"FFmpeg exit={res.returncode}\nstdout:\n{res.stdout}\nstderr:\n{res.stderr}"
     except Exception as exc:  # noqa: BLE001
         log_output = f"FFmpeg execution failed: {exc}"
