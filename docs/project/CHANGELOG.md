@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-16 — Her QC letters written once
+
+- The Director's QC letter and look letter are found wherever his letters rule delivered them (`director_qc._letters_of_kind`): a retried decision no longer writes the Director the same letter every hour.
+
 ## 2026-10-16 — Final encode meets its floor
 
 - The final encode keeps to quality control's bitrate floor: `assembler.encode_to_floor` measures the film it made and tightens the CRF in steps (17 → 12 → 8 → 4) while the average video bitrate is under `qc.MIN_VIDEO_BITRATE`; the encode's record is in `production["encode"]` (7c26a7ce, 05:35Z: 4.4 Mbps, the free re-encode could only repeat it).

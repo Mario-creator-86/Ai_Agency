@@ -5,6 +5,14 @@ AGENT_SCENARIO_ACCEPTANCE later used actual Ollama Cloud calls, with normal seri
 acceptance and real GPU/media/upload still pending. Current local UI evidence is reported
 separately below and does not prove those external workflows.
 
+## Her QC letters are written once (2026-10-16)
+
+Claim: the Director's QC letter and her look letter are written once. `test_director_decides_qc::test_a_refused_rejoin_keeps_her_decision_waiting_and_is_tried_again` failed on HEAD: the retry of a BOUGHT_WAITING decision wrote a second letter. Cause: since his letters rule (2026-10-12, `messages.directors_matter`) `owner_director_qc` and `owner_director_look` are redirected to the Director's inbox (`to_agent_id` = hers, body.to = "Director"), while `director_letter` / `look_letter` looked for the earlier letter only among letters addressed to him (`to_agent_id IS NULL` and `is_for_owner`), so every hourly retry wrote her the same letter again.
+
+Done: `director_qc._letters_of_kind(session, kind)` finds the kind wherever it was delivered; both de-duplications use it (same report, outcome, new film and purchase count; same look event).
+
+Tested: tests/test_director_decides_qc.py (99 passed).
+
 ## The final encode keeps to the bitrate floor (2026-10-16)
 
 Claim: the final encode keeps to quality control's bitrate floor. 05:35Z, 7c26a7ce «Speed of Light» (dark lab, nearly still picture, 24 fps) came out of CRF 17 at 4.4 Mbps; quality control failed the film under its 6 Mbps floor, and the only free fix (`_reencode_from_takes`, same takes, same settings) could only have made the same file again before `FREE_FIX_USED` and the Director's acceptance under the cap.

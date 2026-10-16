@@ -3039,6 +3039,16 @@ def _outcome_line(outcome: str, step: Mapping[str, Any]) -> str:
     return "Nimic din ce a cerut nu se putea reface acum; filmul care a picat nu se publică."
 
 
+def _letters_of_kind(session: Session, kind: str) -> list[AgentMessage]:
+    """Every STATUS letter of this kind, whoever it was delivered to: the Owner, or the
+    Director's inbox when his letters rule redirected it (`messages.directors_matter`)."""
+    return [
+        message
+        for message in session.scalars(select(AgentMessage).where(AgentMessage.intent == "STATUS"))
+        if isinstance(message.body_json, dict) and message.body_json.get("kind") == kind
+    ]
+
+
 def director_letter(
     engine: Engine,
     reading: Mapping[str, Any],
@@ -3061,16 +3071,13 @@ def director_letter(
     bought_count = len(step.get("bought_so_far") or [])
     with Session(engine) as session, session.begin():
         lock_for_write(session)
-        for message in session.scalars(
-            select(AgentMessage).where(
-                AgentMessage.to_agent_id.is_(None), AgentMessage.intent == "STATUS"
-            )
-        ):
+        # The letter is found wherever his letters rule delivered it: addressed to him, or
+        # redirected to the Director's inbox (`messages.directors_matter`, 2026-10-12). Looking
+        # only among his letters wrote the Director the same letter on every hourly retry.
+        for message in _letters_of_kind(session, LETTER_KIND):
             body = message.body_json if isinstance(message.body_json, dict) else {}
             if (
-                is_for_owner(message)
-                and body.get("kind") == LETTER_KIND
-                and str(body.get("report_id") or "") == report_id
+                str(body.get("report_id") or "") == report_id
                 and body.get("outcome") == outcome
                 and body.get("new_asset") == new_asset
                 and int(body.get("bought_count") or 0) == bought_count
@@ -3156,17 +3163,9 @@ def look_letter(
     event_id = str(look.get("event_id") or "")
     with Session(engine) as session, session.begin():
         lock_for_write(session)
-        for message in session.scalars(
-            select(AgentMessage).where(
-                AgentMessage.to_agent_id.is_(None), AgentMessage.intent == "STATUS"
-            )
-        ):
+        for message in _letters_of_kind(session, LOOK_LETTER_KIND):
             body = message.body_json if isinstance(message.body_json, dict) else {}
-            if (
-                is_for_owner(message)
-                and body.get("kind") == LOOK_LETTER_KIND
-                and body.get("look_event_id") == event_id
-            ):
+            if body.get("look_event_id") == event_id:
                 return None
         title = _title(session, storyboard_id)
         name = str(look.get("agent_name") or decision.get("agent_name") or "Directoarea")
