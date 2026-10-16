@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-16 — A desk front is not a pasted strip
+
+- `media/qc.py`: a flat band glued to the bottom edge that is a coloured surface of the scene (grey level neither black nor white, at most 30 % of the height) no longer splits a still — the dark wood front of Sarah's desk, 16 % of the frame in every scene drawn from the episode's reference picture, refused four scenes of 87c05891 as panels before the look saw them (02:33Z); black strips and white caption bands still split. `FlatBand.level`, `FlatBand.surface`; tests in `test_still_gate.py`.
+
 ## 2026-10-16 — The held move said; the audit never refuses a fixed sentence
 
 - `media/prompt_agent.py`: the plan's camera sentence closes with «the camera held to this one move from the first frame to the last» (`LOCKED_MOVE_CLAUSE`). `media/prompt_audit.py` (template v4): a camera sentence that names one move with path and tempo is complete — no lock, ban, lens or framing to ask for; the room's look is the picture's; a doubt resting only on the composer's fixed sentences is an observation, not a refusal (7c26a7ce scene 4, six refusals 02:21–02:25Z).

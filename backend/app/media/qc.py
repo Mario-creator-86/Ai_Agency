@@ -423,6 +423,15 @@ SOFT_EDGE_STEP = 3.0
 #: c1); a still more than half flat is a blank field with a strip of picture faded into it,
 #: which the look alone would otherwise have to catch (review of this rule, 2026-10-10).
 SOFT_BAND_MAX_SHARE = 0.5
+#: A flat band glued to the BOTTOM edge that is a coloured surface of the scene — a desk
+#: front, a floor, the base of a wall — not a strip pasted on: its grey level is neither
+#: black nor white (SURFACE_LEVELS, 8-bit) and it takes no more than SURFACE_BAND_MAX_SHARE of
+#: the height. 2026-10-16 02:33Z, 87c05891: the dark wood front of Sarah's desk, 16 % of the
+#: frame in every scene drawn from the episode's reference picture, refused four scenes as
+#: «o bandă plată pe toată lățimea, jos» before the look saw them. Black bands (the Nepal
+#: lower third, letterboxes) and white caption strips stay splits.
+SURFACE_LEVELS = (24.0, 231.0)
+SURFACE_BAND_MAX_SHARE = 0.3
 
 
 @dataclass(frozen=True)
@@ -440,6 +449,8 @@ class FlatBand:
     #: neighbouring rows within SOFT_EDGE_ROWS of its inner edge; None for a band in the
     #: middle, a band from edge to edge, or no band.
     edge_step: float | None = None
+    #: The band's mean grey (8-bit) over its rows; None when no band.
+    level: float | None = None
 
     @property
     def rows(self) -> int:
@@ -471,13 +482,27 @@ class FlatBand:
         )
 
     @property
+    def surface(self) -> bool:
+        """Glued to the bottom edge only, a coloured surface of the scene (SURFACE_LEVELS:
+        neither black nor white) and no more than SURFACE_BAND_MAX_SHARE of the height: a desk
+        front, a floor, the base of a wall — the picture's own, not a strip pasted on."""
+        return (
+            self.rows > 0
+            and self.start > 0
+            and self.end == self.height - 1
+            and self.level is not None
+            and SURFACE_LEVELS[0] <= self.level <= SURFACE_LEVELS[1]
+            and self.share <= SURFACE_BAND_MAX_SHARE
+        )
+
+    @property
     def splits_a_still(self) -> bool:
         """On a still, any band of at least PANEL_BAND_SHARE of the height but a soft-edged
-        one at the top or the bottom: pictures pasted together, a picture with a blank strip,
-        or a blank field (which the degenerate check refuses as well). Nothing on a still is
-        burned in and nothing fades, so no amount of blank beside a strip of picture makes it
-        one photograph."""
-        return self.wide and not self.soft_edge
+        one at the top or the bottom, or a coloured surface at the bottom (`surface`):
+        pictures pasted together, a picture with a blank strip, or a blank field (which the
+        degenerate check refuses as well). Nothing on a still is burned in and nothing fades,
+        so no amount of blank beside a strip of picture makes it one photograph."""
+        return self.wide and not self.soft_edge and not self.surface
 
     @property
     def splits_the_picture(self) -> bool:
@@ -610,7 +635,14 @@ def flat_band(ffmpeg: str | None, path: Path | str) -> FlatBand | None:
             runs.append((run_start, y - 1))
             run_start = -1
     bands = [
-        FlatBand(start, end, height, flat_rows, _edge_step(means, start, end))
+        FlatBand(
+            start,
+            end,
+            height,
+            flat_rows,
+            _edge_step(means, start, end),
+            level=sum(means[start : end + 1]) / (end - start + 1),
+        )
         for start, end in runs
     ]
     if not bands:

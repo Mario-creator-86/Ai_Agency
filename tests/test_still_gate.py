@@ -1035,6 +1035,20 @@ def test_an_edge_band_splits_with_a_hard_edge_and_not_with_a_soft_gradient(
 def test_a_soft_edge_excuses_a_sky_not_a_still_more_than_half_flat():
     """The widest sky measured is 30 % of the height. A still flat over more than half of it,
     however softly the strip of picture fades in, is a blank field: it splits."""
+    # A coloured surface at the bottom — the dark wood front of a desk, 16 % of the frame
+    # (2026-10-16 02:33Z, 87c05891: four scenes refused before the look saw them) — is the
+    # picture's own; a black strip or a white caption band of the same size still splits it,
+    # and a surface too wide is a blank field.
+    desk = FlatBand(start=404, end=479, height=480, flat_rows=76, edge_step=9.0, level=58.0)
+    assert desk.wide and not desk.soft_edge and desk.surface and not desk.splits_a_still
+    black = FlatBand(start=404, end=479, height=480, flat_rows=76, edge_step=9.0, level=6.0)
+    assert not black.surface and black.splits_a_still
+    white = FlatBand(start=404, end=479, height=480, flat_rows=76, edge_step=9.0, level=240.0)
+    assert not white.surface and white.splits_a_still
+    wide_desk = FlatBand(start=300, end=479, height=480, flat_rows=180, edge_step=9.0, level=58.0)
+    assert not wide_desk.surface and wide_desk.splits_a_still
+    top_band = FlatBand(start=0, end=75, height=480, flat_rows=76, edge_step=9.0, level=58.0)
+    assert not top_band.surface and top_band.splits_a_still
     sky = FlatBand(start=0, end=143, height=480, flat_rows=144, edge_step=0.4)
     assert sky.soft_edge is True and sky.splits_a_still is False
     field = FlatBand(start=0, end=299, height=480, flat_rows=300, edge_step=0.4)
