@@ -1080,6 +1080,119 @@ def _budget_films_technical(environment: str) -> dict[str, list[str]]:
     return _technical(routes=[BUDGET_ROUTE], settings=knob_settings, fields=knob_fields)
 
 
+def _motion_model(engine: Engine, table: Any) -> str | None:
+    """The motion model a day's films are priced with: the Owner's selected video model when
+    the table prices it, else the cheapest per-round (RunPod) video model it prices; None
+    when it prices none (never a guess)."""
+    from app.integrations.models import MediaProductionConfig, ServiceSelection  # noqa: PLC0415
+
+    with Session(engine) as session:
+        selection = session.get(ServiceSelection, "video")
+        production = (
+            session.get(MediaProductionConfig, selection.integration_id)
+            if selection is not None and selection.integration_id
+            else None
+        )
+        chosen = production.model_id if production is not None else None
+    videos = [row for row in table.rows if row.kind == "video" and row.credits_per_second]
+    if chosen and any(row.model_id == chosen for row in videos):
+        return str(chosen)
+    rounds = [row for row in videos if row.model_id in table.round_models]
+    if not rounds:
+        return None
+    return str(min(rounds, key=lambda row: float(row.credits_per_second)).model_id)
+
+
+def _montage_day(engine: Engine, settings: Settings, films: int) -> dict[str, Any] | None:
+    """What a production day of montage films costs at today's prices, before any re-roll.
+
+    2026-10-16: a film is cut into shots of `montage_shot_seconds` (about 40 rows for a 160 s
+    short; the serial's episode about as many), each row its own still and clip. Per film:
+    every row's still with two GPU starts (scene 1, then the rest), the test shot with its
+    start, the other rows' clips with theirs; the narration is not in it (its price is read
+    per film, from its words). None while the montage is off, or when the table cannot
+    price a part."""
+    import math  # noqa: PLC0415
+
+    from app.media.assembler import SPOKEN_TAIL_SECONDS, TRANSITION_SECONDS  # noqa: PLC0415
+    from app.media.cost_plan import (  # noqa: PLC0415
+        STILL_CANDIDATES,
+        STILLS_RESOLUTION,
+        UnpricedError,
+        credits_to_micros,
+        price_shot,
+        price_still,
+    )
+    from app.media.montage import montage_settings  # noqa: PLC0415
+    from app.media.shooting_sheet import price_table_for  # noqa: PLC0415
+
+    montage = montage_settings(settings)
+    if not montage["enabled"]:
+        return None
+    shot = float(montage["shot_seconds"])
+    rows = max(1, math.ceil(float(settings.target_video_seconds) / shot))
+    table = price_table_for(engine, None)
+    video = _motion_model(engine, table)
+    if video is None:
+        return None
+    try:
+        still = price_still(table.stills_model, STILLS_RESOLUTION, STILL_CANDIDATES, table=table)
+        # A row's clip holds its words, the breath after them and the dissolve into the next.
+        clip = price_shot(
+            video,
+            str(getattr(settings, "motion_resolution", "1080p")),
+            shot + SPOKEN_TAIL_SECONDS + TRANSITION_SECONDS,
+            table=table,
+        )
+    except (UnpricedError, KeyError):
+        return None
+    stills = rows * still + 2 * table.round_overhead("image", table.stills_model)
+    test_shot = clip + table.round_overhead("video", video)
+    motion = (rows - 1) * clip + table.round_overhead("video", video)
+
+    def usd(credits: float) -> int:
+        return credits_to_micros(credits, table.credit_usd)
+
+    film = usd(stills) + usd(test_shot) + usd(motion)
+    return {
+        "films": films,
+        "rows": rows,
+        "stills_model": table.stills_model,
+        "motion_model": video,
+        "stills_usd_micros": usd(stills),
+        "test_shot_usd_micros": usd(test_shot),
+        "motion_usd_micros": usd(motion),
+        "film_usd_micros": film,
+        "day_usd_micros": films * film,
+    }
+
+
+def _montage_words(day: dict[str, Any], limit: int) -> str:
+    """The montage day in the Owner's words: what a film and the day cost, against his
+    daily budget."""
+
+    def usd(micros: int) -> str:
+        return f"{_usd(int(micros))} USD"
+
+    films = int(day["films"])
+    said = (
+        f"O zi cu montaj ({count(films, 'film', 'filme')} de câte aproximativ {day['rows']} "
+        f"de cadre, la prețurile de azi) costă estimat {usd(day['day_usd_micros'])} fără "
+        f"nicio reluare și fără narațiune: pe film, imaginile {usd(day['stills_usd_micros'])}, "
+        f"cadrul de probă {usd(day['test_shot_usd_micros'])} și restul mișcării "
+        f"{usd(day['motion_usd_micros'])} ({day['stills_model']}, {day['motion_model']})."
+    )
+    spare = limit - int(day["day_usd_micros"])
+    if spare < 0:
+        return (
+            f"{said} Bugetul zilnic de {usd(limit)} nu ține ziua: al doilea film se oprește "
+            "la pasul pe care bugetul nu îl mai poate ține și ziua nu își atinge ținta. "
+            f"Bugetul zilnic se schimbă în {BUDGET_PLACE[2]}: cel puțin "
+            f"{usd(day['day_usd_micros'])}, plus loc pentru reluări."
+        )
+    return f"{said} Din bugetul zilnic de {usd(limit)} rămân {usd(spare)} pentru reluări."
+
+
 def _daily_budget_films_check(
     engine: Engine, settings: Settings, environment: str, now: datetime
 ) -> dict[str, Any]:
@@ -1187,9 +1300,36 @@ def _daily_budget_films_check(
         "per_film_usd": format_micros(here),
         "daily_limit_usd": format_micros(limit),
     }
+    montage_line = ""
     if environment == "PRODUCTION":
         from app.media.shooting_sheet import film_ceiling_micros  # noqa: PLC0415
 
+        # The day's montage films at today's prices (2026-10-16): a film of about 40 rows
+        # holds a step's next round only, but the day still has to pay for both films.
+        day = _montage_day(engine, settings, films)
+        if day is not None:
+            value["montage_day"] = {
+                key: format_micros(item) if key.endswith("_usd_micros") else item
+                for key, item in day.items()
+            }
+            detail += (
+                f"; montaj: {count(films, 'film', 'filme')} × ~{day['rows']} cadre ≈ "
+                f"{_usd(day['day_usd_micros'])} USD fără reluări"
+            )
+            montage_line = " " + _montage_words(day, limit)
+            if int(day["day_usd_micros"]) > limit:
+                return _check(
+                    "daily_budget_films",
+                    False,
+                    DEGRADING,
+                    "",
+                    montage_line.strip(),
+                    detail=detail,
+                    value=value,
+                    failed="montage_day_over_budget",
+                    place=BUDGET_PLACE,
+                    technical=_budget_films_technical(environment),
+                )
         _, source = film_ceiling_micros(settings, engine=engine)
         if source == "buget_zilnic":
             return _check(
@@ -1199,7 +1339,8 @@ def _daily_budget_films_check(
                 f"Bugetul zilnic de {_usd(limit)} USD este comun tuturor filmelor și agenților. "
                 "Nu ai stabilit un plafon separat pe film: fiecare pas folosește suma rămasă "
                 "după cheltuielile și rezervările existente. Majorarea bugetului se aplică "
-                "la următoarea verificare; suma nu se multiplică după numărul filmelor.",
+                "la următoarea verificare; suma nu se multiplică după numărul filmelor."
+                + montage_line,
                 "",
                 detail=detail,
                 value=value,

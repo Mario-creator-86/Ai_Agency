@@ -118,6 +118,7 @@ from app.media.assembler import (
     SpendMeter,
     _paid_attempts,
     _record_intent,
+    budget_cut,
     classify_vendor_failure,
     collect_submitted_takes,
     failure_code_of,
@@ -420,6 +421,9 @@ class _Ledger:
     meter: SpendMeter = field(default_factory=SpendMeter)
     images: int = 0
     take_ids: list[str] = field(default_factory=list)
+    #: The step's hold on the budgets (`shooting_sheet.StepHold`): its next round, grown before
+    #: every later purchase. None (a scene redo, a direct call): the cap alone binds.
+    hold: Any = None
 
     @property
     def committed(self) -> float:
@@ -428,6 +432,29 @@ class _Ledger:
     @committed.setter
     def committed(self, value: float) -> None:
         self.meter.committed = value
+
+    def room(self, wanted: float = 0.0) -> float:
+        """The credits the step may still commit: the cap's rest and, with a budget hold, no
+        more than it covers once grown for ``wanted`` more (`StepHold.room`)."""
+        rest = float(self.cap) - self.committed
+        if self.hold is None:
+            return rest
+        return min(rest, float(self.hold.room(self.committed, wanted)))
+
+    def round_room(self, price: float) -> None:
+        """Before a round is fitted (`gpu_batch.run_rounds`): the hold grows to the round, or
+        by what the budgets have left, and the round is cut to what is held."""
+        if self.hold is not None:
+            self.hold.room(self.committed, price, partial=True)
+
+    def budget_words(self, wanted: float | None = None) -> str | None:
+        """The budget's words when the hold, not the cap, stopped the next purchase
+        (``wanted`` credits, when known)."""
+        if self.hold is None:
+            return None
+        if wanted is None:
+            return self.hold.budget_words()
+        return self.hold.budget_words(self.committed, wanted)
 
 
 # ------------------------------------------------------------------------------ the plan
@@ -2308,7 +2335,9 @@ class _StillRounds:
                 first_round=first,
                 next_round=self.next_round,
                 price_credits=self.price,
-                cap_left=lambda: float(self.ledger.cap) - self.ledger.committed,
+                cap_left=self.ledger.room,
+                # The budget hold grows to each round before it is fitted (`StepHold`).
+                make_room=self.ledger.round_room if self.ledger.hold is not None else None,
                 guard=guard,
                 stopped=stopped,
                 on_submitted=self.submitted,
@@ -2320,6 +2349,7 @@ class _StillRounds:
                 on_unsent=self.unsent,
                 on_wait=director_wait_work(self.engine, self.registry),
             )
+        budget_cut(summary, self.ledger.budget_words)
         if summary.get("stopped") and summary.get("stopped") != UNCERTAIN:
             self.stop = self.stop or summary["stopped"]
         for index, state in self.states.items():
@@ -2388,6 +2418,7 @@ def run_stills_stage(
     margin: float | None = None,
     unasked: bool = True,
     timezone: str | None = None,
+    budget_hold: Any = None,
 ) -> dict[str, Any]:
     """The stills step of one film, bought only under the Owner's yes for this plan.
 
@@ -2412,6 +2443,10 @@ def run_stills_stage(
     `stills_plan`; the shooting sheet may pass ``plan_hash_of`` so its own sheet hash is the
     one the yes is bound to. Raises `StillsStageRefused` when nothing may be bought; otherwise
     returns what was bought and judged, per scene.
+
+    ``budget_hold`` is the sheet step's hold on the budgets (`shooting_sheet.StepHold`): it
+    holds the step's first round, and is grown before every later purchase or round; what it
+    cannot hold is not bought, and the step ends on the budget's words.
     """
     from app.economy.credits import record_measured_prices  # noqa: PLC0415
     from app.runbook.services import stop_requested  # noqa: PLC0415 - runbook imports media
@@ -2613,7 +2648,7 @@ def run_stills_stage(
     per_image = per_request / STILL_CANDIDATES
     work_dir = (storage_root or DEFAULT_STORAGE_ROOT) / storyboard_id / "stills"
     work_dir.mkdir(parents=True, exist_ok=True)
-    ledger = _Ledger(cap=cap, meter=meter if meter is not None else SpendMeter())
+    ledger = _Ledger(cap=cap, meter=meter if meter is not None else SpendMeter(), hold=budget_hold)
     limit = max_paid_attempts_per_scene()
     figure_one: bytes | None = None
     first_live = live[0].index if live else None
@@ -2717,8 +2752,8 @@ def run_stills_stage(
                     "reason": attempts_reason(scene.index, requests, limit),
                 }
                 break
-            if ledger.committed + per_request > ledger.cap:
-                stopped = (
+            if per_request > ledger.room(per_request) + 1e-9:
+                stopped = ledger.budget_words(per_request) or (
                     f"STOPPED_AT_CAP: încă o cerere ({per_request} credite) ar depăși plafonul "
                     f"aprobat de {ledger.cap} credite (deja {ledger.committed:.0f})."
                 )

@@ -971,7 +971,9 @@ def test_a_repeated_command_id_returns_the_stored_result_and_buys_nothing(
 
 
 @requires_ffmpeg
-def test_two_films_against_one_budget_hold_their_caps_and_the_second_is_refused(engine, tmp_path):
+def test_two_films_against_one_budget_hold_their_rounds_and_the_second_is_refused(
+    engine, tmp_path
+):
     from app.economy.models import SpendReservation
 
     (tmp_path / "a").mkdir()
@@ -979,8 +981,9 @@ def test_two_films_against_one_budget_hold_their_caps_and_the_second_is_refused(
     first_film = film_with_stills(engine, tmp_path / "a", scenes=3)
     second_film = film_with_stills(engine, tmp_path / "b", scenes=3)
     mode_studio(engine)
-    # Each hero holds its cap of 680 credits (6.80 USD); together they do not fit in 10.
-    set_budget(engine, BudgetCommand(period="DAILY", limit_usd="10"))
+    # Each hero holds its next round, 340 credits (3.40 USD), not its cap of 680: the retry
+    # is held only when it is bought (`StepHold`, 2026-10-16). Together they do not fit in 5.
+    set_budget(engine, BudgetCommand(period="DAILY", limit_usd="5"))
     account = Account(10_000)
     spy = HeldVideo("seedance2_5", account)
     first_models = Models(spy)
@@ -1003,9 +1006,10 @@ def test_two_films_against_one_budget_hold_their_caps_and_the_second_is_refused(
     assert second_models.posts() == 0 and first_models.posts() == 1
     with Session(engine) as session:
         holds = list(session.scalars(select(SpendReservation)))
-    # The first hold was settled by its booking; the refused one held nothing.
+    # The first hold was settled by its booking; the refused one held nothing. The first
+    # never grew for a retry it did not buy, and one that does not fit is never half-held.
     assert [h.status for h in holds] == ["SETTLED"]
-    assert holds[0].usd_micros == 6_800_000
+    assert holds[0].usd_micros == 3_400_000
     assert holds[0].purpose == "sheet:test_shot"
 
 

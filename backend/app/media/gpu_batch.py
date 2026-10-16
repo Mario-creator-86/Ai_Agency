@@ -312,6 +312,7 @@ def run_rounds(
     on_unsent: Callable[[list[ItemOutcome], dict[str, Any]], None] | None = None,
     on_wait: Callable[[], None] | None = None,
     accounting: Any = None,
+    make_room: Callable[[float], Any] | None = None,
 ) -> dict[str, Any]:
     """Buy the step's rounds inside one GPU session; returns what happened.
 
@@ -338,7 +339,14 @@ def run_rounds(
     items were never bought, so their credits go back to the meter (the whole round's, its GPU
     start too, when no job of the round was accepted), the stop says so (`NOT_QUEUED_STOP`)
     and ``on_unsent(outcomes, proof)`` lets the stage re-record its takes. Not proven: today's
-    behaviour, the items counted and nothing sent again. ``summary['unsent_proof']`` says which."""
+    behaviour, the items counted and nothing sent again. ``summary['unsent_proof']`` says which.
+
+    ``make_room(price)`` is the step's budget hold (`shooting_sheet.StepHold`, through the
+    stage's ledger): before the first round is fitted, and before every later round, it is
+    asked to grow to the whole round's price on top of what the step committed, within what
+    the budgets have left. ``cap_left`` then reads what the hold covers, so a round the budget
+    cannot hold whole is cut like one the cap cannot (2026-10-16: the step used to hold three
+    times every still of the film before its first round)."""
     summary: dict[str, Any] = {
         "rounds": 0,
         "items_sent": 0,
@@ -383,6 +391,8 @@ def run_rounds(
 
     # Fit, upload and validate every chunk before opening a paid GPU session. The adapter
     # keeps the exact reserved requests so dispatch cannot accidentally rebuild old prompts.
+    if make_room is not None:
+        make_room(float(price_credits(list(first_round))))
     initial_fitted = fit_round(first_round, price_credits, float(cap_left()))
     if not initial_fitted:
         summary["cap_stop"] = summary["stopped"] = CAP_STOP.format(
@@ -408,6 +418,11 @@ def run_rounds(
                 if reason:
                     summary["stopped"] = reason
                     break
+                if make_room is not None and summary["rounds"]:
+                    # A later round (re-rolls, retries, the scenes that waited for Figure 1):
+                    # the budget hold grows to it first. The first round's room was made
+                    # before it was fitted above, so its fit here is the prepared one.
+                    make_room(float(price_credits(requests)))
                 left = float(cap_left())
                 fitted = fit_round(requests, price_credits, left)
                 in_round = {(request.project_id, request.scene_id) for request in fitted}

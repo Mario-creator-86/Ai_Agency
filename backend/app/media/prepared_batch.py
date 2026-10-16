@@ -45,6 +45,9 @@ class RoundWork:
     credits_for_seconds: Callable[..., float] | None = None
     on_unsent: Callable[..., None] | None = None
     on_wait: Callable[[], None] | None = None
+    #: The step's budget hold, grown before each round (`gpu_batch.run_rounds`); None: the
+    #: purchase held its whole cap (a scene redo), and a bundle of them reads ``cap_left``.
+    make_room: Callable[[float], Any] | None = None
 
     def run_purchase(self) -> dict[str, Any]:
         from app.media.gpu_batch import run_rounds  # noqa: PLC0415

@@ -2261,6 +2261,13 @@ def _walk_staircase(
             # His mode was lowered while the stair bought (spec 51): what it bought is in the
             # books, the rest waits on his mode, never on a fault of the film's.
             return stop("WAITING", step, str(result["stopped"]), refusal="BLOCKED_MODE")
+        budget = result.get("budget_stopped")
+        if isinstance(budget, dict) and budget.get("status"):
+            # The stair's next round could not be held within his budget (`StepHold`): what
+            # it bought is in the books, and the film waits on the budget exactly as a stair
+            # refused at its start does (his card when his rule raises one), never on a fault.
+            reason = str(budget.get("reason") or result.get("stopped") or "")
+            return stop("WAITING", step, reason, refusal=str(budget["status"]))
         if result.get("stopped"):
             return stop("WAITING", step, str(result["stopped"]), refusal="STOPPED")
     return stop("WAITING", None, "Scara filmului nu s-a încheiat în această rulare.")

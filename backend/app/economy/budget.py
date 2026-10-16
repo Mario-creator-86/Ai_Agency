@@ -538,6 +538,76 @@ def reserve_spend(
         }
 
 
+def extend_reservation(
+    engine: Engine,
+    reservation_id: str,
+    usd_micros: int,
+    *,
+    correlation_id: str | None = None,
+    now: datetime | None = None,
+    partial: bool = False,
+) -> dict[str, Any]:
+    """Grow a standing hold by ``usd_micros`` within every active budget, behind the write lock.
+
+    A paid step holds its next round, not its whole cap, and grows the same row before each
+    later round (`media.shooting_sheet.StepHold`, 2026-10-16: a 40-shot film held three times
+    every still up front, and the day's second film was refused before its first still). When
+    the whole sum does not fit, the hold does not grow and the refusal's words come back; with
+    ``partial`` (a round of many items) it grows by what the tightest budget has left, and the
+    round is cut to what is held (`gpu_batch.fit_round`). Nothing bought passes a budget,
+    and a single purchase never takes what is left of the day without fitting in it. A hold
+    no longer RESERVED (settled, released, swept by the watchdog) is never grown: nothing
+    more is bought on it. Returns ``allowed`` (the whole sum fitted), ``added_usd_micros``
+    and, refused, the budget's ``period`` and ``reason``.
+    """
+    moment = now or datetime.now(UTC)
+    wanted = max(0, int(usd_micros))
+    with Session(engine) as session, session.begin():
+        lock_for_write(session)
+        row = session.get(SpendReservation, reservation_id)
+        if row is None or row.status != "RESERVED":
+            return {
+                "allowed": False,
+                "added_usd_micros": 0,
+                "period": None,
+                "reason": "Rezervarea pasului nu mai este activă; nu se mai cumpără nimic în "
+                "acest pas.",
+            }
+        room = wanted
+        refused: dict[str, Any] | None = None
+        for period in _period_status(session, moment, studio_timezone(session)):
+            committed = period["spent_usd_micros"] + period["reserved_usd_micros"]
+            left = max(0, int(period["limit_usd_micros"]) - committed)
+            if left < wanted and (refused is None or left < room):
+                refused = _refusal(period, wanted)
+            room = min(room, left)
+        if refused is not None and not partial:
+            room = 0
+        if room > 0:
+            row.usd_micros = int(row.usd_micros) + room
+            event = append_event(
+                session,
+                "economy.spend_reservation_grown",
+                "spend_reservation",
+                row.id,
+                1,
+                {
+                    "purpose": row.purpose,
+                    "added_usd": format_micros(room),
+                    "usd": format_micros(row.usd_micros),
+                },
+                correlation_id or row.correlation_id,
+            )
+            row.event_id = event.event_id
+        return {
+            "allowed": refused is None,
+            "added_usd_micros": room,
+            "usd_micros": int(row.usd_micros),
+            "period": refused["period"] if refused else None,
+            "reason": refused["reason"] if refused else "",
+        }
+
+
 def _close_reservation(
     session: Session, reservation_id: str, status: str, reference: str, correlation: str
 ) -> dict[str, Any]:

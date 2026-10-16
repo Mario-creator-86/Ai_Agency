@@ -14,10 +14,17 @@ reads the business day's goal — one factual short and one serial episode out o
 (`day_goal`) — and, while it is not met, queues the day's run again (the same queued run his
 button queues, ``manual``), once the last run finished and nothing of the day is at work: no
 run queued or running, no film continuation at work (the serial's filming is the day's own
-work, walked by the worker), `DAY_GOAL_GAP_MINUTES` after the last run ended. It stops, and
-says so once, when the day cannot be moved by another run: his autonomy stop, safe mode, the
-daily budget spent, or `DAY_GOAL_RUNS_PER_DAY` runs queued by this pass already (the same
-refusal many times over is a problem for him: a letter to the Owner, once a day).
+work, walked by the worker), `DAY_GOAL_GAP_MINUTES` after the last run ended. It stops when
+the day cannot be moved by another run: his autonomy stop, safe mode, the daily budget spent,
+or `DAY_GOAL_RUNS_PER_DAY` runs queued by this pass already (the same refusal many times over
+is a problem for him: a letter to the Owner, once a day).
+
+The budget is spent when nothing is left of it, and also when a film's next round could not be
+held within what is left (`shooting_sheet.STEP_HOLD_REFUSED_EVENT`, 2026-10-16). Before, a
+day whose remaining budget could not hold a film's step still counted as unspent: it queued
+six more runs that each met the same refusal, then wrote him «6 rulări» for what was his
+budget. A spent budget is money, so it reaches him as the film's budget card when his rule
+raises one (`decisions.sources.film_budget`), never as a letter from this pass.
 
 Nothing here buys or decides: the run it queues asks for anything paid under his rule, behind
 his stop, safe mode and his mode, exactly as his own button does.
@@ -130,15 +137,40 @@ def _film_at_work(session: Any) -> bool:
 
 
 def _budget_spent(engine: Any) -> bool:
-    from app.economy.repurchase_gate import _daily_budget  # noqa: PLC0415
+    """Whether the daily budget can buy nothing more today: none of it is left, or the newest
+    round the budgets refused today (`STEP_HOLD_REFUSED_EVENT`) still needs more than its
+    period has left now. Raised by the Owner since, the round fits and the day goes on."""
+    from sqlalchemy import select  # noqa: PLC0415
+    from sqlalchemy.orm import Session  # noqa: PLC0415
 
-    budget = _daily_budget(engine)
-    if not budget or budget.get("remaining_usd") is None:
-        return False
+    from app.economy.budget import budget_status  # noqa: PLC0415
+    from app.media.shooting_sheet import STEP_HOLD_REFUSED_EVENT  # noqa: PLC0415
+    from app.models import DomainEvent  # noqa: PLC0415
+
     try:
-        return float(budget["remaining_usd"]) <= 0
-    except (TypeError, ValueError):
+        periods = {str(p["period"]): p for p in budget_status(engine)["budgets"]}
+    except Exception:  # noqa: BLE001 - a budget that cannot be read stops nothing here
         return False
+    daily = periods.get("DAILY")
+    if daily is None:
+        return False
+    if int(daily["remaining_usd_micros"]) <= 0:
+        return True
+    with Session(engine) as session:
+        refused = session.scalar(
+            select(DomainEvent)
+            .where(
+                DomainEvent.event_type == STEP_HOLD_REFUSED_EVENT,
+                DomainEvent.timestamp >= str(daily["since"]),
+            )
+            .order_by(DomainEvent.sequence.desc())
+            .limit(1)
+        )
+    payload = refused.payload if refused is not None and isinstance(refused.payload, dict) else {}
+    period = periods.get(str(payload.get("period") or ""))
+    if period is None:
+        return False
+    return int(payload.get("need_usd_micros") or 0) > int(period["remaining_usd_micros"])
 
 
 def _letter_once(session: Any, date_iso: str, why: str, goal: dict[str, Any]) -> bool:
@@ -209,10 +241,18 @@ def keep_the_day_going(context: WatchdogContext) -> dict[str, Any]:
             last = last.replace(tzinfo=UTC)
         if datetime.now(UTC) - last < timedelta(minutes=DAY_GOAL_GAP_MINUTES):
             return {"queued": None, "goal": goal, "why": "the last run just ended"}
-    stop_why = None
     if _budget_spent(engine):
-        stop_why = "bugetul zilnic este cheltuit"
-    elif queued_today >= DAY_GOAL_RUNS_PER_DAY:
+        # Money is his card, not a letter (2026-10-12): the film waiting on the budget carries
+        # it when his rule raises one, and another run would meet the same refusal.
+        return {
+            "queued": None,
+            "goal": goal,
+            "why": "bugetul zilnic este cheltuit: runda următoare nu încape în ce a rămas",
+            "letter": False,
+            "budget": True,
+        }
+    stop_why = None
+    if queued_today >= DAY_GOAL_RUNS_PER_DAY:
         stop_why = f"{DAY_GOAL_RUNS_PER_DAY} rulări pornite de studio azi, fără cele două publicări"
     if stop_why:
         with Session(engine) as session, session.begin():

@@ -1891,8 +1891,9 @@ def may_spend_step(engine: Engine, cap_usd_micros: int) -> tuple[str, str] | Non
 #
 # 2026-10-02 (GATES_BEFORE_BUYING). Nothing is bought unless every gate passes, in this order:
 # the film's purchase lease (one buyer per film, MONEY-04), the balance, the film's own
-# ceiling (PRODUCTION, MONEY-07), a hold of the step's cap against the budgets (AR-03: a
-# reservation decided behind the write lock, not a reading), and then the Owner's rule in
+# ceiling (PRODUCTION, MONEY-07) against the step's whole cap, a hold of the step's next round
+# against the budgets (AR-03: a reservation decided behind the write lock, not a reading;
+# grown before each later round since 2026-10-16, `StepHold`), and then the Owner's rule in
 # `may_act` (which refuses unasked buying in PRODUCTION with no daily budget, MONEY-06).
 
 #: A second buyer of a film while the first is still buying (409; the day WAITs).
@@ -1903,6 +1904,10 @@ OVER_FILM_BUDGET = "OVER_FILM_BUDGET"
 FILM_EXCESS_EVENT = "media.film_budget_excess_approved"
 #: The Owner's consent to go past a period budget for one step.
 BUDGET_EXCESS_EVENT = "media.budget_excess_approved"
+#: A step's next round the budgets could not hold (its first, or a re-roll round): what it
+#: needed and the period that refused it. `passes.day_goal` reads it as the day's budget spent
+#: while that period has less left than the round needed.
+STEP_HOLD_REFUSED_EVENT = "media.step_hold_refused"
 #: What a lease is held for, in the Owner's words.
 LEASE_WORDS_RO: dict[str, str] = {
     STILLS_STEP: "pasul «imaginile»",
@@ -2781,15 +2786,21 @@ def hold_step_budget(
     allow_over_budget: bool,
     correlation_id: str,
     detail: dict[str, Any] | None = None,
+    step_cap_usd_micros: int | None = None,
 ) -> str | None:
-    """Hold the step's cap against every active budget (`reserve_spend`), or refuse.
+    """Hold the step's cap, or its next round, against every active budget (`reserve_spend`),
+    or refuse.
 
     The hold is decided behind the write lock, so a second step (another film, the Owner's
     press beside the day) reads it as taken (AR-03: two films were both told the last ten
     dollars were free). Its purpose is ``sheet:<step>`` and its correlation the film. With
     the Owner's explicit consent the sum is held anyway and his consent recorded. Returns the
     reservation id (None when nothing was held: a cap of 0). The caller settles it once the
-    purchase is in the books, or lets it go when nothing was bought."""
+    purchase is in the books, or lets it go when nothing was bought.
+
+    ``step_cap_usd_micros`` is given when the sum held is only the step's next round (a sheet
+    step, `StepHold`): his refusal then names the round and the step's whole cap. A refusal is
+    recorded (`STEP_HOLD_REFUSED_EVENT`) for the day's goal to read as the budget spent."""
     from app.economy.budget import reserve_spend  # noqa: PLC0415 - economy imports media
     from app.services import append_event  # noqa: PLC0415
 
@@ -2798,8 +2809,11 @@ def hold_step_budget(
     if hold["allowed"]:
         return hold.get("reservation_id")
     period = str(hold.get("period") or "DAILY")
-    reason = _budget_words(engine, period, int(cap_usd_micros))
+    reason = _budget_words(
+        engine, period, int(cap_usd_micros), step_cap_usd_micros=step_cap_usd_micros
+    )
     if not allow_over_budget:
+        _hold_refused(engine, storyboard_id, step, period, int(cap_usd_micros), reason)
         raise PurchaseGateRefused(
             "OVER_DAILY_BUDGET" if period == "DAILY" else "OVER_BUDGET", reason
         )
@@ -2877,6 +2891,124 @@ def close_step_hold(
         settle_step_hold(engine, reservation_id, reference, correlation_id)
 
 
+@dataclass
+class StepHold:
+    """A paid step's hold on the budgets: its next round, grown before each later one.
+
+    2026-10-16 (the montage): a step held its whole cap at its start, three times every still
+    of every row. A 37-row episode's stills held 10,83 USD of the day's 20 while their first
+    round cost 3,61, so the day's second film was refused OVER_DAILY_BUDGET before its first
+    still. Now the step holds its first round with its GPU starts (the plan's
+    ``cost_credits``), and before every later purchase the same row grows to what the step has
+    committed plus what it is about to send (`economy.budget.extend_reservation`, behind the
+    write lock). It never grows past the step's cap, and only within what every active budget
+    has left. A round the budget cannot hold whole is cut to what is held. When nothing fits,
+    the step ends on what it bought with the budget's words (``refusal``). The day reads that
+    end as OVER_DAILY_BUDGET (``budget_stop``, `runbook.stages._walk_staircase`), the same path
+    as a step refused at its start, never as a fault of the film. The film's ceiling is still
+    checked against the whole cap before the step starts (`check_film_ceiling`)."""
+
+    engine: Engine
+    storyboard_id: str
+    step: str
+    cap_credits: float
+    credit_usd: float
+    correlation_id: str
+    reservation_id: str | None = None
+    held_micros: int = 0
+    #: The budget's refusal of a growth, kept once given: its period, words and the sum the
+    #: round needed beyond the hold (period "" when the row itself was no longer held).
+    refusal: dict[str, Any] | None = None
+    #: Whether the step ended on the budget's words (the stage said so, `budget_words`).
+    stopped: bool = False
+
+    @property
+    def covered_credits(self) -> float:
+        """The credits the hold covers now."""
+        return self.held_micros / (float(self.credit_usd) * 1_000_000)
+
+    def room(self, committed: float, wanted: float = 0.0, *, partial: bool = False) -> float:
+        """The credits the step may still commit: the cap's rest, and no more than the hold
+        covers once grown for ``wanted`` more on top of ``committed``. ``partial`` (a round of
+        many items, cut to fit) lets the hold grow by what the budgets have left when the
+        whole round does not fit; a single purchase grows it whole or not at all."""
+        rest = float(self.cap_credits) - float(committed)
+        if wanted > 0:
+            total = min(float(self.cap_credits), float(committed) + float(wanted))
+            self._cover(total, partial=partial)
+        return min(rest, self.covered_credits - float(committed))
+
+    def _cover(self, total_credits: float, *, partial: bool) -> None:
+        from app.economy.budget import extend_reservation, reserve_spend  # noqa: PLC0415
+
+        add = credits_to_micros(total_credits, self.credit_usd) - self.held_micros
+        if add <= 0:
+            return
+        if self.reservation_id is None:
+            # Nothing held yet (a first round priced at nothing): the hold starts here.
+            hold = reserve_spend(
+                self.engine, add, f"sheet:{self.step}", self.storyboard_id, note="runda pasului"
+            )
+            self.reservation_id = hold.get("reservation_id")
+            grown = add if hold["allowed"] else 0
+        else:
+            hold = extend_reservation(
+                self.engine,
+                self.reservation_id,
+                add,
+                correlation_id=self.correlation_id,
+                partial=partial,
+            )
+            grown = int(hold.get("added_usd_micros") or 0)
+        self.held_micros += grown
+        if hold["allowed"] or self.refusal is not None:
+            return
+        period = str(hold.get("period") or "")
+        if not period:
+            # The row is no longer held (settled, or swept by the watchdog): nothing more is
+            # bought on it, and that is not the budget's refusal.
+            self.refusal = {"period": "", "reason": str(hold.get("reason") or "")}
+            return
+        reason = _budget_words(
+            self.engine,
+            period,
+            add,
+            step_cap_usd_micros=credits_to_micros(self.cap_credits, self.credit_usd),
+        )
+        self.refusal = {"period": period, "reason": reason, "need_usd_micros": add}
+
+    def budget_words(self, committed: float | None = None, wanted: float = 0.0) -> str | None:
+        """The refusal's words when the hold, not the cap, is what stops the step's next
+        purchase (``wanted`` credits on top of ``committed``, when the caller knows them);
+        None when it is the cap (or nothing was refused). Once said, the step is marked as
+        ended on them, and a budget's refusal is recorded for the day's goal
+        (`STEP_HOLD_REFUSED_EVENT`): only a refusal that stopped a purchase, never a growth
+        asked ahead of a retry that was not needed."""
+        if self.refusal is None or self.covered_credits >= float(self.cap_credits) - 1e-9:
+            return None
+        if committed is not None and float(committed) + wanted > float(self.cap_credits) + 1e-9:
+            return None  # the cap he approved stops it, whatever the budget has left
+        period = str(self.refusal["period"])
+        reason = str(self.refusal["reason"])
+        if not self.stopped and period:
+            need = int(self.refusal.get("need_usd_micros") or 0)
+            _hold_refused(self.engine, self.storyboard_id, self.step, period, need, reason)
+        self.stopped = True
+        return reason
+
+    def budget_stop(self) -> dict[str, str] | None:
+        """What the step's result carries when it ended on a budget: the refusal's status,
+        period and words, read by the day as his budget (OVER_DAILY_BUDGET / OVER_BUDGET)."""
+        if not self.stopped or self.refusal is None or not self.refusal["period"]:
+            return None
+        period = str(self.refusal["period"])
+        return {
+            "status": "OVER_DAILY_BUDGET" if period == "DAILY" else "OVER_BUDGET",
+            "period": period,
+            "reason": str(self.refusal["reason"]),
+        }
+
+
 #: The command type a paid press of the Owner's is remembered under (`CommandRecord`).
 PURCHASE_COMMAND = "SheetPurchase"
 
@@ -2910,8 +3042,15 @@ def remember_purchase(
         logger.warning("purchase_command_not_remembered", extra={"command_id": str(command_id)})
 
 
-def _budget_words(engine: Engine, period: str, cap_usd_micros: int) -> str:
-    """The Romanian refusal of a period budget for a step's cap, with what is left."""
+def _budget_words(
+    engine: Engine,
+    period: str,
+    cap_usd_micros: int,
+    *,
+    step_cap_usd_micros: int | None = None,
+) -> str:
+    """The Romanian refusal of a period budget for a step's cap, with what is left; for a
+    step holding only its next round (``step_cap_usd_micros`` given), the round and the cap."""
     from app.economy.budget import budget_status  # noqa: PLC0415 - economy imports media
     from app.economy.services import format_micros  # noqa: PLC0415
 
@@ -2924,11 +3063,46 @@ def _budget_words(engine: Engine, period: str, cap_usd_micros: int) -> str:
         if detail.get("reserved_usd_micros")
         else ""
     )
+    asked = (
+        f"plafonul pasului este {format_micros(cap_usd_micros)} USD"
+        if step_cap_usd_micros is None
+        else f"runda următoare a pasului cere {format_micros(cap_usd_micros)} USD (plafonul "
+        f"pasului, cu reluările, este {format_micros(step_cap_usd_micros)} USD)"
+    )
     return (
-        f"Bugetul {word} de {detail['limit_usd']} USD ar fi depășit: plafonul pasului este "
-        f"{format_micros(cap_usd_micros)} USD și au rămas {detail['remaining_usd']} USD{held}. "
+        f"Bugetul {word} de {detail['limit_usd']} USD ar fi depășit: {asked} și au rămas "
+        f"{detail['remaining_usd']} USD{held}. "
         "Confirmați explicit depășirea pe foaia de filmare, sau așteptați perioada următoare."
     )
+
+
+def _hold_refused(
+    engine: Engine, storyboard_id: str, step: str, period: str, need_micros: int, reason: str
+) -> None:
+    """`STEP_HOLD_REFUSED_EVENT`: the step's next round did not fit a period budget. Never
+    raises: the refusal itself stands whatever happens to its record."""
+    from uuid import uuid4  # noqa: PLC0415
+
+    from app.services import append_event  # noqa: PLC0415 - services imports media
+
+    try:
+        with Session(engine) as session, session.begin():
+            append_event(
+                session,
+                STEP_HOLD_REFUSED_EVENT,
+                "storyboard",
+                storyboard_id,
+                1,
+                {
+                    "step": step,
+                    "period": period,
+                    "need_usd_micros": int(need_micros),
+                    "reason": reason,
+                },
+                str(uuid4()),
+            )
+    except Exception:  # noqa: BLE001 - a refusal is never lost to its bookkeeping
+        logger.warning("step_hold_refusal_not_recorded", extra={"storyboard_id": storyboard_id})
 
 
 #: The books' reference column holds 120 characters; a correlation id is cut to fit.
@@ -3275,9 +3449,11 @@ def run_sheet_step(
 
     The whole step runs under the film's purchase lease (holder: ``correlation_id``): a second
     buyer of the same film is refused FILM_BUSY («Filmul este deja în lucru») before anything
-    is priced. Before the stage, the film's ceiling (PRODUCTION) and a hold of the step's cap
-    against the budgets (`hold_step_budget`); the hold is settled once the purchase is in the
-    books and let go on every refusal.
+    is priced. Before the stage, the film's ceiling (PRODUCTION) against the step's cap, and a
+    hold of the step's next round against the budgets (`hold_step_budget`, `StepHold`: grown
+    before each later round, or the whole cap with his consent to go over); the hold is
+    settled once the purchase is in the books and let go on every refusal. A step that ended
+    because its next round could not be held carries ``budget_stopped``.
     """
     if step not in SHEET_STEPS:
         raise SheetStepRefused("UNKNOWN_STEP", f"Pas necunoscut: {step}.")
@@ -3464,6 +3640,11 @@ def _run_sheet_step(
     if not local_step:
         _balance_covered(engine, storyboard_id, float(balance["credits"]))
     cap_micros = credits_to_micros(cap, ctx.table.credit_usd)
+    # The budgets hold the step's next round, not its cap (`StepHold`, 2026-10-16): the first
+    # round with its GPU starts, grown before every later purchase within what the budgets
+    # have left. His explicit consent to go over a budget covers the whole cap, held at once.
+    held = cap if allow_over_budget else min(cap, round_credits)
+    held_micros = credits_to_micros(held, ctx.table.credit_usd)
     try:
         check_film_ceiling(
             engine,
@@ -3481,14 +3662,25 @@ def _run_sheet_step(
             engine,
             storyboard_id,
             step,
-            cap_micros,
+            held_micros,
             plan_hash=plan_hash,
             allow_over_budget=allow_over_budget,
             correlation_id=correlation_id,
-            detail={"cap_credits": cap, "cap_usd": info["cap_usd"]},
+            detail={"cap_credits": cap, "cap_usd": info["cap_usd"], "held_credits": held},
+            step_cap_usd_micros=None if held == cap else cap_micros,
         )
     except PurchaseGateRefused as exc:
         raise SheetStepRefused(exc.status, exc.reason_ro) from exc
+    budget_hold = StepHold(
+        engine=engine,
+        storyboard_id=storyboard_id,
+        step=step,
+        cap_credits=float(cap),
+        credit_usd=float(ctx.table.credit_usd),
+        correlation_id=correlation_id,
+        reservation_id=reservation_id,
+        held_micros=held_micros if reservation_id else 0,
+    )
     reference = purchase_reference(
         f"foaie:{storyboard_id}:{step}:{str(plan_hash)[:16]}", correlation_id
     )
@@ -3519,6 +3711,7 @@ def _run_sheet_step(
                 margin=margin,
                 unasked=unasked,
                 timezone=getattr(settings, "timezone", None),
+                budget_hold=budget_hold,
             )
         else:
             if adapter_for_model is None:
@@ -3551,13 +3744,18 @@ def _run_sheet_step(
                 meter=meter,
                 unasked=unasked,
                 timezone=getattr(settings, "timezone", None),
+                budget_hold=budget_hold,
             )
     except SheetStepRefused:
-        release_step_hold(engine, reservation_id, f"pasul {step} refuzat", correlation_id)
+        release_step_hold(
+            engine, budget_hold.reservation_id, f"pasul {step} refuzat", correlation_id
+        )
         raise
     except (StillsStageRefused, MotionStepRefused) as exc:
         # A stage refuses before it sends anything: nothing to book, nothing held.
-        release_step_hold(engine, reservation_id, f"pasul {step}: {exc.status}", correlation_id)
+        release_step_hold(
+            engine, budget_hold.reservation_id, f"pasul {step}: {exc.status}", correlation_id
+        )
         raise _step_refused(
             engine, storyboard_id, step, plan_hash, exc, info, cap, correlation_id
         ) from exc
@@ -3567,11 +3765,15 @@ def _run_sheet_step(
         # committed goes into the books now, the Owner gets his letter, and the error is
         # HARD, so neither the runbook's retry nor a second attempt of the day re-runs it.
         if not meter.attempts:
-            release_step_hold(engine, reservation_id, f"pasul {step} a căzut", correlation_id)
+            release_step_hold(
+                engine, budget_hold.reservation_id, f"pasul {step} a căzut", correlation_id
+            )
             raise  # nothing was sent: the step may be tried again
         credits, measured = interrupted_spend(meter, source, balance["credits"])
         if credits <= 0:
-            release_step_hold(engine, reservation_id, f"pasul {step} a căzut", correlation_id)
+            release_step_hold(
+                engine, budget_hold.reservation_id, f"pasul {step} a căzut", correlation_id
+            )
             raise  # sent, and refused before anything was made: nothing was charged
         from app.providers.runpod.wiring import billing_name  # noqa: PLC0415
 
@@ -3590,7 +3792,7 @@ def _run_sheet_step(
         )
         close_step_hold(
             engine,
-            reservation_id,
+            budget_hold.reservation_id,
             spent_credits=credits,
             booked=booked,
             reference=reference,
@@ -3607,11 +3809,14 @@ def _run_sheet_step(
     from app.providers.runpod.wiring import billing_name  # noqa: PLC0415
 
     result["billing_provider"] = billing_name(image_adapter if step == STILLS_STEP else source)
+    # The step ended on the budget (its next round could not be held): the day reads it as
+    # his budget, as a step refused at its start, never as a fault of the film.
+    result["budget_stopped"] = budget_hold.budget_stop()
     bought = _step_bought(engine, storyboard_id, step, plan_hash, ctx, result, correlation_id)
     spent = bought.get("spent_credits_measured")
     close_step_hold(
         engine,
-        reservation_id,
+        budget_hold.reservation_id,
         spent_credits=float(
             spent if spent is not None else bought.get("spent_credits_quoted") or 0
         ),
@@ -3982,6 +4187,9 @@ def run_assemble_step(
             over = may_spend_step(engine, micros)
             if over is not None:
                 period, reason = over
+                # The film's last paid step does not fit what the day has left: the day's
+                # goal reads it as the budget spent, like any step's round (2026-10-16).
+                _hold_refused(engine, storyboard_id, ASSEMBLE_STEP, period, micros, reason)
                 raise SheetStepRefused(
                     "OVER_DAILY_BUDGET" if period == "DAILY" else "OVER_BUDGET", reason
                 )

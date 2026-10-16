@@ -8444,6 +8444,20 @@ class SpendMeter:
     attempts: int = 0
 
 
+def budget_cut(summary: dict[str, Any], budget_words: Callable[[], str | None]) -> None:
+    """A round `gpu_batch.run_rounds` cut, or left unsent, for want of room says the budget's
+    words when the step's budget hold (`shooting_sheet.StepHold`), not its cap, was the bound:
+    the day then reads the step as waiting on his budget, never on the cap he approved."""
+    if not summary.get("cap_stop"):
+        return
+    words = budget_words()
+    if not words:
+        return
+    if summary.get("stopped") == summary["cap_stop"]:
+        summary["stopped"] = words
+    summary["cap_stop"] = words
+
+
 #: The failure code of a request that left and got no answer: it may have been served and
 #: billed, so it is counted and never sent again automatically.
 UNANSWERED_FAILURE_CODE = "VENDOR.UNANSWERED"
@@ -11292,6 +11306,8 @@ class _ShotRounds:
         attempts_reason: Callable[[int], str],
         sent: dict[int, int],
         scene_dicts: dict[int, dict[str, Any]],
+        room: Callable[..., float] | None = None,
+        budget_words: Callable[[], str | None] | None = None,
     ) -> None:
         self.engine = engine
         self.storyboard_id = storyboard_id
@@ -11315,8 +11331,24 @@ class _ShotRounds:
         self.attempts_reason = attempts_reason
         self.sent = sent
         self.scene_dicts = scene_dicts
+        # The step's budget hold (`shooting_sheet.StepHold`): what may still be committed,
+        # grown for a round before it is fitted; None, the cap alone binds.
+        self.room = room
+        self.budget_words = budget_words or (lambda: None)
         self.states: dict[int, _ShotRound] = {}
         self.stop: str | None = None
+
+    def _left(self) -> float:
+        """What the step may still commit: the cap's rest, or what its budget hold covers."""
+        if self.room is not None:
+            return float(self.room(0.0))
+        return float(self.cap) - self.meter.committed
+
+    def _round_room(self, price: float) -> None:
+        """Before a round is fitted: the hold grows to it, or by what the budgets have left
+        (the round is then cut to what is held, `gpu_batch.run_rounds`)."""
+        if self.room is not None:
+            self.room(price, partial=True)
 
     # ------------------------------------------------------------------ requests
 
@@ -11655,7 +11687,8 @@ class _ShotRounds:
                 first_round=first,
                 next_round=self.next_round,
                 price_credits=self.price,
-                cap_left=lambda: float(self.cap) - self.meter.committed,
+                cap_left=self._left,
+                make_room=self._round_room if self.room is not None else None,
                 guard=guard,
                 stopped=stopped,
                 on_submitted=self.submitted,
@@ -11667,6 +11700,7 @@ class _ShotRounds:
                 on_unsent=self.unsent,
                 on_wait=director_wait_work(self.engine, self.registry),
             )
+        budget_cut(summary, self.budget_words)
         if summary.get("stopped") and summary.get("stopped") != UNCERTAIN:
             self.stop = self.stop or summary["stopped"]
         for state in shots:
@@ -11764,6 +11798,7 @@ def run_motion_step(
     timezone: str | None = None,
     proposal: bool = False,
     director_repair: bool = False,
+    budget_hold: Any = None,
 ) -> Generator[RoundWork, dict[str, Any], dict[str, Any]]:
     """One step of the motion staircase (``test_shot`` or ``motion``), bought only under the
     Owner's yes for this plan and this cap.
@@ -11814,6 +11849,10 @@ def run_motion_step(
     outright, and stopped before any later shot or retry when the Owner's mode or rule no
     longer lets it buy (`mode_guard`, spec 51). False is his own press, which goes on through
     BLOCKED_MODE and NEEDS_APPROVAL. ``timezone`` is his clock, for the stop's sentence.
+
+    ``budget_hold`` is the sheet step's hold on the budgets (`shooting_sheet.StepHold`): it
+    holds the step's first round, and is grown before every later shot, retry or round; what
+    it cannot hold is not bought, and the step ends on the budget's words.
     """
     from app.economy.credits import record_measured_prices  # noqa: PLC0415
     from app.media.mode_guard import PurchaseGuard, unasked_refusal  # noqa: PLC0415
@@ -11905,6 +11944,25 @@ def run_motion_step(
     to_buy = [int(index) for index in step_plan["to_buy"]]
     cap = int(cap_credits) if cap_credits is not None else int(step_plan["cap_credits"])
     cap_usd = round(cap * prices.credit_usd, 6)
+
+    def room(wanted: float = 0.0, *, partial: bool = False) -> float:
+        """The credits the step may still commit: the cap's rest and, with the sheet's budget
+        hold, no more than it covers once grown for ``wanted`` more (`StepHold.room`; a round
+        of shots may grow it by what is left, ``partial``, and is cut to it)."""
+        rest = float(cap) - meter.committed
+        if budget_hold is None:
+            return rest
+        return min(rest, float(budget_hold.room(meter.committed, wanted, partial=partial)))
+
+    def budget_words(wanted: float | None = None) -> str | None:
+        """The budget's words when the hold, not the cap, stopped the next purchase
+        (``wanted`` credits, when known)."""
+        if budget_hold is None:
+            return None
+        if wanted is None:
+            return budget_hold.budget_words()
+        return budget_hold.budget_words(meter.committed, wanted)
+
     take_kind = MOTION_STEP_TAKE_KINDS.get(step, "motion")
     source = account
     before: float | None = None
@@ -12326,8 +12384,8 @@ def run_motion_step(
             if over_attempts(index):
                 outcome = {"status": "NEEDS_OWNER", "reason": attempts_reason(index)}
                 break
-            if meter.committed + price > cap:
-                stopped = (
+            if price > room(price) + 1e-9:
+                stopped = budget_words(float(price)) or (
                     f"STOPPED_AT_CAP: cadrul scenei {index} ({price} credite) ar depăși "
                     f"plafonul aprobat de {cap} credite (deja {meter.committed:.0f})."
                 )
@@ -12601,7 +12659,9 @@ def run_motion_step(
                 adapter=adapter,
                 price=float(price),
                 committed=meter.committed,
-                cap=float(cap),
+                # Its one retry, inside the cap and what the budget hold covers once grown for
+                # it (`StepHold`): a retry the budget cannot hold is not bought.
+                cap=meter.committed + room(float(price)),
                 environment=environment,
                 bible=state["bible"],
                 ffmpeg_exe=ffmpeg_exe,
@@ -12630,7 +12690,7 @@ def run_motion_step(
             if checked["status"] != "PAID" and index in bought_now:
                 bought_now.remove(index)
             if checked["cap_stop"] and stopped is None:
-                stopped = checked["cap_stop"]
+                stopped = budget_words(float(price)) or checked["cap_stop"]
         entry.update(outcome)
         entry["attempts"] = attempts
         if outcome["status"] in ("NEEDS_OWNER", "NEEDS_STILL"):
@@ -12686,6 +12746,8 @@ def run_motion_step(
             attempts_reason=attempts_reason,
             sent=sent,
             scene_dicts=scene_dicts,
+            room=room if budget_hold is not None else None,
+            budget_words=budget_words,
         )
         try:
             gpu = yield from flow_call(
