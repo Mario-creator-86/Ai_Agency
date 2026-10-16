@@ -793,6 +793,9 @@ def render_plan(engine: Engine, vault: CredentialVault, storyboard_id: str) -> d
                     # already paid for (the Owner, 2026-10-16). Before this the plan carried
                     # it and the built take dropped it: no note ever reached the voice.
                     "direction": str(take.get("direction") or ""),
+                    # The voice take these words are said in (`pause_plan`): a speaker's run
+                    # that goes on into the next shot is said once, as one take.
+                    "voice_group": take.get("voice_group"),
                     "adapter": cache[key],
                     "voice_source": voice.get("speaker_source"),
                 }

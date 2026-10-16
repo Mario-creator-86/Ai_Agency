@@ -2103,10 +2103,12 @@ def test_the_storyboard_reads_the_lines_and_speaks_no_label(engine, staffed, mon
         assert "[" not in script.voiceover_full_text
         # The first speaker's bible comes first, so the voice bound is the one who speaks.
         assert first.character_ids_json[0] == kael.id
+        # The line as written, and the voice take it is said in (`pause_plan.serial_lines`).
         assert script.scenes_json[0]["lines"][0] == {
             "speaker": KAEL,
             "text": SPOKEN[0],
             "direction": "quietly",
+            "voice_group": "b1.1",
         }
         assert "Content" in first.visual_prompt  # the room, from the headquarters
 
@@ -2161,7 +2163,11 @@ def test_an_old_v2_episode_is_still_filmed_without_its_labels(engine, staffed, m
         assert first["narration"] == "Right. Where are we?\nThe render is running, do not touch it."
         # A line with no name on it is the narrator's.
         assert second["lines"] == [
-            {"speaker": None, "text": "The day went on without anyone noticing the cup."}
+            {
+                "speaker": None,
+                "text": "The day went on without anyone noticing the cup.",
+                "voice_group": "b2.1",
+            }
         ]
 
 

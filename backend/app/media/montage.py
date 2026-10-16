@@ -23,6 +23,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from app.media.pauses import DASH, SENTENCE, punctuation_class
 from app.story.lines import ends_sentence, stops_inside
 
 #: Words a second, as the storyboard builders size a scene from its words.
@@ -94,6 +95,32 @@ def beat_of(prompt_json: Any) -> dict[str, Any]:
     return dict(tag) if isinstance(tag, dict) else {}
 
 
+#: What the pause plan freezes on a row's beat tag (`pause_plan.freeze_rows`, the Owner's
+#: «pauza vocii», 2026-10-16): the voice take the row's words are said in, the silence after
+#: them, the silences between its own takes (a serial row of two speakers), and, on the film's
+#: first row, every number they were made from. None of it is the montage's cut.
+PAUSE_KEYS = ("voice_group", "pause_after", "inner_pauses", "pause_profile")
+
+
+def shot_tag(prompt_json: Any) -> dict[str, Any]:
+    """The montage's own tag of a row (its writer's scene or beat, which shot, its size, whose
+    face): the beat tag without the frozen pauses, or an empty dict for a row the montage
+    never cut. What a model is shown of the cut: the pauses are numbers for the render, never
+    words for a prompt, and a scene of one shot reads as it always did."""
+    return {key: value for key, value in beat_of(prompt_json).items() if key not in PAUSE_KEYS}
+
+
+def keep_frozen(new: Any, old: Any) -> Any:
+    """``new`` (a scene's package about to replace ``old``) with ``old``'s frozen pauses kept
+    on its beat tag: a shot plan, a rewrite or a restored package changes the words of a
+    picture, never the film's timing. ``new`` as it is when ``old`` froze none."""
+    frozen = {key: value for key, value in beat_of(old).items() if key in PAUSE_KEYS}
+    if not frozen or not isinstance(new, dict):
+        return new
+    tag = beat_of(new)
+    return {**new, "beat": {**tag, **frozen}}
+
+
 def shot_count(words: int, *, shot_seconds: float, max_shots: int) -> int:
     """How many shots ``words`` are cut into: about ``shot_seconds`` each, at most
     ``max_shots``, never a shot under MIN_SHOT_WORDS."""
@@ -106,6 +133,12 @@ def shot_count(words: int, *, shot_seconds: float, max_shots: int) -> int:
     return count
 
 
+def _ends_sentence(word: str) -> bool:
+    """A sentence end (`lines.ends_sentence`) or the writer's ellipsis: the voice's full stop,
+    where a cut lands first (`pauses.punctuation_class`)."""
+    return punctuation_class(word) == SENTENCE
+
+
 def split_words(text: str, count: int) -> list[str]:
     """``text`` cut into ``count`` fragments of about equal length, each cut on a clause end
     (a comma, a full stop, a dash) when one lies near the ideal point, else between words.
@@ -114,7 +147,28 @@ def split_words(text: str, count: int) -> list[str]:
     A title's or an abbreviation's stop is no clause end, and no cut falls right after one
     (2026-10-16: "signed by Dr." / "Ellen Harper" were two shots and two voice takes, the
     voice pausing between the title and the name)."""
+    return [fragment for fragment, _cut in split_words_classed(text, count)]
+
+
+def split_words_classed(text: str, count: int) -> list[tuple[str, str | None]]:
+    """`split_words`, each fragment with the class of the cut after it
+    (`pauses.punctuation_class` of its last word: SENTENCE at a full stop or the writer's
+    ellipsis, DASH, CLAUSE, else WORD; None after the last fragment). The cut is a picture cut
+    inside one voice take: the class says which of the voice's own pauses the viewer hears
+    there, and which join it would be if the fragments were ever voiced apart (2026-10-16,
+    the Owner's «pauza vocii»). An ellipsis is a cut of sentence priority."""
     tokens = str(text or "").split()
+    fragments = _split_tokens(tokens, count)
+    return [
+        (
+            fragment,
+            None if position == len(fragments) - 1 else punctuation_class(fragment.split()[-1]),
+        )
+        for position, fragment in enumerate(fragments)
+    ]
+
+
+def _split_tokens(tokens: list[str], count: int) -> list[str]:
     if count <= 1 or len(tokens) < 2 * MIN_SHOT_WORDS:
         return [" ".join(tokens)] if tokens else []
     count = min(count, len(tokens) // MIN_SHOT_WORDS)
@@ -132,7 +186,7 @@ def split_words(text: str, count: int) -> list[str]:
             # A sentence end nearest the ideal, else a clause end, else the word nearest
             # the ideal that does not follow a title ("Dr." | "Ellen").
             best = None
-            for ends in (ends_sentence, _ends_clause):
+            for ends in (_ends_sentence, _ends_clause):
                 near = [i for i in range(low, high + 1) if ends(tokens[i - 1])]
                 if near:
                     best = min(near, key=lambda i: abs(i - ideal))
@@ -161,8 +215,10 @@ def factual_sizes(count: int, scene_number: int) -> list[str]:
 def factual_shots(
     narration: str, scene_number: int, *, live: bool, settings: Any = None
 ) -> list[dict[str, Any]]:
-    """A factual scene's shots: ``[{"narration", "size", "shot", "of"}]``. A composed scene
-    (a card, black) or a montage switched off is one shot with no size of its own."""
+    """A factual scene's shots: ``[{"narration", "size", "shot", "of", "cut_after"}]``. A
+    composed scene (a card, black) or a montage switched off is one shot with no size of its
+    own. ``cut_after`` is the class of the picture cut after the shot inside the writer's
+    scene (`split_words_classed`), None after its last shot."""
     options = montage_settings(settings)
     words = len(str(narration or "").split())
     count = (
@@ -170,13 +226,25 @@ def factual_shots(
         if live and options["enabled"]
         else 1
     )
-    fragments = split_words(narration, count) if count > 1 else [str(narration or "").strip()]
-    if len(fragments) <= 1:
-        return [{"narration": fragments[0] if fragments else "", "size": None, "shot": 1, "of": 1}]
-    sizes = factual_sizes(len(fragments), scene_number)
+    cut = (
+        split_words_classed(narration, count)
+        if count > 1
+        else [(str(narration or "").strip(), None)]
+    )
+    if len(cut) <= 1:
+        return [
+            {
+                "narration": cut[0][0] if cut else "",
+                "size": None,
+                "shot": 1,
+                "of": 1,
+                "cut_after": None,
+            }
+        ]
+    sizes = factual_sizes(len(cut), scene_number)
     return [
-        {"narration": fragment, "size": size, "shot": i, "of": len(fragments)}
-        for i, (fragment, size) in enumerate(zip(fragments, sizes, strict=True), start=1)
+        {"narration": fragment, "size": size, "shot": i, "of": len(cut), "cut_after": after}
+        for i, ((fragment, after), size) in enumerate(zip(cut, sizes, strict=True), start=1)
     ]
 
 
@@ -216,7 +284,20 @@ def _line_parts(line: dict[str, Any], count: int) -> list[dict[str, Any]]:
     if count <= 1:
         return [line]
     parts = split_words(str(line.get("text") or ""), count)
-    return [{**line, "text": part} for part in parts] if len(parts) > 1 else [line]
+    if len(parts) <= 1:
+        return [line]
+    # A writer's mark stays where it stood (`pause_plan.serial_lines`): one before the line
+    # on its first part, one after it on its last; the punchline starts with the first.
+    cut = []
+    for position, part in enumerate(parts):
+        piece = {**line, "text": part}
+        if position:
+            piece.pop("mark_before", None)
+            piece.pop("punchline", None)
+        if position < len(parts) - 1:
+            piece.pop("mark_after", None)
+        cut.append(piece)
+    return cut
 
 
 def _partition(
@@ -354,8 +435,13 @@ def _split_run(run: dict[str, Any], pieces: int) -> list[list[dict[str, Any]]]:
         previous = None
         for index, part in units[start:end]:
             if index == previous:
-                # Two parts of one line in one piece are that line again, whole.
-                piece[-1] = {**piece[-1], "text": f"{piece[-1]['text']} {part['text']}"}
+                # Two parts of one line in one piece are that line again, whole (with the
+                # mark after its last part, `_line_parts`).
+                piece[-1] = {
+                    **piece[-1],
+                    "text": f"{piece[-1]['text']} {part['text']}",
+                    **({"mark_after": True} if part.get("mark_after") else {}),
+                }
             else:
                 piece.append(part)
             previous = index
@@ -394,9 +480,27 @@ def serial_shots(
     options = montage_settings(settings)
     runs = _runs(lines)
     if not runs:
-        return [{"lines": list(lines), "size": None, "on": None, "shot": 1, "of": 1}]
+        return [
+            {
+                "lines": list(lines),
+                "size": None,
+                "on": None,
+                "shot": 1,
+                "of": 1,
+                "cut_after": BEAT_END,
+            }
+        ]
     if not options["enabled"] or options["max_shots"] <= 1:
-        return [{"lines": list(lines), "size": None, "on": None, "shot": 1, "of": 1}]
+        return [
+            {
+                "lines": list(lines),
+                "size": None,
+                "on": None,
+                "shot": 1,
+                "of": 1,
+                "cut_after": BEAT_END,
+            }
+        ]
     distinct = list(dict.fromkeys(run["speaker"] for run in runs if run["speaker"]))
 
     # 1. The runs as shots: a few words answer inside the shot before (a two-shot on both).
@@ -510,4 +614,42 @@ def serial_shots(
             spoken[-1]["size"] = "close"
     for i, shot in enumerate(shots, start=1):
         shot["shot"], shot["of"] = i, len(shots)
+        shot["cut_after"] = serial_cut(shot, shots[i] if i < len(shots) else None)
     return shots
+
+
+#: How a serial shot hands over to the next one (`serial_cut`): the pause plan reads it with
+#: the lines themselves (`pauses.boundary_class`).
+SPEAKER_CHANGE = "speaker_change"
+INTERRUPT_CUT = "interrupt"
+REACTION_SPLIT = "reaction_split"
+SAME_SPEAKER = "same_speaker"
+NARRATOR_IN = "narrator_in"
+NARRATOR_OUT = "narrator_out"
+BEAT_END = "beat_end"
+
+
+def serial_cut(shot: dict[str, Any], following: dict[str, Any] | None) -> str:
+    """What happens at the cut after ``shot`` (``following`` the beat's next shot, None after
+    its last): BEAT_END; NARRATOR_IN (the room hands to the narrator) or NARRATOR_OUT (he hands
+    to the room); INTERRUPT (the line ends on a dash and another speaker cuts in) or
+    SPEAKER_CHANGE; REACTION_SPLIT (the same speaker's words go on over the listener's face)
+    or SAME_SPEAKER."""
+    if following is None:
+        return BEAT_END
+    said = [line for line in shot.get("lines") or [] if str(line.get("text") or "").strip()]
+    next_said = [
+        line for line in following.get("lines") or [] if str(line.get("text") or "").strip()
+    ]
+    if not said or not next_said:
+        return SAME_SPEAKER
+    out = str(said[-1].get("speaker") or "") or None
+    inn = str(next_said[0].get("speaker") or "") or None
+    if out is None and inn is not None:
+        return NARRATOR_OUT
+    if out is not None and inn is None:
+        return NARRATOR_IN
+    if out != inn:
+        words = str(said[-1].get("text") or "").split()
+        return INTERRUPT_CUT if words and punctuation_class(words[-1]) == DASH else SPEAKER_CHANGE
+    return REACTION_SPLIT if following.get("size") == "reaction" else SAME_SPEAKER

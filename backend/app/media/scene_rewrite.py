@@ -2981,7 +2981,10 @@ def rewrite_scene(
         if row is None or dict(row.prompt_json or {}) != stored:
             outcome["reason"] = "Pachetul scenei s-a schimbat între timp; nu se scrie peste el."
             return outcome
-        row.prompt_json = package
+        from app.media.montage import keep_frozen  # noqa: PLC0415
+
+        # The film's frozen pauses stay on the row: a rewrite changes a picture's words only.
+        row.prompt_json = keep_frozen(package, stored)
         row.visual_prompt = visual
         row.story_purpose = package.get("story_purpose") or row.story_purpose
         learned, unlearned = learn_from_review(session, review, context)
@@ -3625,8 +3628,10 @@ def _say_serial_words_again(
         DIRECTOR_REWRITE,
         SCENE_PROMPTS_REWRITTEN_EVENT,
     )
+    from app.media.montage import keep_frozen  # noqa: PLC0415
 
-    target.prompt_json = dict(rewrite["package"])
+    # The film's frozen pauses stay on the row: a rewrite changes a picture's words only.
+    target.prompt_json = keep_frozen(dict(rewrite["package"]), target.prompt_json)
     target.visual_prompt = str(rewrite["visual_prompt"])
     append_event(
         session,

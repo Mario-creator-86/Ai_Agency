@@ -57,7 +57,7 @@ from app.factual.sanitizer import wrap_in_inert_boundary
 from app.media import prompt_lint as lint
 from app.media.markings import markings_kept, planned_markings, still_exclusions
 from app.media.models import CharacterBible, Storyboard, StoryboardScene
-from app.media.montage import beat_of
+from app.media.montage import beat_of, keep_frozen, shot_tag
 from app.media.script_entries import row_entries
 from app.media.series_look import (
     LIGHT_SLOTS,
@@ -663,7 +663,9 @@ def _film_facts(session: Session, board: Storyboard) -> dict[str, Any]:
                 "shot_type": scene.shot_type,
                 # The montage's tag: which writer's scene this shot belongs to, which of its
                 # shots it is and at what size (None for a scene that is its own one shot).
-                "beat": beat_of(scene.prompt_json) or None,
+                # The pauses frozen beside it are the render's numbers, never shown to a
+                # model (`montage.shot_tag`): the shot plan's payload is what it was.
+                "beat": shot_tag(scene.prompt_json) or None,
                 "claims": [claims.get(cid, "") for cid in (scene.claim_ids_json or [])],
                 "characters": [
                     {
@@ -1561,7 +1563,9 @@ def write_shot_prompts(
                 composed = compiled["still_prompt"] or str(
                     package.get("writer_visual") or scene.visual_prompt or ""
                 )
-            scene.prompt_json = package
+            # The film's frozen pauses stay on the row whatever the shot plan says
+            # (`montage.keep_frozen`): a picture's words never change the film's timing.
+            scene.prompt_json = keep_frozen(package, earlier)
             scene.story_purpose = package["story_purpose"]
             scene.visual_prompt = composed
             previous_ending = str(package.get("ending_frame") or "")

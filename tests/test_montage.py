@@ -38,7 +38,7 @@ def test_a_long_narration_is_cut_into_three_shots_on_its_clauses():
 def test_a_short_narration_a_card_and_a_montage_off_stay_one_shot():
     short = "Lawrence built a machine no wider than his hand."
     assert montage.factual_shots(short, 2, live=True, settings=_Settings()) == [
-        {"narration": short, "size": None, "shot": 1, "of": 1}
+        {"narration": short, "size": None, "shot": 1, "of": 1, "cut_after": None}
     ]
     (card,) = montage.factual_shots(NARRATION, 3, live=False, settings=_Settings())
     assert card["of"] == 1 and card["size"] is None
@@ -90,6 +90,13 @@ def test_a_beat_of_dialogue_cuts_with_its_speakers_and_shows_the_listener():
     spoken = " ".join(line["text"] for s in shots for line in s["lines"])
     assert spoken == " ".join(line["text"] for line in lines)
     assert [(s["shot"], s["of"]) for s in shots] == [(1, 3), (2, 3), (3, 3)]
+    # What each cut is, for the pause plan (`montage.serial_cut`): the speaker hands over,
+    # then Sarah's words go on over Marcus's face, then the beat ends.
+    assert [s["cut_after"] for s in shots] == [
+        montage.SPEAKER_CHANGE,
+        montage.REACTION_SPLIT,
+        montage.BEAT_END,
+    ]
 
 
 def test_the_button_ends_on_a_close_up_and_a_switched_off_montage_keeps_the_beat():

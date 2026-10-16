@@ -109,13 +109,59 @@ class NameBook:
 
 def split_direction(text: Any) -> tuple[str, str]:
     """(the words a voice says, the stage directions taken out of them)."""
+    spoken, directions, _places = split_direction_places(text)
+    return spoken, directions
+
+
+#: Where a stage direction stood among the spoken words (`split_direction_places`).
+AT_START = "start"
+AT_END = "end"
+
+
+def split_direction_places(text: Any) -> tuple[str, str, list[dict[str, Any]]]:
+    """(the words a voice says, the stage directions taken out of them, where each direction
+    stood): ``{"direction", "at"}``, ``at`` being AT_START (before the first spoken word),
+    AT_END (after the last) or the number of spoken words before it (in the middle).
+
+    The pause rules read it (the Owner, 2026-10-16): a «(beat)» before a line is a silence
+    before it, after the line a silence after it, in the middle a silence that cuts the line
+    in two takes."""
     raw = str(text or "")
-    directions = [
-        " ".join(next(group for group in match.groups() if group).split())
-        for match in _DIRECTION.finditer(raw)
-    ]
+    directions: list[str] = []
+    places: list[dict[str, Any]] = []
+    total = len(_DIRECTION.sub(" ", raw).split())
+    for match in _DIRECTION.finditer(raw):
+        said = " ".join(next(group for group in match.groups() if group).split())
+        directions.append(said)
+        before = len(_DIRECTION.sub(" ", raw[: match.start()]).split())
+        at: str | int = AT_START if before == 0 else AT_END if before >= total else before
+        places.append({"direction": said, "at": at})
     spoken = " ".join(_DIRECTION.sub(" ", raw).split())
-    return spoken, "; ".join(directions)
+    return spoken, "; ".join(directions), places
+
+
+def pause_place(places: list[dict[str, Any]], is_pause: Any) -> str | int | None:
+    """Where the first direction that asks for a silence stood (``is_pause(direction)``):
+    AT_START, AT_END or the spoken words before it; None when none asks for one."""
+    for place in places:
+        if is_pause(place.get("direction")):
+            at = place.get("at")
+            return at if isinstance(at, str | int) else None
+    return None
+
+
+def _pause_words() -> Any:
+    """The pause rules' reading of a direction that asks for a silence, or None when the rules
+    are not in use (`app.media.pauses.direction_marked`)."""
+    try:
+        from app.media import pauses  # noqa: PLC0415 - the media reads the story
+
+        rules = pauses.active_rules()
+    except Exception:  # noqa: BLE001 - a line is stored whatever the pause rules say
+        return None
+    if rules is None or not rules.switch("marked_beats"):
+        return None
+    return lambda direction: pauses.direction_marked(direction, rules)
 
 
 def split_label(text: Any, names: NameBook | None = None) -> tuple[str | None, str]:
@@ -146,13 +192,19 @@ def clean_line(
     says who talks, and the label would be read aloud. None when nothing is left to say.
     """
     label, rest = split_label(text, names) if names is not None else (None, str(text or ""))
-    spoken, taken = split_direction(rest if label else text)
+    spoken, taken, places = split_direction_places(rest if label else text)
     notes = [part for part in (" ".join(str(direction or "").split()), taken) if part]
     if not spoken:
         return None
     line: dict[str, Any] = {"speaker": speaker, "text": spoken}
     if notes:
         line["direction"] = "; ".join(notes)[:200]
+    # Where a «(beat)» stood in the words (the Owner, 2026-10-16): the storyboard makes it a
+    # silence there. Only written for a direction that asks for one.
+    is_pause = _pause_words() if places else None
+    at = pause_place(places, is_pause) if is_pause is not None else None
+    if at is not None:
+        line["pause_at"] = at
     return line
 
 

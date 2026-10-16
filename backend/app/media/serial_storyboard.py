@@ -57,6 +57,8 @@ from app.agents.models import AgentRun
 from app.factual.models import ScriptDraft, StoryReview, TopicIdea
 from app.media.models import CharacterBible, Storyboard, StoryboardScene
 from app.media.montage import beat_tag, serial_shots
+from app.media.pause_plan import RowSpec, freeze_rows, serial_lines, serial_row_sides
+from app.media.pauses import active_rules as active_pause_rules
 from app.media.prompt_agent import PromptError, write_shot_prompts
 from app.media.series_look import (
     PART_PURPOSES,
@@ -191,6 +193,12 @@ def storyboard_from_episode(engine: Engine, episode_id: str, correlation_id: str
             review_run = None
 
         lines = [beat_lines(beat, names) for beat in beats]
+        # «Pauza vocii» (the Owner, 2026-10-16): a writer's «(beat)» marked where it stood,
+        # at most one a beat and never before the punchline, and each line named for the
+        # voice take it is said in (`pause_plan.serial_lines`).
+        pause_rules = active_pause_rules()
+        if pause_rules is not None:
+            lines = serial_lines(lines, [beat.get("part") for beat in beats], pause_rules)
         spoken = [spoken_text(said) for said in lines]
         dialogue = "\n\n".join(spoken)
         words = len(dialogue.split())
@@ -312,26 +320,26 @@ def storyboard_from_episode(engine: Engine, episode_id: str, correlation_id: str
             },
             correlation_id,
         )
-        session.add(
-            Storyboard(
-                id=storyboard_id,
-                script_draft_id=script_id,
-                title=f"Storyboard: {episode.title}"[:200],
-                visual_style=VISUAL_STYLE,
-                aspect_ratio=ASPECT_RATIO,
-                target_duration_seconds=target_seconds,
-                status="APPROVED",
-                total_scenes=len(cuts),
-                channel_id=channel.id if channel else None,
-                series_key=SERIES_KEY,
-                production_overrides_json={},
-                # The series' one look, read-only: an episode never decides its own.
-                visual_bible_json=series_bible(look, ASPECT_RATIO),
-                created_at=now,
-                event_id=event.event_id,
-            )
+        board = Storyboard(
+            id=storyboard_id,
+            script_draft_id=script_id,
+            title=f"Storyboard: {episode.title}"[:200],
+            visual_style=VISUAL_STYLE,
+            aspect_ratio=ASPECT_RATIO,
+            target_duration_seconds=target_seconds,
+            status="APPROVED",
+            total_scenes=len(cuts),
+            channel_id=channel.id if channel else None,
+            series_key=SERIES_KEY,
+            production_overrides_json={},
+            # The series' one look, read-only: an episode never decides its own.
+            visual_bible_json=series_bible(look, ASPECT_RATIO),
+            created_at=now,
+            event_id=event.event_id,
         )
+        session.add(board)
         session.flush()
+        pause_rows: list[RowSpec] = []
         for index, cut in enumerate(cuts, start=1):
             beat = cut["source"]
             narration = spoken_text(cut["lines"])
@@ -365,25 +373,32 @@ def storyboard_from_episode(engine: Engine, episode_id: str, correlation_id: str
                 if int(cut["of"]) > 1 or cut.get("size")
                 else None
             )
-            session.add(
-                StoryboardScene(
-                    id=str(uuid4()),
-                    storyboard_id=storyboard_id,
-                    scene_index=index,
-                    visual_prompt=visual,
-                    visual_type=VISUAL_STYLE,
-                    duration_seconds=duration,
-                    voiceover_segment=narration,
-                    shot_type=SHOT_TYPES[size],
-                    story_purpose=PART_PURPOSES.get(str(beat.get("part") or "").lower()),
-                    transition_in="FADE" if index == 1 else "CUT",
-                    character_ids_json=[b.id for b in present],
-                    claim_ids_json=[],
-                    production_overrides_json={},
-                    prompt_json={"beat": tag} if tag else None,
-                    created_at=now,
-                )
+            row = StoryboardScene(
+                id=str(uuid4()),
+                storyboard_id=storyboard_id,
+                scene_index=index,
+                visual_prompt=visual,
+                visual_type=VISUAL_STYLE,
+                duration_seconds=duration,
+                voiceover_segment=narration,
+                shot_type=SHOT_TYPES[size],
+                story_purpose=PART_PURPOSES.get(str(beat.get("part") or "").lower()),
+                transition_in="FADE" if index == 1 else "CUT",
+                character_ids_json=[b.id for b in present],
+                claim_ids_json=[],
+                production_overrides_json={},
+                prompt_json={"beat": tag} if tag else None,
+                created_at=now,
             )
+            session.add(row)
+            if pause_rules is not None:
+                sides, runs = serial_row_sides(cut["lines"], beat=int(cut["beat"]))
+                pause_rows.append(RowSpec(row=row, sides=sides, lines=runs))
+        # Every join of the episode classed and timed from each voice's own pauses, fitted
+        # under the channel's wall and frozen on its row before anything is bought
+        # (`pause_plan.freeze_rows`).
+        if pause_rules is not None:
+            freeze_rows(session, board, pause_rows, serial=True, rules=pause_rules)
         episode.storyboard_id = storyboard_id
         session.flush()
     # Every shot composed with the series' look, through the prompt agent's own path and with

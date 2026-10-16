@@ -9,7 +9,7 @@ from uuid import uuid4
 import pytest
 from app.factual.models import ScriptDraft
 from app.media.models import CharacterBible, Storyboard, StoryboardScene
-from app.media.montage import beat_of
+from app.media.montage import beat_of, shot_tag
 from app.media.prompt_agent import SERIAL_LIFE_SENTENCE, SERIAL_LISTEN_TAIL, write_shot_prompts
 from app.media.serial_storyboard import storyboard_from_episode
 from app.media.services import generate_storyboard_from_script
@@ -90,7 +90,8 @@ def test_a_factual_scene_becomes_three_shots_that_read_the_writers_scene(engine)
     assert [row.shot_type for row in rows[:3]] == ["WIDE", "MEDIUM", "DETAIL"]
     # The writer's words once, in order, cut on clause ends; the short scene is one shot.
     assert " ".join(row.voiceover_segment for row in rows[:3]) == LONG
-    assert tags[3] == {} and rows[3].voiceover_segment == SHORT
+    # The short scene carries no montage tag, only its frozen pause (`pause_plan`).
+    assert shot_tag(rows[3].prompt_json) == {} and rows[3].voiceover_segment == SHORT
     assert all(row.claim_ids_json == ["c1"] for row in rows[:3])
     assert all(3.0 <= row.duration_seconds <= 9.0 for row in rows)
     with Session(engine) as session:
@@ -106,7 +107,8 @@ def test_a_factual_scene_becomes_three_shots_that_read_the_writers_scene(engine)
         assert row.prompt_json["writer_visual"] == scenes[0]["visual_description"]
         assert row.prompt_json["story_purpose"] == "HOOK"
     assert rows[3].prompt_json["writer_visual"] == scenes[1]["visual_description"]
-    assert rows[3].prompt_json["beat"] is None
+    assert shot_tag(rows[3].prompt_json) == {}
+    assert rows[3].prompt_json["beat"]["pause_after"]["class"] == "END"
 
 
 def test_a_serial_beat_cuts_with_its_dialogue_and_shows_the_listener(

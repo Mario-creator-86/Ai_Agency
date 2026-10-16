@@ -32,6 +32,8 @@ from app.media.models import (
     VideoRenderJob,
 )
 from app.media.montage import FACTUAL_SHOT_TYPES, beat_tag, factual_shots
+from app.media.pause_plan import RowSpec, factual_side, freeze_rows
+from app.media.pauses import active_rules as active_pause_rules
 from app.media.production_policy import estimate_cost_usd
 from app.media.schemas import (
     CharacterBibleView,
@@ -1441,6 +1443,8 @@ def generate_storyboard_from_script(
 
         # Create individual StoryboardScenes: one per shot of the montage (`_montage_rows`),
         # each reading the writer's scene (``beat``) it was cut from.
+        pause_rules = active_pause_rules()
+        pause_rows: list[RowSpec] = []
         for idx, (beat, s, shot) in enumerate(rows, start=1):
             scene_id = str(uuid4())
             # The shot's own words: the writer's narration, or the fragment of it the
@@ -1493,6 +1497,28 @@ def generate_storyboard_from_script(
                 created_at=now,
             )
             session.add(scene_rec)
+            if pause_rules is not None:
+                pause_rows.append(
+                    RowSpec(
+                        row=scene_rec,
+                        sides=[
+                            factual_side(
+                                vo,
+                                scene=beat,
+                                purpose=s.get("purpose") or s.get("story_purpose"),
+                                kind=kind["kind"],
+                                planned_seconds=dur,
+                                rules=pause_rules,
+                            )
+                        ],
+                    )
+                )
+        # «Pauza vocii» (the Owner, 2026-10-16): every row's pause classed, timed from the
+        # narrator's own measured pauses, fitted under the channel's wall and frozen on its
+        # beat tag before anything is bought (`pause_plan.freeze_rows`). The rows of one
+        # writer's scene are said in one take, the montage cutting the picture on its words.
+        if pause_rules is not None:
+            freeze_rows(session, sb, pause_rows, serial=False, rules=pause_rules)
 
     return get_storyboard(engine, storyboard_id) or {}
 

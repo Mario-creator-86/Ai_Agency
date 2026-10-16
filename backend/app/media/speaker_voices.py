@@ -26,7 +26,8 @@ into takes:
   read whole by one voice, as before.
 
 Nothing here synthesises: choosing a voice id is configuration. The assembler speaks the
-takes, joins them with `SPEAKER_GAP_SECONDS` of silence and times the captions to them.
+takes, joins them with the film's frozen pause between two speakers (`SPEAKER_GAP_SECONDS`
+for a film built before the pause rules) and times the captions to them.
 """
 
 from __future__ import annotations
@@ -47,8 +48,10 @@ from app.publishing.models import ChannelRecord
 #: The Owner's proposal file: which catalogue voice each character speaks in by default.
 VOICE_CAST_FILE = ROOT / "config" / "serial_voice_cast.json"
 
-#: The breath between two speakers: long enough to hear a new person, short enough to be
-#: one conversation. Between two scenes the picture decides the pause, not this.
+#: The breath between two speakers of a film built before the pause rules: long enough to
+#: hear a new person, short enough to be one conversation. Since 2026-10-16 («pauza vocii»,
+#: the Owner) a film built under the rules joins two speakers with its frozen TURN (the
+#: conversational gap, `app.media.pauses`); this constant only times a legacy film.
 SPEAKER_GAP_SECONDS = 0.3
 
 #: The keys of a resolved voice the plan records for a take.
@@ -115,35 +118,55 @@ def speaker_segments(
     (None for the narrator) and ``character_id`` the bible that speaker has, if any. The text
     is the spoken words only; ``direction`` is how they are said, the lines' acting notes
     joined, for the voice to play (2026-10-15).
+
+    A storyboard built under the pause rules names the voice take each line is said in
+    (``voice_group``, `pause_plan`): a speaker's run is one take only inside one group — a
+    writer's «(beat)» between two of his lines makes two takes and a silence — and the take
+    carries its group, so the render says a run that goes on into the next shot as one take
+    (the Owner, 2026-10-16). Lines without a group join as they always did.
     """
     bibles = speaker_bibles or {}
     takes: list[dict[str, Any]] = []
-    for line in lines:
-        if not isinstance(line, dict):
-            continue
-        text = _words(line.get("text"))
-        direction = _words(line.get("direction"))
-        if not text:
-            continue
-        speaker = str(line["speaker"]) if line.get("speaker") else None
-        if takes and takes[-1]["speaker"] == speaker:
-            takes[-1]["text"] = f"{takes[-1]['text']} {text}"
-            if direction and direction not in takes[-1]["direction"]:
-                takes[-1]["direction"] = "; ".join(
-                    part for part in (takes[-1]["direction"], direction) if part
-                )
-            continue
+    for run in line_runs(lines):
+        speaker = str(run[0]["speaker"]) if run[0].get("speaker") else None
+        group = run[0].get("voice_group")
+        direction = ""
+        for line in run:
+            note = _words(line.get("direction"))
+            if note and note not in direction:
+                direction = "; ".join(part for part in (direction, note) if part)
         takes.append(
             {
                 "speaker": speaker,
                 "character_id": bibles.get(speaker) if speaker else None,
-                "text": text,
+                "text": " ".join(_words(line.get("text")) for line in run),
                 # How the line is said (the writer's acting note): the voice plays it
                 # (`providers.elevenlabs.performance_terms`, the Owner, 2026-10-15).
                 "direction": direction,
+                **({"voice_group": group} if group is not None else {}),
             }
         )
     return takes
+
+
+def line_runs(lines: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    """A scene's lines with words, as runs said in one take each: consecutive lines of one
+    speaker (None for the narrator) inside one voice group (``voice_group``; lines without one
+    are of one group). `speaker_segments` voices them and `pause_plan` times the joins between
+    them, so the two never cut a scene differently."""
+    runs: list[list[dict[str, Any]]] = []
+    for line in lines:
+        if not isinstance(line, dict) or not _words(line.get("text")):
+            continue
+        speaker = str(line["speaker"]) if line.get("speaker") else None
+        if runs:
+            last = runs[-1][-1]
+            last_speaker = str(last["speaker"]) if last.get("speaker") else None
+            if last_speaker == speaker and last.get("voice_group") == line.get("voice_group"):
+                runs[-1].append(line)
+                continue
+        runs.append([line])
+    return runs
 
 
 def _recorded(resolved: dict[str, Any], source: str, notes: list[str]) -> dict[str, Any]:

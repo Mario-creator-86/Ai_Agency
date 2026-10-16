@@ -78,6 +78,8 @@ from app.media.models import (
     StoryboardScene,
     VideoRenderJob,
 )
+from app.media.montage import keep_frozen
+from app.media.pause_plan import frozen_beat
 from app.media.prepared_batch import RoundWork, flow_call, purchase_flow
 from app.media.production_policy import (
     FailureRecord,
@@ -3522,8 +3524,15 @@ def scene_view(row: StoryboardScene) -> dict[str, Any]:
     so the router and the tier know which scenes carry the film.
     """
     kind = scene_kind_of({"scene_kind": row.scene_kind})
+    # The pauses frozen on the row when its storyboard was built (`pause_plan.freeze_rows`):
+    # the voice take its words are said in, the silence after them and between its own takes.
+    # None on a row built before the pause rules: the render keeps the legacy timing for it.
+    frozen = frozen_beat(row.prompt_json)
     return {
         "scene_index": row.scene_index,
+        "voice_group": frozen["voice_group"] if frozen else None,
+        "pause_after": frozen["pause_after"] if frozen else None,
+        "inner_pauses": frozen["inner_pauses"] if frozen else [],
         "visual_prompt": row.visual_prompt,
         # The compiled package: its motion prompt is what the video model is sent
         # (motion_request), never the still's words again.
@@ -14716,7 +14725,9 @@ def give_back_retired_takes(
             elif not item["matches"]:
                 outcome["unmatched"].append(row.id)
         if outcome["restored"] and package is not None and rewrite_id is not None:
-            scene_row.prompt_json = dict(package)
+            # A restored package brings back a picture's words, never another timing: the
+            # film's frozen pauses stay on the row (`montage.keep_frozen`).
+            scene_row.prompt_json = keep_frozen(dict(package), scene_row.prompt_json)
             scene_row.visual_prompt = visual
             append_event(
                 session,
@@ -15100,7 +15111,8 @@ def _rewrite_scene_prompts(
             "planul refacerii: nu se cumpără nimic. Deschideți refacerea din nou.",
             plan=plan,
         )
-    row.prompt_json = dict(rewrite["package"])
+    # The film's frozen pauses stay on the row: a redo changes a picture's words only.
+    row.prompt_json = keep_frozen(dict(rewrite["package"]), row.prompt_json)
     row.visual_prompt = str(rewrite["visual_prompt"])
     append_event(
         session,
