@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-16 — Placement kept, pasted still sentences dropped, no refusal for a missing negation
+
+- `media/prompt_agent.py`: the still's placement keeps the plan's sentences after the colon with only their negated, locking or camera sub-clauses taken out (the whole placement was dropped when the Editor added «does not tighten»); the composer's still sentences pasted into a plan's field (the frame rule, the composition line, «No text, no logo») are not said twice. `media/prompt_audit.py` (template v5): the composer never sends a negation — refuse no words for lacking «no window»; a missing colour or shape must be quoted from words_to_send (7c26a7ce scenes 1, 2, 5 held as tool defects at 03:16–03:24Z).
+
 ## 2026-10-16 — The still's frame keeps the plan's placement
 
 - `media/prompt_agent.py`: the still's frame sentence keeps the plan's own placement after its label («Wide establishing shot, 24mm lens: the glass display case centred in the vertical frame, the bar large and centred inside it, the dark room around»), without the movement, the span and the exclusions (`_frame_placement`) — the composer said «Wide establishing shot, 24mm lens.» and the Director's review refused every rewrite of 7c26a7ce scene 1 for «a bare label with no framing distance» (03:00Z). Test in `test_still_prompt_is_static.py`.

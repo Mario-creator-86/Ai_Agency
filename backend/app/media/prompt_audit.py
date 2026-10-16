@@ -47,7 +47,7 @@ AUDIT_TASK = "director_prompt_audit"
 #: defect are those made under the same instructions (20:54Z, 7c26a7ce scene 2: the guard
 #: fired at once on seven refusals made under instructions that let her ask a picture for a
 #: static frame and read a duplication off the plan — the corrected audit never judged).
-AUDIT_TEMPLATE = "director_prompt_audit-v4"
+AUDIT_TEMPLATE = "director_prompt_audit-v5"
 AUDIT_EVENT = "media.prompt_audited"
 #: Her rounds on one scene's layer inside ONE walk before the scene waits for her next walk:
 #: a bound on the walk's LLM time, not on her rounds (the Owner, 2026-10-15 18:15Z: no cap
@@ -134,6 +134,12 @@ _STILL_NOTE = (
     "refused only when you can quote it from words_to_send itself: the plan's subject and "
     "the shot_plan are the Editor's fields, not what is sent, and a clause that stands in "
     "the plan but not in words_to_send is not said twice.\n"
+    "The composer never sends a negation to the image model: «no window», «no daylight», "
+    "«no hand» leave words_to_send by rule, and the plan's exclusions reach the model's "
+    "negative channel and the gate that measures the picture — never refuse the words for "
+    "lacking a «no …»; ask instead that the present thing be named (the one light, the "
+    "closed dark room). A thing's colour, shape or light is missing only when words_to_send "
+    "does not carry it: quote the subject sentence before saying so.\n"
     "The picture is ONE frozen moment, the first of the plan: the plan's later moments "
     "(«then…», «lowers», «points») belong to the clip's words and are never in a picture's — "
     "do not refuse a picture for lacking them. When the picture must show a LATER moment of "

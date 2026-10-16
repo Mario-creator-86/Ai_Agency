@@ -205,6 +205,33 @@ def test_the_frame_keeps_the_plans_placement_after_its_label():
         "frame, the bar large and centred inside it, the dark room around."
     ), frame
     assert shot_frame("Medium shot, 50mm lens")[1] == "Medium shot, 50mm lens."
+    # 03:12Z: the Editor's camera field with its own distance sentence; the negated and the
+    # camera's sub-clauses leave, the placement stays.
+    _size, held = shot_frame(
+        "Wide establishing shot, 24mm lens, the camera standing at a wide distance across the "
+        "room: the entire windowless laboratory is held in frame — its charcoal and slate blue "
+        "walls, the one steel workbench and the glass display case complete in its fixed spot "
+        "— with the case and the bar in the upper two thirds and the lower quarter calm and "
+        "uncluttered. The camera stays at that same wide distance and does not tighten on "
+        "anything at any point."
+    )
+    assert held.startswith("Wide establishing shot, 24mm lens: the entire windowless laboratory"), (
+        held
+    )
+    assert "upper two thirds" in held and "tighten" not in held and "camera" not in held, held
+    # A composer sentence pasted into a field is not said twice.
+    pasted = compile_prompts(
+        {
+            "subject": (
+                "The platinum-iridium bar resting inside its glass display case. The frame "
+                "holds only the place and the things named."
+            ),
+            "environment": "the windowless measurement laboratory",
+            "camera": "Wide establishing shot, 24mm lens",
+        },
+        {"continuity_rules": ["No human faces appear"]},
+    )["still_prompt"]
+    assert pasted.count("The frame holds only the place and the things named") == 1, pasted
     still = compile_prompts(
         {
             "subject": "The platinum-iridium bar resting inside its glass display case",

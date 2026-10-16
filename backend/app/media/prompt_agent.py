@@ -3236,15 +3236,23 @@ def _frame_placement(camera: Any) -> str:
         return ""
     after = raw.split(":", 1)[1]
     kept: list[str] = []
-    for clause in re.split(r"\s*;\s*", after):
-        clause = lint.without_tempo(lint.static_clause(clause)).strip(" .,—–-")
-        if (
-            len(clause.split()) < 3
-            or lint.camera_moves(clause)
-            or lint.NEGATION.search(clause)
-            or _LOCKED_CAMERA.search(clause)
-            or lint.dangling(clause)
-        ):
+    for sentence in re.split(r"\s*[;.]\s*", after):
+        parts: list[str] = []
+        # A sub-clause that moves the camera, locks it, spans the clip or excludes something
+        # («does not tighten», «no movement») leaves; the placement words around it stay.
+        for part in re.split(r"\s*(?:,|—|–|\s-\s)\s*", sentence):
+            part = lint.without_tempo(part).strip(" .,—–-")
+            if (
+                not part
+                or lint.camera_moves(part)
+                or lint.NEGATION.search(part)
+                or _LOCKED_CAMERA.search(part)
+                or re.search(r"\bcamera\b", part, re.IGNORECASE)
+            ):
+                continue
+            parts.append(part)
+        clause = ", ".join(parts).strip(" .,")
+        if len(clause.split()) < 3 or lint.dangling(clause):
             continue
         kept.append(clause)
     return ", ".join(kept)
@@ -3452,6 +3460,10 @@ def _without_composer_sentences(text: Any) -> str:
 
 
 _COMPOSER_SENTENCES: tuple[str, ...] = (
+    COMPOSITION_SENTENCE,
+    STILL_EXCLUSIONS,
+    PEOPLE_SENTENCE,
+    CLOSE_PEOPLE_SENTENCE,
     DEFAULT_WORLD_MOTION,
     MOTION_PAD,
     MOTIONLESS_PAD,
@@ -3889,7 +3901,9 @@ def compile_prompts(
     size, frame = shot_frame(package.get("camera"), package.get("shot_type"))
 
     def said(field: str) -> str:
-        text = _sentence(", ".join(_clauses_of(package.get(field))))
+        # The composer's own sentences pasted into a field by a rewrite («The frame holds only
+        # the place and the things named» inside scene 1's subject, 03:12Z) are not the plan's.
+        text = _sentence(", ".join(_clauses_of(_without_composer_sentences(package.get(field)))))
         return hide_faces(text) if faces_banned else text
 
     subject = said("subject")
