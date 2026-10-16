@@ -1303,8 +1303,13 @@ def _words(
         again = f" la încercarea {attempt}" if isinstance(attempt, int) and attempt > 1 else ""
         if str(payload.get("accepted_by") or "") == "director_look":
             return _kept_clip_words(payload, where, film)
-        if payload.get("accepted_under_cap") and not payload.get("passed"):
-            # Kept under the Owner's renders cap: clip QC refused it, it stays (STUB-003).
+        from app.media.assembler import is_legacy_cap_pass  # noqa: PLC0415 - a large module
+
+        if payload.get("accepted_under_cap") and (
+            not payload.get("passed") or is_legacy_cap_pass(payload)
+        ):
+            # Kept under the Owner's renders cap: clip QC refused it, it stays (STUB-003); the
+            # old cap-keep wrote such a clip as passed, with nobody choosing it.
             who = (
                 "Directoarea l-a ales"
                 if payload.get("chosen_by") == "director"

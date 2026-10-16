@@ -1298,11 +1298,20 @@ def _set_verdicts(
 
 @dataclass
 class _RoundEnd:
-    """What one judged round of a scene leads to: a take approved (by the gate or by her
-    look), another round on the same words with ``instruction``, or ``outcome``."""
+    """What one judged round of a scene leads to: a take approved (by the gate, by her look,
+    or under the Owner's renders cap), another round on the same words with ``instruction``, or
+    ``outcome``.
+
+    A round approved a take when ``take_id`` is set, and only then; ``report`` is that take's
+    verdict in this round, which a still kept under the cap from an EARLIER round does not have
+    (the review of the track-1 fix, 2026-10-16: every buyer read ``report`` as the approval,
+    and her choice of an earlier round's still fell over on ``outcome['status']`` after the
+    round was paid for). ``path`` is the approved take's file in every case (`picture`)."""
 
     take_id: str | None = None
     report: StillReport | None = None
+    #: The approved take's file, whichever round made it: Figure 1 is read from it.
+    path: str | None = None
     approved_by: str = GATE_REVIEWER
     again: bool = False
     instruction: str = ""
@@ -1313,6 +1322,15 @@ class _RoundEnd:
     #: She confirmed a refusal that says the WORDS ask for the wrong picture
     #: (`still_gate.content_refusal`): another seed on them is not bought.
     confirmed_content: bool = False
+
+    def picture(self) -> Path | None:
+        """The approved take's file: this round's candidate, or the still kept under the cap
+        from an earlier round. None when no take was approved."""
+        if self.take_id is None:
+            return None
+        if self.path:
+            return Path(self.path)
+        return Path(self.report.path) if self.report is not None else None
 
     def approved(self) -> dict[str, Any]:
         """The scene's outcome for the approved take, with what was accepted on it."""
@@ -1956,9 +1974,15 @@ def _settle_round(
                 lessons=confirmed,
             )
             if kept is not None:
+                # She may choose a still of an earlier round: it has no report in this one,
+                # and the buyers read the approval from ``take_id`` and the file from ``path``.
                 report = next((rep for take, rep in verdicts if take == kept.id), None)
                 end = _RoundEnd(
-                    take_id=kept.id, report=report, approved_by=CAP_APPROVER, confirmed=confirmed
+                    take_id=kept.id,
+                    report=report,
+                    path=str(kept.path) if kept.path else None,
+                    approved_by=CAP_APPROVER,
+                    confirmed=confirmed,
                 )
                 _after_approval(engine, storyboard_id, scene, end, correlation_id)
                 return end
@@ -2079,12 +2103,15 @@ def _settle_pending(
         end = _settle_round(
             engine, registry, storyboard_id, scene, verdicts, correlation_id, rerolls=0
         )
-        if end.report is not None:
+        if end.take_id is not None:
+            # Approved: one of these candidates, or, past the cap, the still she (or the
+            # studio) kept among the scene's, of whichever round.
+            picture = end.picture()
             return {
                 **end.approved(),
                 "credits": 0,
                 "judged_collected": len(verdicts),
-                "path": str(end.report.path),
+                "path": str(picture) if picture is not None else None,
             }
         if end.outcome is not None and end.outcome.get("rewrite"):
             return {**end.outcome, "judged_collected": len(verdicts)}
@@ -2540,9 +2567,10 @@ class _StillRounds:
             self.correlation_id,
             rerolls=state.rerolls,
         )
-        if end.report is not None:
-            if state.scene.index == self.first_live:
-                self.figure_one = Path(end.report.path).read_bytes()
+        if end.take_id is not None:
+            picture = end.picture()
+            if state.scene.index == self.first_live and picture is not None:
+                self.figure_one = picture.read_bytes()
             state.outcome = end.approved()
             return None
         if end.again:
@@ -3010,7 +3038,7 @@ def run_stills_stage(
                 rules=_bible_rules(bible),
             )
             entry.update(settled)
-            if settled["status"] == "APPROVED" and scene.index == first_live:
+            if settled["status"] == "APPROVED" and scene.index == first_live and settled["path"]:
                 figure_one = Path(str(settled["path"])).read_bytes()
             entry.pop("path", None)
             continue
@@ -3300,9 +3328,10 @@ def run_stills_stage(
                 correlation_id,
                 rerolls=rerolls,
             )
-            if end.report is not None:
-                if scene.index == first_live:
-                    figure_one = Path(end.report.path).read_bytes()
+            if end.take_id is not None:
+                picture = end.picture()
+                if scene.index == first_live and picture is not None:
+                    figure_one = picture.read_bytes()
                 outcome = end.approved()
                 break
             if end.again:

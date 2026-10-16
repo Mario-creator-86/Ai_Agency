@@ -5229,6 +5229,45 @@ def clip_kept(record: Mapping[str, Any] | None) -> bool:
     return (record or {}).get("verdict") in CLIP_KEPT_VERDICTS
 
 
+def is_legacy_cap_pass(record: Mapping[str, Any] | None) -> bool:
+    """Whether a clip-QC record is one the cap-keep wrote before 2026-10-16: ``verdict`` PASSED
+    and ``passed`` True for a clip clip QC had refused, kept by the cap (`CAP_APPROVER`,
+    ``accepted_under_cap``) with no QC verdict of its own. Four such records stand on the live
+    films (7c26a7ce scenes 1-2, 87c05891 scenes 4-5), each with its refusal in its blocks. A
+    record her second look passed afterwards (``accepted_by`` her look's) is hers, not one."""
+    said = record or {}
+    return (
+        bool(said.get("accepted_under_cap"))
+        and said.get("accepted_by") == CAP_APPROVER
+        and "qc_verdict" not in said
+        and said.get("verdict") == "PASSED"
+    )
+
+
+def read_clip_record(payload: Any) -> dict[str, Any] | None:
+    """A clip-QC event's payload as the record every reader reads (`clip_qc_of`, the hero gate,
+    the register): as written, except a record the old cap-keep wrote as a pass
+    (`is_legacy_cap_pass`), which is read as what it was — kept under the cap (`CAP_VERDICT`),
+    not passed — with QC's own verdict as its checks and blocks still show it: FAILED when a
+    blocking check failed or it carries a refusal, else UNCHECKED. The events stay as written
+    (the database is never rewritten for this); the review of the track-1 fix, STUB-003."""
+    if not isinstance(payload, Mapping):
+        return None
+    record = dict(payload)
+    if not is_legacy_cap_pass(record):
+        return record
+    checks = [check for check in record.get("checks") or [] if isinstance(check, Mapping)]
+    failed = any(check.get("blocking") and check.get("status") == "FAILED" for check in checks)
+    blocks = [str(text) for text in record.get("blocks_ro") or [] if str(text).strip()]
+    record.update(
+        verdict=CAP_VERDICT,
+        passed=False,
+        qc_verdict="FAILED" if failed or blocks else "UNCHECKED",
+        legacy_cap_pass=True,
+    )
+    return record
+
+
 def clip_report_record(report: Any) -> dict[str, Any]:
     """A ``qc.ClipReport`` as the take's event and the scene's record keep it.
 
@@ -5654,14 +5693,15 @@ def _keep_clip_report(
 
 
 def clip_qc_of(session: Session, take_id: str) -> dict[str, Any] | None:
-    """The latest clip-QC report kept on a take, or None when it was never checked."""
+    """The latest clip-QC report kept on a take, or None when it was never checked. A record
+    the old cap-keep wrote as a pass is read as kept, not passed (`read_clip_record`)."""
     event = session.scalars(
         select(DomainEvent)
         .where(DomainEvent.event_type == CLIP_QC_EVENT, DomainEvent.aggregate_id == take_id)
         .order_by(DomainEvent.sequence.desc())
         .limit(1)
     ).first()
-    return dict(event.payload) if event is not None and isinstance(event.payload, dict) else None
+    return read_clip_record(event.payload) if event is not None else None
 
 
 def clip_accepted(session: Session, take: SceneTake, environment: str) -> tuple[bool, str]:
@@ -10630,7 +10670,8 @@ def hero_gate(
         )
         return view
     report = _clip_report_event(session, take.id) if take is not None else None
-    record = dict(report.payload) if report is not None and isinstance(report.payload, dict) else {}
+    # Read as every reader reads it: an old cap-keep's «pass» is a clip kept (STUB-003).
+    record = (read_clip_record(report.payload) if report is not None else None) or {}
     clip_verdict = record.get("verdict") if take is not None and take.status == "PAID" else None
     if take is not None and take.status != "PAID":
         clip_verdict = "FAILED"
@@ -17593,7 +17634,9 @@ class _StillRedoBuyer:
                 c["correlation_id"],
                 rerolls=self.rerolls,
             )
-            if end.report is not None:
+            if end.take_id is not None:
+                # Approved: a candidate of this redo, or past the cap a still of the scene's
+                # kept from any round (`stills._RoundEnd`: it may have no report here).
                 outcome = end.approved()
                 break
             if end.again:

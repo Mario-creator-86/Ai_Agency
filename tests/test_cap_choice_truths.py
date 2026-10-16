@@ -443,3 +443,317 @@ def test_a_still_whose_file_changed_is_not_settled_again_and_again(engine, tmp_p
     assert not stills_stage.settle_scene_under_cap(engine, board, 1, "c")
     with Session(engine) as session:
         assert session.get(SceneTake, changed).status == "REJECTED"
+
+
+# ----------------------- the review of this fix (2026-10-16): her choice of an earlier still
+
+
+class ChooseTake(Look):
+    """Her look past the cap, faked: she chooses the take whose picture is ``image``, wherever
+    it was shown."""
+
+    def __init__(self, image: str):
+        super().__init__({"decision": "CHOOSE", "reason": "Cea din runda trecută e mai aproape."})
+        self.image = image
+
+    def __call__(self, engine, registry, shown, images, correlation_id=None, **kwargs):
+        self.answer = {**dict(self.answer or {}), "candidate": list(images).index(self.image) + 1}
+        return super().__call__(engine, registry, shown, images, correlation_id, **kwargs)
+
+
+def _her_second_look_confirms(monkeypatch) -> None:
+    """Her second look confirms every refusal, and her reading of older briefs is a no-op."""
+    monkeypatch.setattr(
+        stills_stage,
+        "_director_looks",
+        lambda *a, **k: stills_stage._RoundEnd(confirmed=["Directoarea confirmă refuzul."]),
+    )
+    monkeypatch.setattr(fix_check, "read_film_reasons", lambda *a, **k: None)
+
+
+def test_her_choice_of_an_earlier_rounds_still_is_the_scenes_picture_and_figure_one(
+    engine, tmp_path, monkeypatch, eyes
+):
+    """Scene 1 had a still refused in an earlier round. This round buys its second render,
+    the gate refuses both candidates and her second look confirms it; past the cap she chooses
+    the EARLIER round's still. It is the scene's picture and the film's Figure 1, and the rest
+    of the film is bought with it. Until the review of this fix the round had no report for
+    that still and the step fell over on ``outcome['status']`` after the round was paid for."""
+    from test_approvals import answer
+    from test_stills_stage import FACE, NO_FACE, SUBJECTS, SpyJudge, SpyStills, faces_in
+
+    board = a_film_to_buy(engine, tmp_path)
+    with Session(engine) as session, session.begin():
+        older = _take(session, board, 1, "still", on_disk=tmp_path / "older.png")
+        _at(session, older, "2026-10-16T09:00:00+00:00")
+    older_bytes = (tmp_path / "older.png").read_bytes()
+    _her_second_look_confirms(monkeypatch)
+    look = ChooseTake(f"still:{older}")
+    monkeypatch.setattr(reviews, "review_bought_pictures", look)
+    adapter = SpyStills(
+        pictures=lambda prompt, call: [FACE, FACE] if SUBJECTS[1] in prompt else list(NO_FACE)
+    )
+
+    def go() -> dict[str, Any]:
+        return stills_stage.run_stills_stage(
+            engine,
+            board,
+            str(uuid4()),
+            plan_hash=stills_stage.stills_plan(engine, board)["plan_hash"],
+            image_adapter=adapter,
+            registry=Registry(),
+            judge=SpyJudge(),
+            face_counter=faces_in(),
+            measure=("faces",),
+            storage_root=tmp_path / "media",
+        )
+
+    with pytest.raises(stills_stage.StillsStageRefused) as asked:
+        go()
+    answer(engine, asked.value.approval_id, "APPROVED", note="Da, imaginile.")
+    result = go()
+
+    (shown,) = look.asked
+    with Session(engine) as session:
+        this_round = [
+            row.id
+            for row in session.scalars(
+                select(SceneTake).where(
+                    SceneTake.storyboard_id == board,
+                    SceneTake.scene_number == 1,
+                    SceneTake.id != older,
+                )
+            )
+        ]
+    # The round's measured still first (the studio's own pick), then the earlier round's.
+    assert shown["images"] == [*(f"still:{take}" for take in this_round), f"still:{older}"]
+    by_scene = {entry["scene_index"]: entry for entry in result["scenes"]}
+    assert by_scene[1]["status"] == "APPROVED" and by_scene[1]["take_id"] == older
+    assert by_scene[1]["approved_by"] == CAP_APPROVER
+    with Session(engine) as session:
+        assert session.get(SceneTake, older).status == "APPROVED"
+    (choice,) = _choices(engine, board)
+    assert choice["take_id"] == older and choice["chosen_by"] == "director"
+    # The rest of the film is bought, each request carrying the still she chose as Figure 1.
+    later = [call for call in adapter.asked if SUBJECTS[1] not in call["prompt"]]
+    assert len(later) == 3 and all(call["references"] == [older_bytes] for call in later)
+    assert all(by_scene[n]["status"] == "APPROVED" for n in (2, 3, 4))
+
+
+def test_a_collected_round_settled_on_an_earlier_still_is_approved_not_refused(
+    engine, tmp_path, monkeypatch, eyes
+):
+    """The free settle of what was bought: scene 1's second render was collected and refused,
+    and past the cap she chooses the still of its first render. The scene is APPROVED with
+    that still, never reported as «judecate și respinse»."""
+    import hashlib
+
+    from test_stills_stage import FACE, SpyJudge, faces_in
+
+    board = a_film_to_buy(engine, tmp_path)
+    _bible, scenes = stills_stage._read_scenes(engine, board)
+    identity = next(scene for scene in scenes if scene.index == 1).identity
+    with Session(engine) as session, session.begin():
+        older = _take(session, board, 1, "still", on_disk=tmp_path / "older.png")
+        _at(session, older, "2026-10-16T09:00:00+00:00")
+        collected = _take(
+            session,
+            board,
+            1,
+            "still",
+            status="PAID",
+            on_disk=tmp_path / "collected.jpg",
+            prompt_hash=assembler.take_hash(identity, stills_stage.STILLS_MODEL),
+        )
+        (tmp_path / "collected.jpg").write_bytes(FACE.read_bytes())
+        row = session.get(SceneTake, collected)
+        row.sha256 = hashlib.sha256(FACE.read_bytes()).hexdigest()
+        row.failure_code = assembler.UNJUDGED_FAILURE_CODE
+        row.failure_detail = assembler.UNJUDGED_DETAIL
+        _at(session, collected, "2026-10-16T10:00:00+00:00")
+    _her_second_look_confirms(monkeypatch)
+    monkeypatch.setattr(reviews, "review_bought_pictures", ChooseTake(f"still:{older}"))
+
+    summary = stills_stage.settle_stills(
+        engine,
+        board,
+        "c",
+        image_adapter=None,
+        registry=Registry(),
+        judge=SpyJudge(),
+        face_counter=faces_in(),
+        measure=("faces",),
+    )
+
+    (one,) = [entry for entry in summary["scenes"] if entry["scene_index"] == 1]
+    assert one["status"] == "APPROVED" and one["take_id"] == older, one
+    assert one["approved_by"] == CAP_APPROVER and one["credits"] == 0
+    with Session(engine) as session:
+        assert session.get(SceneTake, older).status == "APPROVED"
+        assert session.get(SceneTake, collected).status == "REJECTED"
+
+
+def test_the_runpod_rounds_take_figure_one_from_a_still_of_an_earlier_round(tmp_path, monkeypatch):
+    """The RunPod rounds read the round's end as the other buyers do: a still kept under the
+    cap from an earlier round (no report in this one) is APPROVED and gives Figure 1 its
+    file."""
+    from types import SimpleNamespace
+
+    picture = tmp_path / "older.png"
+    picture.write_bytes(b"the still of an earlier round")
+    end = stills_stage._RoundEnd(take_id="older", approved_by=CAP_APPROVER, path=str(picture))
+    monkeypatch.setattr(stills_stage, "_settle_round", lambda *a, **k: end)
+    rounds = SimpleNamespace(
+        engine=None,
+        registry=None,
+        storyboard_id="b",
+        correlation_id="c",
+        first_live=1,
+        figure_one=None,
+    )
+    state = SimpleNamespace(
+        scene=SimpleNamespace(index=1), verdicts=[], rerolls=0, outcome=None, entry={}
+    )
+
+    assert stills_stage._StillRounds._settled(rounds, state) is None
+
+    assert state.outcome["status"] == "APPROVED" and state.outcome["take_id"] == "older"
+    assert state.outcome["approved_by"] == CAP_APPROVER
+    assert rounds.figure_one == b"the still of an earlier round"
+
+
+def test_every_buyer_reads_an_approved_round_by_its_take_not_by_its_report():
+    """The paid still redo, the RunPod rounds, the per-request path and the free settle read a
+    round's approval from its take, so a still kept from an earlier round is approved there."""
+    import inspect
+
+    for code in (
+        inspect.getsource(assembler._StillRedoBuyer.run),
+        inspect.getsource(stills_stage._StillRounds._settled),
+        inspect.getsource(stills_stage.run_stills_stage),
+        inspect.getsource(stills_stage._settle_pending),
+    ):
+        assert "end.report is not None" not in code
+        assert "end.take_id is not None" in code
+
+
+# ------------ the review of this fix: clip records the old cap-keep wrote as a pass (STUB-003)
+
+
+def _legacy_cap_record(session: Session, board: str, scene: int, take_id: str) -> None:
+    """A clip-QC record as the cap-keep wrote it before 2026-10-16: PASSED, passed, kept by
+    the cap, no QC verdict of its own; its refusal only in its blocks (as on 87c05891 scene 5)."""
+    append_event(
+        session,
+        CLIP_QC_EVENT,
+        "scene_take",
+        take_id,
+        1,
+        {
+            "storyboard_id": board,
+            "scene_number": scene,
+            "take_id": take_id,
+            "verdict": "PASSED",
+            "passed": True,
+            "accepted_by": CAP_APPROVER,
+            "accepted_under_cap": True,
+            "blocks_ro": ["repetă greșeala pe care rescrierea mișcării trebuia să o corecteze"],
+            "cap_note_ro": "Acceptat sub plafonul Proprietarului (2 randări): clipul rămâne.",
+        },
+        "c",
+    )
+
+
+def test_a_clip_the_old_cap_keep_wrote_as_passed_is_read_as_kept_not_passed(engine, tmp_path):
+    board = a_film_with_stills(engine, tmp_path, scenes=3)
+    with Session(engine) as session, session.begin():
+        passed = _take(session, board, 2, "motion", status="PAID", on_disk=tmp_path / "p.mp4")
+        legacy = _take(session, board, 2, "motion", status="PAID", on_disk=tmp_path / "k.mp4")
+        _at(session, passed, "2026-10-16T09:00:00+00:00")
+        _at(session, legacy, "2026-10-16T10:00:00+00:00")
+        session.get(SceneTake, legacy).approved_by = CAP_APPROVER
+        _legacy_cap_record(session, board, 2, legacy)
+        append_event(
+            session,
+            CLIP_QC_EVENT,
+            "scene_take",
+            passed,
+            1,
+            {"storyboard_id": board, "scene_number": 2, "take_id": passed, "verdict": "PASSED"},
+            "c",
+        )
+    with Session(engine) as session:
+        record = clip_qc_of(session, legacy)
+        assert record["verdict"] == CAP_VERDICT and record["passed"] is False
+        assert record["qc_verdict"] == "FAILED" and record["accepted_under_cap"] is True
+        # The film may still use it, as it was kept ...
+        take = session.get(SceneTake, legacy)
+        assert assembler.clip_accepted(session, take, "PRODUCTION") == (True, "")
+        # ... but it is no pass: a real pass ranks before it.
+        ranked = [row.id for row in assembler._cap_shot_candidates(session, board, 2)]
+        assert ranked == [passed, legacy]
+
+
+def test_a_clip_the_old_cap_keep_wrote_as_passed_closes_none_of_her_motion_items(engine, tmp_path):
+    board = a_film_with_stills(engine, tmp_path, scenes=3)
+    with Session(engine) as session, session.begin():
+        legacy = _take(session, board, 2, "motion", status="PAID", on_disk=tmp_path / "k.mp4")
+        session.get(SceneTake, legacy).approved_by = CAP_APPROVER
+        _legacy_cap_record(session, board, 2, legacy)
+    with Session(engine) as session:
+        assert not fix_check._passing_clip_after(session, board, 2, "2000-01-01T00:00:00")
+
+
+def test_the_register_says_a_clip_the_old_cap_keep_wrote_as_passed_did_not_pass(engine):
+    from test_events_feed import TITLE, page, record, studio
+
+    ids = studio(engine)
+    record(
+        engine,
+        "media.clip_qc_checked",
+        ("scene_take", str(uuid4())),
+        {
+            "storyboard_id": ids["board"],
+            "scene_number": 5,
+            "take_id": str(uuid4()),
+            "scene": 5,
+            "passed": True,
+            "verdict": "PASSED",
+            "accepted_by": CAP_APPROVER,
+            "accepted_under_cap": True,
+            "blocks_ro": ["repetă greșeala"],
+        },
+    )
+    clip = page(engine)["media.clip_qc_checked"]
+    assert clip["words_ro"] == (
+        f"Clipul scenei 5 din «{TITLE}» nu a trecut controlul, dar rămâne sub plafonul de "
+        "randări: studioul l-a păstrat."
+    )
+
+
+def test_her_look_that_passed_a_clip_once_kept_under_the_cap_stays_a_pass(engine, tmp_path):
+    """A clip her second look kept (`fix_check.DIRECTOR_LOOK_APPROVER`) after an old cap-keep
+    carries the old record's fields; it is her pass, and it is read as one."""
+    board = a_film_with_stills(engine, tmp_path, scenes=3)
+    with Session(engine) as session, session.begin():
+        clip = _take(session, board, 2, "motion", status="PAID", on_disk=tmp_path / "k.mp4")
+        append_event(
+            session,
+            CLIP_QC_EVENT,
+            "scene_take",
+            clip,
+            1,
+            {
+                "storyboard_id": board,
+                "scene_number": 2,
+                "take_id": clip,
+                "verdict": "PASSED",
+                "passed": True,
+                "accepted_by": fix_check.DIRECTOR_LOOK_APPROVER,
+                "accepted_under_cap": True,
+            },
+            "c",
+        )
+    with Session(engine) as session:
+        assert clip_qc_of(session, clip)["verdict"] == "PASSED"
+        assert fix_check._passing_clip_after(session, board, 2, "2000-01-01T00:00:00")
