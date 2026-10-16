@@ -24,7 +24,10 @@ held within what is left (`shooting_sheet.STEP_HOLD_REFUSED_EVENT`, 2026-10-16).
 day whose remaining budget could not hold a film's step still counted as unspent: it queued
 six more runs that each met the same refusal, then wrote him «6 rulări» for what was his
 budget. A spent budget is money, so it reaches him as the film's budget card when his rule
-raises one (`decisions.sources.film_budget`), never as a letter from this pass.
+raises one (`decisions.sources.film_budget`), never as a letter from this pass. It is read film
+by film (SAFE-003, 2026-10-16): the day stops on the budget only when every film it still owes
+— the short, the episode — has its own newest round refused over what is left; a film whose
+round still fits, or that was never refused, keeps the day going.
 
 Nothing here buys or decides: the run it queues asks for anything paid under his rule, behind
 his stop, safe mode and his mode, exactly as his own button does.
@@ -136,41 +139,75 @@ def _film_at_work(session: Any) -> bool:
     )
 
 
-def _budget_spent(engine: Any) -> bool:
-    """Whether the daily budget can buy nothing more today: none of it is left, or the newest
-    round the budgets refused today (`STEP_HOLD_REFUSED_EVENT`) still needs more than its
-    period has left now. Raised by the Owner since, the round fits and the day goes on."""
+#: The films the day owes, as `day_goal` counts them, and how the budget's reason names them.
+OWED_FILMS = {"short": "shortul", "serial": "episodul serialului"}
+
+
+def _budget_spent(engine: Any, owed: list[str]) -> list[str]:
+    """The films the day still owes (``owed``: "short", "serial") that the daily budget cannot
+    carry now: every one of them when none of the budget is left; else each whose own newest
+    round the budgets refused today (`STEP_HOLD_REFUSED_EVENT`, per storyboard) still needs
+    more than its period has left. Raised by the Owner since, the round fits and the film goes
+    on. The day stops on the budget only when every owed film is in this list (SAFE-003,
+    2026-10-16): until then the newest refusal of any film stopped the whole day, and a short
+    whose next round still fitted waited, with no run, card or reason, behind the episode's.
+
+    A refusal whose storyboard the studio cannot find is read as before, for every owed film:
+    the day cannot tell which film it was."""
     from sqlalchemy import select  # noqa: PLC0415
     from sqlalchemy.orm import Session  # noqa: PLC0415
 
     from app.economy.budget import budget_status  # noqa: PLC0415
+    from app.media.models import Storyboard  # noqa: PLC0415
     from app.media.shooting_sheet import STEP_HOLD_REFUSED_EVENT  # noqa: PLC0415
     from app.models import DomainEvent  # noqa: PLC0415
 
+    if not owed:
+        return []
     try:
         periods = {str(p["period"]): p for p in budget_status(engine)["budgets"]}
     except Exception:  # noqa: BLE001 - a budget that cannot be read stops nothing here
-        return False
+        return []
     daily = periods.get("DAILY")
     if daily is None:
-        return False
+        return []
     if int(daily["remaining_usd_micros"]) <= 0:
-        return True
+        return list(owed)
+    newest: dict[str, dict[str, Any]] = {}
     with Session(engine) as session:
-        refused = session.scalar(
+        for event in session.scalars(
             select(DomainEvent)
             .where(
                 DomainEvent.event_type == STEP_HOLD_REFUSED_EVENT,
                 DomainEvent.timestamp >= str(daily["since"]),
             )
             .order_by(DomainEvent.sequence.desc())
-            .limit(1)
-        )
-    payload = refused.payload if refused is not None and isinstance(refused.payload, dict) else {}
-    period = periods.get(str(payload.get("period") or ""))
-    if period is None:
-        return False
-    return int(payload.get("need_usd_micros") or 0) > int(period["remaining_usd_micros"])
+        ):
+            board_id = str(event.aggregate_id or "")
+            if board_id in newest:
+                continue  # an older refusal of a film whose newest is already read
+            board = session.get(Storyboard, board_id) if board_id else None
+            kinds = (
+                list(owed)
+                if board is None
+                else [
+                    "serial"
+                    if str(board.series_key or "").strip().lower() == SERIAL_SERIES_KEY
+                    else "short"
+                ]
+            )
+            payload = event.payload if isinstance(event.payload, dict) else {}
+            newest[board_id] = {"kinds": kinds, "payload": payload}
+    waiting: list[str] = []
+    for refusal in newest.values():
+        payload = refusal["payload"]
+        period = periods.get(str(payload.get("period") or ""))
+        if period is None:
+            continue
+        if int(payload.get("need_usd_micros") or 0) <= int(period["remaining_usd_micros"]):
+            continue
+        waiting += [kind for kind in refusal["kinds"] if kind in owed and kind not in waiting]
+    return [kind for kind in owed if kind in waiting]
 
 
 def _letter_once(session: Any, date_iso: str, why: str, goal: dict[str, Any]) -> bool:
@@ -241,15 +278,24 @@ def keep_the_day_going(context: WatchdogContext) -> dict[str, Any]:
             last = last.replace(tzinfo=UTC)
         if datetime.now(UTC) - last < timedelta(minutes=DAY_GOAL_GAP_MINUTES):
             return {"queued": None, "goal": goal, "why": "the last run just ended"}
-    if _budget_spent(engine):
+    owed = [kind for kind in OWED_FILMS if int(goal.get(kind) or 0) < 1]
+    waiting = _budget_spent(engine, owed)
+    if owed and waiting == owed:
         # Money is his card, not a letter (2026-10-12): the film waiting on the budget carries
-        # it when his rule raises one, and another run would meet the same refusal.
+        # it when his rule raises one, and another run would meet the same refusal. Only when
+        # every film the day still owes waits on it: a film whose round fits keeps the day
+        # going (SAFE-003).
+        films = " și ".join(OWED_FILMS[kind] for kind in waiting)
         return {
             "queued": None,
             "goal": goal,
-            "why": "bugetul zilnic este cheltuit: runda următoare nu încape în ce a rămas",
+            "why": (
+                f"bugetul zilnic este cheltuit: runda următoare pentru {films} nu încape în ce "
+                "a rămas"
+            ),
             "letter": False,
             "budget": True,
+            "waiting_on_budget": waiting,
         }
     stop_why = None
     if queued_today >= DAY_GOAL_RUNS_PER_DAY:
