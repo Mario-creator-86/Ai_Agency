@@ -1718,14 +1718,15 @@ def settle_scene_under_cap(
     Director chooses among several by looking at them through ``registry``
     (`cap_choice.choose_under_cap`), or, when she cannot, the studio's own pick, said as the
     studio's; never one the Owner rejected himself. A motion at its cap settles the picture
-    whatever the picture's count: a new one could not be animated. Its motion, at its cap: a
-    clip it has stands (chosen the same way), else its still moved locally
-    (`assembler.settle_motion_under_cap`). A render still pending (at the vendor, or collected
-    and not judged) is judged first, never passed over. Returns True only when something
-    changed — a still now approved for the scene, a clip kept, a local move — so a walk never
-    turns on a scene it cannot move (05:20Z, 7c26a7ce scenes 1-2: the still under the cap,
-    three clips refused for it, and every walk stopped at «Directoarea nu a putut încă
-    rescrie» — the ladder ran before the cap could act).
+    whatever the picture's count: a new one could not be animated. Its motion, at its cap, or
+    with nothing left to buy because the picture kept under the cap cannot be animated again
+    (`renders_cap.motion_spent`): a clip it has stands (chosen the same way), else its still
+    moved locally (`assembler.settle_motion_under_cap`). A render still pending (at the
+    vendor, or collected and not judged) is judged first, never passed over. Returns True
+    only when something changed — a still now approved for the scene, a clip kept, a local
+    move — so a walk never turns on a scene it cannot move (05:20Z, 7c26a7ce scenes 1-2: the
+    still under the cap, three clips refused for it, and every walk stopped at «Directoarea
+    nu a putut încă rescrie» — the ladder ran before the cap could act).
 
     ``act=False`` writes nothing, calls no model, and says whether it would settle something:
     only such a scene is said to be the Director's to settle under the cap
@@ -1737,7 +1738,8 @@ def settle_scene_under_cap(
     )
 
     motion_full = _motion_at_renders_cap(engine, storyboard_id, scene_index)
-    if not motion_full and not _at_renders_cap(engine, storyboard_id, scene_index):
+    picture_full = _at_renders_cap(engine, storyboard_id, scene_index)
+    if not motion_full and not picture_full:
         return False
     settled = False
     with Session(engine) as session:
@@ -1772,7 +1774,10 @@ def settle_scene_under_cap(
                 kept is not None
                 and scene_approved_still(engine, storyboard_id, scene_index) is not None
             )
-    if motion_full:
+    if motion_full or picture_full:
+        # A picture at the cap whose kept still cannot be animated again leaves the motion
+        # nothing to buy either (`renders_cap.motion_spent`, read by the settle itself): the
+        # clip the scene has stands, else her local move (2026-10-16, 87c05891 scene 1).
         moved = settle_motion_under_cap(
             engine,
             storyboard_id,

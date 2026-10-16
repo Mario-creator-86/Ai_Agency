@@ -31,7 +31,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger("studio.renders_cap")
@@ -266,8 +266,9 @@ def at_cap(
 # Owner approved by card on 2026-10-16. The move is not a look: it is made when no clip is left
 # to keep. It is recorded here and read by every reader of his: the motion plan (the scene is
 # LOCAL, never planned), the sheet's and the render's readiness, the fallback gate and film QC
-# (which record it apart from his own choices). It stands while the scene's motion is at the
-# cap: a cap he raises (STUDIO_RENDERS_PER_LAYER) gives the scene its render back.
+# (which record it apart from his own choices). It stands while the scene's motion has nothing
+# left to buy (`motion_spent`: at its cap, or its picture at the cap and not to be animated
+# again): a cap he raises (STUDIO_RENDERS_PER_LAYER) gives the scene its render back.
 
 #: {storyboard_id, scene_index, renders, cap, reason_ro} on the storyboard.
 CAP_LOCAL_MOVE_EVENT = "media.cap_local_move"
@@ -275,9 +276,160 @@ CAP_LOCAL_MOVE_EVENT = "media.cap_local_move"
 CAP_LOCAL_MOVE_BY = "director"
 
 
+# --------------------------------------- a motion with nothing left to buy: its picture's cap
+#
+# 2026-10-16 21:45-22:07Z, 87c05891 «Zero Scripts, Blocked Log», scene 1: its picture had three
+# renders, all refused by the gate, and the Director kept 8b7393c4 under the cap. Its one clip
+# (1283e81e) was refused for a fault of that picture (a flat band across its bottom), so the
+# same-input guard refused every new clip from it (SAME_INPUT_FAILED) and sent the picture back
+# to the stills gate; the cap could buy no new picture and chose 8b7393c4 again; the motion,
+# at one render of two, was never at its cap, so no clip was kept and no local move made. Each
+# walk paid a look of hers and a rewrite of hers in tokens, and the film never assembled.
+#
+# The Owner's rule decides it: a picture at the cap that cannot be animated again leaves its
+# motion nothing to buy, exactly as a motion at its own cap (`motion_spent`). The picture
+# stays (`assembler._send_still_back_for_clip` sends a still at the cap back no more, and
+# records `MOTION_SPENT_EVENT` instead), and the motion settles under the cap with what the
+# scene has: its clip kept, or her local move of the still (0 credits). The flip-flop's guard:
+# a picture sent back for a clip's fault and kept under the cap again (any route, past or
+# future) is read as spent too, so a re-opened choice settles the motion at the next walk
+# instead of turning for ever.
+
+#: {storyboard_id, scene_index, still_take_id, still_renders, motion_renders, cap, cause,
+#: reason_ro} on the storyboard: the picture kept under the cap cannot be animated again.
+MOTION_SPENT_EVENT = "media.cap_motion_spent"
+#: `assembler._send_still_back`/`_send_still_back_for_clip`'s event, on the still's take: a
+#: clip from it was refused for a fault of that picture.
+STILL_SENT_BACK_EVENT = "media.still_sent_back"
+
+
+def picture_cannot_move(session: Session, storyboard_id: str, still_take_id: str) -> bool:
+    """Whether a clip from this still was refused for the still's own fault: it was sent back
+    to the stills gate for it (`STILL_SENT_BACK_EVENT`: clip QC's finding, the same-input
+    guard's, a video model's safety refusal of it), or kept at the cap in its place
+    (`MOTION_SPENT_EVENT`). Not when her look at the refused clip overturned the send-back
+    (`fix_check.restore_sent_back_scenes`: the still APPROVED as hers, the clip restored)."""
+    from app.media.fix_check import DIRECTOR_LOOK_APPROVER  # noqa: PLC0415
+    from app.media.models import SceneTake  # noqa: PLC0415
+    from app.models import DomainEvent  # noqa: PLC0415
+
+    if any(
+        isinstance(event.payload, dict)
+        and str(event.payload.get("still_take_id") or "") == str(still_take_id)
+        for event in session.scalars(
+            select(DomainEvent).where(
+                DomainEvent.event_type == MOTION_SPENT_EVENT,
+                DomainEvent.aggregate_id == storyboard_id,
+            )
+        )
+    ):
+        return True
+    sent_back = session.scalar(
+        select(DomainEvent.event_id)
+        .where(
+            DomainEvent.event_type == STILL_SENT_BACK_EVENT,
+            DomainEvent.aggregate_id == str(still_take_id),
+        )
+        .limit(1)
+    )
+    if sent_back is None:
+        return False
+    still = session.get(SceneTake, str(still_take_id))
+    return still is None or still.approved_by != DIRECTOR_LOOK_APPROVER
+
+
+def _kept_still_id(session: Session, storyboard_id: str, scene_index: int) -> str | None:
+    """The still the scene's motion starts from now (`assembler.scene_approved_still`)."""
+    from app.media.assembler import scene_approved_still  # noqa: PLC0415 - it imports us
+
+    bind = session.get_bind()
+    engine = bind if isinstance(bind, Engine) else bind.engine
+    kept = scene_approved_still(engine, storyboard_id, int(scene_index))
+    return str(kept.id) if kept is not None else None
+
+
+def motion_spent(
+    session: Session,
+    storyboard_id: str,
+    scene_index: int,
+    settings: Any = None,
+    *,
+    still_take_id: str | None = None,
+) -> bool:
+    """Whether nothing more of the scene's motion can be bought under the Owner's cap: its
+    motion had its renders, or its picture had its renders and the picture kept
+    (``still_take_id``, else the scene's approved still) cannot be animated again
+    (`picture_cannot_move`). Either way what the scene has stands
+    (`assembler.settle_motion_under_cap`). A cap he raises gives the layer its render back."""
+    cap = renders_per_layer(settings)
+    if renders_made(session, storyboard_id, scene_index, "motion") >= cap:
+        return True
+    if renders_made(session, storyboard_id, scene_index, "still") < cap:
+        return False
+    kept = still_take_id or _kept_still_id(session, storyboard_id, scene_index)
+    return kept is not None and picture_cannot_move(session, storyboard_id, kept)
+
+
+def motion_spent_words(scene_index: int, settings: Any = None) -> str:
+    """Why nothing more of a scene's motion is bought though its motion had fewer renders than
+    the cap: its picture had its renders and the picture kept cannot be animated again."""
+    return (
+        f"Scena {scene_index}: imaginea ei a avut deja {renders_ro(None, settings)}, plafonul "
+        "Proprietarului, iar un clip din imaginea păstrată sub plafon a fost refuzat pentru o "
+        "greșeală a acelei imagini; nu se mai cumpără nici o imagine nouă, nici un clip din "
+        "aceeași imagine, deci mișcarea ei nu mai are ce cumpăra: rămâne clipul pe care îl are "
+        "scena, sub plafon, altfel imaginea ei animată local (0 credite), iar filmul merge mai "
+        "departe."
+    )
+
+
+def record_motion_spent(
+    session: Session,
+    storyboard_id: str,
+    scene_index: int,
+    still_take_id: str,
+    correlation_id: str,
+    *,
+    cause: str,
+    reason_ro: str = "",
+    settings: Any = None,
+) -> bool:
+    """The picture kept under the cap that cannot be animated again, recorded once per still,
+    inside the caller's transaction. False (nothing written) when the picture is not at the
+    cap or it is already recorded."""
+    from app.services import append_event  # noqa: PLC0415
+
+    cap = renders_per_layer(settings)
+    pictures = renders_made(session, storyboard_id, scene_index, "still")
+    if pictures < cap or picture_cannot_move(session, storyboard_id, still_take_id):
+        return False
+    append_event(
+        session,
+        MOTION_SPENT_EVENT,
+        "storyboard",
+        storyboard_id,
+        1,
+        {
+            "storyboard_id": storyboard_id,
+            "scene_index": int(scene_index),
+            "still_take_id": str(still_take_id),
+            "still_renders": pictures,
+            "motion_renders": renders_made(session, storyboard_id, scene_index, "motion"),
+            "cap": cap,
+            "cause": cause,
+            "reason_ro": (
+                motion_spent_words(int(scene_index), settings)
+                + (f" Refuzul: {' '.join(reason_ro.split())}" if reason_ro.strip() else "")
+            )[:1500],
+        },
+        correlation_id,
+    )
+    return True
+
+
 def cap_local_moves(session: Session, storyboard_id: str, settings: Any = None) -> set[int]:
-    """The scenes the Director moved locally under the renders cap, while their motion is
-    still at the cap."""
+    """The scenes the Director moved locally under the renders cap, while their motion has
+    nothing left to buy (`motion_spent`)."""
     from app.models import DomainEvent  # noqa: PLC0415
 
     chosen: set[int] = set()
@@ -295,17 +447,29 @@ def cap_local_moves(session: Session, storyboard_id: str, settings: Any = None) 
         return chosen
     made = renders_by_scene(session, storyboard_id, "motion")
     cap = renders_per_layer(settings)
-    return {scene for scene in chosen if made.get(scene, 0) >= cap}
+    return {
+        scene
+        for scene in chosen
+        if made.get(scene, 0) >= cap or motion_spent(session, storyboard_id, scene, settings)
+    }
 
 
-def cap_local_move_words(scene_index: int, settings: Any = None) -> str:
+def cap_local_move_words(scene_index: int, settings: Any = None, *, picture: bool = False) -> str:
     """The local move, said as it is made: the cap left no clip that can carry the scene, so
-    its still is shown moved locally — no look, no choice among takes."""
+    its still is shown moved locally — no look, no choice among takes. ``picture``: the
+    motion had fewer renders than the cap, and it is the picture's cap that left it nothing
+    to buy (`motion_spent`)."""
+    why = (
+        f"imaginea ei a avut deja {renders_ro(None, settings)}, plafonul Proprietarului, iar "
+        "imaginea păstrată sub plafon nu se mai poate anima"
+        if picture
+        else f"mișcarea ei a avut deja {renders_ro(None, settings)}, plafonul Proprietarului"
+    )
     return (
-        f"Scena {scene_index}: mișcarea ei a avut deja {renders_ro(None, settings)}, plafonul "
-        "Proprietarului, și niciun clip al ei nu acoperă scena; scena se arată ca imagine fixă "
-        "animată local (0 credite), singurul lucru care o mai poate acoperi, iar filmul merge "
-        "mai departe (mutarea locală sub plafon, aprobată de Proprietar pe 2026-10-16)."
+        f"Scena {scene_index}: {why}, și niciun clip al ei nu acoperă scena; scena se arată ca "
+        "imagine fixă animată local (0 credite), singurul lucru care o mai poate acoperi, iar "
+        "filmul merge mai departe (mutarea locală sub plafon, aprobată de Proprietar pe "
+        "2026-10-16)."
     )
 
 
@@ -318,14 +482,18 @@ def record_cap_local_move(
     reason_ro: str = "",
     settings: Any = None,
 ) -> bool:
-    """Her local move of a scene whose motion is at the cap, recorded once while it stands.
-    False (nothing written) when the motion is not at the cap or the move already stands."""
+    """Her local move of a scene whose motion has nothing left to buy (`motion_spent`: at its
+    cap, or its picture at the cap and not to be animated again), recorded once while it
+    stands. False (nothing written) when the motion is not spent or the move already stands."""
     from app.services import append_event  # noqa: PLC0415
 
     made = renders_made(session, storyboard_id, scene_index, "motion")
     cap = renders_per_layer(settings)
-    if made < cap or int(scene_index) in cap_local_moves(session, storyboard_id, settings):
+    if not motion_spent(session, storyboard_id, scene_index, settings) or int(
+        scene_index
+    ) in cap_local_moves(session, storyboard_id, settings):
         return False
+    picture = made < cap
     append_event(
         session,
         CAP_LOCAL_MOVE_EVENT,
@@ -338,7 +506,18 @@ def record_cap_local_move(
             "renders": made,
             "cap": cap,
             "decided_by": CAP_LOCAL_MOVE_BY,
-            "reason_ro": (reason_ro or cap_local_move_words(int(scene_index), settings))[:1500],
+            # The picture's cap, when it is the picture that left the motion nothing to buy.
+            **(
+                {
+                    "spent_by": "still",
+                    "still_renders": renders_made(session, storyboard_id, scene_index, "still"),
+                }
+                if picture
+                else {}
+            ),
+            "reason_ro": (
+                reason_ro or cap_local_move_words(int(scene_index), settings, picture=picture)
+            )[:1500],
         },
         correlation_id,
     )

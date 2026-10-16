@@ -97,7 +97,10 @@ from app.media.renders_cap import (
     cap_local_moves,
     clip_retries,
     max_rerolls,
+    motion_spent,
+    motion_spent_words,
     record_cap_local_move,
+    record_motion_spent,
     renders_by_scene,
     renders_left,
     renders_made,
@@ -5794,7 +5797,11 @@ def assembly_readiness(
                 ok=True,
                 how="local_move",
                 reason_ro=(
-                    cap_local_move_words(index)
+                    cap_local_move_words(
+                        index,
+                        picture=renders_made(session, storyboard_id, index, "motion")
+                        < renders_per_layer(),
+                    )
                     if index in (cap_moves or set())
                     else f"Scena {index}: imagine fixă animată local, aleasă de Proprietar."
                 ),
@@ -6449,12 +6456,14 @@ def settle_motion_under_cap(
     registry: Any | None = None,
     ffmpeg_path: str | None = None,
 ) -> bool:
-    """A filmed scene whose motion has had its renders (`renders_cap`) and that the film cannot
-    cut in as it stands: what it has is kept, and the film goes on (the Owner, 2026-10-15:
-    «publicăm cu ce Directoarea alege ca fiind cel mai apropiat»; 2026-10-16: «maxim încă o
-    randare»). First a clip it has on disk stands under the cap (`_keep_clip_under_cap`): the
-    one clip it has, or the one the Director chooses among several by looking at their frames
-    through ``registry``, or the studio's own pick when she cannot, said as the studio's
+    """A filmed scene whose motion has nothing left to buy (`renders_cap.motion_spent`: it had
+    its renders, or its picture had its renders and the picture kept cannot be animated again)
+    and that the film cannot cut in as it stands: what it has is kept, and the film goes on
+    (the Owner, 2026-10-15: «publicăm cu ce Directoarea alege ca fiind cel mai apropiat»;
+    2026-10-16: «maxim încă o randare»). First a clip it has on disk stands under the cap
+    (`_keep_clip_under_cap`): the one clip it has, or the one the Director chooses among
+    several by looking at their frames through ``registry``, or the studio's own pick when
+    she cannot, said as the studio's
     (`_choose_shot_under_cap`); a clip already kept under the cap stays kept and is never
     chosen again. When none stands, or the one kept is too short for its words even slowed
     down (CLIP_SHORT), the scene is shown as its approved still moved locally
@@ -6465,7 +6474,7 @@ def settle_motion_under_cap(
     ``act=False`` writes nothing, calls no model, and says whether it would change something:
     the walk's words read it before the ladder acts (`runbook.stages._held_words`)."""
     with Session(engine) as session:
-        if renders_made(session, storyboard_id, scene_index, "motion") < renders_per_layer():
+        if not motion_spent(session, storyboard_id, scene_index):
             return False
         pending = session.scalar(
             select(SceneTake.id).where(
@@ -11077,11 +11086,16 @@ def _motion_state(
         overrides = {**(overrides or {}), **{index: LOCAL_MOVE for index in moved}}
         for index in moved:
             holds.pop(index, None)
-    for index in fields_of:
-        if index in shots or index in in_flight or index in moved:
-            continue
-        if motion_made.get(index, 0) >= renders_cap:
-            holds.setdefault(index, motion_capped_reason(index))
+    with Session(engine) as session:
+        for index in fields_of:
+            if index in shots or index in in_flight or index in moved:
+                continue
+            if motion_made.get(index, 0) >= renders_cap:
+                holds.setdefault(index, motion_capped_reason(index))
+            elif motion_spent(session, storyboard_id, index, still_take_id=stills[index].id):
+                # Its picture had its renders and the picture kept cannot be animated again:
+                # the motion has nothing left to buy either (`renders_cap.motion_spent`).
+                holds.setdefault(index, motion_spent_words(index))
     retries = clip_retries()
     # Who accepted each bought test shot: the Owner (APPROVED) or its clip QC under his rule
     # (HERO_ACCEPTED_EVENT). Part of the plan, and so of its hash.
@@ -11123,7 +11137,10 @@ def _motion_state(
         # Hers, past his cap, not his: said so on the sheet.
         if chosen.get(index, {}).get("status") == "LOCAL":
             chosen[index].update(
-                decided_by=CAP_LOCAL_MOVE_BY, reason_ro=cap_local_move_words(index)
+                decided_by=CAP_LOCAL_MOVE_BY,
+                reason_ro=cap_local_move_words(
+                    index, picture=motion_made.get(index, 0) < renders_cap
+                ),
             )
 
     view: list[dict[str, Any]] = []
@@ -11458,12 +11475,16 @@ def _send_still_back_for_clip(
     still_take_id: str | None,
     reason: str,
     correlation_id: str,
+    *,
+    cause: str = "CLIP_QC",
 ) -> bool:
     """Clip QC found the fault in the picture the clip was made from (``back_to_still``: faces
     in its frames, panels, another subject): the still goes back to the stills gate, REJECTED
     with the gate's code, so the scene's next still is a new one and nobody animates this one
     again. Returns whether it was sent back. A still the Owner approved himself stays as it is:
-    his look is his (the scene then waits for him).
+    his look is his (the scene then waits for him). A still whose picture had its renders
+    (`renders_cap`) stays too: no new picture can be bought, so it is the picture kept under
+    the cap, and its motion has nothing left to buy (`renders_cap.record_motion_spent`).
 
     2026-10-12, the cyclotron's scene 1: the new still approved by the gate at 10:43 showed two
     people facing the camera; its clip failed clip QC at 12:56 («greșeala e în imaginea din care
@@ -11503,6 +11524,26 @@ def _send_still_back_for_clip(
         if str(row.approved_by or "").lower() == "owner":
             logger.info(
                 "still_not_sent_back", extra={"take_id": still_take_id, "why": "his approval"}
+            )
+            return False
+        if renders_made(session, row.storyboard_id, row.scene_number, "still") >= (
+            renders_per_layer()
+        ):
+            # The picture had its renders (2026-10-16, 87c05891 scene 1): no new one can be
+            # bought, and sent back it only re-opened the cap's choice, which kept it again,
+            # every walk. It stays the scene's picture; its motion has nothing left to buy
+            # (`renders_cap.motion_spent`) and settles under the cap with what it has.
+            record_motion_spent(
+                session,
+                row.storyboard_id,
+                row.scene_number,
+                row.id,
+                correlation_id,
+                cause=cause,
+                reason_ro=reason,
+            )
+            logger.info(
+                "still_not_sent_back", extra={"take_id": row.id, "why": "picture at the cap"}
             )
             return False
         row.status = "REJECTED"
@@ -13151,7 +13192,40 @@ class _ShotRounds:
                     state.still.id,
                     refusal.reason_ro,
                     self.correlation_id,
+                    cause=REFUSAL_CODE,
                 )
+                with Session(self.engine) as session:
+                    spent = motion_spent(
+                        session, self.storyboard_id, state.index, still_take_id=state.still.id
+                    )
+                if spent:
+                    # The picture had its renders and stays (2026-10-16, 87c05891 scene 1):
+                    # no new picture, no clip from this one, so the motion has nothing left
+                    # to buy, as at its own cap. What the scene has stands now, nothing is
+                    # bought and nobody waits: its clip kept under the cap, else her local
+                    # move of the still (`settle_motion_under_cap`, 0 credits).
+                    try:
+                        settle_motion_under_cap(
+                            self.engine,
+                            self.storyboard_id,
+                            state.index,
+                            self.correlation_id,
+                            environment=self.environment,
+                            registry=self.registry,
+                            ffmpeg_path=self.ffmpeg_exe,
+                        )
+                    except Exception:  # noqa: BLE001 - the walk's ladder settles it instead
+                        logger.exception(
+                            "motion_not_settled_under_cap",
+                            extra={"storyboard_id": self.storyboard_id, "scene": state.index},
+                        )
+                    state.outcome = {
+                        "status": "NOT_BOUGHT",
+                        "failure_code": REFUSAL_CODE,
+                        "rewrite": False,
+                        "layer": refusal.layer,
+                        "reason": f"{motion_spent_words(state.index)} {refusal.reason_ro}",
+                    }
             return []
         state.attempts += 1
         self.sent[state.index] = self.sent.get(state.index, 0) + 1
@@ -15078,6 +15152,16 @@ def _redo_past_cap(
             "Proprietarului, STUDIO_RENDERS_PER_LAYER), deci o imagine nouă nu mai poate fi "
             "animată; nu se cumpără, iar scena rămâne cu cadrul pe care îl are."
         )
+    if kind == "motion":
+        # Its picture had its renders and the picture kept cannot be animated again: the
+        # motion is past the cap as if it had its own (`renders_cap.motion_spent`).
+        with Session(engine) as session:
+            spent = motion_spent(session, storyboard_id, scene_index, settings)
+        if spent:
+            return (
+                f"{motion_spent_words(scene_index, settings)} Numărul îl schimbă doar setarea "
+                "lui, STUDIO_RENDERS_PER_LAYER."
+            )
     return None
 
 
