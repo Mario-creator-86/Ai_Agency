@@ -23,11 +23,15 @@ local move of a scene no clip can carry, below), and nothing waits for the Owner
 
 from __future__ import annotations
 
+import logging
 import os
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+
+logger = logging.getLogger("studio.renders_cap")
 
 #: The two layers a shot is made of: its picture and its motion (the test shot is motion).
 LAYERS: tuple[str, ...] = ("still", "motion")
@@ -35,6 +39,9 @@ LAYERS: tuple[str, ...] = ("still", "motion")
 ENV_NAME = "STUDIO_RENDERS_PER_LAYER"
 #: The one retry clip quality control knows (seed + 1, the move asked more firmly).
 CLIP_QC_RETRIES = 1
+#: The failures already logged by `renders_per_layer` in this process (one warning each, not
+#: one per call: the cap is read many times per walk).
+_LOGGED: set[tuple[str, int]] = set()
 
 
 def _field() -> tuple[int, int, int]:
@@ -58,7 +65,13 @@ def _valid(value: Any, low: int, high: int) -> int | None:
 def renders_per_layer(settings: Any = None) -> int:
     """How many times a shot's picture, or its motion, may be made, the first purchase
     included: ``settings.renders_per_layer`` when it carries one, else the studio's settings
-    as they stand now (environment and .env), else the field's default."""
+    as they stand now (environment and .env), else the field's default.
+
+    When the studio's settings cannot be built (a .env locked, a value it cannot read, no
+    Owner token), the number is read safe (`_unbuilt_cap`): never more than any source sets,
+    the lowest the setting allows when a source cannot be read, and the failure is logged.
+    Before 2026-10-16 such a failure fell back to the environment alone, then to the default:
+    a cap of 1 written only in .env read as 2, one paid render more than the Owner set."""
     default, low, high = _field()
     given = _valid(getattr(settings, "renders_per_layer", None), low, high)
     if given is not None:
@@ -67,18 +80,63 @@ def renders_per_layer(settings: Any = None) -> int:
 
     try:
         built = Settings()  # type: ignore[call-arg]
-    except Exception:  # noqa: BLE001 - a studio without usable settings (no Owner token)
-        built = None
-    if built is not None:
-        read = _valid(getattr(built, "renders_per_layer", None), low, high)
-        if read is not None:
-            return read
-    raw = os.environ.get(ENV_NAME, "").strip()
-    if raw.isdigit():
-        parsed = _valid(int(raw), low, high)
-        if parsed is not None:
-            return parsed
-    return default
+    except Exception as exc:  # noqa: BLE001 - read safe below, and logged
+        cap = _unbuilt_cap(default, low, high)
+        key = (type(exc).__name__, cap)
+        if key not in _LOGGED:
+            _LOGGED.add(key)
+            logger.warning(
+                "renders_cap_settings_unreadable",
+                extra={"error": type(exc).__name__, "renders_per_layer": cap},
+            )
+        return cap
+    read = _valid(getattr(built, "renders_per_layer", None), low, high)
+    return read if read is not None else default
+
+
+def _named(raw: Any, low: int, high: int) -> int | None:
+    """A source's value for the cap read as the setting would read it, or None when it names
+    none it can hold (the caller then reads the lowest)."""
+    text = str(raw).strip()
+    return _valid(int(text), low, high) if text.isdigit() else None
+
+
+def _unbuilt_cap(default: int, low: int, high: int) -> int:
+    """The cap when the settings cannot be built: the lowest the environment and the .env file
+    set (the settings read the environment first, the file second; the lower of the two can
+    never be more than either), the field's default when neither sets one, and the lowest
+    the setting allows when a source sets a value it cannot hold or the file cannot be read.
+    Never more renders than the Owner configured."""
+    from app.config import Settings  # noqa: PLC0415
+
+    named: list[int] = []
+    unreadable = False
+    for key, value in os.environ.items():
+        if key.upper() == ENV_NAME:
+            parsed = _named(value, low, high)
+            unreadable = unreadable or parsed is None
+            named += [parsed] if parsed is not None else []
+    env_file = Settings.model_config.get("env_file")
+    files = env_file if isinstance(env_file, (list, tuple)) else [env_file] if env_file else []
+    for file in files:
+        path = Path(str(file))
+        if not path.exists():
+            continue
+        try:
+            from dotenv import dotenv_values  # noqa: PLC0415 - pydantic-settings' own reader
+
+            values = dotenv_values(path)
+        except Exception:  # noqa: BLE001 - a file that cannot be read sets the lowest
+            unreadable = True
+            continue
+        for name, found in values.items():
+            if name.upper() == ENV_NAME and found is not None:
+                parsed = _named(found, low, high)
+                unreadable = unreadable or parsed is None
+                named += [parsed] if parsed is not None else []
+    if unreadable:
+        return low
+    return min(named) if named else default
 
 
 def max_rerolls(settings: Any = None) -> int:
