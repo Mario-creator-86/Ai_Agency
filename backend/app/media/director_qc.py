@@ -1130,10 +1130,11 @@ def film_qc_context(
                     "accepted_before_unchanged": bool(accepted),
                 }
             )
-        earlier = (
-            _earlier(session, decisions_of_film(session, storyboard_id)) if storyboard_id else []
-        )
-        looks = looks_of_film(session, storyboard_id) if storyboard_id else []
+        decided = decisions_of_film(session, storyboard_id) if storyboard_id else []
+        looked = _look_events(session, storyboard_id) if storyboard_id else []
+        earlier = _earlier(session, decided)
+        looks = looks_of_film(session, storyboard_id, looked) if storyboard_id else []
+        her_runs = her_runs_on_film(decided, looked)
         found = dict(diagnosis) if diagnosis else _diagnosis_of(session, report_id)
     captions = production.get("captions") if isinstance(production.get("captions"), dict) else {}
     burned = (captions or {}).get("burned_in")
@@ -1186,6 +1187,10 @@ def film_qc_context(
         # The code's own bookkeeping, never shown to her (`reviews._director_payload`): each
         # scene's carry key per family, recorded on her verdicts (`annotate_verdicts`).
         "_settle_keys": settle_keys,
+        # And the runs of her earlier reviews and looks on the film, named as her review's
+        # subject (`review_film_qc`): her records of them reach her even when the payload
+        # omits earlier_reviews and your_looks.
+        "_her_run_ids": her_runs,
     }
 
 
@@ -2549,17 +2554,42 @@ def _closing(
 # Now she looks at them herself (`runbook.stages._director_looks`); his look still wins.
 
 
-def looks_of_film(session: Session, storyboard_id: str) -> list[dict[str, Any]]:
-    """Her newest looks at the pictures bought for this film, as she reads them again."""
-    out: list[dict[str, Any]] = []
+def _look_events(session: Session, storyboard_id: str) -> list[tuple[DomainEvent, dict[str, Any]]]:
+    """Her looks at the pictures bought for this film (`LOOK_EVENT`), oldest first."""
+    out: list[tuple[DomainEvent, dict[str, Any]]] = []
     for event in session.scalars(
         select(DomainEvent)
         .where(DomainEvent.event_type == LOOK_EVENT)
         .order_by(DomainEvent.sequence)
     ):
         payload = _payload(event)
-        if str(payload.get("storyboard_id") or "") != storyboard_id:
-            continue
+        if str(payload.get("storyboard_id") or "") == storyboard_id:
+            out.append((event, payload))
+    return out
+
+
+def her_runs_on_film(
+    decisions: Iterable[Mapping[str, Any]], looks: Iterable[tuple[DomainEvent, Mapping[str, Any]]]
+) -> list[str]:
+    """The runs of her reviews (``decisions``, `decisions_of_film`) and of her looks
+    (``looks``, `_look_events`) on one film, each once: each wrote her own record of what she
+    concluded (`agents.reviews`, «Film QC …», «Pictures refused by the gate …»), with the run as
+    its source. Her next review of the film names them as its subject, so those records come
+    back to her whole when the payload leaves them out (`reviews._director_payload`), the ones
+    written before a run recorded its subject too."""
+    runs = [str(item.get("run_id") or "") for item in decisions]
+    runs += [str(payload.get("run_id") or "") for _event, payload in looks]
+    return list(dict.fromkeys(run for run in runs if run))
+
+
+def looks_of_film(
+    session: Session,
+    storyboard_id: str,
+    events: list[tuple[DomainEvent, dict[str, Any]]] | None = None,
+) -> list[dict[str, Any]]:
+    """Her newest looks at the pictures bought for this film, as she reads them again."""
+    out: list[dict[str, Any]] = []
+    for event, payload in _look_events(session, storyboard_id) if events is None else events:
         out.append(
             {
                 "report_id": payload.get("report_id"),

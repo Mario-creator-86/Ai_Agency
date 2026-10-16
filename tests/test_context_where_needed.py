@@ -39,6 +39,7 @@ from app.agents.identity import (
     MEMORY_BUDGET_CHARS,
     PROFILE_CRAFT,
     TASK_CONTEXT,
+    root_matter,
     standing_direction,
 )
 from app.agents.inbox import (
@@ -60,8 +61,10 @@ from app.agents.memory import (
 )
 from app.agents.messages import post_message
 from app.agents.models import Agent, AgentMessage, AgentRun, MemoryRecord, Role
+from app.agents.reviews import DIRECTOR_LOOK_TASK, DIRECTOR_QC_TASK
 from app.analytics.models import DirectorDecision
 from app.factual.models import ScriptDraft, TopicIdea
+from app.media.director_qc import decision_state
 from app.media.models import Storyboard
 from app.models import OwnerPolicy
 from app.schemas import AutonomyModeCommand, EnvironmentCommand, PolicyCommand
@@ -86,6 +89,26 @@ from test_context_profiles import (  # noqa: F401 - `staffed` is a fixture
     registry_with,
     staffed,
 )
+from test_director_decides_qc import (
+    REPAIR_5,
+    _accepting,
+    _context_of,
+    answer,
+    failed_film,
+    verdicts_for,
+)
+from test_director_looks_at_pictures import (  # noqa: F401 - `studio` is a fixture
+    NIGHT_SKY,
+    OTHER,
+    REJECT_ALL,
+    REJECTED_WHY,
+    RefusingGate,
+    SeeingDirector,
+    _her_eyes,
+    _registry,
+    _walk,
+    studio,
+)
 from test_production_policy import make_storyboard
 
 STATE = {"pipeline": {"stages": {"published": 3}}}
@@ -102,9 +125,9 @@ def _matter(key: str, observation: str) -> dict:
     }
 
 
-def _decide(engine, team, role: str, key: str, action: str) -> dict:
+def _decide(engine, team, role: str, key: str, action: str, decision: str = "ITERATE") -> dict:
     sarah = team["agents"]["Director"]
-    choice = Choice(matter_key=key, decision="ITERATE", confidence="MEDIUM", action=action)
+    choice = Choice(matter_key=key, decision=decision, confidence="MEDIUM", action=action)
     return _assign(
         engine,
         sarah.id,
@@ -186,6 +209,62 @@ def test_her_company_decision_reaches_the_work_of_the_department_it_directs(engi
         assert lyra_letter.status == "OPEN"
         lyra_letter.status = "RESOLVED"
     assert "ACTION FOR VoiceArtist" not in identity_of(engine, lyra.id, "sound_design").system
+
+
+def test_a_review_of_her_decision_replaces_it_in_the_work_it_directs(engine, staffed):  # noqa: F811
+    """A decision and the decisions that review it are one chain: `command.findings` files the
+    review as ``review_<matter>`` and the decision it reviews stays OPEN, its letter open, until
+    the review is itself reviewed (`repairs.stale_decisions.why_closed`). Keyed by the raw
+    matter key, both rode: Kael's shot_prompts on the 2026-10-16 copy told growth_reach, its
+    review and the review of that review (the same «DE FĂCUT» three times), and renders_failed
+    beside its review: 6 decision lines, 4,563 characters. The newest decision of the chain
+    decides what the department is told."""
+    kael, marcus = staffed["agents"]["VideoEditor"], staffed["agents"]["ScriptWriter"]
+    alpha = _decide(
+        engine, staffed, "VideoEditor", "renders_failed", "ALPHA: push in on every shot."
+    )
+    other = _decide(engine, staffed, "VideoEditor", "anomaly_cost_spike_x", "OTHER: cheaper.")
+    assert "ALPHA: push in" in identity_of(engine, kael.id, "shot_prompts").system
+    beta = _decide(
+        engine,
+        staffed,
+        "VideoEditor",
+        "review_renders_failed",
+        "BETA: stop the push-in; hold every camera still.",
+        decision="HOLD",
+    )
+    shots = identity_of(engine, kael.id, "shot_prompts")
+    assert "BETA: stop the push-in" in shots.system
+    assert "ALPHA" not in shots.system, "the reviewed action is not told beside its review"
+    assert "OTHER: cheaper." in shots.system, "another matter is its own chain"
+    with Session(engine) as session:
+        letter_of = {
+            key: session.get(DirectorDecision, made["decision_id"]).message_id
+            for key, made in (("alpha", alpha), ("beta", beta), ("other", other))
+        }
+        # Selection only: the reviewed decision and its letter are as they were.
+        assert session.get(DirectorDecision, alpha["decision_id"]).state == "OPEN"
+        assert session.get(AgentMessage, letter_of["alpha"]).status == "OPEN"
+    assert sorted(shots.context["decision_message_ids"]) == sorted(
+        [letter_of["beta"], letter_of["other"]]
+    )
+    # A review of the review decides in its turn.
+    _decide(
+        engine,
+        staffed,
+        "VideoEditor",
+        "review_review_renders_failed",
+        "GAMMA: one push-in per film, at the reveal.",
+    )
+    shots = identity_of(engine, kael.id, "shot_prompts").system
+    assert "GAMMA: one push-in" in shots and "BETA" not in shots and "ALPHA" not in shots
+    # A review handed to another department takes the chain there.
+    _decide(engine, staffed, "VideoEditor", "growth_reach_y", "DELTA: brighter thumbnails.")
+    assert "DELTA" in identity_of(engine, kael.id, "shot_prompts").system
+    _decide(engine, staffed, "ScriptWriter", "review_growth_reach_y", "EPSILON: a sharper hook.")
+    assert "DELTA" not in identity_of(engine, kael.id, "shot_prompts").system
+    assert "EPSILON: a sharper hook." in identity_of(engine, marcus.id, "write_script").system
+    assert [root_matter(k) for k in ("x", "review_x", "review_review_x")] == ["x", "x", "x"]
 
 
 # --------------------------------------------------------------------------- C2
@@ -419,39 +498,47 @@ def test_his_decision_on_one_episode_goes_where_that_episode_is_the_work(engine,
 # --------------------------------------------------------------------------- C8
 
 
-def test_her_qc_review_reads_her_earlier_reviews_of_this_film(engine, staffed):  # noqa: F811
+def _her_run(session, agent_id: str, task: str, board: str | None) -> str:
+    """One of her runs as `run_agent_task` records it: about ``board`` when it names it."""
+    run = AgentRun(
+        id=str(uuid4()),
+        agent_id=agent_id,
+        task_type=task,
+        objective="...",
+        prompt_template_version="v",
+        model_name="m",
+        provider_name="p",
+        status="SUCCEEDED",
+        correlation_id=str(uuid4()),
+        started_at=utc_now(),
+        context_json={"subject_ids": [board]} if board else {},
+    )
+    session.add(run)
+    session.flush()
+    return run.id
+
+
+def test_her_qc_review_reads_her_earlier_reviews_first_however_many_second_looks(
+    engine,
+    staffed,  # noqa: F811
+):
     """The payload omits earlier_reviews and your_looks past 24,000 characters (77% of her
-    runs on the 2026-10-16 copy); her rows tied to the storyboard are told instead."""
+    runs on the 2026-10-16 copy); her records of those reviews and looks are told instead. On
+    a large film her second looks are many and newer («The Zero Script Club»: 29 rows, about
+    20,600 characters, past the 8,000 the memory holds): read newest first, they left her
+    reviews out whole. Her reviews and looks come first; second looks fill what is left."""
     sarah = staffed["agents"]["Director"]
     board, other = str(uuid4()), str(uuid4())
     with Session(engine) as session, session.begin():
-        run = AgentRun(
-            id=str(uuid4()),
+        review = _her_run(session, sarah.id, "director_qc_review", board)
+        first_id = remember(
+            session,
+            memory_class="AGENT_OPINION",
+            content="Film QC r1 of “Big film”: REPAIR — DELTA scene 3 still, the ledger as text.",
+            source_type="run",
+            source_id=review,
             agent_id=sarah.id,
-            task_type="director_qc_review",
-            objective="...",
-            prompt_template_version="v",
-            model_name="m",
-            provider_name="p",
-            status="SUCCEEDED",
-            correlation_id=str(uuid4()),
-            started_at=utc_now(),
-            context_json={"subject_ids": [board]},
-        )
-        session.add(run)
-        session.flush()
-        for words, source in (
-            ("Film QC r1 of “This film”: REPAIR — scene 3 still, the ledger read as text.", run.id),
-            ("Second look at scene 3: candidate 2 approved, the ledger is blank.", run.id),
-        ):
-            remember(
-                session,
-                memory_class="AGENT_OPINION",
-                content=words,
-                source_type="run",
-                source_id=source,
-                agent_id=sarah.id,
-            )
+        ).id
         remember(
             session,
             memory_class="AGENT_OPINION",
@@ -460,19 +547,201 @@ def test_her_qc_review_reads_her_earlier_reviews_of_this_film(engine, staffed): 
             source_id=other,
             agent_id=sarah.id,
         )
+    for number in range(20):
+        with Session(engine) as session, session.begin():
+            look = _her_run(session, sarah.id, "director_second_look", board)
+            remember(
+                session,
+                memory_class="AGENT_OPINION",
+                content=f"Second look at the still of scene {number} of “Big film”: ACCEPT — "
+                + "the frame holds; " * 25
+                + str(number),
+                source_type="run",
+                source_id=look,
+                agent_id=sarah.id,
+            )
     identity = identity_of(
         engine, sarah.id, "director_qc_review", {"storyboard_id": board, "report_id": str(uuid4())}
     )
     assert identity.context["profile"] == PROFILE_CRAFT
-    assert "REPAIR — scene 3 still" in identity.system
-    assert "candidate 2 approved" in identity.system
+    assert "REPAIR — DELTA scene 3 still" in identity.system
+    assert identity.context["memory_tied_ids"][0] == first_id
+    assert "Second look at the still of scene 19" in identity.system, "then the newest looks"
+    assert identity.context["memory_left_out"] > 0, "the budget holds; nothing is cut"
     assert "another film" not in identity.system, "only this film's rows: recall is empty"
-    assert len(identity.context["memory_tied_ids"]) == 2
     assert identity.context["memory_chars"] <= MEMORY_BUDGET_CHARS
-    assert "storyboard" in TASK_CONTEXT["director_qc_review"].why
+    assert TASK_CONTEXT["director_qc_review"].first_tasks == (DIRECTOR_QC_TASK, DIRECTOR_LOOK_TASK)
+
+
+class _HerEyes(SeeingDirector):
+    """`SeeingDirector`, keeping the system prompt of each of her QC reviews."""
+
+    def __init__(self, decide, look):
+        super().__init__(decide, look)
+        self.systems: list[str] = []
+
+    async def generate(self, model, prompt, **kwargs):
+        if "director-qc" in prompt and "director-look" not in prompt:
+            self.systems.append(str(kwargs.get("system") or ""))
+        return await super().generate(model, prompt, **kwargs)
+
+
+def test_her_look_at_the_bought_pictures_comes_back_to_her_next_review_of_the_film(
+    engine,
+    settings,
+    studio,  # noqa: F811
+    monkeypatch,
+    tmp_path,
+):
+    """On the real path: she REPAIRs scene 5, the gate refuses both candidates bought, she
+    looks and REJECTs them all (`stages._director_looks` → `review_bought_pictures`), and the
+    report is hers again. Her look's run names the film as its subject, and her next review
+    names the runs of her earlier review and look (`director_qc.her_runs_on_film`), so with
+    the payload's earlier_reviews and your_looks omitted she reads both all the same — also
+    when the runs were written before a run recorded its subject."""
+    from app.runbook import stages
+
+    film = failed_film(engine)
+    decisions = iter([answer(verdicts_for(film), "REPAIR", REPAIR_5), _accepting(film)])
+    model = _HerEyes(lambda prompt: next(decisions), REJECT_ALL)
+    registry = _registry(studio, model)
+    _her_eyes(engine, studio)
+    RefusingGate(engine, monkeypatch, tmp_path, [NIGHT_SKY, OTHER])
+    _walk(engine, settings, registry, film)
+    standing = decision_state(engine, film["report"])
+    looked = stages._director_looks(
+        engine, settings, registry, film["report"], standing["decision"], "c"
+    )
+    assert looked["outcome"] == "LOOKED"
+    sarah = studio["agents"]["Director"]
+    film_only = {"storyboard_id": film["board"], "report_id": film["report"]}
+    with Session(engine) as session:
+        (look_run,) = session.scalars(
+            select(AgentRun).where(AgentRun.task_type == DIRECTOR_LOOK_TASK)
+        ).all()
+        (first_review,) = session.scalars(
+            select(AgentRun).where(AgentRun.task_type == DIRECTOR_QC_TASK)
+        ).all()
+        assert film["board"] in look_run.context_json["subject_ids"]
+        assert look_run.context_json["subject"]["scene_index"] == 5
+        (look_row,) = session.scalars(
+            select(MemoryRecord).where(MemoryRecord.source_id == look_run.id)
+        ).all()
+        assert REJECTED_WHY in look_row.content
+        look_run_id, first_review_id, look_row_id = look_run.id, first_review.id, look_row.id
+    # Her look's run names the film: the film's next review is told it.
+    assert REJECTED_WHY in identity_of(engine, sarah.id, DIRECTOR_QC_TASK, film_only).system
+    with Session(engine) as session, session.begin():
+        # As runs written before 2026-10-16 are: no subject recorded.
+        for run_id in (look_run_id, first_review_id):
+            run = session.get(AgentRun, run_id)
+            run.context_json = {
+                k: v for k, v in run.context_json.items() if k not in ("subject", "subject_ids")
+            }
+    told = identity_of(engine, sarah.id, DIRECTOR_QC_TASK, film_only)
+    assert REJECTED_WHY not in told.system, "named by the film alone, the old look is lost"
+
+    # The film is large: the payload leaves her earlier reviews and looks out.
+    monkeypatch.setattr("app.agents.reviews.DIRECTOR_QC_PAYLOAD_CHARS", 10)
+    _walk(engine, settings, registry, film)
+
+    assert len(model.asked) == 2 and len(model.systems) == 2
+    payload = _context_of(model.asked[1])
+    assert payload["your_looks"] == payload["earlier_reviews"] == "(omis: prea lung)"
+    system = model.systems[1]
+    assert REJECTED_WHY in system, "her look is told whole"
+    assert f"Film QC {film['report'][:8]}" in system, "her earlier review too"
+    with Session(engine) as session:
+        second_review = session.scalars(
+            select(AgentRun)
+            .where(AgentRun.task_type == DIRECTOR_QC_TASK)
+            .order_by(AgentRun.started_at.desc())
+        ).first()
+        context = second_review.context_json
+    assert {look_run_id, first_review_id} <= set(context["subject"]["run_ids"])
+    assert look_row_id in context["memory_tied_ids"]
 
 
 # --------------------------------------------------------------------------- C9
+
+
+def _review(session, sarah_id: str, words: str, priorities: list[str], **before) -> list[str]:
+    """What `director.director_review` writes: her «Daily review:» row and one TEMP_CONTEXT
+    «Priority:» row per priority, all from one run, in that order. Returns the priority rows'
+    ids."""
+    run = str(uuid4())
+    moment = datetime.now(UTC) - timedelta(**before)
+    row = remember(
+        session,
+        memory_class="AGENT_OPINION",
+        content=f"Daily review: {words}"
+        + (" Priorities: " + "; ".join(priorities) if priorities else ""),
+        source_type="run",
+        source_id=run,
+        agent_id=sarah_id,
+    )
+    row.created_at = moment.isoformat()
+    ids = []
+    for number, priority in enumerate(priorities, start=1):
+        kept = remember(
+            session,
+            memory_class="TEMP_CONTEXT",
+            content=f"Priority: {priority}",
+            source_type="run",
+            source_id=run,
+            agent_id=sarah_id,
+        )
+        kept.created_at = (moment + timedelta(milliseconds=number)).isoformat()
+        ids.append(kept.id)
+    return ids
+
+
+def test_her_priorities_reach_her_management_work_when_her_newest_review_sets_none(
+    engine,
+    staffed,  # noqa: F811
+):
+    """The review runs at every mail round (33 on 2026-10-15) and 40 of the 119 «Daily review:»
+    rows on the 2026-10-16 copy set no priorities: after such a review the live «Priority: …»
+    rows of the one before reached no task (direct_company at 23:23:40Z followed the 22:29:53Z
+    review, which set none, and was not told the 22:25:10Z priorities)."""
+    sarah = staffed["agents"]["Director"]
+    with Session(engine) as session, session.begin():
+        _review(session, sarah.id, "two days ago.", ["ALPHA old priority"], hours=30)
+        kept = _review(
+            session,
+            sarah.id,
+            "busy day.",
+            ["GAMMA ship the serial first", "DELTA one short a day"],
+            hours=5,
+        )
+        _review(session, sarah.id, "two letters answered, nothing new.", [], hours=1)
+    for task in ("direct_company", "choose_topic"):
+        identity = identity_of(engine, sarah.id, task)
+        assert "Daily review: two letters answered, nothing new." in identity.system, task
+        assert "Priority: GAMMA ship the serial first" in identity.system, task
+        assert "Priority: DELTA one short a day" in identity.system, task
+        assert "ALPHA" not in identity.system, "a newer set of priorities replaced it"
+        assert identity.context["own_priority_ids"] == kept, task
+        assert set(kept) <= set(identity.context["memory_record_ids"]), task
+    assert "GAMMA" not in identity_of(engine, sarah.id, "director_prompt_audit").system
+
+    # When the newest review sets them, its own row says them: not told twice.
+    with Session(engine) as session, session.begin():
+        _review(session, sarah.id, "evening.", ["EPSILON the episode first"], minutes=5)
+    identity = identity_of(engine, sarah.id, "direct_company")
+    assert identity.system.count("EPSILON the episode first") == 1
+    assert identity.context["own_priority_ids"] == []
+    assert "GAMMA" not in identity.system
+
+    # Priorities live TEMP_CONTEXT_DAYS: once they lapse, none is told.
+    with Session(engine) as session, session.begin():
+        for row in session.scalars(
+            select(MemoryRecord).where(MemoryRecord.content.like("Priority:%"))
+        ):
+            row.expires_at = ago(minutes=1)
+        _review(session, sarah.id, "quiet.", [], minutes=1)
+    identity = identity_of(engine, sarah.id, "direct_company")
+    assert "Priority:" not in identity.system and "EPSILON" not in identity.system
 
 
 def test_her_last_daily_review_and_its_priorities_reach_her_management_work(engine, staffed):  # noqa: F811

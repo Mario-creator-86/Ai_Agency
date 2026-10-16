@@ -4962,7 +4962,12 @@ def _director_looks(
                 return wait("niciun model de limbaj nu este configurat")
             try:
                 answer = review_bought_pictures(
-                    engine, registry, entry["shown"], entry["images"], correlation
+                    engine,
+                    registry,
+                    entry["shown"],
+                    entry["images"],
+                    correlation,
+                    storyboard_id=str(decision.get("storyboard_id") or "") or None,
                 )
             except (NoReviewer, ReviewError, ValueError) as exc:
                 return wait(error_words(exc))

@@ -352,11 +352,17 @@ def owner_policies(session: Session, agent: Agent, role: Role | None) -> list[Me
 DAILY_REVIEW_MARKER = "Daily review:"
 
 
+#: The head of each TEMP_CONTEXT row the same review writes per priority it set; they live
+#: `TEMP_CONTEXT_DAYS` (`agents.director.director_review`).
+PRIORITY_MARKER = "Priority:"
+
+
 def own_review(session: Session, agent: Agent) -> MemoryRecord | None:
-    """The employee's own newest live daily review row («Daily review: … Priorities: …»), or
-    None. Its priorities for the next day are written for her next decisions; read by recency
-    among her other memory they were left to chance, and by her decisions' memory class
-    (STRATEGY) never (2026-10-16)."""
+    """The employee's own newest live daily review row («Daily review: …», with « Priorities:
+    …» when it set any), or None: her latest opinion of the studio, written for her next
+    decisions; read by recency among her other memory it was left to chance, and by her
+    decisions' memory class (STRATEGY) never (2026-10-16). The priorities she set are
+    `own_priorities`: the newest review often sets none."""
     return session.scalar(
         select(MemoryRecord)
         .where(
@@ -369,6 +375,42 @@ def own_review(session: Session, agent: Agent) -> MemoryRecord | None:
     )
 
 
+def own_priorities(session: Session, agent: Agent) -> list[MemoryRecord]:
+    """The priorities her newest review that set any still holds: its live «Priority: …»
+    TEMP_CONTEXT rows (one per priority, `TEMP_CONTEXT_DAYS`), in the order she set them; []
+    when none lives. The review runs at every mail round now (33 on 2026-10-15) and 40 of the
+    119 «Daily review:» rows on the copy of studio-20261016T115708Z set none, so her newest
+    review alone would leave the priorities of the one before untold. Older reviews'
+    priorities, still live, are not told: the newest set she gave replaces them (120 live rows
+    from 44 reviews on that copy, 23,483 characters)."""
+    newest = session.scalar(
+        select(MemoryRecord)
+        .where(
+            *_readable(agent, ["TEMP_CONTEXT"]),
+            MemoryRecord.agent_id == agent.id,
+            MemoryRecord.content.like(f"{PRIORITY_MARKER}%"),
+        )
+        .order_by(MemoryRecord.created_at.desc())
+        .limit(1)
+    )
+    if newest is None:
+        return []
+    if not newest.source_id:
+        return [newest]
+    return list(
+        session.scalars(
+            select(MemoryRecord)
+            .where(
+                *_readable(agent, ["TEMP_CONTEXT"]),
+                MemoryRecord.agent_id == agent.id,
+                MemoryRecord.content.like(f"{PRIORITY_MARKER}%"),
+                MemoryRecord.source_id == newest.source_id,
+            )
+            .order_by(MemoryRecord.created_at, MemoryRecord.id)
+        )
+    )
+
+
 def tied_memory(
     session: Session,
     agent: Agent,
@@ -376,15 +418,17 @@ def tied_memory(
     ids: Sequence[str],
     *,
     limit: int,
+    tasks: Sequence[str] = (),
 ) -> list[MemoryRecord]:
     """The live rows of these classes tied to a call's subject, newest first, at most ``limit``.
 
     A row is tied to the subject (a storyboard, an episode, a topic, a day's log, a thread, a
-    correlation: any id the caller named) when its source is one of those ids; when the run it
-    came from was about the subject (that run recorded the ids as its ``subject_ids``, or ran
-    under one of them as its correlation); when the event it came from is the subject's; or
-    when its words name one of the ids, whole or by the eight characters the studio quotes
-    them by («Chose today's topic 1c038a99»)."""
+    correlation, a run: any id the caller named) when its source is one of those ids; when the
+    run it came from was about the subject (that run recorded the ids as its ``subject_ids``,
+    or ran under one of them as its correlation); when the event it came from is the
+    subject's; or when its words name one of the ids, whole or by the eight characters the
+    studio quotes them by («Chose today's topic 1c038a99»). With ``tasks``, only the rows the
+    runs of those task types wrote."""
     wanted = sorted({str(i) for i in ids if str(i).strip()})
     if not classes or not wanted:
         return []
@@ -394,6 +438,7 @@ def tied_memory(
     recorded = select(literal(1)).select_from(listed).where(listed.c.value.in_(wanted)).exists()
     heads = sorted({i[:8] for i in wanted if len(i) >= 8})
     named = [MemoryRecord.content.contains(head, autoescape=True) for head in heads]
+    by_task = [run.task_type.in_(list(tasks))] if tasks else []
     return list(
         session.scalars(
             select(MemoryRecord)
@@ -403,6 +448,7 @@ def tied_memory(
             .outerjoin(event, event.event_id == MemoryRecord.event_id)
             .where(
                 *_readable(agent, classes),
+                *by_task,
                 or_(
                     MemoryRecord.source_id.in_(wanted),
                     run.correlation_id.in_(wanted),

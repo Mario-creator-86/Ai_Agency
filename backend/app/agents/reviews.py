@@ -1560,7 +1560,13 @@ def review_film_qc(
             f"({count(len(findings), 'constatare', 'constatări')})."
         ),
         max_tokens=director_qc_tokens(len(findings)),
-        subject={"storyboard_id": film.get("storyboard_id"), "report_id": film.get("report_id")},
+        # The film, the report, and the runs of her earlier reviews and looks on the film
+        # (`director_qc.her_runs_on_film`): her records of those come back to her whole.
+        subject={
+            "storyboard_id": film.get("storyboard_id"),
+            "report_id": film.get("report_id"),
+            "run_ids": list(context.get("_her_run_ids") or []),
+        },
     )
     last = second or first
     if parsed is None:
@@ -1672,10 +1678,14 @@ def review_bought_pictures(
     shown: Mapping[str, Any],
     images: list[str],
     correlation_id: str | None = None,
+    *,
+    storyboard_id: str | None = None,
 ) -> dict[str, Any]:
     """The Director's look at the candidates of one scene bought for her repair that the
     stills gate or the clip QC refused (``shown``, built by `app.media.director_qc.look_entries`;
     ``images`` the pictures as `picture_qc.judge_still` and `judge_clip` send them).
+    ``storyboard_id`` names the film: the run records it as its subject, so what she
+    concluded comes back to her next QC review of the film (`identity.TASK_CONTEXT`).
 
     Asked on a model that sees (`app.agents.vision.seeing_model`: hers, a slot of hers, else the
     studio's seeing model; the run is hers whichever answers) through `structured_run`: an
@@ -1734,6 +1744,9 @@ def review_bought_pictures(
             max_tokens=4000,
             extra={"images": list(images)},
             model_id=model_id,
+            subject=(
+                {"storyboard_id": storyboard_id, "scene_index": index} if storyboard_id else None
+            ),
         )
     except PolicyKernelError as exc:
         # A model other than her own is checked against what her role requires before it

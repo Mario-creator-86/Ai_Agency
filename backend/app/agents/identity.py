@@ -40,7 +40,9 @@ from app.agents.memory import (
     POLICY_DECISION,
     POLICY_IN_FORCE,
     POLICY_SUPERSEDED,
+    PRIORITY_MARKER,
     PolicyRow,
+    own_priorities,
     own_review,
     owner_policy_rows,
     readable_classes,
@@ -276,12 +278,16 @@ class TaskContext:
     recall: tuple[str, ...] = ()
     #: The memory tied to the call's subject, first.
     subject_memory: bool = False
+    #: Of the memory tied to the subject, the rows the runs of these task types wrote come
+    #: first, newest first; the subject's other rows fill what is left of the budget.
+    first_tasks: tuple[str, ...] = ()
     #: The Director's standing direction to the employee's department: her weekly letter and
     #: her decisions assigned to it (`standing_direction`, `standing_decisions`).
     direction: bool = False
     #: The whole persona (habits, typical phrases): the answer is prose in the character's voice.
     voice: bool = False
-    #: The employee's own last daily review, with the priorities it set (`memory.own_review`).
+    #: The employee's own last daily review (`memory.own_review`) and the priorities still in
+    #: force from the newest review that set any (`memory.own_priorities`).
     own_review: bool = False
     #: A mail task answering a letter from the Owner: the memory tied to what the letter and
     #: its thread name, whole, within the memory budget (he may ask about past work).
@@ -322,11 +328,13 @@ TASK_CONTEXT: dict[str, TaskContext] = {
     "director_film_reasons_read": _bare("reads the film's refusal reasons its data carries"),
     "director_qc_review": TaskContext(
         PROFILE_CRAFT,
-        "her own earlier reviews and looks on this film (rows tied to the storyboard): its data "
-        "carries the report, the scenes' exact prompts and the money state whole, but omits "
-        "the earlier reviews and looks past DIRECTOR_QC_PAYLOAD_CHARS (77% of her 142 runs on "
-        "the 2026-10-16 copy)",
+        "her own earlier reviews and looks on this film (the rows of her director_qc_review "
+        "and director_take_look runs its subject names, first; then the film's other rows): "
+        "its data carries the report, the scenes' exact prompts and the money state whole, but "
+        "omits the earlier reviews and looks past DIRECTOR_QC_PAYLOAD_CHARS (77% of her 142 "
+        "runs on the 2026-10-16 copy)",
         subject_memory=True,
+        first_tasks=("director_qc_review", "director_take_look"),
     ),
     "director_scene_brief": _bare(
         "briefs one scene from its refusals, earlier briefs, QC findings and lessons in its data"
@@ -399,16 +407,18 @@ TASK_CONTEXT: dict[str, TaskContext] = {
     "choose_topic": TaskContext(
         PROFILE_CRAFT,
         "her own channel direction and company decisions (STRATEGY), which the instruction asks "
-        "her to weigh and the candidate list does not carry, and the priorities her last daily "
-        "review set, which nothing else carries to the next day",
+        "her to weigh and the candidate list does not carry, her last daily review and the "
+        "priorities still in force from the newest review that set any, which nothing else "
+        "carries to the next day",
         recall=("STRATEGY",),
         own_review=True,
     ),
     "direct_company": TaskContext(
         PROFILE_CRAFT,
         "her earlier channel and company decisions (STRATEGY), of which the company state "
-        "carries only the open ones, how she directs (the contract's CORRECT section), and the "
-        "priorities her last daily review set, which the company state does not carry",
+        "carries only the open ones, how she directs (the contract's CORRECT section), her last "
+        "daily review and the priorities still in force from the newest review that set any, "
+        "which the company state does not carry",
         contract=("correct",),
         recall=("STRATEGY",),
         own_review=True,
@@ -635,14 +645,16 @@ def _craft_memory(
         return row.memory_class != OWNER_POLICY or row.id in decisions
 
     if ctx.subject_memory and ids:
-        for row in tied_memory(session, agent, readable, ids, limit=MEMORY_SCAN):
-            if not told_here(row):
-                continue
-            seen.add(row.id)
-            before = len(fitted.rows)
-            fitted.offer(row, _memory_line(row))
-            if len(fitted.rows) > before:
-                tied.append(row.id)
+        passes = [ctx.first_tasks, ()] if ctx.first_tasks else [()]
+        for tasks in passes:
+            for row in tied_memory(session, agent, readable, ids, limit=MEMORY_SCAN, tasks=tasks):
+                if row.id in seen or not told_here(row):
+                    continue
+                seen.add(row.id)
+                before = len(fitted.rows)
+                fitted.offer(row, _memory_line(row))
+                if len(fitted.rows) > before:
+                    tied.append(row.id)
     classes = [c for c in ctx.recall if c in readable]
     for row in recent_memory(session, agent, classes, limit=MEMORY_SCAN):
         if row.id not in seen and told_here(row):
@@ -684,51 +696,86 @@ def _decision_letters(rows: Iterable[AgentMessage]) -> list[AgentMessage]:
     ]
 
 
+#: The head `agents.command.findings` gives the decision that reviews another
+#: (``review_<its matter>``); a review of a review is ``review_review_<matter>``.
+REVIEW_PREFIX = "review_"
+
+
+def root_matter(key: Any) -> str:
+    """The matter a decision is about, whichever review of it this is: ``renders_failed``,
+    ``review_renders_failed`` and ``review_review_renders_failed`` are one matter."""
+    text = str(key or "")
+    while text.startswith(REVIEW_PREFIX):
+        text = text.removeprefix(REVIEW_PREFIX)
+    return text
+
+
 def standing_decisions(session: Session, agent: Agent) -> list[AgentMessage]:
     """The Director's company decisions assigned to this employee's department, while their
     letter is open: the HANDOFF `agents.command._assign` files (body «kind» direction, its
-    «matter_key», «DE FĂCUT: …» in its words). The newest letter on each matter decides it: it
-    is told while it is open and the decision it carries is still open; an older letter on the
-    same matter is never told, even open, once a newer one was filed. Not the inbox: an
-    instruction the department's work acts on — the writer's next script, the editor's next
-    shot prompts, the voice's next mix — and the decision's review after N films measures
-    exactly that."""
+    «matter_key», «DE FĂCUT: …» in its words). Not the inbox: an instruction the department's
+    work acts on — the writer's next script, the editor's next shot prompts, the voice's next
+    mix — and the decision's review after N films measures exactly that.
+
+    A decision and the decisions that review it are one chain (`root_matter`): the review is
+    filed as ``review_<matter>`` while the decision it reviews stays OPEN until the review is
+    itself reviewed (`repairs.stale_decisions.why_closed`), and a review may change or stop
+    the action (HOLD, REDUCE, ITERATE are assigned, not escalated). So the newest decision of
+    the chain, whichever department it went to, decides what is told: its letter, while that
+    letter is open, is this employee's, and the decision is still OPEN. An older decision of
+    the chain is never told, even with its letter open; nor is one whose chain went on to
+    another department, or to a decision of her desk that sent no letter (a repair she makes
+    herself, a film-cost review she computes). Selection only: no letter or decision changes."""
     from app.analytics.models import DirectorDecision  # noqa: PLC0415 - analytics imports agents
 
-    handoffs = (
-        AgentMessage.to_agent_id == agent.id,
-        AgentMessage.intent == "HANDOFF",
-    )
     open_letters = _decision_letters(
-        session.scalars(select(AgentMessage).where(*handoffs, AgentMessage.status == "OPEN"))
+        session.scalars(
+            select(AgentMessage).where(
+                AgentMessage.to_agent_id == agent.id,
+                AgentMessage.intent == "HANDOFF",
+                AgentMessage.status == "OPEN",
+            )
+        )
     )
     if not open_letters:
         return []
-    # Every letter on these matters since the oldest open one, whatever its state: a newer
-    # letter, open or not, replaces an older one on its matter.
+    roots = {root_matter(row.body_json["matter_key"]) for row in open_letters}
+    # Every decision of these chains since the oldest open letter (a decision is recorded
+    # after its letter, in the same transaction), to any department, in any state.
     since = min(str(row.created_at) for row in open_letters)
-    newest: dict[str, AgentMessage] = {}
-    for row in _decision_letters(
-        session.scalars(
-            select(AgentMessage)
-            .where(*handoffs, AgentMessage.created_at >= since)
-            .order_by(AgentMessage.created_at.desc())
-        )
-    ):
-        newest.setdefault(str(row.body_json["matter_key"]), row)
-    told = [row for row in newest.values() if row.status == "OPEN"]
-    if not told:
-        return []
-    states: dict[str, str] = {
-        str(message_id): str(state)
-        for message_id, state in session.execute(
-            select(DirectorDecision.message_id, DirectorDecision.state).where(
-                DirectorDecision.message_id.in_([row.id for row in told])
-            )
-        ).all()
-    }
-    # Its decision reviewed or closed, the letter only lingers.
-    return [row for row in told if states.get(row.id, "OPEN") == "OPEN"]
+    newest: dict[str, tuple[str, str | None, str]] = {}
+    for created_at, message_id, matter_key, state in session.execute(
+        select(
+            DirectorDecision.created_at,
+            DirectorDecision.message_id,
+            DirectorDecision.matter_key,
+            DirectorDecision.state,
+        ).where(DirectorDecision.created_at >= since)
+    ).all():
+        root = root_matter(matter_key)
+        if root in roots and str(created_at) > newest.get(root, ("", None, ""))[0]:
+            newest[root] = (str(created_at), message_id, str(state))
+    told = []
+    for row in sorted(open_letters, key=lambda letter: str(letter.created_at)):
+        root = root_matter(row.body_json["matter_key"])
+        decided = newest.get(root)
+        if decided is None:
+            # A letter no decision recorded (none on the 2026-10-16 copy): its own newest,
+            # unless a newer open letter of the chain came after it.
+            later = [
+                other
+                for other in open_letters
+                if root_matter(other.body_json["matter_key"]) == root
+                and str(other.created_at) > str(row.created_at)
+            ]
+            if not later:
+                told.append(row)
+            continue
+        _at, message_id, state = decided
+        # Its decision reviewed or closed, the letter only lingers.
+        if message_id == row.id and state == "OPEN":
+            told.append(row)
+    return told
 
 
 def _direction_line(row: AgentMessage) -> str:
@@ -864,12 +911,20 @@ def compose_identity(
         )
 
     review = own_review(session, agent) if ctx.own_review else None
+    priorities = own_priorities(session, agent) if ctx.own_review else []
+    if review is not None and all(
+        row.content.removeprefix(PRIORITY_MARKER).strip() in review.content for row in priorities
+    ):
+        priorities = []  # the newest review set them: its row says them whole
     if review is not None:
-        lines.append(
-            "YOUR LAST DAILY REVIEW, WITH THE PRIORITIES YOU SET FOR THE NEXT DAY (weigh them "
-            "in this decision):"
-        )
+        lines.append("YOUR LAST DAILY REVIEW (weigh it in this decision):")
         lines.append(_memory_line(review))
+    if priorities:
+        lines.append(
+            "THE PRIORITIES YOU SET FOR THE NEXT DAY, in your newest review that set any, "
+            f"{_minute(priorities[0].created_at)} (still in force; weigh them in this decision):"
+        )
+        lines.extend(_memory_line(row) for row in priorities)
 
     memory = _Fitted(MEMORY_BUDGET_CHARS)
     tied: list[str] = []
@@ -897,6 +952,7 @@ def compose_identity(
     told: list[MemoryRecord] = [
         *policies,
         *([review] if review is not None else []),
+        *priorities,
         *memory.rows,
     ]
     letters = [str(i) for i in (subject or {}).get("message_ids") or [] if i]
@@ -929,6 +985,7 @@ def compose_identity(
         "memory_left_out": memory.skipped,
         "owner_letter_memory": owner_letter is not None,
         "own_review_id": review.id if review is not None else None,
+        "own_priority_ids": [row.id for row in priorities],
         "direction_message_ids": [row.id for row in weekly],
         "decision_message_ids": [row.id for row in assigned],
         "direction_chars": direction_chars,
