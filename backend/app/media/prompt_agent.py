@@ -2796,6 +2796,8 @@ _FIXED_WORLD = re.compile(
     r"|fixed\s+(?:pool|light|place)s?\b|light(?:ing)?\s+(?:is|stays|remains)\s+fixed)",
     re.IGNORECASE,
 )
+#: Said for a plan that fixes its world when the camera moves: the model is told what holds.
+FIXED_WORLD_SENTENCE = "The room, its light and its shadows hold exactly as they are."
 _MOTIONLESS_WORLD = re.compile(
     r"\bnothing\s+(?:(?:in|around)\s+(?:the\s+)?(?:world|scene|background)\s+)?moves\b",
     re.IGNORECASE,
@@ -3388,7 +3390,11 @@ def _motion_intent(
         # plan whose own words fix the light and the room (`_FIXED_WORLD`).
         "world": _sentence(world)
         if world
-        else ("" if move == "static" or _fixed_world(package) else DEFAULT_WORLD_MOTION),
+        else (
+            ""
+            if move == "static"
+            else (FIXED_WORLD_SENTENCE if _fixed_world(package) else DEFAULT_WORLD_MOTION)
+        ),
         "world_fixed": _fixed_world(package),
         "camera_path": _plan_move_clause(package, move),
         "subject": _sentence(subject),
@@ -3437,6 +3443,23 @@ _CAMERA_CLAUSE_NOISE = re.compile(
     r"|,?\s*(?:over|across|for)\s+\d+(?:\.\d+)?\s+seconds?",
     re.IGNORECASE,
 )
+
+
+def _camera_with_path(move: str, path: str) -> str:
+    """The move named once, with the plan's own path and tempo in the same sentence:
+    «Tracking right: a slow, straight follow along the pulse's path as it travels across the
+    room.» The move's own tempo word opens it when the plan's clause carries none."""
+    short = MOVE_SHORT.get(move, MOVE_SHORT[DEFAULT_MOVE])
+    found = lint.camera_moves(short)
+    name = found[0][1] if found else move
+    text = " ".join(path.split()).rstrip(". ")
+    text = text[:1].lower() + text[1:]
+    tempo = ""
+    if not lint.SPEED_WORDS.search(text):
+        first = short.split()[0]
+        tempo = f"{first} " if lint.SPEED_WORDS.search(first) else ""
+    said = f"{tempo}{name}: {text}"
+    return _sentence(said[:1].upper() + said[1:])
 
 
 def _plan_move_clause(package: Mapping[str, Any], move: str) -> str:
@@ -3538,17 +3561,27 @@ def render_motion(
     at_rest = bool(_MOTIONLESS_WORLD.search(" ".join([world, *map(str, subjects), *actions])))
     if at_rest and move == "static":
         camera = MOVE_SHORT["static"]
-    if world == DEFAULT_WORLD_MOTION and (at_rest or move == "static" or intent.get("world_fixed")):
-        # A stored intent whose stillness stood in its action, or whose plan fixes its world
-        # (`motion_intent_of` completes it from the plan): the drifting-shadows default
+    if world == DEFAULT_WORLD_MOTION and (at_rest or move == "static"):
+        # A stored intent whose stillness stood in its action: the drifting-shadows default
         # contradicted it («Static camera… Shadows drift and the light shifts… Nothing
         # moves.» — 2026-10-15, 7c26a7ce scene 1, refused by the Director twice).
         world = ""
+    elif world == DEFAULT_WORLD_MOTION and intent.get("world_fixed"):
+        # …or whose plan fixes its world (`motion_intent_of` completes it from the plan): the
+        # clip is told what holds (02:02Z, scene 4: «nothing in the words states that the
+        # room, its light and its equipment hold exactly as they are»).
+        world = FIXED_WORLD_SENTENCE
     amplitude = str(intent.get("amplitude") or AMPLE)
     seconds = _seconds_of(intent)
     two_beats = amplitude != MEASURED and move != "static" and seconds >= TWO_BEAT_SECONDS
     ending = _ending_sentence(intent.get("ending_frame"))
     path = str(intent.get("camera_path") or "")
+    if path and move != "static":
+        # ONE camera sentence, the plan's path and tempo inside it (02:03Z, scene 4: the fixed
+        # sentence followed by the plan's clause was refused as «two camera instructions, the
+        # vague one first»).
+        camera = _camera_with_path(move, path)
+        path = ""
     required = [
         camera,
         path,

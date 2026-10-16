@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-16 — One camera sentence; the fixed world said; the cap before any round
+
+- `media/prompt_agent.py`: one camera sentence carrying the plan's path and tempo (`_camera_with_path`); `FIXED_WORLD_SENTENCE` when a plan fixes its world and the camera moves (7c26a7ce scene 4, 02:03Z). `media/stills_stage.py`, `media/assembler.py`: a scene at the renders cap with no approved still keeps its newest refused still on disk as its picture before any round, and `usable_take` reuses a `director_cap` still whatever its words (87c05891 scene 1, 02:04Z).
+
 ## 2026-10-16 — The renders cap holds in the stills stage
 
 - `media/stills_stage.py`: the Owner's renders cap holds in the stills stage too — past three stills of a scene, with none passed and her look letting none stand, the closest candidate is approved under the cap (`director_cap`) and the film goes on (87c05891 scene 1 kept the whole episode waiting). Test `test_stills_renders_cap.py`.

@@ -102,6 +102,7 @@ from sqlalchemy.orm import Session
 from app.db import lock_for_write
 from app.media import fix_check
 from app.media.assembler import (
+    CAP_APPROVER,
     DEFAULT_STORAGE_ROOT,
     FREE_FAILURE_KINDS,
     LIVE_KIND,
@@ -666,6 +667,28 @@ def _read_scenes(engine: Engine, storyboard_id: str) -> tuple[dict[str, Any], li
                         or 0
                     )
             scenes.append(scene)
+    # The Owner's renders cap (`RENDERS_PER_LAYER`) for a scene held after its rounds: three
+    # stills made, none approved, the rewrite ladder still turning — the newest refused still
+    # is the scene's picture (approved under the cap) and nothing more is bought for it
+    # (02:04Z, 87c05891 scene 1: the whole episode waited on a fourth).
+    for scene in scenes:
+        if scene.kind != LIVE_KIND or scene.reuse is not None or scene.needs_reference:
+            continue
+        if not _at_renders_cap(engine, storyboard_id, scene.index):
+            continue
+        with Session(engine) as session:
+            newest = _newest_refused(session, storyboard_id, scene.index)
+            take_id = newest.id if newest is not None else None
+            said = str(newest.failure_detail or "") if newest is not None else ""
+        if take_id is None:
+            continue
+        _approve_under_cap(engine, take_id, [said])
+        with Session(engine) as session:
+            kept = session.get(SceneTake, take_id)
+            if kept is not None:
+                session.expunge(kept)
+                scene.reuse = kept
+                scene.pending = []
     # What each scene still to be bought remembers since the Owner last decided about it: a
     # scene the gate or the vendor left to him is held, and is never bought meanwhile.
     open_scenes = {
@@ -1142,7 +1165,6 @@ class _RoundEnd:
 #: scene 1: a third still refused by the gate, and scenes 2, 4, 6, 8 — which take their look
 #: from scene 1's picture — never bought).
 RENDERS_PER_LAYER = 3
-CAP_APPROVER = "director_cap"
 
 
 def _at_renders_cap(engine: Engine, storyboard_id: str, scene_index: int) -> bool:
@@ -1174,12 +1196,29 @@ def _closest(verdicts: list[tuple[str, StillReport]]) -> tuple[str, StillReport]
     )
 
 
-def _approve_under_cap(
-    engine: Engine, take_id: str, report: StillReport, confirmed: list[str]
-) -> None:
+def _newest_refused(session: Session, storyboard_id: str, scene_index: int) -> SceneTake | None:
+    """The scene's newest still the gate refused that is still on disk: made on the most
+    corrected words, the closest the scene has when the cap stops a fourth."""
+    rows = session.scalars(
+        select(SceneTake)
+        .where(
+            SceneTake.storyboard_id == storyboard_id,
+            SceneTake.scene_number == int(scene_index),
+            SceneTake.kind == "still",
+            SceneTake.status == "REJECTED",
+        )
+        .order_by(SceneTake.created_at.desc())
+    )
+    for row in rows:
+        if row.path and row.sha256 and Path(row.path).is_file():
+            return row
+    return None
+
+
+def _approve_under_cap(engine: Engine, take_id: str, reasons: list[str]) -> None:
     """The closest candidate APPROVED under the cap, its refusal cleared and kept as the
     lesson in its quality note."""
-    left = "; ".join(dict.fromkeys([*report.reasons_ro, *confirmed]))[:2500]
+    left = "; ".join(dict.fromkeys(text for text in reasons if text))[:2500]
     with Session(engine) as session, session.begin():
         lock_for_write(session)
         row = session.get(SceneTake, take_id)
@@ -1367,7 +1406,7 @@ def _settle_round(
             # The Owner's cap: three stills made, none passed, her look let none stand — the
             # closest candidate is the scene's picture and nothing more is bought for it.
             take_id, report = _closest(verdicts)
-            _approve_under_cap(engine, take_id, report, confirmed)
+            _approve_under_cap(engine, take_id, [*report.reasons_ro, *confirmed])
             end = _RoundEnd(
                 take_id=take_id, report=report, approved_by=CAP_APPROVER, confirmed=confirmed
             )

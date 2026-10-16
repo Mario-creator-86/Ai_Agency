@@ -2657,6 +2657,11 @@ def classify_vendor_failure(exc: BaseException, previous: str | None = None) -> 
     )
 
 
+#: A still the Owner's renders cap approved as the scene's picture (`stills_stage`): it is
+#: the scene's whatever words it was made on, so `usable_take` matches it without its hash.
+CAP_APPROVER = "director_cap"
+
+
 def usable_take(
     session: Session,
     storyboard_id: str,
@@ -2699,7 +2704,9 @@ def usable_take(
             and row.seconds < min_seconds
         ):
             continue
-        if not any(take_hash(fields, row.model_id) == row.prompt_hash for fields in field_options):
+        if row.approved_by != CAP_APPROVER and not any(
+            take_hash(fields, row.model_id) == row.prompt_hash for fields in field_options
+        ):
             continue
         if not row.path or not row.sha256:
             continue

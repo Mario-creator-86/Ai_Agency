@@ -59,6 +59,53 @@ def _report(scene: int, violations: list[str], reasons: list[str], score: float)
     )
 
 
+def test_a_scene_held_after_three_stills_keeps_its_newest_refused_still_and_is_reused(
+    engine, tmp_path
+):
+    """02:04Z, 87c05891 scene 1: three stills refused, the rewrite ladder turning on the
+    composer's fixed sentences, the episode waiting. Read for the next round, the scene keeps
+    its newest refused still on disk (approved under the cap) and the sheet reuses it whatever
+    words it was made on."""
+    import hashlib
+
+    from app.media.assembler import usable_take
+
+    board = a_film(engine, tmp_path, scenes=2)
+    with Session(engine) as session, session.begin():
+        approved = session.scalar(
+            select(SceneTake).where(
+                SceneTake.storyboard_id == board,
+                SceneTake.scene_number == 1,
+                SceneTake.kind == "still",
+            )
+        )
+        approved.status = "REJECTED"
+        approved.approved_by = None
+        approved.failure_code = "LOCAL.STILL_GATE"
+        approved.failure_detail = "prim-plan, nu cadru larg"
+        older = _take(session, board, 1)
+        newest = _take(session, board, 1)
+        file = tmp_path / "newest.png"
+        file.write_bytes(b"newest still bytes")
+        row = session.get(SceneTake, newest)
+        row.path = str(file)
+        row.sha256 = hashlib.sha256(b"newest still bytes").hexdigest()
+        row.created_at = utc_now()
+    _bible, scenes = stills_stage._read_scenes(engine, board)
+    one = next(scene for scene in scenes if scene.index == 1)
+    assert one.reuse is not None and one.reuse.id == newest
+    assert one.reuse.status == "APPROVED" and one.reuse.approved_by == stills_stage.CAP_APPROVER
+    assert one.hold_ro is None and one.pending == []
+    with Session(engine) as session:
+        assert session.get(SceneTake, older).status == "REJECTED"
+        found = usable_take(
+            session, board, 1, "still", [{"still_prompt": "other words"}], statuses=("APPROVED",)
+        )
+        assert found is not None and found.id == newest
+    two = next(scene for scene in scenes if scene.index == 2)
+    assert two.reuse is not None and two.reuse.approved_by != stills_stage.CAP_APPROVER
+
+
 def test_past_three_stills_the_closest_candidate_stands_and_the_scene_goes_on(
     engine, tmp_path, monkeypatch
 ):
