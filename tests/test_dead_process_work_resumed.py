@@ -1,7 +1,9 @@
 """What a dead process left is taken up by the studio itself (2026-10-16 06:07:53Z): the
 leases it held are given back on every worker pass, not only at the start whose own release
 had failed on the database the stopping process still held; and a film's continuation it
-interrupted is queued again, once, instead of waiting for the Owner's hand."""
+interrupted is queued again, once, instead of waiting for the Owner's hand. A day it left is
+never given back (run again whole it would buy a second film): it is closed INTERRUPTED, for
+its run to be resumed from its stage (review 2026-10-16)."""
 
 from __future__ import annotations
 
@@ -128,3 +130,117 @@ def test_an_interrupted_continuation_is_queued_again_once_and_an_old_one_is_not(
         assert event.payload["storyboard_id"] == "7c26a7ce" and event.payload["max_attempts"] == 2
     # Resumed once: the row is QUEUED now, not DEAD_LETTER, so nothing is resumed again.
     assert resume_interrupted_continuations(engine) == 0
+
+
+def test_a_day_a_dead_process_left_claimed_is_closed_not_given_back(engine):
+    """Review 2026-10-16: the release gave a DAILY_RUN back to the queue like any task, and a
+    day run again from its start chooses a second subject and buys a second film. It is
+    closed INTERRUPTED instead — at the start (every leased task is an orphan) and on the
+    pass (one leased before this process began) — for its run to be resumed from its stage."""
+    started = _stamp(5)
+    day = _task(
+        engine,
+        status="CLAIMED",
+        updated_minutes_ago=10,
+        storyboard="",
+        task_type="DAILY_RUN",
+        payload={"manual": True},
+        lease_token="worker_main:dead",
+        lease_expires_at=_stamp(-50),
+    )
+    walk = _task(
+        engine,
+        status="CLAIMED",
+        updated_minutes_ago=10,
+        storyboard="7c26a7ce",
+        lease_token="worker_main:dead-too",
+        lease_expires_at=_stamp(-50),
+    )
+    alive = _task(
+        engine,
+        status="CLAIMED",
+        updated_minutes_ago=1,
+        storyboard="",
+        task_type="DAILY_RUN",
+        payload={"manual": True},
+        lease_token="worker_main:this-process",
+        lease_expires_at=_stamp(-50),
+    )
+
+    assert release_orphaned_claims(engine, started_at=started) == 1
+    assert _row(engine, walk).status == "QUEUED"
+    assert _row(engine, day).status == "CLAIMED", "a day is never queued again"
+
+    from app.workflows.services import TASK_INTERRUPTED_EVENT, interrupt_orphaned_claims
+
+    (closed,) = interrupt_orphaned_claims(engine, started_at=started)
+
+    assert closed["id"] == day
+    row = _row(engine, day)
+    assert row.status == "DEAD_LETTER" and row.lease_token is None and row.attempts == 1
+    assert str(row.error_detail).startswith(INTERRUPTED)
+    assert _row(engine, alive).status == "CLAIMED"  # this process's own day
+    with Session(engine) as session:
+        (event,) = session.scalars(
+            select(DomainEvent).where(DomainEvent.event_type == TASK_INTERRUPTED_EVENT)
+        )
+        assert event.aggregate_id == day and event.payload["orphaned"] is True
+    assert interrupt_orphaned_claims(engine, started_at=started) == []
+    # At the start every leased task is an orphan: the day this process had not yet claimed
+    # is closed too, and the release still gives none back.
+    assert release_orphaned_claims(engine) == 0
+    assert [item["id"] for item in interrupt_orphaned_claims(engine)] == [alive]
+
+
+def test_a_continuation_resumed_once_and_cut_off_again_is_left_to_the_next_daily_run(engine):
+    """Resumed once, a continuation cut off again is not queued a second time: a crash loop
+    cannot walk a film without end, and the letter that says so is then true. Asked before
+    the Owner is told (`continuation_resumes`), the answer is the resume's own."""
+    from app.services import append_event
+
+    fresh = _task(
+        engine,
+        status="DEAD_LETTER",
+        updated_minutes_ago=2,
+        storyboard="7c26a7ce",
+        error_detail=f"{INTERRUPTED}: procesul care rula sarcina s-a oprit",
+    )
+    again = _task(
+        engine,
+        status="DEAD_LETTER",
+        updated_minutes_ago=2,
+        storyboard="87c05891",
+        attempts=2,
+        max_attempts=2,
+        error_detail=f"{INTERRUPTED}: procesul care rula sarcina s-a oprit",
+    )
+    with Session(engine) as session, session.begin():
+        # Its first resume, before this second cut.
+        append_event(
+            session,
+            TASK_RESUMED_EVENT,
+            "task_queue",
+            again,
+            1,
+            {"task_type": "FILM_CONTINUE", "storyboard_id": "87c05891", "max_attempts": 2},
+            str(uuid4()),
+        )
+
+    assert resume_interrupted_continuations(engine) == 1
+
+    assert _row(engine, fresh).status == "QUEUED"
+    assert _row(engine, again).status == "DEAD_LETTER"
+
+    from app.workflows.services import continuation_resumes
+
+    later = _task(
+        engine,
+        status="DEAD_LETTER",
+        updated_minutes_ago=1,
+        storyboard="babcf272",
+        error_detail=f"{INTERRUPTED}: procesul care rula sarcina s-a oprit",
+    )
+    assert continuation_resumes(engine, later) is True
+    assert continuation_resumes(engine, again) is False
+    assert continuation_resumes(engine, fresh) is False  # queued again already
+    assert continuation_resumes(engine, str(uuid4())) is False  # not a dead continuation

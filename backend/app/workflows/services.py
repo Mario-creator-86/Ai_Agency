@@ -101,6 +101,13 @@ PROCESS_STARTED_AT = utc_now()
 TASK_RESUMED_EVENT = "workflow.task_resumed"
 #: How long after its interruption a film's continuation is still the studio's to resume.
 RESUME_CONTINUATION_HOURS = 6
+#: Task types a dead process's claim never goes back to the queue for. A day run again from
+#: its start chooses a second subject and buys a second film (REL-03): its claim is closed as
+#: the sweep closes a lapsed one, DEAD_LETTER INTERRUPTED (`interrupt_orphaned_claims`), the
+#: worker closes the day INTERRUPTED at its stage (`runbook.services.interrupt_task_day`), and
+#: the watchdog resumes that run from where it stopped (`passes.resume_interrupted_day`).
+#: The name is `runbook.services.DAILY_RUN_TASK`, written out: the runbook imports this module.
+NEVER_RELEASED = ("DAILY_RUN",)
 
 
 # ---------------------------------------------------------------------------
@@ -416,11 +423,14 @@ def release_orphaned_claims(
     or last renewed before this process began is: 06:07:53Z, the start's own release failed
     on the database the stopping process still held (OperationalError) and was never tried
     again, and the walk that had just accepted «Speed of Light» under the cap stood CLAIMED,
-    the film unpublished, until its lease lapsed and it was dead-lettered."""
+    the film unpublished, until its lease lapsed and it was dead-lettered.
+
+    A day (`NEVER_RELEASED`) is never given back: review 2026-10-16, the Owner's GO left
+    CLAIMED by a killed process was queued again here, claimed a second time and run from its
+    start — a second subject, a second film — while its first run stood RUNNING with half a
+    film bought. `interrupt_orphaned_claims` closes it instead."""
     now_str = utc_now()
-    orphaned: Any = TaskQueueItem.status.in_(LEASED_STATES)
-    if started_at:
-        orphaned = orphaned & (TaskQueueItem.updated_at < started_at)
+    orphaned = _orphaned(started_at) & TaskQueueItem.task_type.not_in(NEVER_RELEASED)
     with Session(engine) as session:
         if session.scalars(select(TaskQueueItem.id).where(orphaned).limit(1)).first() is None:
             return 0
@@ -452,6 +462,122 @@ def release_orphaned_claims(
     return released
 
 
+def _orphaned(started_at: str | None) -> Any:
+    """Leased by a process that is gone: every leased task at the worker's start (None), or
+    one leased or last renewed before ``started_at`` (one worker per database)."""
+    orphaned: Any = TaskQueueItem.status.in_(LEASED_STATES)
+    if started_at:
+        orphaned = orphaned & (TaskQueueItem.updated_at < started_at)
+    return orphaned
+
+
+def interrupt_orphaned_claims(engine: Engine, *, started_at: str | None = None) -> list[dict]:
+    """Every day (`NEVER_RELEASED`) a dead process left leased, closed now the way
+    `sweep_interrupted_tasks` closes a lapsed one — DEAD_LETTER INTERRUPTED, one
+    `TASK_INTERRUPTED_EVENT` — instead of waiting up to an hour for its lease to lapse; the
+    tasks, for the worker to close their days and tell the Owner (`announce_interrupted`).
+    Orphaned as in `release_orphaned_claims` (``started_at``). Its run is then resumed from the
+    stage it stopped in (`passes.resume_interrupted_day`): the stages it completed are
+    replayed from their record, so nothing is bought twice.
+
+    Not behind the autonomy stop, like the sweep: it starts nothing and spends nothing."""
+    orphaned = _orphaned(started_at) & TaskQueueItem.task_type.in_(NEVER_RELEASED)
+    with Session(engine) as session:
+        if session.scalars(select(TaskQueueItem.id).where(orphaned).limit(1)).first() is None:
+            return []
+    now_str = utc_now()
+    closed: list[dict] = []
+    with Session(engine) as session, session.begin():
+        lock_for_write(session)
+        for task in session.scalars(select(TaskQueueItem).where(orphaned)):
+            renewed_at = task.updated_at
+            closed.append(
+                _interrupt(
+                    session,
+                    task,
+                    "procesul care rula sarcina s-a oprit înainte să o încheie (ultima "
+                    f"reînnoire la {str(renewed_at)[:19]}); ziua nu este pornită din nou de la "
+                    "început, ci reluată de la etapa unde s-a oprit.",
+                    now_str,
+                    last_renewed_at=renewed_at,
+                    orphaned=True,
+                )
+            )
+    for item in closed:
+        logger.error(
+            "task_interrupted", extra={"task_id": item["id"], "task_type": item["task_type"]}
+        )
+    return closed
+
+
+def _interrupted_continuations(since: str) -> Any:
+    """Film continuations dead-lettered INTERRUPTED since ``since``."""
+    return (
+        (TaskQueueItem.task_type == "FILM_CONTINUE")
+        & (TaskQueueItem.status == "DEAD_LETTER")
+        & (TaskQueueItem.updated_at >= since)
+        & (TaskQueueItem.error_detail.like(f"{INTERRUPTED}%"))
+    )
+
+
+def _to_resume(session: Session, candidates: list[TaskQueueItem], since: str) -> list[str]:
+    """The ids of the ``candidates`` (`_interrupted_continuations`) the studio queues again:
+    each task once — one resumed already was cut off a second time, and the next daily run
+    walks its film — and only while no later continuation of the same film was queued."""
+    if not candidates:
+        return []
+    later = list(
+        session.scalars(
+            select(TaskQueueItem).where(
+                TaskQueueItem.task_type == "FILM_CONTINUE", TaskQueueItem.created_at >= since
+            )
+        )
+    )
+    resumed_before = set(
+        session.scalars(
+            select(DomainEvent.aggregate_id).where(
+                DomainEvent.event_type == TASK_RESUMED_EVENT,
+                DomainEvent.aggregate_id.in_([task.id for task in candidates]),
+            )
+        )
+    )
+    chosen: list[str] = []
+    for task in candidates:
+        if task.id in resumed_before:
+            continue
+        storyboard_id = str((task.payload or {}).get("storyboard_id") or "")
+        if any(
+            other.id != task.id
+            and str((other.payload or {}).get("storyboard_id") or "") == storyboard_id
+            and other.created_at > task.created_at
+            for other in later
+        ):
+            continue  # the film was walked, or is queued to be, since
+        chosen.append(task.id)
+    return chosen
+
+
+def _resume_since(now_str: str) -> str:
+    return (
+        datetime.fromisoformat(now_str) - timedelta(hours=RESUME_CONTINUATION_HOURS)
+    ).isoformat()
+
+
+def continuation_resumes(engine: Engine, task_id: str, *, now: str | None = None) -> bool:
+    """Whether `resume_interrupted_continuations` queues this dead-lettered continuation again,
+    asked before the Owner is told about it: one the studio resumes itself is no letter of
+    his (review 2026-10-16: the letter said «nu o repornesc singur» and the next pass, seconds
+    later, walked the film)."""
+    since = _resume_since(now or utc_now())
+    with Session(engine) as session:
+        task = session.scalars(
+            select(TaskQueueItem).where(
+                _interrupted_continuations(since), TaskQueueItem.id == task_id
+            )
+        ).first()
+        return task is not None and bool(_to_resume(session, [task], since))
+
+
 def resume_interrupted_continuations(
     engine: Engine, *, correlation_id: str | None = None, now: str | None = None
 ) -> int:
@@ -460,39 +586,24 @@ def resume_interrupted_continuations(
     studio itself, once, when no later continuation of the same film was queued since: the
     Owner's rules, 2026-10-12 («dai singur restart») and 2026-10-15 («the day ends on its
     goal»), leave no walk waiting for his hand. It gets one more attempt and a
-    `TASK_RESUMED_EVENT`. Returns how many."""
+    `TASK_RESUMED_EVENT`. A task resumed once and cut off again is left to the next daily
+    run, so a crash loop cannot walk a film without end (`_to_resume`: the choice
+    `continuation_resumes` reports before the Owner is told). Returns how many."""
     now_str = now or utc_now()
-    since = (
-        datetime.fromisoformat(now_str) - timedelta(hours=RESUME_CONTINUATION_HOURS)
-    ).isoformat()
-    interrupted = (
-        (TaskQueueItem.task_type == "FILM_CONTINUE")
-        & (TaskQueueItem.status == "DEAD_LETTER")
-        & (TaskQueueItem.updated_at >= since)
-        & (TaskQueueItem.error_detail.like(f"{INTERRUPTED}%"))
-    )
+    since = _resume_since(now_str)
+    interrupted = _interrupted_continuations(since)
     with Session(engine) as session:
         if session.scalars(select(TaskQueueItem.id).where(interrupted).limit(1)).first() is None:
             return 0
     resumed = 0
     with Session(engine) as session, session.begin():
         lock_for_write(session)
-        later = list(
-            session.scalars(
-                select(TaskQueueItem).where(
-                    TaskQueueItem.task_type == "FILM_CONTINUE", TaskQueueItem.created_at >= since
-                )
-            )
-        )
-        for task in session.scalars(select(TaskQueueItem).where(interrupted)):
+        candidates = list(session.scalars(select(TaskQueueItem).where(interrupted)))
+        chosen = set(_to_resume(session, candidates, since))
+        for task in candidates:
+            if task.id not in chosen:
+                continue
             storyboard_id = str((task.payload or {}).get("storyboard_id") or "")
-            if any(
-                other.id != task.id
-                and str((other.payload or {}).get("storyboard_id") or "") == storyboard_id
-                and other.created_at > task.created_at
-                for other in later
-            ):
-                continue  # the film was walked, or is queued to be, since
             task.status = "QUEUED"
             task.max_attempts = max(int(task.max_attempts or 1), int(task.attempts or 0) + 1)
             task.next_attempt_at = now_str
@@ -554,38 +665,52 @@ def sweep_interrupted_tasks(engine: Engine) -> list[dict]:
     with Session(engine) as session, session.begin():
         lock_for_write(session)
         for task in session.scalars(select(TaskQueueItem).where(lapsed)):
-            previous_token = task.lease_token
             lapsed_at = task.lease_expires_at
-            task.status = "DEAD_LETTER"
-            task.error_detail = (
-                f"{INTERRUPTED}: procesul care rula sarcina s-a oprit înainte să o încheie "
-                f"(contractul expirat la {str(lapsed_at)[:19]}); sarcina și-a folosit "
-                "încercările și nu este pornită din nou automat."
+            swept.append(
+                _interrupt(
+                    session,
+                    task,
+                    "procesul care rula sarcina s-a oprit înainte să o încheie (contractul "
+                    f"expirat la {str(lapsed_at)[:19]}); sarcina și-a folosit încercările și nu "
+                    "este pornită din nou automat.",
+                    now_str,
+                    lease_expired_at=lapsed_at,
+                )
             )
-            task.lease_token = None
-            task.lease_expires_at = None
-            task.updated_at = now_str
-            append_event_with_outbox(
-                session,
-                TASK_INTERRUPTED_EVENT,
-                "task_queue",
-                task.id,
-                1,
-                {
-                    "task_type": task.task_type,
-                    "attempts": task.attempts,
-                    "max_attempts": task.max_attempts,
-                    "lease_token": previous_token,
-                    "lease_expired_at": lapsed_at,
-                },
-                task.id,
-            )
-            swept.append(TaskQueueItemView.model_validate(task).model_dump())
     for item in swept:
         logger.error(
             "task_interrupted", extra={"task_id": item["id"], "task_type": item["task_type"]}
         )
     return swept
+
+
+def _interrupt(
+    session: Session, task: TaskQueueItem, detail: str, now_str: str, **facts: Any
+) -> dict:
+    """``task`` closed as interrupted: DEAD_LETTER, ``error_detail`` opening with INTERRUPTED,
+    its lease cleared and one `TASK_INTERRUPTED_EVENT` carrying ``facts``; the task's view."""
+    previous_token = task.lease_token
+    task.status = "DEAD_LETTER"
+    task.error_detail = f"{INTERRUPTED}: {detail}"
+    task.lease_token = None
+    task.lease_expires_at = None
+    task.updated_at = now_str
+    append_event_with_outbox(
+        session,
+        TASK_INTERRUPTED_EVENT,
+        "task_queue",
+        task.id,
+        1,
+        {
+            "task_type": task.task_type,
+            "attempts": task.attempts,
+            "max_attempts": task.max_attempts,
+            "lease_token": previous_token,
+            **facts,
+        },
+        task.id,
+    )
+    return TaskQueueItemView.model_validate(task).model_dump()
 
 
 def _held(task: TaskQueueItem | None, lease_token: str) -> bool:

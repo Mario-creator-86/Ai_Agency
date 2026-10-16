@@ -61,9 +61,11 @@ from app.workflows.services import (
     LeaseLost,
     claim_task,
     complete_task,
+    continuation_resumes,
     enqueue_task,
     fail_task,
     heartbeat_task,
+    interrupt_orphaned_claims,
     release_orphaned_claims,
     resume_interrupted_continuations,
     scheduler_tick,
@@ -681,7 +683,12 @@ def work_once(
 def announce_interrupted(engine: Engine, tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Tell the Owner about interrupted work he cares for: a day, a film's continuation.
 
-    Called with what `sweep_interrupted_tasks` just dead-lettered, so each is told once.
+    Called with what `sweep_interrupted_tasks` or `interrupt_orphaned_claims` just
+    dead-lettered, so each is told once. A continuation the studio queues again itself
+    (`continuation_resumes`, asked before `resume_interrupted_continuations` runs) is no
+    letter: his rule of 2026-10-12 keeps his letters for accounts, authorisations and security,
+    and review 2026-10-16 measured the letter saying «nu o repornesc singur» seconds before
+    the next pass walked the film. One that is not resumed is told, as before.
     """
     told: list[dict[str, Any]] = []
     for task in tasks:
@@ -690,7 +697,10 @@ def announce_interrupted(engine: Engine, tasks: list[dict[str, Any]]) -> list[di
             if task["task_type"] == DAILY_RUN:
                 record["day"] = interrupt_task_day(engine, task)
             elif task["task_type"] == FILM_CONTINUE:
-                record["letter_id"] = _tell_continue_interrupted(engine, task)
+                if continuation_resumes(engine, task["id"]):
+                    record["resumes"] = True
+                else:
+                    record["letter_id"] = _tell_continue_interrupted(engine, task)
         except Exception as exc:  # noqa: BLE001 - one letter must not lose the others
             logger.error(
                 "interrupted_task_not_announced",
@@ -730,6 +740,16 @@ def _tell_continue_interrupted(engine: Engine, task: dict[str, Any]) -> str:
         return row.id
 
 
+def close_orphaned_days(engine: Engine, *, started_at: str | None = None) -> list[dict[str, Any]]:
+    """A day a dead process left leased, closed instead of queued again: its task
+    DEAD_LETTER INTERRUPTED (`interrupt_orphaned_claims`, ``started_at`` as in
+    `release_orphaned_claims`), its run INTERRUPTED at the stage it was in and the Owner told
+    (`announce_interrupted`); the watchdog then resumes that run from its stage
+    (`passes.resume_interrupted_day`). Run again whole, it would choose a second subject and
+    buy a second film (review 2026-10-16). What was told."""
+    return announce_interrupted(engine, interrupt_orphaned_claims(engine, started_at=started_at))
+
+
 def worker_pass(
     engine: Engine,
     handlers: dict[str, TaskHandler],
@@ -740,29 +760,39 @@ def worker_pass(
     """One pass: close what died, fire what is due, run what is queued, then answer the mail.
 
     First the queue's dead are named: a task whose lease lapsed with no attempts left was
-    being run by a process that is gone, and becomes DEAD_LETTER INTERRUPTED with a letter to
-    the Owner when it was a day or a film's continuation — never run again on its own (REL-03).
-    The mail comes last and only with a registry to run models through: a letter to an
-    employee is answered by that employee within the pass, so an exchange the Director
-    starts in the evening is a conversation by the next pass, not a note that waits a day.
-    Nothing happens while the studio shuts down.
+    being run by a process that is gone, and becomes DEAD_LETTER INTERRUPTED (REL-03). A day
+    is closed INTERRUPTED and resumed from its stage by the watchdog, never run again whole;
+    a film's continuation is queued again by the studio, once, in this same pass, and only one
+    that is not is told to the Owner. The mail comes last and only with a registry to run
+    models through: a letter to an employee is answered by that employee within the pass, so
+    an exchange the Director starts in the evening is a conversation by the next pass, not a
+    note that waits a day. Nothing happens while the studio shuts down.
     """
     idle: dict[str, Any] = {"answered": [], "refused": []}
     if shutdown_requested(engine):
         return {"triggered": [], "ran": [], "mail": idle, "interrupted": []}
     # What a dead process left: its leases given back (the start's own release may have
-    # failed on a database the stopping process still held, 06:07:53Z 2026-10-16), and a
-    # film's continuation it interrupted queued again — before the sweep can dead-letter it.
+    # failed on a database the stopping process still held, 06:07:53Z 2026-10-16); a day is
+    # closed instead, since run again from its start it would buy a second film.
+    released = resumed = 0
+    closed: list[dict[str, Any]] = []
     try:
         released = release_orphaned_claims(engine, started_at=PROCESS_STARTED_AT)
-        resumed = resume_interrupted_continuations(engine)
-        if released or resumed:
-            logger.info(
-                "dead_process_work_resumed", extra={"released": released, "resumed": resumed}
-            )
+        closed = close_orphaned_days(engine, started_at=PROCESS_STARTED_AT)
     except Exception as exc:  # noqa: BLE001 - tried again on the next pass
         logger.warning("dead_process_work_not_resumed", extra={"error_class": type(exc).__name__})
-    interrupted = announce_interrupted(engine, sweep_interrupted_tasks(engine))
+    # Told before the resume below and decided the same way (`continuation_resumes`): a
+    # continuation the studio queues again is no letter, one it does not is.
+    interrupted = closed + announce_interrupted(engine, sweep_interrupted_tasks(engine))
+    try:
+        resumed = resume_interrupted_continuations(engine)
+    except Exception as exc:  # noqa: BLE001 - tried again on the next pass
+        logger.warning("dead_process_work_not_resumed", extra={"error_class": type(exc).__name__})
+    if released or closed or resumed:
+        logger.info(
+            "dead_process_work_resumed",
+            extra={"released": released, "closed": len(closed), "resumed": resumed},
+        )
     if "SCAN_FILM_SHEETS" in handlers:
         try:
             handlers["SCAN_FILM_SHEETS"]({"payload": {}})

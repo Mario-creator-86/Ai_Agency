@@ -118,6 +118,7 @@ from app.workflows.worker import (
     WorkerLock,
     acquire_worker_lock,
     build_task_handlers,
+    close_orphaned_days,
     worker_lock_path,
     worker_pass,
 )
@@ -420,11 +421,17 @@ def create_app(settings: Settings | None = None) -> ASGIApp:
                 recover_interrupted_sheet_runs, engine, started_at=process_started
             )
             # The tasks a dead worker left CLAIMED go back to the queue now, not when their
-            # hour-long lease lapses (2026-10-15 20:08Z, two walks of 7c26a7ce).
+            # hour-long lease lapses (2026-10-15 20:08Z, two walks of 7c26a7ce). A day is not
+            # given back but closed INTERRUPTED, and the watchdog resumes its run from the
+            # stage it stopped in: run again whole it would buy a second film (review
+            # 2026-10-16).
             try:
                 released = await asyncio.to_thread(release_orphaned_claims, engine)
                 if released:
                     logger.info("orphaned_claims_released", extra={"count": released})
+                closed = await asyncio.to_thread(close_orphaned_days, engine)
+                if closed:
+                    logger.info("orphaned_days_closed", extra={"count": len(closed)})
             except Exception as exc:  # noqa: BLE001 - logged; the studio still starts
                 logger.warning(
                     "orphaned_claims_release_failed", extra={"error": type(exc).__name__}

@@ -493,3 +493,35 @@ def test_a_task_a_dead_worker_left_claimed_is_queued_again_at_the_next_start(eng
         task = session.get(TaskQueueItem, task_id)
         assert task.status == "QUEUED" and task.lease_token is None and task.attempts == 1
     assert release_orphaned_claims(engine) == 0  # nothing claimed: nothing to release
+
+
+def test_a_day_a_dead_worker_left_claimed_is_closed_at_the_next_start_not_queued(settings, engine):
+    """Review 2026-10-16: the start gave every claimed task back to the queue, a day too, so
+    the Owner's GO left by a killed process ran again from its start — a second subject, a
+    second film. The start now closes it INTERRUPTED, even one written after this module was
+    imported (only the start's own release counts every leased task an orphan), for the
+    watchdog to resume its run from the stage it stopped in. Under his stop nothing is
+    claimed, so what is seen is what the start did."""
+    from app import main
+    from app.workflows.services import new_lease_token
+    from app.workflows.worker import DAILY_RUN
+    from fastapi.testclient import TestClient
+    from sqlalchemy.orm import Session
+
+    with Session(engine) as session, session.begin():
+        session.get(OwnerPolicy, 1).autonomy_stopped = True
+    task_id = enqueue_task(engine, DAILY_RUN, {"manual": True}, priority=10, max_attempts=1)["id"]
+    with Session(engine) as session, session.begin():
+        task = session.get(TaskQueueItem, task_id)
+        task.status = "CLAIMED"
+        task.attempts = 1
+        task.lease_token = new_lease_token("worker_main")
+        task.lease_expires_at = "2099-01-01T00:00:00+00:00"
+
+    app = main.create_app(settings.model_copy(update={"worker_enabled": True}))
+    with TestClient(app):
+        assert app.app.state.worker_running is True
+    with Session(engine) as session:
+        task = session.get(TaskQueueItem, task_id)
+        assert task.status == "DEAD_LETTER", task.status
+        assert str(task.error_detail).startswith("INTERRUPTED") and task.attempts == 1
