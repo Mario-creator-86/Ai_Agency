@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-16 — A static camera says its framing is held
+
+- `media/prompt_agent.py`: a static camera's sentence closes with «the framing held exactly as it starts from the first frame to the last» (`STATIC_HELD_CLAUSE`), in the factual and the serial composer — the clips of «static» shots pushed in (7c26a7ce scenes 1-2, 87c05891 scene 5) and every review asked for the framing to be held.
+
 ## 2026-10-16 — Placement kept, pasted still sentences dropped, no refusal for a missing negation
 
 - `media/prompt_agent.py`: the still's placement keeps the plan's sentences after the colon with only their negated, locking or camera sub-clauses taken out (the whole placement was dropped when the Editor added «does not tighten»); the composer's still sentences pasted into a plan's field (the frame rule, the composition line, «No text, no logo») are not said twice. `media/prompt_audit.py` (template v5): the composer never sends a negation — refuse no words for lacking «no window»; a missing colour or shape must be quoted from words_to_send (7c26a7ce scenes 1, 2, 5 held as tool defects at 03:16–03:24Z).

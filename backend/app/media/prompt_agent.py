@@ -2423,6 +2423,8 @@ def serial_motion(package: dict[str, Any], look: dict[str, Any]) -> tuple[str, b
     move = str(package.get("camera_move") or "static")
     two_beats = move != "static" and _seconds_of(package) >= TWO_BEAT_SECONDS
     move_sentence = MOVE_SENTENCES.get(move, MOVE_SENTENCES["static"])
+    if move == "static" or move not in MOVE_SENTENCES:
+        move_sentence = _held_static(move_sentence)
     dropped = bool(ending and not ending_sentence)
     if ending_sentence:
         raw = str(package.get("action") or "")
@@ -3490,6 +3492,15 @@ _CAMERA_CLAUSE_NOISE = re.compile(
 #: Closes the plan's camera sentence: the one move, held, in positive words (02:21-02:25Z,
 #: 7c26a7ce scene 4: six refusals for «never states the camera is locked to this one move»).
 LOCKED_MOVE_CLAUSE = ", the camera held to this one move from the first frame to the last"
+#: Closes a static camera's sentence: the framing kept, in positive words (03:26Z, 87c05891
+#: scene 5 and 7c26a7ce scenes 1-2: the clips of «static» shots pushed in, and every review
+#: asked for «the framing distance and the ban on tightening»).
+STATIC_HELD_CLAUSE = ", the framing held exactly as it starts from the first frame to the last"
+
+
+def _held_static(sentence: str) -> str:
+    """A static camera's sentence with STATIC_HELD_CLAUSE before its full stop."""
+    return sentence.rstrip(". ") + STATIC_HELD_CLAUSE + "."
 
 
 def _camera_with_path(move: str, path: str) -> str:
@@ -3582,6 +3593,8 @@ def render_motion(
     """
     move = str(intent.get("camera_move") or "")
     camera = MOVE_SENTENCES.get(move, MOVE_SENTENCES[DEFAULT_MOVE])
+    if move == "static":
+        camera = _held_static(camera)
     positive_only = family in ("veo", "gen4")
     closing = lint.VEO_MOTION_CLOSING if positive_only else lint.MOTION_CLOSING
     faces = bool(intent.get("faces_banned"))
@@ -3607,7 +3620,7 @@ def render_motion(
         world = DEFAULT_WORLD_MOTION
     at_rest = bool(_MOTIONLESS_WORLD.search(" ".join([world, *map(str, subjects), *actions])))
     if at_rest and move == "static":
-        camera = MOVE_SHORT["static"]
+        camera = _held_static(MOVE_SHORT["static"])
     if world == DEFAULT_WORLD_MOTION and (at_rest or move == "static"):
         # A stored intent whose stillness stood in its action: the drifting-shadows default
         # contradicted it («Static camera… Shadows drift and the light shifts… Nothing

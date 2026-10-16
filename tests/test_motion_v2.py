@@ -413,7 +413,7 @@ def test_the_serial_motion_moves_its_people_and_keeps_its_faces_and_closing():
     assert END_BEAT not in compose_serial_motion({**brief, "seconds": 5.0}, {})
     # A beat with no move of its own holds the camera, as before, and moves its people.
     held = compose_serial_motion({**brief, "camera_move": ""}, {})
-    assert held.startswith(MOVE_SENTENCES["static"]) and SERIAL_LIFE_SENTENCE in held
+    assert held.startswith(MOVE_SENTENCES["static"].rstrip(".")) and SERIAL_LIFE_SENTENCE in held
 
 
 def test_the_serial_motion_carries_the_ending_frame_and_the_rewrites_feeling():
@@ -747,11 +747,15 @@ def test_a_shot_at_rest_says_its_stillness_once_and_names_what_the_frame_holds()
     prompt = compiled["motion_prompt"]
     assert compiled["camera_move"] == "static"
     # The camera said short, no «life of the scene moving», and no drifting-shadows default.
-    assert prompt.startswith(MOVE_SHORT["static"]), prompt
+    assert prompt.startswith(MOVE_SHORT["static"].rstrip(".")), prompt
     assert DEFAULT_WORLD_MOTION not in prompt, prompt
     assert "drift" not in prompt.lower() and "shifts" not in prompt.lower(), prompt
     # The stillness said once, as the world of the shot.
     assert prompt.count("Nothing moves.") == 1, prompt
+    # A static camera says its framing is held, in positive words (03:26Z: the clips of
+    # «static» shots pushed in).
+    assert prompt_agent.STATIC_HELD_CLAUSE in prompt, prompt
+    assert [m for m, _ in camera_moves(prompt)] == ["static"], prompt
     # The thing the frame holds is named, from the plan's action.
     assert "the bar rests still inside its glass case" in prompt.lower(), prompt
     # The ending in the plan's label is said as the visible final image, once.
@@ -764,7 +768,9 @@ def test_a_shot_at_rest_says_its_stillness_once_and_names_what_the_frame_holds()
         compiled["motion_intent"], world=DEFAULT_WORLD_MOTION, action_clauses=["Nothing moves."]
     )
     again, _ = render_motion(stored, "seedance")
-    assert DEFAULT_WORLD_MOTION not in again and again.startswith(MOVE_SHORT["static"]), again
+    assert DEFAULT_WORLD_MOTION not in again and again.startswith(
+        MOVE_SHORT["static"].rstrip(".")
+    ), again
     assert again.count("Nothing moves.") == 1, again
     assert motion_prompt_for(compiled, "LTX-2.5")[0] == prompt
     findings = lint_motion_prompt(
@@ -802,7 +808,7 @@ def test_the_editors_rewrite_of_a_shot_at_rest_ends_as_a_sentence_and_rests_once
     )
     compiled = compile_prompts(rewritten, FACELESS_BIBLE, {"model_id": "LTX-2.5"})
     prompt = compiled["motion_prompt"]
-    assert prompt.startswith(MOVE_SHORT["static"]), prompt
+    assert prompt.startswith(MOVE_SHORT["static"].rstrip(".")), prompt
     assert "The shot ends as the silvery rectangular bar rests inside its glass display case" in (
         prompt
     ), prompt
@@ -847,7 +853,7 @@ def test_a_plan_that_locks_its_frame_is_static_and_the_composers_drift_is_not_th
     compiled = compile_prompts(plan, FACELESS_BIBLE, {"model_id": "LTX-2.5"})
     prompt = compiled["motion_prompt"]
     assert compiled["camera_move"] == "static", compiled["camera_move"]
-    assert prompt.startswith(MOVE_SENTENCES["static"]), prompt
+    assert prompt.startswith(MOVE_SENTENCES["static"].rstrip(".")), prompt
     assert DEFAULT_WORLD_MOTION not in prompt and "tilt" not in prompt.lower(), prompt
     assert "point along the thin warm-red laser line" in prompt.lower(), prompt
     assert compiled["motion_intent"]["world"] == ""
