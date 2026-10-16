@@ -85,6 +85,7 @@ from app.media.models import (
     StoryboardScene,
     VideoRenderJob,
 )
+from app.media.script_entries import row_entries
 from app.models import DomainEvent
 from app.services import append_event
 
@@ -636,17 +637,25 @@ def scene_intent(
     package: dict[str, Any] = (
         dict(row.prompt_json) if row is not None and isinstance(row.prompt_json, dict) else {}
     )
-    scenes = list(script.scenes_json or []) if script is not None else []
-    # The writer's scene: the shot's own number, or the beat the montage cut it from.
-    from app.media.montage import beat_of  # noqa: PLC0415
-
-    number = beat_of(package).get("scene_number")
-    writer_index = int(number) if isinstance(number, int) and number > 0 else scene_index
-    entry: dict[str, Any] = (
-        dict(scenes[writer_index - 1])
-        if 1 <= writer_index <= len(scenes) and isinstance(scenes[writer_index - 1], dict)
-        else {}
-    )
+    # The shot's own script entry: the writer's scene a factual shot was cut from, a serial
+    # shot's own (its script is kept one entry a shot, and its tag's number is the beat's, a
+    # shot of an earlier beat in that list) — `script_entries.row_entries`, as the prompt
+    # agent reads it.
+    rows = {
+        int(index): prompt_json
+        for index, prompt_json in session.execute(
+            select(StoryboardScene.scene_index, StoryboardScene.prompt_json).where(
+                StoryboardScene.storyboard_id == storyboard_id
+            )
+        )
+    }
+    # A scene the board no longer has is read at its own number, as it always was.
+    rows.setdefault(int(scene_index), package)
+    entry: dict[str, Any] = row_entries(
+        list(script.scenes_json or []) if script is not None else [],
+        list(rows.items()),
+        serial=serial,
+    ).get(int(scene_index), {})
     still_prompt = str(package.get("still_prompt") or (row.visual_prompt if row else "") or "")
     writer = str(entry.get("visual_description") or package.get("writer_visual") or "")
     if (

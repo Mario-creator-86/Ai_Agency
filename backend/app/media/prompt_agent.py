@@ -58,6 +58,7 @@ from app.media import prompt_lint as lint
 from app.media.markings import markings_kept, planned_markings, still_exclusions
 from app.media.models import CharacterBible, Storyboard, StoryboardScene
 from app.media.montage import beat_of
+from app.media.script_entries import row_entries
 from app.media.series_look import (
     LIGHT_SLOTS,
     PART_PURPOSES,
@@ -595,13 +596,6 @@ def _serial_scene_facts(session: Session, entry: dict[str, Any]) -> dict[str, An
     }
 
 
-def _writer_scene(scene: StoryboardScene) -> int:
-    """The writer's scene number a storyboard scene reads its script entry by: its own index,
-    or the beat it was cut from by the montage (`montage.beat_of`)."""
-    number = beat_of(scene.prompt_json).get("scene_number")
-    return int(number) if isinstance(number, int) and number > 0 else int(scene.scene_index)
-
-
 def _film_facts(session: Session, board: Storyboard) -> dict[str, Any]:
     """The story, its scenes and its characters, as the prompt agent reads them."""
     script = session.get(ScriptDraft, board.script_draft_id)
@@ -622,10 +616,6 @@ def _film_facts(session: Session, board: Storyboard) -> dict[str, Any]:
         if script
         else {}
     )
-    script_scenes = {
-        int(entry.get("scene_number") or index): entry
-        for index, entry in enumerate(list(script.scenes_json or []) if script else [], start=1)
-    }
     characters = {
         row.id: row
         for row in session.scalars(
@@ -637,6 +627,14 @@ def _film_facts(session: Session, board: Storyboard) -> dict[str, Any]:
         )
     }
     serial = _is_serial(board, script)
+    # Each row's own script entry: the writer's scene a factual shot was cut from, the
+    # serial shot's own entry (its script is kept one entry a shot) — never the entry at the
+    # beat's number, which in the serial is a shot of an earlier beat (`script_entries`).
+    entries = row_entries(
+        list(script.scenes_json or []) if script else [],
+        [(scene.scene_index, scene.prompt_json) for scene in scenes],
+        serial=serial,
+    )
     facts: dict[str, Any] = {
         "serial": serial,
         "title": board.title,
@@ -649,15 +647,15 @@ def _film_facts(session: Session, board: Storyboard) -> dict[str, Any]:
                 "scene_index": scene.scene_index,
                 "seconds": scene.duration_seconds,
                 "story_purpose": scene.story_purpose
-                or str(script_scenes.get(_writer_scene(scene), {}).get("purpose") or ""),
+                or str(entries.get(scene.scene_index, {}).get("purpose") or ""),
                 "narration": scene.voiceover_segment,
                 # The writer's own line about what is seen, from the script — not from
                 # `visual_prompt`, which this step overwrites with what it composed. Reading
                 # it back would feed a second run its own output, and each pass would drift
                 # a little further from what the writer actually asked for. A shot of a
-                # montage reads the writer's scene it was cut from (`montage.beat_of`).
+                # montage reads its own entry (`script_entries.row_entries`).
                 "writer_visual": str(
-                    script_scenes.get(_writer_scene(scene), {}).get("visual_description")
+                    entries.get(scene.scene_index, {}).get("visual_description")
                     or (scene.prompt_json or {}).get("writer_visual")
                     or scene.visual_prompt
                 ),
@@ -685,7 +683,7 @@ def _film_facts(session: Session, board: Storyboard) -> dict[str, Any]:
     if serial:
         scene_list: list[dict[str, Any]] = facts["scenes"]
         for scene_facts in scene_list:
-            entry = script_scenes.get(int(scene_facts["scene_index"]), {})
+            entry = entries.get(int(scene_facts["scene_index"]), {})
             scene_facts.update(_serial_scene_facts(session, entry))
     return facts
 
