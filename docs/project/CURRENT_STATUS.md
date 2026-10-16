@@ -1,9 +1,17 @@
-# CURRENT STATUS — State on 2026-10-15
+# CURRENT STATUS — State on 2026-10-16
 
 Current proof: the 2026-10-01/02 paid film readiness audit was proven on fakes only;
 AGENT_SCENARIO_ACCEPTANCE later used actual Ollama Cloud calls, with normal serial
 acceptance and real GPU/media/upload still pending. Current local UI evidence is reported
 separately below and does not prove those external workflows.
+
+## A plan that fixes its light gets no drift; the lens is the picture's (audit v3) (2026-10-16)
+
+**Claim:** 7c26a7ce scene 4 (00:47Z): the Director refused the tracking shot's words twice — «Shadows drift and the light shifts…» in a lab whose plan says «the traveling pulse is the only moving light… no flicker» and «the room itself does not change», and a camera sentence «with no lens, no framing distance» — and Kael's second rewrite gave the same words (the sentences were the composer's); the studio declared a tool defect and she took over.
+
+**Fixes:** (1) `prompt_agent._fixed_world`: a plan whose lighting, motion, background or continuity fix the light or the room (`_FIXED_WORLD`) gets no drift default; the intent carries `world_fixed` so `render_motion` keeps the decision (an intent from before keeps the default). (2) `prompt_audit._MOTION_NOTE` (template v3): the lens, framing distance and shot size are the picture's and never in the clip's words; the clip's camera sentence is the fixed sentence of its move with path and tempo; refuse no clip for lacking a lens. (3) `scene_rewrite._REVIEW_INSTRUCTIONS`: the same rule for her review of a rewrite.
+
+**Tested:** `test_motion_v2.py::test_a_plan_that_fixes_its_light_gets_no_drift_default_and_an_ordinary_one_does` (the fixed-light plan has no drift; an ordinary plan keeps it); 65 passed across motion/sheet/followup files, the 4 known fixture failures unchanged; ruff, mypy clean. Live from the next restart; the guard counts refusals under v3 only.
 
 ## Serial endings join like the factual ones (87c05891's eight lint blocks) (2026-10-15)
 

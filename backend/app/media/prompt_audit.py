@@ -47,7 +47,7 @@ AUDIT_TASK = "director_prompt_audit"
 #: defect are those made under the same instructions (20:54Z, 7c26a7ce scene 2: the guard
 #: fired at once on seven refusals made under instructions that let her ask a picture for a
 #: static frame and read a duplication off the plan — the corrected audit never judged).
-AUDIT_TEMPLATE = "director_prompt_audit-v2"
+AUDIT_TEMPLATE = "director_prompt_audit-v3"
 AUDIT_EVENT = "media.prompt_audited"
 #: Her rounds on one scene's layer inside ONE walk before the scene waits for her next walk:
 #: a bound on the walk's LLM time, not on her rounds (the Owner, 2026-10-15 18:15Z: no cap
@@ -152,6 +152,11 @@ _MOTION_NOTE = (
     "The picture of each scene is already bought and approved: judge only what the clip's "
     "words make it DO — the camera move, the people's movement, where the shot ends — never "
     "what the picture shows or which objects are in it; those are settled.\n"
+    "The clip starts from that picture: the lens, the framing distance and the shot size are "
+    "the picture's and are never in the clip's words — refuse no clip for lacking them. The "
+    "clip's camera sentence is the fixed sentence of its move, with its path and its tempo "
+    "(camera_move_sentences); it is the composer's and no rewrite changes it. What the "
+    "Editor can change is the plan's motion, action, camera_move and ending_frame.\n"
 )
 #: The stored shot plan's fields she reads beside the words (`prompt_agent` packages).
 PLAN_FIELDS = (

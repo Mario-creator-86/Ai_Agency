@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-16 — Fixed light means no drift; the lens is the picture's
+
+- `media/prompt_agent.py`: no drift default for a plan whose words fix the light or the room (`_fixed_world`, `world_fixed` on the intent); `media/prompt_audit.py` (template v3) and `media/scene_rewrite.py`: the lens, framing distance and shot size are the picture's, never a motion finding; the clip's camera sentence is the move's fixed sentence (7c26a7ce scene 4, 00:47Z).
+
 ## 2026-10-15 — Serial endings join like the factual ones
 
 - `media/prompt_agent.py`: the serial composer joins the ending as the factual one does (`_ending_join`: own preposition, «as» for a sentence, else «on»), so the sheet's check and the sent words agree (87c05891: eight scenes blocked «ending_frame nu ajunge integral» at 23:47Z); nouns-as-verbs left out of the finite-verb list.

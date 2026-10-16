@@ -859,6 +859,37 @@ def test_a_plan_that_locks_its_frame_is_static_and_the_composers_drift_is_not_th
     assert choose_camera_move({"camera": "Medium shot, 50mm lens"}, "medium") != "static"
 
 
+def test_a_plan_that_fixes_its_light_gets_no_drift_default_and_an_ordinary_one_does():
+    """00:47Z, 7c26a7ce scene 4: a tracking shot of a laser pulse in a dark lab whose plan
+    says «the only moving light… no flicker» and «the room itself does not change» was said
+    with «Shadows drift and the light shifts across the scene…», and the Director refused it
+    for the bible. The drift default stays for a plan that says nothing of its light."""
+    fixed = {
+        **PLAN,
+        "motion": "The pulse streaks in a straight line across the dark room",
+        "environment": "The dark laboratory, the walls and the bench dim",
+        "lighting": (
+            "The traveling pulse is the only moving light and the brightest element in the "
+            "frame; no lamps as subjects, no flicker."
+        ),
+        "background": "The dark laboratory stays still and dim",
+        "camera_move": "tracking right",
+    }
+    prompt = compile_prompts(fixed, FACELESS_BIBLE, {"model_id": "LTX-2.5"})["motion_prompt"]
+    assert DEFAULT_WORLD_MOTION not in prompt, prompt
+    assert "streaks in a straight line" in prompt.lower(), prompt
+    ordinary = {
+        **PLAN,
+        "motion": "",
+        "environment": "a quiet reading room",
+        "lighting": "soft lamplight",
+        "background": "",
+        "camera_move": "tracking right",
+    }
+    prompt = compile_prompts(ordinary, FACELESS_BIBLE, {"model_id": "LTX-2.5"})["motion_prompt"]
+    assert DEFAULT_WORLD_MOTION in prompt, prompt
+
+
 # ----------------------------------------------------- 6. clip QC and the one retry
 
 

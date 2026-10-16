@@ -2785,6 +2785,17 @@ MOTIONLESS_END_BEAT = "In the final seconds the camera eases to a steady hold."
 DEFAULT_WORLD_MOTION = (
     "Shadows drift and the light shifts across the scene, its smallest details stirring."
 )
+#: A plan that fixes its world in so many words — the light does not move, the room does
+#: not change — gets no drift default (00:47Z, 7c26a7ce scene 4: «The traveling pulse is the
+#: only moving light… no flicker», «the room itself does not change», and the composer said
+#: «Shadows drift and the light shifts…»; the Director refused it for the bible).
+_FIXED_WORLD = re.compile(
+    r"\b(?:does\s+not\s+change|do\s+not\s+change|stays?\s+(?:dark|still|dim|fixed|locked"
+    r"|the\s+same)|remains?\s+(?:fixed|still|dark|dim|locked)|no\s+flicker"
+    r"|the\s+only\s+(?:moving\s+light|light\s+that\s+moves)|locked\s+in\s+identical"
+    r"|fixed\s+(?:pool|light|place)s?\b|light(?:ing)?\s+(?:is|stays|remains)\s+fixed)",
+    re.IGNORECASE,
+)
 _MOTIONLESS_WORLD = re.compile(
     r"\bnothing\s+(?:(?:in|around)\s+(?:the\s+)?(?:world|scene|background)\s+)?moves\b",
     re.IGNORECASE,
@@ -3373,8 +3384,12 @@ def _motion_intent(
     return {
         "camera_move": move,
         # A static camera gets no drift by default: its life is the subject's own action,
-        # and a plan that names no world motion for a locked frame means none.
-        "world": _sentence(world) if world else ("" if move == "static" else DEFAULT_WORLD_MOTION),
+        # and a plan that names no world motion for a locked frame means none; nor does a
+        # plan whose own words fix the light and the room (`_FIXED_WORLD`).
+        "world": _sentence(world)
+        if world
+        else ("" if move == "static" or _fixed_world(package) else DEFAULT_WORLD_MOTION),
+        "world_fixed": _fixed_world(package),
         "subject": _sentence(subject),
         "subject_clauses": [_sentence(clause) for clause in subject_clauses],
         "action_clauses": [_sentence(clause) for clause in action_clauses],
@@ -3412,6 +3427,15 @@ _COMPOSER_SENTENCES: tuple[str, ...] = (
     lint.VEO_MOTION_CLOSING,
     *lint.LEGACY_STILLNESS,
 )
+
+
+def _fixed_world(package: Mapping[str, Any]) -> bool:
+    """Whether the plan fixes its world in words: its lighting, motion, background or
+    continuity say the light does not move or the room does not change."""
+    said = " ".join(
+        _flatten(package.get(key)) for key in ("lighting", "motion", "background", "continuity")
+    )
+    return bool(_FIXED_WORLD.search(said))
 
 
 def _intent_clauses(intent: dict[str, Any], key: str) -> list[str]:
@@ -3456,7 +3480,9 @@ def render_motion(
     subjects = clauses if isinstance(clauses, list) else [str(intent.get("subject") or "")]
     actions = _intent_clauses(intent, "action_clauses")
     world = str(intent.get("world") or "")
-    if not world or world in lint.LEGACY_STILLNESS:
+    # An intent whose plan fixed its world (`_fixed_world`) keeps no world sentence; one from
+    # before the intents, or with the old stillness, gets the drift default as before.
+    if (not world or world in lint.LEGACY_STILLNESS) and not intent.get("world_fixed"):
         world = DEFAULT_WORLD_MOTION
     at_rest = bool(_MOTIONLESS_WORLD.search(" ".join([world, *map(str, subjects), *actions])))
     if at_rest and move == "static":
