@@ -31,6 +31,10 @@ Two things live here:
 An expired ask is marked ANSWERED, not RESOLVED: code that later resolves a letter it wrote
 (`media.blocker_repair` resolves its report when the repair ends) may still do so, while every
 reader of the inbox — the mail round, her review, the thread repairs — reads OPEN letters only.
+Its closer, `messages.EXPIRED_BY`, is what the letter's view reads (``expired``) so the page
+shows it as closed unanswered, never as «răspuns». An old ask its addressee's model tried and
+failed to answer is closed as never answered (ANSWER_FAILED), the tries and the last failure
+named (the audit of 2026-10-16, STUB-006 / SAFE-002).
 """
 
 from __future__ import annotations
@@ -47,10 +51,11 @@ from uuid import uuid4
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
-from app.agents.messages import resolve_message
+from app.agents.messages import EXPIRED_BY, resolve_message
 from app.agents.models import AgentMessage
 from app.db import lock_for_write
 from app.services import append_event
+from app.wording import count
 
 logger = logging.getLogger("studio.inbox")
 
@@ -68,13 +73,18 @@ LIVE_TOPIC_STATUSES = frozenset({"SELECTED", "SERIAL"})
 #: letters of the usual size, the most her review decides in one answer (`REVIEW_BATCH`).
 INBOX_PAGE_CHARS = 24_000
 EXPIRED_EVENT = "agent.ask_expired"
-EXPIRED_BY = "Studioul (cereri expirate)"
+# EXPIRED_BY, who closes an expired ask, lives in `agents.messages`: the letter's view reads it
+# to show such a letter as closed unanswered, never as «răspuns».
 
 FILM_CLOSED = "FILM_CLOSED"
 EPISODE_CLOSED = "EPISODE_CLOSED"
 TOPIC_REJECTED = "TOPIC_REJECTED"
 DUPLICATE = "DUPLICATE"
 EXPIRED = "EXPIRED"
+#: Old, tied to no work in hand, and its addressee's model tried to answer it and failed
+#: (``answer_attempts``): closed as never answered, with the tries and the last failure named,
+#: not with the words of an ask nobody tried (SAFE-002, 2026-10-16).
+ANSWER_FAILED = "ANSWER_FAILED"
 
 #: What a letter's body keeps that changes while it waits, and so never makes two letters
 #: different: the mail round's tries, a block, a worker's result and its dispatch.
@@ -338,16 +348,48 @@ def stale_asks(session: Session, now: datetime | None = None) -> list[StaleAsk]:
         if subjects.live(body):
             continue  # about a film still in work: kept however long the film takes
         if str(row.created_at) < cutoff:
-            out.append(
-                StaleAsk(
-                    row.id,
-                    EXPIRED,
-                    f"Închisă de studio: cererea a stat deschisă mai mult de {STALE_ASK_DAYS} "
-                    "zile fără să țină de un film în lucru; dacă mai contează, se trimite din nou.",
-                    {"days": STALE_ASK_DAYS},
-                )
-            )
+            out.append(_failed_answers(row.id, body) or _expired(row.id))
     return out
+
+
+def _expired(message_id: str) -> StaleAsk:
+    return StaleAsk(
+        message_id,
+        EXPIRED,
+        f"Închisă de studio: cererea a stat deschisă mai mult de {STALE_ASK_DAYS} "
+        "zile fără să țină de un film în lucru; dacă mai contează, se trimite din nou.",
+        {"days": STALE_ASK_DAYS},
+    )
+
+
+def _failed_answers(message_id: str, body: dict[str, Any]) -> StaleAsk | None:
+    """An old ask its addressee's model tried to answer and failed (``answer_attempts``, written
+    by `mail.note_failed_answer`), closed as never answered: the tries and the last failure are
+    named, so the failure that kept it open is not erased by the age sweep. None when nobody
+    tried."""
+    attempts = body.get("answer_attempts")
+    if not isinstance(attempts, dict):
+        return None
+    tries = int(attempts.get("total") or attempts.get("count") or 0)
+    if tries <= 0:
+        return None
+    error = " ".join(str(attempts.get("error") or "").split())[:200]
+    run_status = str(attempts.get("run_status") or "")
+    last = error or run_status or "fără motiv înregistrat"
+    return StaleAsk(
+        message_id,
+        ANSWER_FAILED,
+        "Închisă de studio fără răspuns: destinatarul nu a reușit să răspundă "
+        f"({count(tries, 'încercare eșuată', 'încercări eșuate')}; ultima: {last}), iar cererea "
+        f"a stat deschisă mai mult de {STALE_ASK_DAYS} zile fără să țină de un film în lucru; "
+        "dacă mai contează, se trimite din nou.",
+        {
+            "days": STALE_ASK_DAYS,
+            "answer_attempts": tries,
+            "run_status": run_status or None,
+            "error": error or None,
+        },
+    )
 
 
 def expire_stale_asks(

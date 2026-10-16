@@ -221,8 +221,11 @@ export function connectionTitle(name, fallback) {
   return { title: before && !machineWord ? before : fallback, identifier: whole };
 }
 
-/** A letter (mesaj, masculine), part two. */
-export const letterStateWord = lookup({ OPEN: 'deschis', ANSWERED: 'răspuns', RESOLVED: 'rezolvat' });
+/** A letter (mesaj, masculine), part two. EXPIRED is a letter the studio's sweep closed with
+ * nobody's answer (`expired` on the letter): stored ANSWERED, never shown as «răspuns». */
+export const letterStateWord = lookup({
+  OPEN: 'deschis', ANSWERED: 'răspuns', RESOLVED: 'rezolvat', EXPIRED: 'închis fără răspuns',
+});
 
 /** When an employee's extra models are used, in the select's own words. */
 export const policyWord = lookup({

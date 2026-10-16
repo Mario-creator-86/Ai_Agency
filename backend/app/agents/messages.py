@@ -451,6 +451,18 @@ def letters_for_owner(engine: Engine, *, open_only: bool = True, limit: int = 50
         return [message_view(r, names) for r in rows if is_for_owner(r)][:limit]
 
 
+#: Who closes an ask the studio's sweep expires (`agents.inbox.expire_stale_asks`). The sweep
+#: closes it ANSWERED, never RESOLVED — the sheet repair resolves its own report later, and a
+#: RESOLVED letter cannot be resolved again — so this name is what tells such a letter from
+#: one an employee answered (STUB-006, 2026-10-16: the page showed it as «răspuns»).
+EXPIRED_BY = "Studioul (cereri expirate)"
+
+
+def closed_unanswered(row: AgentMessage) -> bool:
+    """Whether the studio's sweep closed this letter with nobody's answer (`EXPIRED_BY`)."""
+    return row.status == "ANSWERED" and row.resolved_by == EXPIRED_BY
+
+
 def message_view(row: AgentMessage, names: dict[str, str] | None = None) -> dict[str, Any]:
     names = names or {}
     body = row.body_json if isinstance(row.body_json, dict) else {}
@@ -482,6 +494,8 @@ def message_view(row: AgentMessage, names: dict[str, str] | None = None) -> dict
         "body_json": row.body_json,
         "run_id": row.run_id,
         "status": row.status,
+        # Closed by the studio's sweep, unanswered: the page says so instead of «răspuns».
+        "expired": closed_unanswered(row),
         "resolution": row.resolution,
         "resolved_by": row.resolved_by,
         "created_at": row.created_at,

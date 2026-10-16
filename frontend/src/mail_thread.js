@@ -42,6 +42,9 @@ const STATUS_LABEL = {
   OPEN: 'deschis',
   ANSWERED: 'răspuns',
   RESOLVED: 'rezolvat',
+  // Closed by the studio's sweep with nobody's answer (`expired` on the letter, 2026-10-16):
+  // stored ANSWERED so the sheet repair may still resolve it, never shown as «răspuns».
+  EXPIRED: 'închis fără răspuns',
 };
 
 /**
@@ -123,7 +126,7 @@ export function renderThread(thread, { escape, timezone }) {
         String(m.subject || '').trim().toLowerCase() === String(thread.subject || '').trim().toLowerCase();
       const footer =
         m.status && m.status !== 'OPEN'
-          ? `<div class="mail-footer">${escape(STATUS_LABEL[m.status] || m.status)}${m.resolved_by ? ` de ${escape(m.resolved_by)}` : ''}${m.resolution && m.resolution !== full ? ` — ${escape(m.resolution)}` : ''}</div>`
+          ? `<div class="mail-footer">${escape(STATUS_LABEL[m.expired ? 'EXPIRED' : m.status] || m.status)}${m.resolved_by ? ` de ${escape(m.resolved_by)}` : ''}${m.resolution && m.resolution !== full ? ` — ${escape(m.resolution)}` : ''}</div>`
           : '';
       const forOwner = Boolean(m.for_owner) || to === 'Owner';
       const body = m.body_json || {};

@@ -1606,7 +1606,7 @@ function timelineItem(item) {
   if (item.kind === 'message') {
     const direction = item.from_name ? `de la ${ownerName(item.from_name)}` : '';
     const to = item.to_name ? `către ${ownerName(item.to_name)}` : '';
-    return `<div data-card-key="${escapeHtml(item.id)}" class="chat-item chat-message"><div class="chat-meta"><span class="policy-tag policy-locked" title="${escapeHtml(item.intent)}">${escapeHtml(mailIntentLabel(item.intent))}</span> <small>${escapeHtml(timelineTime(item.at))} ${escapeHtml([direction, to].filter(Boolean).join(' '))} · ${escapeHtml(letterStateWord(item.status))}</small></div><div>${escapeHtml(item.subject)}</div>${item.resolution ? `<div class="helper">${escapeHtml(item.resolution)}</div>` : ''}</div>`;
+    return `<div data-card-key="${escapeHtml(item.id)}" class="chat-item chat-message"><div class="chat-meta"><span class="policy-tag policy-locked" title="${escapeHtml(item.intent)}">${escapeHtml(mailIntentLabel(item.intent))}</span> <small>${escapeHtml(timelineTime(item.at))} ${escapeHtml([direction, to].filter(Boolean).join(' '))} · ${escapeHtml(letterStateWord(item.expired ? 'EXPIRED' : item.status))}</small></div><div>${escapeHtml(item.subject)}</div>${item.resolution ? `<div class="helper">${escapeHtml(item.resolution)}</div>` : ''}</div>`;
   }
   return `<div data-card-key="${escapeHtml(item.id)}" class="chat-item chat-memory"><div class="chat-meta"><span class="policy-tag">${escapeHtml(TIMELINE_LABEL[item.memory_class] || item.memory_class)}</span> <small>${escapeHtml(timelineTime(item.at))}</small></div><div>${escapeHtml(item.content)}</div></div>`;
 }
