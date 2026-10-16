@@ -357,6 +357,12 @@ def describe_public(
         if sender and to:
             line = f"{sender} wrote to {to}" + (f': "{subject}"' if subject else "")
             return redact(line, private_names)
+    if event_type == "agent.message_answered":
+        from app.agents.messages import EXPIRED_BY  # noqa: PLC0415 - agents import the studio
+
+        if payload.get("expired") is True or payload.get("resolved_by") == EXPIRED_BY:
+            # The studio's sweep closed it with nobody's answer (STUB-006, 2026-10-16).
+            return "an ask was closed unanswered"
     if event_type == "factual.claim_verified" and claim_text:
         if _value(payload.get("status")).upper() == "REFUTED":
             return redact(

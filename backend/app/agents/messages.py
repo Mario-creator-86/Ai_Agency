@@ -409,7 +409,14 @@ def resolve_message(
         "agent_message",
         row.id,
         2,
-        {"intent": row.intent, "subject": row.subject, "resolved_by": row.resolved_by},
+        {
+            "intent": row.intent,
+            "subject": row.subject,
+            "resolved_by": row.resolved_by,
+            # The register draws this event: an ask the studio's sweep closed with nobody's
+            # answer is never «a răspuns» there (STUB-006, 2026-10-16).
+            "expired": closed_unanswered(row),
+        },
         correlation_id or str(uuid4()),
     )
     row.event_id = event.event_id

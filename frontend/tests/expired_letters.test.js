@@ -37,3 +37,26 @@ test('the chat line names the expired state in words', () => {
   assert.equal(letterStateWord('EXPIRED'), 'închis fără răspuns');
   assert.equal(letterStateWord('ANSWERED'), 'răspuns');
 });
+
+// The register and the live window draw the answer's event (`describeEvent`): an ask the sweep
+// closed is never «a răspuns la un mesaj» there either (the review of 2026-10-16). The event
+// says it by `expired`; an event recorded before the flag existed says it by its closer.
+test('the register never says an employee answered an ask the studio closed unanswered', async () => {
+  const { describeEvent } = await import('../src/ledger.js');
+  const event = (payload) => ({ event_type: 'agent.message_answered', aggregate_id: 'm-1', payload });
+  for (const payload of [
+    { intent: 'REQUEST_INFO', subject: 'Ce cârlig merge', resolved_by: 'Studioul (cereri expirate)', expired: true },
+    { intent: 'REQUEST_INFO', subject: 'Ce cârlig merge', resolved_by: 'Studioul (cereri expirate)' },
+  ]) {
+    const row = describeEvent(event(payload), {});
+    assert.ok(!/răspuns la/.test(row.label), JSON.stringify(row));
+    assert.match(row.label, /fără răspuns/);
+    assert.equal(row.text, 'Ce cârlig merge');
+    assert.equal(row.who, 'Studioul');
+  }
+  const answered = describeEvent(
+    event({ intent: 'REQUEST_INFO', subject: 'Ce cârlig merge', resolved_by: 'Marcus (Script Writer)', expired: false }),
+    {},
+  );
+  assert.equal(answered.label, 'a răspuns la un mesaj');
+});

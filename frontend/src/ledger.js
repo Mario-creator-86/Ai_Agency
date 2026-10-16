@@ -331,6 +331,9 @@ export function withoutEcho(headline, detail) {
   return a === b || a.endsWith(b) ? '' : tail;
 }
 
+/** Who closes an ask the studio's sweep expires (backend `agents.messages.EXPIRED_BY`). */
+const EXPIRED_BY = 'Studioul (cereri expirate)';
+
 /**
  * Describe one event for the Owner.
  *
@@ -395,7 +398,16 @@ export function describeEvent(event, names = {}) {
         excerpt: withoutEcho(payload.subject, payload.excerpt),
       };
     case 'agent.message_answered':
-      label = 'a răspuns la un mesaj';
+      // An ask the studio's sweep closed with nobody's answer is stored ANSWERED (the sheet
+      // repair may still resolve it), and its event is this one: the row says it was closed
+      // unanswered, never «a răspuns» (2026-10-16). `expired` is on the event since then; an
+      // older event says it only by its closer (`messages.EXPIRED_BY`).
+      if (payload.expired === true || payload.resolved_by === EXPIRED_BY) {
+        who = 'Studioul';
+        label = 'a închis fără răspuns o cerere';
+      } else {
+        label = 'a răspuns la un mesaj';
+      }
       text = payload.subject || '';
       kind = 'speech';
       break;
