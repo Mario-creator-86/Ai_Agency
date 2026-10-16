@@ -25,7 +25,7 @@
     "watermarks or logos"
   ],
   "shot_sizes": {
-    "establishing": "Establishing wide shot at eye level, the whole room in view",
+    "establishing": "Establishing wide shot at eye level from across the room: the whole room in view, floor to ceiling, {name} small in the middle distance, the full figure and the whole desk inside the frame",
     "two_shot": "Medium two-shot at eye level, both speakers facing the viewer",
     "single": "Medium close-up single at eye level on {name}, facing the viewer",
     "close": "Close-up at eye level on {name}'s reaction, facing the viewer"

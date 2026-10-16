@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-16 — The establishing framing says the person small
+
+- `config/serial_series_look.json`, `media/series_look.py`: the serial's establishing framing says the person small in the middle distance, the full figure and the whole desk inside the frame, the room floor to ceiling — the image model drew «Establishing wide shot, the whole room in view» as a medium close-up of Sarah twice (87c05891 scene 1, 00:12Z and 00:59Z, both refused by the still gate).
+
 ## 2026-10-16 — The plan's path follows the move; one intent reader
 
 - `media/prompt_agent.py`, `media/prompt_audit.py`: the plan's own clause of its move (path and tempo, without lens, size and span) follows the move's fixed sentence (`camera_path`); `motion_intent_of` completes a stored intent from its plan for the sheet and the audit alike (`world_fixed`, `camera_path`); the finite-verb list keeps verbs only («the pulse mid-travel» is no sentence). 7c26a7ce scene 4, six refusals at 00:55–00:59Z.

@@ -37,7 +37,11 @@ DEFAULT_MAX_PROMPT_CHARS = MAX_PROMPT
 #: The shot sizes the serial varies between, when the file does not name them. ``{name}`` is
 #: the character the shot is on.
 DEFAULT_SHOT_SIZES = {
-    "establishing": "Establishing wide shot at eye level, the whole room in view",
+    "establishing": (
+        "Establishing wide shot at eye level from across the room: the whole room in view, "
+        "floor to ceiling, {name} small in the middle distance, the full figure and the whole "
+        "desk inside the frame"
+    ),
     "two_shot": "Medium two-shot at eye level, both speakers facing the viewer",
     "single": "Medium close-up single at eye level on {name}, facing the viewer",
     "close": "Close-up at eye level on {name}'s reaction, facing the viewer",
