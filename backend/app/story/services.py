@@ -86,6 +86,14 @@ MAX_BEATS = 12
 #: The writer names the speaker "Narrator"; stored as speaker None, spoken by the narrator
 #: voice (`media.speaker_voices`), never counted in the speaking cast.
 NARRATOR_NAME = "Narrator"
+#: What a line the model wrote with no speaker is read as until its place in the episode is
+#: known: the narrator's in the opening narration (the first beat's lines before anyone in
+#: the room speaks) and the closing one (the last beat's lines after the last who speaks),
+#: refused anywhere else with the beat named (`_unnamed_out_of_place`). Until 2026-10-16 such
+#: a line refused the answer; that day it became the narrator's anywhere, and a character's
+#: line that lost its name mid-episode was read by the voice in off (the audit's SAFE-005).
+#: Never a name: the brackets keep it off the roster and out of every stored line.
+UNNAMED = "<no speaker>"
 NARRATION_OPENING_SENTENCES = (2, 3)
 NARRATION_CLOSING_SENTENCES = 1
 #: The showrunner's brief and answer schema. v3 (2026-09-24): lines ``{speaker, text,
@@ -265,15 +273,17 @@ class _Line(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _as_written(cls, value: Any) -> Any:
-        # A line written as "Sarah: Fine." is read as her line; one with no name on it is the
-        # narrator's (2026-10-16: the voice in off opens and closes the episode).
+        # A line written as "Sarah: Fine." is read as her line. One with no name on it is
+        # marked `UNNAMED` until its place is known: the narrator's where the narrator speaks
+        # (the start of the first beat, the end of the last: 2026-10-16, the voice in off
+        # opens and closes the episode), refused anywhere else (`_unnamed_out_of_place`).
         if isinstance(value, str):
             label, rest = split_label(value)
-            return {"speaker": label or NARRATOR_NAME, "text": rest}
+            return {"speaker": label or UNNAMED, "text": rest}
         if isinstance(value, dict) and not value.get("speaker"):
             return {
                 **value,
-                "speaker": value.get("character") or value.get("name") or NARRATOR_NAME,
+                "speaker": value.get("character") or value.get("name") or UNNAMED,
             }
         return value
 
@@ -1490,6 +1500,28 @@ def is_narrator(speaker: Any) -> bool:
     return key in _NARRATOR_LABELS
 
 
+def _voice_in_off(speaker: Any) -> bool:
+    """The narrator: named as a screenplay names it (`is_narrator`), or a line with no name
+    on it (`UNNAMED`) once `_unnamed_out_of_place` has found it where the narrator speaks."""
+    return speaker == UNNAMED or is_narrator(speaker)
+
+
+def _unnamed_out_of_place(lines: list[_Line], *, first: bool, last: bool) -> int | None:
+    """The number (from 1) of the first line in a beat written with no speaker outside the
+    narrator's places, or None. Those places are the opening narration — the first beat's
+    lines before anyone in the room speaks — and the closing one — the last beat's lines after
+    the last who speaks (`review._narration` counts the same lines)."""
+    named = [not _voice_in_off(line.speaker) for line in lines]
+    for number, line in enumerate(lines, start=1):
+        if line.speaker != UNNAMED:
+            continue
+        opening = first and not any(named[: number - 1])
+        closing = last and not any(named[number:])
+        if not (opening or closing):
+            return number
+    return None
+
+
 def _episode_from_answer(
     raw: str,
     names: NameBook,
@@ -1514,10 +1546,25 @@ def _episode_from_answer(
                 f"petrecut în {date_iso} sau nu pot fi povestite public. Nimic nu a fost salvat.",
                 raw,
             )
+        # A line with no name on it is the narrator's only where the narrator speaks; anywhere
+        # else it is someone's line that lost its name, and which one is not knowable here.
+        out_of_place = _unnamed_out_of_place(
+            beat.lines, first=index == 1, last=index == len(draft.beats)
+        )
+        if out_of_place is not None:
+            said = " ".join(beat.lines[out_of_place - 1].text.split())[:80]
+            raise DraftRefused(
+                f"Beat-ul {index}: replica {out_of_place} („{said}”) nu are vorbitor. Fără nume "
+                "vorbește doar naratorul, și numai la început (înaintea primei replici din "
+                "primul beat) și la sfârșit (după ultima replică din ultimul beat); oriunde "
+                "altundeva «speaker» ține un nume din listă, iar vocea din off se scrie "
+                f"„{NARRATOR_NAME}”.",
+                raw,
+            )
         # Casting someone who was not there is the same failure as citing an event that did
         # not happen — it puts a person in a room the record says they were not in. A name
         # written short ("Sarah") is the roster's own name, not a stranger.
-        written = [line.speaker for line in beat.lines if not is_narrator(line.speaker)] + list(
+        written = [line.speaker for line in beat.lines if not _voice_in_off(line.speaker)] + list(
             beat.background
         )
         strangers = [name for name in written if names.canonical(name) is None]
@@ -1533,7 +1580,7 @@ def _episode_from_answer(
         # was filmed in another's voice without a word (verifier, 2026-09-24). Which of the
         # two the model meant is not knowable here, so the answer goes back with the reason.
         for line in beat.lines:
-            if is_narrator(line.speaker):
+            if _voice_in_off(line.speaker):
                 continue
             label, _rest = split_label(line.text, names)
             if label and names.canonical(label) != names.canonical(line.speaker):
@@ -1548,7 +1595,7 @@ def _episode_from_answer(
             for line in beat.lines
             if (
                 cleaned := clean_line(
-                    None if is_narrator(line.speaker) else names.canonical(line.speaker),
+                    None if _voice_in_off(line.speaker) else names.canonical(line.speaker),
                     line.text,
                     line.direction,
                     names,
