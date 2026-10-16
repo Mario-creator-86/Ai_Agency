@@ -11,6 +11,7 @@ estimate it checks.
 
 from __future__ import annotations
 
+import random
 from types import SimpleNamespace
 
 import pytest
@@ -129,6 +130,105 @@ def test_a_factual_draft_at_the_briefs_maximum_is_a_film_under_the_wall():
     assert not check["passed"]
     assert "ținta de 160s" in check["reason"] and "80-177s" in check["reason"]
     assert "zidul de 180 s" in check["reason"]
+
+
+def _keeping_the_brief(budget: dict, seed: int) -> list[list[int]]:
+    """Drafts that keep every number the brief gives: its scene count, each scene inside its
+    band of words, at most its maximum in all. The worst shapes first (for each width of the
+    band, as many scenes at it as the maximum allows, the rest at the band's floor taking what
+    is left), every scene at the band's top, then random ones."""
+    scenes = budget["scenes"]
+    low, high = budget["words_per_scene_low"], budget["words_per_scene_high"]
+    most = budget["max_words"]
+    shapes: list[list[int]] = []
+    for width in range(low, high + 1):
+        many = max(k for k in range(scenes + 1) if k * width + (scenes - k) * low <= most)
+        counts = [width] * many + [low] * (scenes - many)
+        spare = most - sum(counts)
+        for index in range(many, scenes):
+            more = min(spare, high - counts[index])
+            counts[index] += more
+            spare -= more
+        shapes.append(counts)
+    shapes.append([high] * scenes)
+    rng = random.Random(seed)
+    for _ in range(12):
+        shapes.append([rng.randint(low, high) for _ in range(scenes)])
+    for counts in shapes:
+        while sum(counts) > most:
+            index = rng.choice([i for i, words in enumerate(counts) if words > low])
+            counts[index] -= 1
+    return shapes
+
+
+@pytest.mark.montage
+@pytest.mark.parametrize("montage", ["1", "0"])
+@pytest.mark.parametrize("target", [90, 160, 180])
+def test_every_draft_that_keeps_the_brief_is_a_film_the_review_accepts(
+    montage, target, monkeypatch
+):
+    """The adversarial review's R1: the brief's band (10-16 words a scene at 160 s) reached
+    past the montage's cut at fifteen, and 23 scenes of fifteen, one of fourteen and four of
+    ten — 399 words, every scene inside the band, at the brief's maximum — were 51 shots and
+    184.1 s, refused for following the brief. Whatever shape a writer gives the words, if
+    every number of the brief is kept, the film is under the ceiling and the review takes it."""
+    monkeypatch.setenv("STUDIO_MONTAGE_ENABLED", montage)
+    budget = narration_budget(target)
+    for counts in _keeping_the_brief(budget, seed=target):
+        assert len(counts) == budget["scenes"] and sum(counts) <= budget["max_words"]
+        assert all(
+            budget["words_per_scene_low"] <= words <= budget["words_per_scene_high"]
+            for words in counts
+        )
+        draft = _factual(counts)
+        assert _assembled_factual(draft) <= budget["max_seconds"] + 1e-6, counts
+        check = story_checks(title="t", scenes=draft, story={}, target_seconds=target)[
+            "duration_is_realistic"
+        ]
+        assert check["passed"], (counts, check["reason"])
+
+
+@pytest.mark.montage
+def test_the_band_stops_under_the_montages_cut_and_the_brief_names_it():
+    from app.factual.agent_pipeline import _write_instructions
+    from app.media.film_length import factual_cut_words
+
+    budget = narration_budget(160)
+    cut = factual_cut_words()
+    # Fifteen words are two shots and two breaths, fourteen one (`montage.shot_count`).
+    assert cut == 15 == budget["cut_words"]
+    assert len(factual_shots(_text(cut - 1), 2, live=True)) == 1
+    assert len(factual_shots(_text(cut), 2, live=True)) == 2
+    # A scene the brief describes is one shot, and the band still holds the target's words.
+    assert budget["words_per_scene_high"] == cut - 1
+    assert (
+        budget["scenes"] * budget["words_per_scene_low"]
+        <= budget["total_words"]
+        <= budget["scenes"] * budget["words_per_scene_high"]
+        <= budget["max_words"]
+    )
+    # The reviewer's drafts are no longer inside the band: each has a scene at the cut.
+    for counts in ([15] * 23 + [14] + [10] * 4, [16] * 19 + [15] + [10] * 8, [15] * 26):
+        assert max(counts) > budget["words_per_scene_high"]
+    # The writer is told where the cut lies, in the brief's own numbers.
+    brief = _write_instructions(160)
+    assert f"{budget['scenes']} scene, cam {budget['words_per_scene_low']}-{cut - 1} cuvinte" in (
+        " ".join(brief.split())
+    )
+    assert f"o scenă de {cut} cuvinte sau mai multe se taie în două-trei cadre" in (
+        " ".join(brief.split())
+    )
+
+
+def test_with_the_montage_off_the_brief_cuts_no_scene():
+    from app.factual.agent_pipeline import _write_instructions
+    from app.media.film_length import factual_cut_words
+
+    assert factual_cut_words() is None
+    assert narration_budget(160)["cut_words"] is None
+    brief = " ".join(_write_instructions(160).split())
+    assert "iar fiecare scenă rămâne un singur cadru" in brief
+    assert "se taie în două-trei cadre" not in brief
 
 
 @pytest.mark.montage

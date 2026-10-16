@@ -31,8 +31,10 @@ import re
 from typing import Any
 
 from app.media.film_length import (
+    factual_cut_words,
     factual_film_length,
     film_timing,
+    longest_factual_films,
     montage_options,
     review_ceiling_seconds,
 )
@@ -218,6 +220,20 @@ def _words_within(seconds: float, scenes: int, options: Any) -> int:
     return low
 
 
+def _words_within_band(seconds: float, scenes: int, low: int, high: int, options: Any) -> int:
+    """The most words EVERY draft inside the brief's band may carry (at most ``scenes``
+    scenes of ``low``-``high`` words) while its film lasts at most ``seconds``: the worst shape
+    the band allows (`film_length.longest_factual_films`), not the even one. ``scenes * high``
+    when no draft inside the band can pass ``seconds`` at all."""
+    most = 0
+    for words, film in enumerate(longest_factual_films(scenes, low, high, settings=options)):
+        # Rounded as `factual_film_length` rounds the estimate the length check compares.
+        if round(film, 3) > seconds:
+            break
+        most = words
+    return most
+
+
 def narration_budget(target_seconds: float) -> dict[str, Any]:
     """How much narration a film of this length affords — and how many scenes that is.
 
@@ -250,6 +266,24 @@ def narration_budget(target_seconds: float) -> dict[str, Any]:
     # The fewest words whose film reaches the floor: one more than the most that stay under it.
     fewest = _words_within(floor - 1e-6, scenes, options) + 1 if scenes else 0
     per_scene = total / scenes if scenes else 0.0
+    low = max(6, int(per_scene * 0.8))
+    high = int(per_scene * 1.2) + 1
+    # The band is a promise too: every draft that keeps it must be a film the length check
+    # accepts. At 160 s the band was 10-16 while the montage cuts a scene of fifteen words into
+    # two shots, and 23 scenes of fifteen with the rest at ten (399 words, all inside it) were
+    # 51 shots and 184 s, refused for following the brief (the review of 2026-10-16). So the
+    # band stops under the cut whenever the words a scene aims at do, which keeps a scene the
+    # brief describes one shot and one breath; and if a draft inside the band could still pass
+    # the ceiling (a short asked at the wall, a scene count where the frames add up, a band
+    # the cut lies inside), the ceiling comes down to what its worst shape allows.
+    cut = factual_cut_words(options)
+    if cut is not None and per_scene <= cut - 1:
+        high = min(high, cut - 1)
+    if scenes and low <= high:
+        band = _words_within_band(outer, scenes, low, high, options)
+        if band < scenes * high:
+            ceiling = min(ceiling, band)
+            total = min(total, ceiling)
     timing = film_timing()
     return {
         "target_seconds": round(target, 1),
@@ -261,8 +295,11 @@ def narration_budget(target_seconds: float) -> dict[str, Any]:
         # The rate and the breath the words were priced at, for the brief to say.
         "words_per_second": round(1.0 / timing["seconds_per_word"], 2),
         "breath_seconds": timing["breath_seconds"],
-        "words_per_scene_low": max(6, int(per_scene * 0.8)),
-        "words_per_scene_high": int(per_scene * 1.2) + 1,
+        "words_per_scene_low": low,
+        "words_per_scene_high": high,
+        # From this many words the montage cuts a scene into two or three shots, each with
+        # its breath (None: it never does); the brief says so.
+        "cut_words": cut,
         "beats": [
             (name, round(target * start, 1), round(target * end, 1))
             for name, start, end in STORY_BEATS

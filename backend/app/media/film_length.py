@@ -22,6 +22,10 @@ as the assembler does:
   frames;
 - the film is its rows end to end: a dissolve overlaps two pictures, never the sound.
 
+The factual brief's numbers must hold for every draft that keeps them, not only for its words
+spread evenly: its band of words a scene stops under the montage's cut (`factual_cut_words`),
+and its ceiling holds for the longest film the band allows (`longest_factual_films`).
+
 What stays an estimate, and which way it errs:
 
 - a take's length. SECONDS_PER_SPOKEN_WORD is the mean of the vendor's own takes (babcf272),
@@ -69,6 +73,9 @@ CARD_KINDS = ("DATA_CARD", "TITLE_CARD", "BLACK")
 PLANNED_WORDS_PER_SECOND = 2.5
 PLANNED_MIN_SECONDS = 3.0
 PLANNED_MAX_SECONDS = 9.0
+#: The most words a scene's cut point is looked for in: a narration is at most 800
+#: characters (`agent_pipeline._Scene`), well under this many words.
+CUT_SEARCH_WORDS = 200
 
 
 @dataclass(frozen=True)
@@ -209,6 +216,71 @@ def silent_row_seconds(plan: float, kind: str | None) -> float:
     if kind in timing.card_max:
         return float(timing.whole_frames(min(float(plan), timing.card_max[kind]), timing.fps))
     return float(timing.whole_frames(float(plan), timing.fps))
+
+
+def factual_cut_words(settings: Any = None) -> int | None:
+    """The fewest words the montage cuts a LIVE scene into two shots or more
+    (`montage.factual_shots`), under these settings; None when it never cuts (the montage off,
+    or one shot a scene). Under it a writer's scene is one shot and one breath, from it on two
+    or three, each with its breath. The cut only grows with the words (`montage.shot_count`),
+    so a brief whose band of words a scene stops under this number keeps every scene one
+    shot."""
+    options = montage_options(settings)
+    if not options.montage_enabled or int(options.montage_max_shots_per_scene) <= 1:
+        return None
+    for words in range(1, CUT_SEARCH_WORDS + 1):
+        if len(factual_shots(" ".join(["word"] * words), 1, live=True, settings=options)) > 1:
+            return words
+    return None
+
+
+def longest_factual_films(scenes: int, low: int, high: int, *, settings: Any = None) -> list[float]:
+    """The longest film each total of words makes, over every draft a writer's band allows:
+    at most ``scenes`` LIVE scenes of ``low`` to ``high`` words each. Item ``t`` is the
+    longest film of any such draft with at most ``t`` words, for ``t`` up to
+    ``scenes * high``.
+
+    The even shape is not the longest (the adversarial review of 2026-10-16): a scene of
+    fifteen words is two shots and two breaths where fourteen is one, and every row is
+    rounded up to its own frame, so the same words spread unevenly make a longer film. 399
+    words in 28 scenes were 176.5 s spread evenly and 184.1 s as 23 scenes of fifteen. This
+    is the worst shape exactly, in whole frames: a knapsack over the scenes (a few dozen
+    scenes, a band of a few words, a few hundred totals)."""
+    scenes, low, high = int(scenes), max(1, int(low)), int(high)
+    if scenes <= 0 or low > high:
+        return [0.0]
+    timing = _timing()
+    options = montage_options(settings)
+    # One scene's film in whole frames: its rows are whole frames (`spoken_row_seconds`).
+    frames = {
+        words: round(
+            factual_film_length(
+                [{"narration": " ".join(["word"] * words)}], settings=options
+            ).seconds
+            * timing.fps
+        )
+        for words in range(low, high + 1)
+    }
+    top = scenes * high
+    # best[t]: the longest film, in frames, of a draft of exactly t words; -1 when no draft
+    # inside the band has t words.
+    best = [0] + [-1] * top
+    for _ in range(scenes):
+        step = list(best)  # this scene left out: a draft may have fewer scenes than asked
+        for total, film in enumerate(best):
+            if film < 0:
+                continue
+            for words, more in frames.items():
+                if total + words > top:
+                    break
+                step[total + words] = max(step[total + words], film + more)
+        best = step
+    longest: list[float] = []
+    worst = 0
+    for film in best:
+        worst = max(worst, film)
+        longest.append(worst / timing.fps)
+    return longest
 
 
 def factual_film_length(scenes: Sequence[dict[str, Any]], *, settings: Any = None) -> FilmLength:

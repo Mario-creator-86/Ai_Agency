@@ -572,9 +572,8 @@ LUNGIMEA — ținta, nu o cămașă de forță:
 - ce nu merge e un film care nu mai e un short: peste {max_words} de cuvinte în total
   ({max_seconds:.0f} secunde) povestea se rescrie mai scurtă.
 Se măsoară filmul pe care îl taie montajul, nu numerele pe care le scrii tu în
-"duration_seconds": textul rostit, plus o respirație de {breath} s după fiecare cadru, iar o
-scenă lungă se taie în două-trei cadre, fiecare cu respirația lui. O scenă de 25 de cuvinte
-pare scurtă și nu este: sunt zece secunde.
+"duration_seconds": textul rostit, plus o respirație de {breath} s după fiecare cadru, {cuts}.
+O scenă de 25 de cuvinte pare scurtă și nu este: sunt zece secunde.
 
 {cost}{judgement}Răspunde EXCLUSIV cu un obiect JSON valid, fără text în plus:
 {{"title": "...", "core_message": "o propoziție: ideea filmului", "takeaway": "ce rămâne
@@ -753,6 +752,14 @@ def _write_instructions(
         duration=int(budget["target_seconds"]),
         wps=decimal(budget["words_per_second"], 1),
         breath=decimal(budget["breath_seconds"], 1),
+        # The word count the montage cuts at, said outright: a scene one word past the band
+        # is a shot and a breath more, which the length check counts.
+        cuts=(
+            f"iar o scenă de {budget['cut_words']} cuvinte sau mai multe se taie în două-trei "
+            "cadre, fiecare cu respirația lui"
+            if budget["cut_words"]
+            else "iar fiecare scenă rămâne un singur cadru"
+        ),
         words=budget["total_words"],
         max_words=budget["max_words"],
         scenes=budget["scenes"],
