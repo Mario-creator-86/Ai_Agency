@@ -476,10 +476,9 @@ def test_verify_re_reads_the_channel_and_records_a_revoked_grant(engine, vault, 
 def test_a_routine_check_of_the_same_channel_writes_no_event(engine, vault, google, connection):
     """The Owner, 2026-10-16: «Vreau să rămână verificarea dar să nu apară aici». The check
     still runs and stamps the row; only a check that changed something is an event."""
+    from app.models import DomainEvent
     from sqlalchemy import func, select
     from sqlalchemy.orm import Session
-
-    from app.models import DomainEvent
 
     def verified_events() -> int:
         with Session(engine) as session:
