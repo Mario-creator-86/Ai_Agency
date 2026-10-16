@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-16 — The still's frame keeps the plan's placement
+
+- `media/prompt_agent.py`: the still's frame sentence keeps the plan's own placement after its label («Wide establishing shot, 24mm lens: the glass display case centred in the vertical frame, the bar large and centred inside it, the dark room around»), without the movement, the span and the exclusions (`_frame_placement`) — the composer said «Wide establishing shot, 24mm lens.» and the Director's review refused every rewrite of 7c26a7ce scene 1 for «a bare label with no framing distance» (03:00Z). Test in `test_still_prompt_is_static.py`.
+
 ## 2026-10-16 — A desk front is not a pasted strip
 
 - `media/qc.py`: a flat band glued to the bottom edge that is a coloured surface of the scene (grey level neither black nor white, at most 30 % of the height) no longer splits a still — the dark wood front of Sarah's desk, 16 % of the frame in every scene drawn from the episode's reference picture, refused four scenes of 87c05891 as panels before the look saw them (02:33Z); black strips and white caption bands still split. `FlatBand.level`, `FlatBand.surface`; tests in `test_still_gate.py`.

@@ -185,6 +185,42 @@ def test_a_detail_shot_of_a_person_keeps_the_face_rule_at_its_own_scale():
     assert NO_PEOPLE_SENTENCE in objects and CLOSE_PEOPLE_SENTENCE not in objects, objects
 
 
+def test_the_frame_keeps_the_plans_placement_after_its_label():
+    """03:00Z, 7c26a7ce scene 1: the plan's camera said «Wide establishing shot, straight-on,
+    24mm wide: the glass display case centred in the vertical frame, the bar large and
+    centred inside it, the dark room around; static — the framing holds, no movement, across
+    the shot's 7.6 seconds», the composer said «Wide establishing shot, 24mm lens.», and the
+    Director's review refused every rewrite for «a bare label with no framing distance». The
+    placement after the colon is said; the movement, the span and the exclusions are not."""
+    from app.media.prompt_agent import compile_prompts, shot_frame
+
+    size, frame = shot_frame(
+        "Wide establishing shot, straight-on, 24mm wide: the glass display case centred in "
+        "the vertical frame, the bar large and centred inside it, the dark room around; "
+        "static — the framing holds, no movement, across the shot's 7.6 seconds."
+    )
+    assert size == "wide"
+    assert frame == (
+        "Wide establishing shot, 24mm lens: the glass display case centred in the vertical "
+        "frame, the bar large and centred inside it, the dark room around."
+    ), frame
+    assert shot_frame("Medium shot, 50mm lens")[1] == "Medium shot, 50mm lens."
+    still = compile_prompts(
+        {
+            "subject": "The platinum-iridium bar resting inside its glass display case",
+            "environment": "the windowless measurement laboratory, charcoal and slate blue walls",
+            "camera": (
+                "Wide establishing shot, straight-on, 24mm wide: the glass display case "
+                "centred in the vertical frame, the bar large and centred inside it; static "
+                "— the framing holds"
+            ),
+        },
+        {"continuity_rules": ["No human faces appear"]},
+    )["still_prompt"]
+    assert "the bar large and centred inside it" in still, still
+    assert "framing holds" not in still and "static" not in still.lower(), still
+
+
 def test_the_room_is_kept_before_a_long_subject():
     """2026-10-15 19:56Z, 7c26a7ce scene 2: a 51-word subject pushed the laboratory, the
     light and the composition out of the 120-word budget, and the Director refused the words

@@ -3217,7 +3217,37 @@ def shot_frame(camera: Any, shot_type: Any = "") -> tuple[str, str]:
     if angle:
         word = angle.group(1).replace(" ", "-")
         parts.append(word if word in ("overhead", "top-down") else f"{word} angle")
+    placement = _frame_placement(camera)
+    if placement:
+        return size, _sentence(f"{', '.join(parts)}: {placement}")
     return size, _sentence(", ".join(parts))
+
+
+def _frame_placement(camera: Any) -> str:
+    """The plan's own words for the frame after its label — what is centred, how large, how
+    far («Wide establishing shot, straight-on, 24mm wide: the glass display case centred in
+    the vertical frame, the bar large and centred inside it, the dark room around; static —
+    the framing holds») — without the camera's movement, its span and any exclusion. Empty
+    when the plan's camera text has no colon to read after (03:00Z, 7c26a7ce scene 1: the
+    composer said «Wide establishing shot, 24mm lens.» and the Director's review refused
+    every rewrite for «a bare label with no framing distance»)."""
+    raw = _flatten(camera)
+    if ":" not in raw:
+        return ""
+    after = raw.split(":", 1)[1]
+    kept: list[str] = []
+    for clause in re.split(r"\s*;\s*", after):
+        clause = lint.without_tempo(lint.static_clause(clause)).strip(" .,—–-")
+        if (
+            len(clause.split()) < 3
+            or lint.camera_moves(clause)
+            or lint.NEGATION.search(clause)
+            or _LOCKED_CAMERA.search(clause)
+            or lint.dangling(clause)
+        ):
+            continue
+        kept.append(clause)
+    return ", ".join(kept)
 
 
 #: A plan's camera text that locks the frame: the clip's move is «static», not the size's.
