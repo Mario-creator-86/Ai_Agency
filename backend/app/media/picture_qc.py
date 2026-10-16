@@ -1441,6 +1441,9 @@ def evaluate_pictures(
     source: FrameSource = "FILM"
     frames: list[str] = []
     framed: list[dict[str, Any]] = []
+    #: Scenes picked for a frame whose cut from the film failed: named as unlooked-at for that
+    #: reason, and their frame's place is never taken by the next scene's (SAFE-001).
+    cut_failed: set[int] = set()
     if wanted and all(scene["index"] in shots for scene in wanted):
         frames = _shot_middles(
             [shots[scene["index"]] for scene in wanted], ffmpeg_path, _film_fps(production)
@@ -1459,8 +1462,12 @@ def evaluate_pictures(
             scene_seconds=[scene["seconds"] for scene in scenes],
             picks=[position[scene["index"]] for scene in wanted],
         )
-        frames = cut[: len(wanted)]
-        framed = wanted[: len(frames)]
+        # One entry per wanted scene (`frames_for`): each frame is judged as its own scene's,
+        # and a scene whose cut failed is left out with it.
+        paired = list(zip(wanted, cut, strict=False))
+        frames = [frame for _scene, frame in paired if frame]
+        framed = [scene for scene, frame in paired if frame]
+        cut_failed = {scene["index"] for scene, frame in paired if not frame}
     if not frames:
         return _not_applicable(
             "no frame could be read from the film: there is no encoder, or no file to cut",
@@ -1707,7 +1714,11 @@ def evaluate_pictures(
                 "is_a_picture": None,
                 "one_picture": None,
                 "shows_the_scene": None,
-                "reason": "no frame was cut for this scene",
+                "reason": (
+                    "the frame of this scene could not be cut from the film"
+                    if index in cut_failed
+                    else "no frame was cut for this scene"
+                ),
             }
         )
     scene_records += [

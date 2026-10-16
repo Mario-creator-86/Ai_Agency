@@ -400,7 +400,7 @@ def frames_for(
     duration: float | None,
     scene_seconds: list[float | None] | None = None,
     picks: Sequence[int] | None = None,
-) -> list[str]:
+) -> list[str | None]:
     """One frame from the middle of each picked scene, as base64 JPEG, for a model that can
     see: ``picks`` are positions in ``scene_seconds`` (`frame_picks`); without them, rows
     spread over the whole film, its last one included.
@@ -410,25 +410,37 @@ def frames_for(
     stripes — was approved on that. The planned scene lengths are scaled to the film's real
     length, because a scene lasts as long as its narration was recorded. Every scene's length
     places the picked ones on the timeline, so a frame is cut where its own scene plays.
+
+    One entry per picked moment, in the order asked: a cut that failed is None in its own
+    place. A failed cut used to be skipped, and every frame after it was then read as the
+    scene before its own — the Director told «the middle of scenes 1, 2, 3» about the frames
+    of 1, 3 and the next one, and the picture look judging a character against another
+    scene's frame (the audit of 2026-10-16, SAFE-001). Empty when nothing can be cut at all.
     """
     ffmpeg = find_ffmpeg(ffmpeg_path)
     file = Path(path)
     if not ffmpeg or not file.is_file() or not duration or duration <= 0:
         return []
     lengths = [float(seconds) if seconds else 0.0 for seconds in (scene_seconds or [])]
-    moments: list[float] = []
+    moments: list[float | None] = []
     if sum(lengths) > 0:
         scale = duration / sum(lengths)
         starts = [sum(lengths[:position]) for position in range(len(lengths))]
         chosen = frame_picks([None] * len(lengths)) if picks is None else list(picks)
         for position in chosen:
-            if 0 <= position < len(lengths):
-                moments.append((starts[position] + lengths[position] / 2) * scale)
+            moments.append(
+                (starts[position] + lengths[position] / 2) * scale
+                if 0 <= position < len(lengths)
+                else None
+            )
     else:
         moments = [duration * fraction for fraction in (0.2, 0.5, 0.8)[:FRAMES]]
-    frames: list[str] = []
-    for moment in moments:
-        moment = max(0.0, moment)
+    frames: list[str | None] = []
+    for number, wanted in enumerate(moments):
+        if wanted is None:
+            frames.append(None)
+            continue
+        moment = max(0.0, wanted)
         try:
             result = subprocess.run(  # noqa: S603 - argument list, no shell
                 [
@@ -457,10 +469,30 @@ def frames_for(
                 timeout=60,
                 check=False,
             )
-        except (OSError, subprocess.SubprocessError):
-            return frames
+        except (OSError, subprocess.SubprocessError) as error:
+            # The encoder itself is gone or hung: the moments left are not tried, and each
+            # keeps its place as a missing frame.
+            logger.warning(
+                "frame_cut_failed",
+                extra={
+                    "path": str(file),
+                    "at_seconds": round(moment, 2),
+                    "error_class": type(error).__name__,
+                },
+            )
+            return frames + [None] * (len(moments) - number)
         if result.returncode == 0 and result.stdout:
             frames.append(base64.b64encode(result.stdout).decode("ascii"))
+        else:
+            logger.warning(
+                "frame_cut_failed",
+                extra={
+                    "path": str(file),
+                    "at_seconds": round(moment, 2),
+                    "returncode": result.returncode,
+                },
+            )
+            frames.append(None)
     return frames
 
 
@@ -498,6 +530,33 @@ def latest_editorial(session: Session, media_asset_id: str) -> EditorialReview |
     )
 
 
+def _frames_note(
+    can_see: bool, frames: Sequence[str], framed: Sequence[Any], unseen: Sequence[Any]
+) -> str:
+    """What the Director's brief says about the frames: how many are attached, which scenes
+    they are, and which picked scene has none because its cut failed (SAFE-001). A model that
+    can see but was handed no frame is told that, not that it has no vision."""
+    blind = (
+        " — so judge it from what is written here and say so if the pictures are what you "
+        "would need to decide"
+    )
+    if not frames:
+        if can_see:
+            return ". No frame could be cut from the film's file, so you cannot see it" + blind
+        return ". You cannot see the film itself — your model has no vision" + blind
+    note = f", and {len(frames)} frames from the file itself are attached"
+    if framed and len(framed) == len(frames):
+        note += f" (the middle of scenes {', '.join(map(str, framed))}, in that order)"
+    if unseen:
+        many = len(unseen) > 1
+        note += (
+            f"; no frame could be cut for scene{'s' if many else ''} "
+            f"{', '.join(map(str, unseen))}, so you have not seen "
+            f"{'their pictures' if many else 'its picture'}"
+        )
+    return note
+
+
 def editorial_review(
     engine: Engine,
     registry: ProviderRegistry | None,
@@ -533,19 +592,29 @@ def editorial_review(
         listed = list(facts.get("scenes") or [])
         # One frame per writer's scene, spread over the whole film, its last row included.
         picks = frame_picks([scene.get("writer_scene") for scene in listed])
+        cut: list[str | None] = []
         if can_see:
-            frames = frames_for(
+            cut = frames_for(
                 facts["path"],
                 ffmpeg_path,
                 facts["duration_seconds"],
                 scene_seconds=[scene.get("seconds") for scene in listed],
                 picks=picks,
             )
+        frames = [frame for frame in cut if frame]
         # Which scenes the frames are, in order: no longer simply the first ones (a film whose
-        # scenes have no lengths is cut at fixed fractions, and names none).
+        # scenes have no lengths is cut at fixed fractions, and names none). Each pick keeps
+        # its own frame: a cut that failed takes its scene's name with it, and that scene is
+        # named as unseen, never given the next scene's frame (SAFE-001).
+        named = any(scene.get("seconds") for scene in listed)
         framed = (
-            [listed[position].get("index") for position in picks][: len(frames)]
-            if any(scene.get("seconds") for scene in listed)
+            [listed[p].get("index") for p, frame in zip(picks, cut, strict=False) if frame]
+            if named
+            else []
+        )
+        unseen = (
+            [listed[p].get("index") for p, frame in zip(picks, cut, strict=False) if not frame]
+            if named
             else []
         )
         shown = {k: v for k, v in facts.items() if k not in ("path", "hard_rejects")}
@@ -553,20 +622,7 @@ def editorial_review(
             audience_language_line(language)
             + instructions_for(
                 bool(facts.get("serial")),
-                frames_note=(
-                    f", and {len(frames)} frames from the file itself are attached"
-                    + (
-                        f" (the middle of scenes {', '.join(map(str, framed))}, in that order)"
-                        if framed and len(framed) == len(frames)
-                        else ""
-                    )
-                    if frames
-                    else (
-                        ". You cannot see the film itself — your model has no vision — so "
-                        "judge it from what is written here and say so if the pictures are "
-                        "what you would need to decide"
-                    )
-                ),
+                frames_note=_frames_note(can_see, frames, framed, unseen),
             )
             + wrap_in_inert_boundary(json.dumps(shown, ensure_ascii=False), "the-film")
         )
