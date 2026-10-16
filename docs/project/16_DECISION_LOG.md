@@ -1,5 +1,9 @@
 # Architectural / Product Decision Log v5
 
+## The renders cap holds before assembly: the closest still stands (2026-10-16)
+
+The Owner's rule of 2026-10-15 («Randările odată făcute, de maxim 3x pentru fiecare imagine sau mișcare … publicăm cu ce Directoarea alege ca fiind cel mai apropiat») applies before assembly as well: a scene whose still was made three times keeps the closest refused candidate as its picture (approved «director_cap», the refusal recorded as the lesson), instead of waiting for a fourth. The alternative — unlimited rewrite-and-rebuy rounds in the stills stage — kept the serial episode 87c05891 from buying four of its eight scenes while scene 1 was bought three times (01:46Z). Hard-limit refusals (a face where faces are forbidden, writing) are still chosen among by fewest faults; the clip QC and the Director's QC decision judge the assembled film afterwards.
+
 ## O singură imagine pe scenă (Proprietarul, 2026-10-15 21:10Z) (2026-10-15)
 
 Decizie: pasul de imagini cumpără un singur candidat pe scenă (STILL_CANDIDATES = 1), nu doi. Motiv: Proprietarul — «ne costă bani pentru că facem câte două imagini, vreau să facem doar 1»; promptul e aprobat de Directoare înainte de cumpărare, iar o imagine refuzată se reface pe un prompt revizuit sub plafonul randărilor. Respins: a păstra doi candidați «ca să aibă din ce alege» — alegerea se face pe prompt, nu pe loterie. Suita de teste rămâne pe două candidate (fixture), cu un test care fixează valoarea de producție la 1.

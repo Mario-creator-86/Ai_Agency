@@ -115,6 +115,7 @@ from app.media.assembler import (
     UNJUDGED_DETAIL,
     UNJUDGED_FAILURE_CODE,
     SpendMeter,
+    _paid_attempts,
     _record_intent,
     classify_vendor_failure,
     collect_submitted_takes,
@@ -1134,6 +1135,71 @@ class _RoundEnd:
         return said
 
 
+#: The Owner's renders cap (2026-10-15: «Randările odată făcute, de maxim 3x pentru fiecare
+#: imagine sau mișcare … publicăm cu ce Directoarea alege ca fiind cel mai apropiat»), the
+#: same count as `runbook.stages.RENDERS_PER_LAYER`: past three stills of a scene, the
+#: closest candidate stands as the scene's picture and the film goes on (01:46Z, 87c05891
+#: scene 1: a third still refused by the gate, and scenes 2, 4, 6, 8 — which take their look
+#: from scene 1's picture — never bought).
+RENDERS_PER_LAYER = 3
+CAP_APPROVER = "director_cap"
+
+
+def _at_renders_cap(engine: Engine, storyboard_id: str, scene_index: int) -> bool:
+    """Whether the scene's still has been made RENDERS_PER_LAYER times already (every paid
+    request among its takes, `assembler._paid_attempts`)."""
+    with Session(engine) as session:
+        rows = list(
+            session.scalars(
+                select(SceneTake).where(
+                    SceneTake.storyboard_id == storyboard_id,
+                    SceneTake.scene_number == int(scene_index),
+                    SceneTake.kind == "still",
+                )
+            )
+        )
+    return _paid_attempts(rows, "still") >= RENDERS_PER_LAYER
+
+
+def _closest(verdicts: list[tuple[str, StillReport]]) -> tuple[str, StillReport]:
+    """The refused candidate nearest the plan: fewest faults measured or unmeasured, then
+    fewest reasons, then the best score."""
+    return min(
+        verdicts,
+        key=lambda pair: (
+            len(pair[1].violations) + len(pair[1].unmeasured),
+            len(pair[1].reasons_ro),
+            -pair[1].score,
+        ),
+    )
+
+
+def _approve_under_cap(
+    engine: Engine, take_id: str, report: StillReport, confirmed: list[str]
+) -> None:
+    """The closest candidate APPROVED under the cap, its refusal cleared and kept as the
+    lesson in its quality note."""
+    left = "; ".join(dict.fromkeys([*report.reasons_ro, *confirmed]))[:2500]
+    with Session(engine) as session, session.begin():
+        lock_for_write(session)
+        row = session.get(SceneTake, take_id)
+        if row is None:
+            return
+        row.status = "APPROVED"
+        row.approved_by = CAP_APPROVER
+        row.failure_code = None
+        row.failure_detail = None
+        sync_take_quality(
+            session,
+            row,
+            accepted=True,
+            reason=(
+                f"Acceptată sub plafonul Proprietarului ({RENDERS_PER_LAYER} randări): cea mai "
+                f"apropiată de plan; ce a rămas sub standard e lecție pentru filmul următor: {left}"
+            )[:4000],
+        )
+
+
 def _approve_by_look(engine: Engine, take_id: str, look: Mapping[str, Any]) -> None:
     """The candidate her look let stand, APPROVED by her (`fix_check.DIRECTOR_LOOK_APPROVER`),
     with no failure left on it — as `director_qc.record_look` writes her choice: a failure left
@@ -1297,6 +1363,16 @@ def _settle_round(
             _after_approval(engine, storyboard_id, scene, looked, correlation_id)
             return looked
         confirmed = looked.confirmed
+        if _at_renders_cap(engine, storyboard_id, scene.index):
+            # The Owner's cap: three stills made, none passed, her look let none stand — the
+            # closest candidate is the scene's picture and nothing more is bought for it.
+            take_id, report = _closest(verdicts)
+            _approve_under_cap(engine, take_id, report, confirmed)
+            end = _RoundEnd(
+                take_id=take_id, report=report, approved_by=CAP_APPROVER, confirmed=confirmed
+            )
+            _after_approval(engine, storyboard_id, scene, end, correlation_id)
+            return end
         if step.action in ("reroll", "needs_owner") and any(
             report.violations for report in reports
         ):

@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-16 — The renders cap holds in the stills stage
+
+- `media/stills_stage.py`: the Owner's renders cap holds in the stills stage too — past three stills of a scene, with none passed and her look letting none stand, the closest candidate is approved under the cap (`director_cap`) and the film goes on (87c05891 scene 1 kept the whole episode waiting). Test `test_stills_renders_cap.py`.
+
 ## 2026-10-16 — The establishing framing says the person small
 
 - `config/serial_series_look.json`, `media/series_look.py`: the serial's establishing framing says the person small in the middle distance, the full figure and the whole desk inside the frame, the room floor to ceiling — the image model drew «Establishing wide shot, the whole room in view» as a medium close-up of Sarah twice (87c05891 scene 1, 00:12Z and 00:59Z, both refused by the still gate).

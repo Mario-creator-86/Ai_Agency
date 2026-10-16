@@ -5,6 +5,14 @@ AGENT_SCENARIO_ACCEPTANCE later used actual Ollama Cloud calls, with normal seri
 acceptance and real GPU/media/upload still pending. Current local UI evidence is reported
 separately below and does not prove those external workflows.
 
+## The renders cap in the stills stage: past three stills the closest stands (2026-10-16)
+
+**Claim:** the serial episode 87c05891 bought scene 1's still three times (00:12Z, 00:59Z, 01:29Z), the gate refused all three (a medium close-up for an establishing shot), and scenes 2, 4, 6 and 8 — which take their light, palette and grain from scene 1's picture — were never bought: the Owner's renders cap (2026-10-15, `runbook.stages.RENDERS_PER_LAYER`) was enforced only in the QC repair path, not in the stills stage, which could keep rewriting and re-buying one scene while the film waited.
+
+**Fix (`media/stills_stage.py`):** `_at_renders_cap` (every paid still request of the scene, `assembler._paid_attempts`) — past three, `_settle_round` ends the round with the closest refused candidate (`_closest`: fewest faults, fewest reasons, best score) APPROVED under the cap (`CAP_APPROVER` «director_cap», the refusal kept as the lesson in its quality note, `_approve_under_cap`), after her look has let none stand; the film goes on and QC judges the assembled film, where her ACCEPT under the cap already ships it.
+
+**Tested:** `tests/test_stills_renders_cap.py` (three stills made → the closest stands, the others stay refused, the approved entry says who approved; two made → the round still waits for the rewrite); stills stage test files pass; ruff, mypy clean. The establishing framing itself was corrected in 43ce426.
+
 ## The plan's own path follows the move's sentence; one reader of the intent for sheet and audit (2026-10-16)
 
 **Claim:** 7c26a7ce scene 4 under template v3 (00:55–00:59Z): the Director refused the fixed tracking sentence «Steady tracking right alongside the subject, the background sliding past behind it» six times for «no path and no tempo» while the plan's camera field carried both («tracking right — a slow, straight follow along the pulse's path as it travels across the room, over the shot's 3.2 seconds»); the stored intent kept the drift default although the plan fixes the light; and the ending «The final frame holds the pulse mid-travel: …» was said «The shot ends as the pulse mid-travel» («pulse» read as a verb). The guard declared a tool defect (correctly).
