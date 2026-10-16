@@ -74,11 +74,12 @@ def _refuse_registry() -> Callable[[], None]:
     return restore
 
 
-BACKUP_NAME = re.compile(r"studio-(\d{8}T\d{6}Z)\.db$")
+BACKUP_NAME = re.compile(r"studio-(\d{8}T\d{6}Z)(?:-[\w-]+)?\.db$")
 
 
 def backup_time(source: Path) -> datetime | None:
-    """The moment the backup was taken, from its name (``studio-20261016T015919Z.db``)."""
+    """The moment the backup was taken, from its name (``studio-20261016T015919Z.db``, or a
+    tagged one such as ``studio-20261016T115708Z-premigrare.db``)."""
     found = BACKUP_NAME.search(source.name)
     if found is None:
         return None

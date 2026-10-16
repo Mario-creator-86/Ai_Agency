@@ -850,4 +850,7 @@ def test_the_offline_measurement_reads_a_copy_and_never_builds_a_registry(
     assert folder_digest(backups) == before
     assert not list(work.iterdir()), "the work copy is cleaned"
     assert data["stale_asks_at"] == "2026-10-16T00:00:00+00:00"
+    # A tagged backup (taken before a migration) is read at its own time too.
+    tagged = module.backup_time(Path("studio-20261016T115708Z-premigrare.db"))
+    assert tagged == datetime(2026, 10, 16, 11, 57, 8, tzinfo=UTC)
     ProviderRegistry()  # put back as it was
