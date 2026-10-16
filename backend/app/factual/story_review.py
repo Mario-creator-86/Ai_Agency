@@ -73,11 +73,12 @@ from app.factual.agent_pipeline import (
     ScriptRejected,
     agent_write_script,
 )
-from app.factual.editorial import expected_seconds, failed, revision_notes, story_checks
+from app.factual.editorial import failed, revision_notes, story_checks
 from app.factual.grounding import grounding_check, script_grounding
 from app.factual.models import ScriptDraft, StoryReview
 from app.factual.sanitizer import wrap_in_inert_boundary
 from app.factual.services import FactualGateError
+from app.media.film_length import factual_film_length, factual_rows
 from app.services import append_event, utc_now
 from app.wording import count, decimal, review_verdict
 
@@ -341,7 +342,8 @@ def _script_facts(session: Session, script: ScriptDraft) -> dict[str, Any]:
         "thesis": (topic.thesis_json if topic and topic.thesis_json else {}),
         "story": dict(script.story_json or {}),
         "target_seconds": script.target_duration_seconds,
-        "estimated_seconds": expected_seconds(script.scenes_json or []),
+        # The film the montage will cut, as the length check measures it.
+        "estimated_seconds": factual_film_length(script.scenes_json or []).seconds,
         "scenes": scenes,
         # Last, because the payload she reads is cut at a fixed length and the scenes are
         # what she must not lose.
@@ -357,7 +359,14 @@ def scene_clip_check(engine: Engine, scenes: list[dict[str, Any]]) -> dict[str, 
     carried words for 11.1 s and 12.5 s of clip under a model whose clips end at 10 s, and
     nothing said so until the shooting sheet, after the story had passed. The length is
     estimated as the motion step will buy it (`assembler.script_clip_seconds`), and the
-    refusal names each scene's seconds, so the writer splits it in the next draft."""
+    refusal names each scene's seconds, so the writer splits it in the next draft.
+
+    Since 2026-10-16 the montage cuts a LIVE scene into shots of its own, each its own clip
+    (`montage.factual_shots`): what must fit one clip is each shot as the storyboard will cut
+    it (`film_length.factual_rows`), and a scene is measured by its longest shot, as the
+    serial's review measures a beat (`story.review._filmable`). With the montage off a scene is
+    one shot, and the whole scene is measured as before. A 28-word scene was refused at 12.75 s
+    while the montage would have filmed it as three shots of about four seconds."""
     from app.media.assembler import script_clip_seconds, spoken_words  # noqa: PLC0415
     from app.media.cost_plan import SLOWDOWN_ALLOWANCE  # noqa: PLC0415
     from app.media.shooting_sheet import motion_clip_limit  # noqa: PLC0415 - media reads us
@@ -367,9 +376,17 @@ def scene_clip_check(engine: Engine, scenes: list[dict[str, Any]]) -> dict[str, 
         return None
     model_id, longest = limit
     most = longest * (1 + SLOWDOWN_ALLOWANCE)
+    rows = factual_rows(scenes)
+    # Each writer's scene by its longest shot: (seconds, the shot's row).
+    longest_shot: dict[int, tuple[float, dict[str, Any]]] = {}
+    for position, seconds in script_clip_seconds(rows).items():
+        row = rows[position - 1]
+        number = int(row["scene_number"])
+        if number not in longest_shot or seconds > longest_shot[number][0]:
+            longest_shot[number] = (seconds, row)
     over = [
-        (position, seconds)
-        for position, seconds in script_clip_seconds(scenes).items()
+        (number, seconds, row)
+        for number, (seconds, row) in sorted(longest_shot.items())
         if seconds > most + 1e-9
     ]
     if not over:
@@ -381,20 +398,23 @@ def scene_clip_check(engine: Engine, scenes: list[dict[str, Any]]) -> dict[str, 
             ),
         }
 
-    def refusal(position: int, seconds: float) -> str:
-        scene = scenes[position - 1]
-        said = spoken_words(str(scene.get("narration") or scene.get("voiceover_segment") or ""))
+    def refusal(number: int, seconds: float, row: dict[str, Any]) -> str:
+        said = spoken_words(str(row.get("narration") or ""))
+        shots = int(row.get("of") or 1)
+        where = (
+            f", în cel mai lung din cele {shots} cadre în care o taie montajul" if shots > 1 else ""
+        )
         return (
-            f"Scena {position} cere un cadru de {decimal(seconds)} s "
-            f"({count(said, 'cuvânt rostit', 'cuvinte rostite')}); {model_id} filmează cel mult "
-            f"{longest} s într-un cadru, iar studioul îl încetinește local cu cel mult "
+            f"Scena {number} cere un cadru de {decimal(seconds)} s "
+            f"({count(said, 'cuvânt rostit', 'cuvinte rostite')}{where}); {model_id} filmează "
+            f"cel mult {longest} s într-un cadru, iar studioul îl încetinește local cu cel mult "
             f"{round(SLOWDOWN_ALLOWANCE * 100)}% ({decimal(most)} s). Împarte scena în două "
             "scene, fiecare cu imaginea ei, sau scurtează-i narațiunea."
         )
 
     return {
         "passed": False,
-        "reason": " ".join(refusal(position, seconds) for position, seconds in over),
+        "reason": " ".join(refusal(number, seconds, row) for number, seconds, row in over),
     }
 
 
@@ -834,7 +854,7 @@ def script_as_text(script: ScriptDraft) -> tuple[str, dict[str, Any]]:
         "cta_kind": story.get("cta_kind"),
         "scenes": len(scenes),
         "purposes": purposes,
-        "estimated_seconds": expected_seconds(scenes),
+        "estimated_seconds": factual_film_length(scenes).seconds,
         "target_seconds": script.target_duration_seconds,
     }
     return "\n".join(rows), context

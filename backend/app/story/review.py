@@ -80,6 +80,12 @@ from app.agents.memory import agent_for_role, remember
 from app.agents.messages import post_message
 from app.agents.services import run_agent_task
 from app.factual.sanitizer import wrap_in_inert_boundary
+from app.media.film_length import (
+    SHORTS_WALL_SECONDS,
+    FilmLength,
+    review_ceiling_seconds,
+    serial_film_length,
+)
 from app.providers.registry import ProviderRegistry
 from app.publishing.models import ChannelRecord
 from app.services import append_event, utc_now
@@ -96,6 +102,7 @@ from app.story.models import ContinuityState, DailyStudioLog, StoryEpisode
 from app.story.projection import leaks
 from app.story.services import (
     EPISODE_PARTS,
+    EPISODE_SECONDS,
     MAX_BEATS,
     PREFERRED_SHOWRUNNER_ROLE,
     SERIES_KEY,
@@ -109,7 +116,7 @@ from app.story.services import (
     voice_of,
     write_episode,
 )
-from app.wording import decimal, work_status
+from app.wording import count, decimal, work_status
 
 logger = logging.getLogger("studio.story.review")
 
@@ -132,11 +139,13 @@ RUBRIC_FLOOR = 3
 FACTS_BUDGET = 14000
 #: The studio's speaking rate, the same figure the storyboard uses to time a scene.
 WORDS_PER_SECOND = 2.5
-#: The episode's length in seconds of speech (the Owner, 2026-10-16: 90-180 s, max 180): the
-#: floor is a recommendation the Director weighs, the ceiling is the Short's wall with the
-#: shots' breaths taken off.
-MIN_SECONDS = 90.0
-MAX_SECONDS = 175.0
+#: The episode's length in seconds of speech (the Owner, 2026-10-16: 90-180 s, max 180), the
+#: very numbers the showrunner's brief states (`services.EPISODE_SECONDS`): the floor is a
+#: recommendation the Director weighs; the ceiling is the brief's word ceiling. The wall itself
+#: is measured on the film the montage cuts (`_length`, `film_length.serial_film_length`):
+#: 175 s of speech left 5 s for the breaths of 30-50 shots, and episodes the review passed
+#: came out at 185-195 s.
+MIN_SECONDS, MAX_SECONDS = EPISODE_SECONDS
 #: Openings that assume the viewer saw yesterday. A first beat that starts with one of these
 #: does not stand alone.
 CONTINUATION_MARKERS = (
@@ -318,18 +327,34 @@ def _structure(beats: list[dict], locations: list[dict]) -> dict[str, Any]:
     return {"passed": not problems, "parts": parts, "reason": "; ".join(problems)}
 
 
-def _length(beats: list[dict], seconds: float) -> dict[str, Any]:
-    """The episode's beats and seconds of speech. The ceiling (MAX_BEATS, MAX_SECONDS: the
-    Short's wall) refuses; the floor (MIN_SECONDS) is a recommendation the Director weighs
-    (``advisory``), as the words-per-beat band is (2026-10-16)."""
-    within_cap = 0 < len(beats) <= MAX_BEATS and seconds <= MAX_SECONDS
+def _length(beats: list[dict], seconds: float, film: FilmLength | None = None) -> dict[str, Any]:
+    """The episode's beats, seconds of speech and the film the montage cuts from them. The
+    ceilings refuse: MAX_BEATS, MAX_SECONDS of speech (the brief's own words), and the film's
+    estimate (``film``, `film_length.serial_film_length`: every shot's words plus its breath)
+    past the Short's wall less the estimate's margin (`film_length.review_ceiling_seconds`).
+    The floor (MIN_SECONDS) is a recommendation the Director weighs (``advisory``), as the
+    words-per-beat band is (2026-10-16)."""
+    ceiling = review_ceiling_seconds()
+    words_fit = 0 < len(beats) <= MAX_BEATS and seconds <= MAX_SECONDS
+    fits_wall = film is None or film.seconds <= ceiling
+    within_cap = words_fit and fits_wall
     short = within_cap and seconds < MIN_SECONDS
     reason = ""
     if not within_cap:
-        reason = (
-            f"{len(beats)} beat-uri și {seconds:.0f} secunde de vorbire; cel mult "
-            f"{MAX_BEATS} beat-uri și {MAX_SECONDS:.0f} secunde (zidul Short-ului)"
-        )
+        problems = []
+        if not words_fit:
+            problems.append(
+                f"{len(beats)} beat-uri și {seconds:.0f} secunde de vorbire; cel mult "
+                f"{MAX_BEATS} beat-uri și {MAX_SECONDS:.0f} secunde (zidul Short-ului)"
+            )
+        if film is not None and not fits_wall:
+            problems.append(
+                f"tăiat în {count(film.rows, 'cadru', 'cadre')}, fiecare cu respirația lui, "
+                f"filmul ar dura {film.seconds:.0f} secunde, peste cele {ceiling:.0f} pe care le "
+                f"primește zidul Short-ului ({SHORTS_WALL_SECONDS:.0f} s, minus o marjă pentru "
+                "estimare): mai puține cuvinte, sau mai puține replici și mai lungi"
+            )
+        reason = "; ".join(problems)
     elif short:
         reason = (
             f"{seconds:.0f} secunde de vorbire, sub recomandarea de {MIN_SECONDS:.0f}; "
@@ -342,6 +367,10 @@ def _length(beats: list[dict], seconds: float) -> dict[str, Any]:
         "words": round(seconds * WORDS_PER_SECOND),
         "seconds": seconds,
         "recommended_seconds": [MIN_SECONDS, MAX_SECONDS],
+        # The film as the montage will cut and time it, against the wall it must stay under.
+        "film_seconds": film.seconds if film is not None else None,
+        "shots": film.rows if film is not None else None,
+        "ceiling_seconds": ceiling,
         "reason": reason,
     }
 
@@ -785,7 +814,11 @@ def episode_checks(
                 if part
             ),
         },
-        "length": _length(beats, seconds),
+        "length": _length(
+            beats,
+            seconds,
+            serial_film_length(lines_by_beat, [beat.get("part") for beat in beats]),
+        ),
         "narration": _narration(lines_by_beat, v3),
         "words_per_beat": _words_per_beat(beats, lines_by_beat, v3),
         "concentration": _concentration(beats, len(projected)),

@@ -80,11 +80,12 @@ def test_past_the_shorts_wall_the_episode_is_refused(
     staffed,  # noqa: F811
     monkeypatch,
 ):
-    """175 s of speech is the ceiling: the shots' breaths take the rest of YouTube's 180."""
+    """Past the brief's words the episode is refused: the shots' breaths take the rest of
+    YouTube's 180 s (`film_length.serial_film_length` measures them)."""
     _, ids = letters_day(engine)
     beats = _story(ids)
     for beat in beats[1:-1]:
-        beat["lines"] = beat["lines"] * 3  # 120 words a beat: far past 430 in all
+        beat["lines"] = beat["lines"] * 3  # 120 words a beat: far past 390 in all
 
     checks = checks_of(engine, written(engine, monkeypatch, beats)["id"])
 
@@ -129,4 +130,5 @@ def test_production_aims_shorts_at_160_seconds_under_the_180_wall():
     from app.story.review import MAX_SECONDS
 
     assert Settings.model_fields["target_video_seconds"].default == 160
-    assert MAX_SHORT_SECONDS == 180.0 and MAX_SECONDS == 175.0
+    # 156 s of speech (390 words): the montage's breaths after 30-43 shots fill the rest.
+    assert MAX_SHORT_SECONDS == 180.0 and MAX_SECONDS == 156.0

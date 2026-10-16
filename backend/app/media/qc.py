@@ -932,12 +932,21 @@ def production_path_verdict(
 #: The shortest film YouTube treats as a Short worth publishing here.
 SHORTS_MIN_SECONDS = 10.0
 #: What a measured length may run past the channel's maximum: the container's own rounding
-#: and the last breath after the final word, never a second scene.
+#: and the last breath after the final word, never a second scene. Never past YouTube's own
+#: limit (`shorts_length_ceiling`): with the channels at 180 since 2026-10-16 the slack would
+#: have moved the wall itself, and a 180.9 s film is not a Short.
 SHORTS_LENGTH_SLACK_SECONDS = 1.0
 #: The longest a channel may set: YouTube's own limit for vertical Shorts since 2024-10-15.
 SHORTS_MAX_LIMIT_SECONDS = 180
 #: Per channel type, when the film's channel row carries no value of its own.
 SHORTS_MAX_BY_CHANNEL_TYPE = {"MAIN_FACTUAL": 180, "OFFICE_SERIAL": 180}
+
+
+def shorts_length_ceiling(max_seconds: float) -> float:
+    """The longest measured film quality control accepts on a channel that takes
+    ``max_seconds``: the channel's maximum plus SHORTS_LENGTH_SLACK_SECONDS, never past
+    SHORTS_MAX_LIMIT_SECONDS (the Owner, 2026-10-16: «maxim 180»)."""
+    return min(float(max_seconds) + SHORTS_LENGTH_SLACK_SECONDS, float(SHORTS_MAX_LIMIT_SECONDS))
 
 
 def shorts_max_seconds(session: Session, media_asset_id: str) -> int:
@@ -1057,7 +1066,7 @@ def evaluate_media_qc(
         # The Shorts bounds: 10 s at least, at most what the film's channel takes (audit
         # PUB-15: 60 s for factual films, 70 s for the serial, up to YouTube's 180 s).
         max_dur = shorts_max_seconds(session, asset.id)
-        dur_valid = SHORTS_MIN_SECONDS <= measured_dur <= max_dur + SHORTS_LENGTH_SLACK_SECONDS
+        dur_valid = SHORTS_MIN_SECONDS <= measured_dur <= shorts_length_ceiling(max_dur)
 
         if probe.get("ok"):
             if not is_9_16:
@@ -1341,6 +1350,7 @@ def evaluate_media_qc(
             ffmpeg=ffmpeg if file_exists and probe.get("ok") else None,
             cues=read_cues,
             blocking=editorial_blocking(settings),
+            settings=settings,
         )
         if editorial["passed"] is False:
             failure_reasons.extend(f"Montaj: {reason}" for reason in editorial["reasons_ro"])
@@ -3114,16 +3124,19 @@ def technical_problems(
         )
     duration = float(probe.get("duration_seconds") or 0.0)
     breaths = float((budget or {}).get("breath_seconds") or 0.0)
+    rounded = float((budget or {}).get("frame_rounding_seconds") or 0.0)
     silent = float((budget or {}).get("silent_card_seconds") or 0.0)
+    allowed = narration_seconds + breaths + rounded + silent if narration_seconds is not None else 0
     if narration_seconds is None:
         floors.append(
             "Lungimea narațiunii nu este înregistrată; durata filmului nu poate fi judecată"
         )
-    elif duration > narration_seconds + breaths + silent + DURATION_OVER_NARRATION_SECONDS + 1e-6:
+    elif duration > allowed + DURATION_OVER_NARRATION_SECONDS + 1e-6:
         floors.append(
             f"Filmul durează {_ro_number(duration)} s, mai mult decât narațiunea "
             f"({_ro_number(narration_seconds)} s)"
             + (f", respirațiile dintre scene ({_ro_number(breaths)} s)" if breaths else "")
+            + (f", rotunjirea la cadre întregi ({_ro_number(rounded)} s)" if rounded else "")
             + (f", cardurile mute ({_ro_number(silent)} s)" if silent else "")
             + f" plus {_ro_number(DURATION_OVER_NARRATION_SECONDS)} s"
         )
@@ -3325,6 +3338,12 @@ def film_length_budget(
     - the narration: every scene's recorded words (narration_seconds_of);
     - the breaths: the breath the timeline plans after each speaking scene's words
       (production['timeline']['spoken_tail_seconds'], else BREATH_SECONDS);
+    - the frame rounding: the timeline rounds each speaking scene's words and breath UP to a
+      whole frame (`assembler.scene_spans`), so each may run up to one frame past them. It is
+      read from the recorded spans (what each span ran past its words and its breath, at most
+      one frame of the timeline's fps), so a span that kept a longer plan is still film over
+      the narration. Before the montage a film had 6-12 speaking scenes and the rounding fitted
+      inside the 1.0 s; a film of 40-56 shots rounds about 1 s on its own (2026-10-16);
     - the silent cards: a composed scene (BLACK, TITLE_CARD, DATA_CARD) with no words is a
       deliberate silence, allowed up to its kind's MAX_SILENT_CARD_SECONDS. A longer one is
       allowed only up to that maximum and is named in ``overruns_ro``. A silent LIVE scene is
@@ -3345,6 +3364,16 @@ def film_length_budget(
         for span in spans
         if span["spoken"] is not None and span["spoken"] >= SILENT_SPOKEN_SECONDS
     )
+    recorded_fps = _seconds(timeline.get("fps")) if isinstance(timeline, dict) else None
+    frame = 1.0 / (recorded_fps if recorded_fps and recorded_fps > 0 else DEFAULT_TIMELINE_FPS)
+    recorded_spans = isinstance(timeline, dict) and bool(timeline.get("spans"))
+    rounding = 0.0
+    if recorded_spans:
+        for span in spans:
+            spoken = span["spoken"]
+            if spoken is None or spoken < SILENT_SPOKEN_SECONDS:
+                continue
+            rounding += min(frame, max(0.0, float(span["seconds"]) - spoken - breath))
     silent_cards: list[dict[str, Any]] = []
     overruns: list[str] = []
     allowance = 0.0
@@ -3373,16 +3402,18 @@ def film_length_budget(
             )
     breaths = round(breath * speaking, 3)
     silent = round(allowance, 3)
+    rounded = round(rounding, 3)
     return {
         "narration_seconds": round(narration, 3) if narration is not None else None,
         "speaking_scenes": speaking,
         "breath_per_scene": breath,
         "breath_seconds": breaths,
+        "frame_rounding_seconds": rounded,
         "silent_cards": silent_cards,
         "silent_card_seconds": silent,
         "over_seconds": DURATION_OVER_NARRATION_SECONDS,
         "allowed_seconds": (
-            round(narration + breaths + silent + DURATION_OVER_NARRATION_SECONDS, 3)
+            round(narration + breaths + rounded + silent + DURATION_OVER_NARRATION_SECONDS, 3)
             if narration is not None
             else None
         ),
@@ -3958,8 +3989,15 @@ def span_picture_qc(
 
 #: The picture is read at this width: enough for luma levels, motion and cuts, and quick.
 EDITORIAL_WIDTH = 270
-#: The longest silence allowed inside the narration, measured at -45 dB on the voice track.
+#: The longest silence allowed inside the narration, measured at -45 dB on the voice track,
+#: beyond the pause the timeline planned there: since 2026-10-16 every shot keeps a 0.4 s
+#: breath after its words (`assembler.SPOKEN_TAIL_SECONDS`), and the silence at a cut is
+#: that breath plus the takes' kept edges and a frame of rounding; only what runs past the
+#: recorded breath is dead air (`_planned_pauses`).
 MAX_NARRATION_SILENCE_SECONDS = 0.25
+#: How far from a recorded span boundary a measured silence may sit and still be that
+#: boundary's breath: the detector's own resolution and a kept edge of the next take.
+PAUSE_BOUNDARY_TOLERANCE_SECONDS = 0.1
 NARRATION_SILENCE_DB = -45.0
 #: The last seconds of the film, and how long the picture may be black or frozen inside them.
 END_WINDOW_SECONDS = 3.0
@@ -3969,8 +4007,14 @@ BLACK_YAVG = 18.0
 #: A frame whose mean difference from the one before is under this (8-bit, at 270 px) did
 #: not move.
 FROZEN_YDIF = 0.1
-#: The longest average shot a short may have, and what counts as a cut (scdet, percent).
+#: The longest average shot a short may have with the montage off, and what counts as a cut
+#: (scdet, percent). With the montage on the limit follows its shots (`average_shot_limit`).
 MAX_AVERAGE_SHOT_SECONDS = 3.5
+#: How far past ``montage_shot_seconds`` of words a montage shot may run: a scene is cut only
+#: when its words reach one and a half shots (`montage.shot_count` rounds), so an uncut scene
+#: runs up to half a shot longer. The Owner's 160 s short at the brief's own 13-14 words a
+#: scene is 28 shots of about 5.8 s, which the 3.5 s limit named on every film (2026-10-16).
+MONTAGE_SHOT_TOLERANCE = 0.5
 CUT_SCORE_PERCENT = 15.0
 #: The picture must move inside the first half-second: the first frame decides the swipe.
 OPENING_SECONDS = 0.5
@@ -4134,6 +4178,44 @@ def _silent_beats(production: Mapping[str, Any]) -> list[tuple[float, float]]:
     return beats
 
 
+def _planned_pauses(production: Mapping[str, Any]) -> list[tuple[float, float]]:
+    """Where the timeline planned a pause after words, and how long: (the span's end, what the
+    span runs past its recorded words), for every span with words."""
+    timeline = production.get("timeline")
+    spans = timeline.get("spans") if isinstance(timeline, Mapping) else None
+    pauses: list[tuple[float, float]] = []
+    for span in spans or []:
+        if not isinstance(span, Mapping):
+            continue
+        spoken = _seconds(span.get("spoken_seconds"))
+        start, end = _seconds(span.get("start")), _seconds(span.get("end"))
+        if spoken is None or spoken <= SILENT_SPOKEN_SECONDS or start is None or end is None:
+            continue
+        pauses.append((end, max(0.0, end - start - spoken)))
+    return pauses
+
+
+def average_shot_limit(production: Mapping[str, Any], settings: Any | None = None) -> float:
+    """The longest average shot editorial QC lets pass without a note. With the montage off,
+    MAX_AVERAGE_SHOT_SECONDS. With it on, a montage shot: ``montage_shot_seconds`` of words and
+    half a shot more (MONTAGE_SHOT_TOLERANCE), plus the breath the timeline recorded after
+    them (else the assembler's)."""
+    from app.media.montage import montage_settings  # noqa: PLC0415 - read when measured
+
+    options = montage_settings(settings)
+    if not options["enabled"] or options["max_shots"] <= 1:
+        return MAX_AVERAGE_SHOT_SECONDS
+    timeline = production.get("timeline")
+    breath = (
+        _seconds(timeline.get("spoken_tail_seconds")) if isinstance(timeline, Mapping) else None
+    )
+    if breath is None:
+        from app.media.assembler import SPOKEN_TAIL_SECONDS  # noqa: PLC0415 - assembler reads qc
+
+        breath = SPOKEN_TAIL_SECONDS
+    return round(float(options["shot_seconds"]) * (1 + MONTAGE_SHOT_TOLERANCE) + breath, 2)
+
+
 def _voice_source(film: Path, production: Mapping[str, Any]) -> Path:
     """The narration as it was joined (production['audio']['voice_track']), else the film."""
     audio = production.get("audio")
@@ -4149,8 +4231,10 @@ def _voice_source(film: Path, production: Mapping[str, Any]) -> Path:
 def _narration_silences(
     ffmpeg: str, film: Path, production: Mapping[str, Any], duration: float
 ) -> list[tuple[float, float]] | None:
-    """The silences inside the narration: after its first word, before its last, and not
-    on a silent card. None when the sound could not be read."""
+    """The silences inside the narration: after its first word, before its last, not on a
+    silent card, and longer than the breath the timeline planned where they fall (a silence
+    across a span's end counts only what runs past that span's breath by
+    MAX_NARRATION_SILENCE_SECONDS or more). None when the sound could not be read."""
     spans = silence_spans(
         ffmpeg,
         _voice_source(film, production),
@@ -4160,6 +4244,7 @@ def _narration_silences(
     if spans is None:
         return None
     beats = _silent_beats(production)
+    pauses = _planned_pauses(production)
     inner: list[tuple[float, float]] = []
     for position, (start, end) in enumerate(spans):
         if start <= 0.02:
@@ -4171,6 +4256,14 @@ def _narration_silences(
         )
         if overlap >= 0.5 * (end - start):
             continue  # a silent card: the pause is the scene
+        if any(
+            start - PAUSE_BOUNDARY_TOLERANCE_SECONDS
+            <= boundary
+            <= end + PAUSE_BOUNDARY_TOLERANCE_SECONDS
+            and (end - start) - planned < MAX_NARRATION_SILENCE_SECONDS
+            for boundary, planned in pauses
+        ):
+            continue  # the breath the timeline planned after a shot's words
         inner.append((start, end))
     return inner
 
@@ -4195,6 +4288,7 @@ def editorial_problems(
     ffmpeg: str | None = None,
     cues: list[dict[str, Any]] | None = None,
     blocking: bool = False,
+    settings: Any | None = None,
 ) -> dict[str, Any]:
     """What a viewer would feel in the editing of ``film``, measured, with Romanian reasons.
 
@@ -4204,6 +4298,7 @@ def editorial_problems(
     NOT_MEASURED (no encoder or no film: ``passed`` is None, never a pass by absence).
     """
     path = Path(film)
+    longest_average = average_shot_limit(production, settings)
     record: dict[str, Any] = {
         "passed": None,
         "status": "NOT_MEASURED",
@@ -4216,7 +4311,7 @@ def editorial_problems(
             "end_still_seconds": MAX_END_STILL_SECONDS,
             "end_window_seconds": END_WINDOW_SECONDS,
             "black_yavg": BLACK_YAVG,
-            "average_shot_seconds": MAX_AVERAGE_SHOT_SECONDS,
+            "average_shot_seconds": longest_average,
             "opening_seconds": OPENING_SECONDS,
             "grade_outlier_delta_e": GRADE_OUTLIER_DELTA_E,
         },
@@ -4265,11 +4360,11 @@ def editorial_problems(
 
     cuts = len(editorial_cut_times(trace, production))
     average = round(trace.duration / (cuts + 1), 3)
-    if average > MAX_AVERAGE_SHOT_SECONDS:
+    if average > longest_average:
         problem(
             "long_shots",
             f"Un cadru durează în medie {_ro_number(average)} s (cel mult "
-            f"{_ro_number(MAX_AVERAGE_SHOT_SECONDS)} s): {cuts} "
+            f"{_ro_number(longest_average)} s): {cuts} "
             f"{'tăietură' if cuts == 1 else 'tăieturi'} în {_ro_number(trace.duration)} s.",
             seconds=average,
         )

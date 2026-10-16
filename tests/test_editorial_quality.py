@@ -1083,8 +1083,10 @@ def test_the_refusal_tells_the_writer_where_the_line_is():
     )
     reason = checks["duration_is_realistic"]["reason"]
     # "Too long" is not a brief. The length measured, the target, and the band that would have
-    # been accepted are all in the sentence the writer receives on the rewrite.
-    assert "115.4s" in reason
+    # been accepted are all in the sentence the writer receives on the rewrite. The length is
+    # the film the montage cuts from the words, breaths included (`film_length`).
+    measured = checks["duration_is_realistic"]["estimated_seconds"]
+    assert measured > 115.0 and f"{measured:.1f}s" in reason
     assert "ținta de 30s" in reason
     assert "15-45s" in reason
 
@@ -1109,11 +1111,13 @@ def test_a_few_words_over_is_not_a_refusal():
 
 def test_a_short_may_never_outgrow_the_format(engine):
     """However long the target, the outer wall is the format itself."""
-    from app.factual.editorial import MAX_SHORT_SECONDS, narration_budget
+    from app.factual.editorial import MAX_SHORT_SECONDS, length_ceiling_seconds, narration_budget
 
     assert narration_budget(45)["max_seconds"] == 67.5  # under the wall: its own tolerance
-    assert narration_budget(200)["max_seconds"] == MAX_SHORT_SECONDS
-    assert narration_budget(300)["max_seconds"] == MAX_SHORT_SECONDS
+    # The wall less the margin the film's estimate keeps under it (2026-10-16).
+    assert length_ceiling_seconds() < MAX_SHORT_SECONDS
+    assert narration_budget(200)["max_seconds"] == length_ceiling_seconds()
+    assert narration_budget(300)["max_seconds"] == length_ceiling_seconds()
 
 
 # --------------------------------------------------------------------------------------------

@@ -1235,7 +1235,8 @@ def _qc_duration(engine, tmp_path, monkeypatch, seconds: float, *, serial: bool 
     ("seconds", "serial", "passes"),
     [
         (180.0, False, True),  # YouTube's Shorts limit, exactly (the Owner, 2026-10-16)
-        (180.9, False, True),  # the container's own rounding and the last breath
+        # YouTube's wall is absolute: the slack never takes a film past it (2026-10-16).
+        (180.9, False, False),
         (181.5, False, False),
         (179.9, True, True),  # the serial's 90-180 s window
         (181.5, True, False),
@@ -1262,3 +1263,23 @@ def test_a_channel_may_take_shorts_up_to_three_minutes(engine, tmp_path, monkeyp
     assert technical["max_duration_seconds"] == 180 and technical["duration_valid"] is True
     technical, _ = _qc_duration(engine, tmp_path / "b", monkeypatch, 181.5)
     assert technical["duration_valid"] is False
+
+
+def test_the_slack_is_forgiven_only_under_youtubes_wall(engine, tmp_path, monkeypatch):
+    """A channel the Owner set to 150 s still forgives the container's rounding; one at 180
+    does not take a film past 180 (2026-10-16, review finding 19)."""
+    seed_default_channels(engine)
+    with Session(engine) as session, session.begin():
+        channel = session.scalars(
+            select(ChannelRecord).where(ChannelRecord.channel_type == "MAIN_FACTUAL")
+        ).one()
+        channel.shorts_max_seconds = 150
+    technical, _ = _qc_duration(engine, tmp_path / "a", monkeypatch, 150.9)
+    assert technical["max_duration_seconds"] == 150 and technical["duration_valid"] is True
+    with Session(engine) as session, session.begin():
+        session.scalars(
+            select(ChannelRecord).where(ChannelRecord.channel_type == "MAIN_FACTUAL")
+        ).one().shorts_max_seconds = 180
+    technical, reasons = _qc_duration(engine, tmp_path / "b", monkeypatch, 180.5)
+    assert technical["duration_valid"] is False
+    assert any("limitele unui Short" in reason for reason in reasons), reasons

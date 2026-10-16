@@ -98,8 +98,9 @@ NARRATION_CLOSING_SENTENCES = 1
 #: measured by the review's own checks before it is stored, with one more ask on a refusal.
 #: v8 (2026-10-16, the Owner: «Eu nu înțeleg nimic… ar trebui să existe o narațiune»): the
 #: showrunner invents the small story and the real day is its backdrop; a narrator opens and
-#: closes; 250-430 spoken words over 90-175 seconds (the montage cuts a beat into shots, so
-#: a beat no longer fits one clip); a quiet day is still told.
+#: closes; 250-390 spoken words, 90-156 seconds of speech (430 and 175 until the length
+#: review of the same day: the shots' breaths); the montage cuts a beat into shots, so a beat
+#: no longer fits one clip; a quiet day is still told.
 EPISODE_TEMPLATE_VERSION = "episode-v8"
 #: The structure a writers' room asks of a short: in this order, the hook first and the
 #: button last; situation, turn and payoff may take more than one beat each.
@@ -117,10 +118,18 @@ OFFERED_SPEAKERS = 3
 #: then 8-22, a beat held to one 9-second clip, and the lines read «Zero scripts. Zero
 #: approvals.»).
 WORDS_PER_BEAT = (15, 45)
-#: Spoken words in the whole episode, the narrator's included: 100 to 172 seconds at 2.5
-#: words a second — under YouTube's 180-second Shorts wall with the shots' breaths (the
-#: Owner, 2026-10-16: «90-180 s, 250-450 cuvinte», and «maxim 180»).
-EPISODE_WORDS = (250, 430)
+#: Spoken words in the whole episode, the narrator's included (the Owner, 2026-10-16:
+#: «90-180 s, 250-450 cuvinte», and «maxim 180»). The ceiling is what the film the montage
+#: cuts from them can carry under YouTube's 180-second wall: every shot keeps a 0.4 s breath
+#: after its words (`assembler.SPOKEN_TAIL_SECONDS`), and 390 words cut into 23-43 shots
+#: estimate at 167-177 s (`media.film_length.serial_film_length`, measured 2026-10-16 on 6-12
+#: beats of 2-4 lines). It was 430: 35 shots of those words came out at 189 s, past the wall
+#: quality control refuses after every still, clip and voice was bought.
+EPISODE_WORDS = (250, 390)
+#: The same episode in seconds of speech at 2.5 words a second, as the brief states it and the
+#: review measures it (`story.review.MIN_SECONDS`, `MAX_SECONDS`): the floor is the Owner's
+#: 90 s, a recommendation the Director weighs; the ceiling is the words' own.
+EPISODE_SECONDS = (90.0, EPISODE_WORDS[1] / 2.5)
 #: The fewest beats the brief asks for. Not the five parts alone: five beats of at most 22
 #: words are 110 words, 44 seconds, which the length check fails, so the v3 brief asked for
 #: an episode it would refuse (verifier, 2026-09-24). Six beats of 20 reach 120.
@@ -982,9 +991,10 @@ the punctuation and the captions follow it.
 the Director weighs, not a rule that refuses the episode. A beat may run longer than one \
 shot: the montage cuts it into shots of a few seconds, so write whole sentences that carry \
 a thought to its end, never telegraphic fragments. The whole episode is {min_episode_words} \
-to {max_episode_words} spoken words, the Narrator's included: about {min_seconds} to \
-{max_seconds} seconds at 2.5 words a second, and never more than {max_episode_words} words \
-(past them the film is no longer a Short).
+to {max_episode_words} spoken words, the Narrator's included: at 2.5 words a second, at \
+least {min_seconds} and at most {max_seconds} seconds of speech, and never more than \
+{max_episode_words} words. Every shot keeps a breath after its words, so past them the \
+film is no longer a Short; many very short lines make many shots, and their breaths add up.
 5. Language. The title, the lines, the summary and the logline are in English. Some event \
 texts (letter subjects, titles) are in Romanian: say what they mean in English, never quote \
 the Romanian.
@@ -1791,8 +1801,8 @@ def write_episode(
             max_speakers=SPEAKING_CAST[1],
             min_words=WORDS_PER_BEAT[0],
             max_words=WORDS_PER_BEAT[1],
-            min_seconds=int(EPISODE_WORDS[0] / 2.5),
-            max_seconds=int(EPISODE_WORDS[1] / 2.5),
+            min_seconds=int(EPISODE_SECONDS[0]),
+            max_seconds=int(EPISODE_SECONDS[1]),
             opening_sentences=(
                 f"{NARRATION_OPENING_SENTENCES[0]} or {NARRATION_OPENING_SENTENCES[1]}"
             ),
