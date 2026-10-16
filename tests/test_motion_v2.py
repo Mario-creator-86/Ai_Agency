@@ -927,7 +927,7 @@ def test_the_plans_own_path_and_tempo_follow_the_moves_sentence_and_a_noun_is_no
     # followed by the plan's clause was refused as «two camera instructions»).
     camera = (
         "Tracking right: a slow, straight follow along the pulse's path as it travels across "
-        "the room."
+        "the room, the camera held to this one move from the first frame to the last."
     )
     assert prompt.startswith(camera), prompt
     assert MOVE_SENTENCES["tracking right"] not in prompt, prompt
@@ -938,7 +938,11 @@ def test_the_plans_own_path_and_tempo_follow_the_moves_sentence_and_a_noun_is_no
     # A clause without a tempo word gets the move's own.
     assert prompt_agent._camera_with_path(
         "tracking right", "A straight follow along the line."
-    ) == ("Steady tracking right: a straight follow along the line.")
+    ) == (
+        "Steady tracking right: a straight follow along the line"
+        + prompt_agent.LOCKED_MOVE_CLAUSE
+        + "."
+    )
     assert "The shot ends on the pulse mid-travel: the bright warm-red pulse" in prompt, prompt
     assert [m for m, _ in camera_moves(prompt)] == ["tracking right"], prompt
     assert not _blocks(lint_motion_prompt(prompt, scene=4, model_id="LTX-2.5"))

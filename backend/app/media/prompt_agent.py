@@ -3445,6 +3445,11 @@ _CAMERA_CLAUSE_NOISE = re.compile(
 )
 
 
+#: Closes the plan's camera sentence: the one move, held, in positive words (02:21-02:25Z,
+#: 7c26a7ce scene 4: six refusals for «never states the camera is locked to this one move»).
+LOCKED_MOVE_CLAUSE = ", the camera held to this one move from the first frame to the last"
+
+
 def _camera_with_path(move: str, path: str) -> str:
     """The move named once, with the plan's own path and tempo in the same sentence:
     «Tracking right: a slow, straight follow along the pulse's path as it travels across the
@@ -3458,7 +3463,7 @@ def _camera_with_path(move: str, path: str) -> str:
     if not lint.SPEED_WORDS.search(text):
         first = short.split()[0]
         tempo = f"{first} " if lint.SPEED_WORDS.search(first) else ""
-    said = f"{tempo}{name}: {text}"
+    said = f"{tempo}{name}: {text}{LOCKED_MOVE_CLAUSE}"
     return _sentence(said[:1].upper() + said[1:])
 
 

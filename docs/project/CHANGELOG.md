@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-16 — The held move said; the audit never refuses a fixed sentence
+
+- `media/prompt_agent.py`: the plan's camera sentence closes with «the camera held to this one move from the first frame to the last» (`LOCKED_MOVE_CLAUSE`). `media/prompt_audit.py` (template v4): a camera sentence that names one move with path and tempo is complete — no lock, ban, lens or framing to ask for; the room's look is the picture's; a doubt resting only on the composer's fixed sentences is an observation, not a refusal (7c26a7ce scene 4, six refusals 02:21–02:25Z).
+
 ## 2026-10-16 — One camera sentence; the fixed world said; the cap before any round
 
 - `media/prompt_agent.py`: one camera sentence carrying the plan's path and tempo (`_camera_with_path`); `FIXED_WORLD_SENTENCE` when a plan fixes its world and the camera moves (7c26a7ce scene 4, 02:03Z). `media/stills_stage.py`, `media/assembler.py`: a scene at the renders cap with no approved still keeps its newest refused still on disk as its picture before any round, and `usable_take` reuses a `director_cap` still whatever its words (87c05891 scene 1, 02:04Z).
