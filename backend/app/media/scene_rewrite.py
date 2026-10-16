@@ -1357,11 +1357,18 @@ def _serial_shot(context: dict[str, Any]) -> dict[str, Any]:
             "the series' look, the room, the fixed framing above, the people in frame as "
             "their bibles describe them, the FIRST moment of action (each person's clause up "
             "to the comma that begins their next moment), then emotion, background and "
-            "continuity while there is room"
+            "continuity while there is room; on an establishing or wide shot the people are "
+            "small figures in the room and no hand-by-hand detail of action, emotion, "
+            "background or continuity is said in the picture (the clip keeps the whole action)"
         ),
         "how_the_clip_is_composed": (
             "camera_move with its path and tempo, the whole action as the chain of movement, "
-            "the ending frame, the people's faces kept, the room alive, the feeling"
+            "the ending frame, the people's faces kept with the expression emotion names, held "
+            "from the first frame to the last; the people's gestures only when action and "
+            "ending_frame leave them free (a pose held — hands resting, flat or held, «holds», "
+            "nothing changed — or an establishing, wide, reaction or narrator shot says none); "
+            "the room's flicker and stir only when nothing in lighting, background, "
+            "continuity, ending_frame or avoid asks for a steady light or a still room"
         ),
         "composition_limits": {
             "still_max_characters": look.get("max_prompt_chars"),
@@ -1424,12 +1431,18 @@ def _motion_sentences(context: dict[str, Any], motion: str) -> tuple[list[str], 
         constants[1:1] = [
             words.SERIAL_CAST_TAIL,
             words.SERIAL_FACES_SENTENCE,
-            words.SERIAL_LIFE_SENTENCE,
             words.SERIAL_LISTEN_TAIL,
         ]
     fixed = _present(constants, motion)
     if lint.MOTION_CLOSING not in fixed:
         fixed += _present([lint.VEO_MOTION_CLOSING], motion)
+    # Since 2026-10-16 the serial's life sentence follows the plan (`serial_life_sentence`):
+    # a held pose or a steady room in the ending takes its halves out, so it is the
+    # ending_frame's sentence — his to change, never a lock (87c05891 scenes 1 and 6: her
+    # reviews named «As they speak their hands gesture…» untreated, round after round).
+    world = [words.DEFAULT_WORLD_MOTION, words.MOTION_PAD, words.MOTIONLESS_PAD]
+    if serial:
+        world += list(words.SERIAL_LIFE_SENTENCES)
     chosen = {
         "camera_move": _present(
             [
@@ -1440,10 +1453,15 @@ def _motion_sentences(context: dict[str, Any], motion: str) -> tuple[list[str], 
             ],
             motion,
         ),
-        ("ending_frame" if serial else "motion"): _present(
-            [words.DEFAULT_WORLD_MOTION, words.MOTION_PAD, words.MOTIONLESS_PAD], motion
-        ),
+        ("ending_frame" if serial else "motion"): _present(world, motion),
     }
+    if serial:
+        # The plan's expression, named and held, is the emotion field's sentence.
+        chosen["emotion"] = [
+            sentence
+            for sentence in _sentences(motion)
+            if sentence.startswith(words.SERIAL_EXPRESSION_LEADS)
+        ]
     return fixed, {name: said for name, said in chosen.items() if said}
 
 
@@ -1502,17 +1520,27 @@ def _layer_fields(context: dict[str, Any], layer: str) -> tuple[dict[str, str], 
         if layer == MOTION:
             fields = {
                 "camera_move": "the clip's one camera move: its sentence opens the motion",
-                "ending_frame": "said in the motion as «The shot ends on …»",
-                "emotion": "the clip's feeling, said in the motion only",
+                "ending_frame": (
+                    "said in the motion as «The shot ends on …»; a pose it holds or a steady "
+                    "room it names takes the people's gestures or the room's flicker out"
+                ),
+                "emotion": (
+                    "the clip's feeling: the expression the faces hold from the first frame to "
+                    "the last, said in the motion only"
+                ),
             }
             kept = {"action": stored.get("action")}
         else:
             fields = {
                 "action": (
-                    "its FIRST moment is the still's action; the whole action is the clip's "
-                    "chain of movement"
+                    "its FIRST moment is the still's action (without hand-by-hand detail on an "
+                    "establishing or wide shot); the whole action is the clip's chain of "
+                    "movement, and a pose it holds takes the people's gestures out"
                 ),
-                "emotion": "said in the still and in the motion",
+                "emotion": (
+                    "said in the still, and in the motion as the expression held from the "
+                    "first frame to the last"
+                ),
                 "background": "said in the still while there is room",
                 "continuity": "said in the still while there is room",
                 "ending_frame": "said in the motion as «The shot ends on …»",
@@ -3146,7 +3174,9 @@ def _after(first: Any, second: Any) -> bool:
 
 def _composer_sentences() -> tuple[str, ...]:
     """Today's fixed sentences of the composer, whatever a stored prompt carries: a lock in
-    one of them lasts while the composer still says it (`scene_waits`)."""
+    one of them lasts while the composer still says it (`scene_waits`). The serial's life
+    sentence is not one since 2026-10-16: the plan says whether it is said
+    (`prompt_agent.serial_life_sentence`), so a lock on it lifts and she is asked again."""
     from app.media import prompt_agent as words  # noqa: PLC0415 - it imports us
 
     return (
@@ -3154,7 +3184,6 @@ def _composer_sentences() -> tuple[str, ...]:
         words.FACES_CONSTRAINT,
         words.SERIAL_CAST_TAIL,
         words.SERIAL_FACES_SENTENCE,
-        words.SERIAL_LIFE_SENTENCE,
         words.SERIAL_LISTEN_TAIL,
         words.SERIAL_FRAME_SENTENCE,
         words.SERIAL_BLANK_SENTENCE,

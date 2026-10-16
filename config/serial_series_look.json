@@ -25,12 +25,13 @@
     "watermarks or logos"
   ],
   "shot_sizes": {
-    "establishing": "Establishing wide shot at eye level from across the room: the whole room in view, floor to ceiling, {name} small in the middle distance, the full figure and the whole desk inside the frame",
+    "establishing": "Establishing wide shot at eye level from across the room: the whole room in view, floor to ceiling, the whole desk inside the frame, {name} a small full figure in the middle distance",
     "two_shot": "Medium two-shot at eye level, both speakers facing the viewer",
     "single": "Medium close-up single at eye level on {name}, facing the viewer",
     "close": "Close-up at eye level on {name}'s reaction, facing the viewer",
     "reaction": "Close-up at eye level on {name} listening, lips closed, eyes on the speaker beside the frame"
   },
+  "shot_sizes_note": "2026-10-16, without a version bump (a bump has every open episode's shots described again, and its approved pictures bought again): the establishing framing names the room and the desk first and the person last, as a small full figure, and the composer says that shot's first pose without hand-by-hand detail. 87c05891 scene 1: «{name} small in the middle distance» said beside an action naming both hands built a medium close-up around Sarah, and four rewrites could not change the framing's words.",
   "max_prompt_chars": 20000,
   "rooms": {
     "house": "Inside the studio house: wooden desks, hanging brass lamps in warm amber, bookshelves, potted plants and climbing vines, big windows on the lantern-lit street.",

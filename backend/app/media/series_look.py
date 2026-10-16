@@ -37,10 +37,13 @@ DEFAULT_MAX_PROMPT_CHARS = MAX_PROMPT
 #: The shot sizes the serial varies between, when the file does not name them. ``{name}`` is
 #: the character the shot is on.
 DEFAULT_SHOT_SIZES = {
+    # The room and the desk first, the person last as a small full figure (2026-10-16,
+    # 87c05891 scene 1: «{name} small in the middle distance» beside an action naming both
+    # hands built a medium close-up around Sarah).
     "establishing": (
         "Establishing wide shot at eye level from across the room: the whole room in view, "
-        "floor to ceiling, {name} small in the middle distance, the full figure and the whole "
-        "desk inside the frame"
+        "floor to ceiling, the whole desk inside the frame, {name} a small full figure in the "
+        "middle distance"
     ),
     "two_shot": "Medium two-shot at eye level, both speakers facing the viewer",
     "single": "Medium close-up single at eye level on {name}, facing the viewer",

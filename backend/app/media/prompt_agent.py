@@ -2060,6 +2060,61 @@ def _still_moment(action: str) -> str:
     return "; ".join(kept)
 
 
+#: Hand-by-hand detail of a pose: a hand, a palm, a finger…
+_HAND_WORDS = re.compile(
+    r"\b(?:hands?|palms?|fingers?|fingertips?|fists?|thumbs?|wrists?|knuckles?)\b", re.IGNORECASE
+)
+#: A clause that opens on a hand («her right hand rests on the folder»): the pose's detail,
+#: never a person's own clause, which opens on the person.
+_HAND_LEAD = re.compile(
+    r"^(?:(?:her|his|their|both|one|the|a)\s+)*(?:(?:left|right|other|free)\s+)?"
+    r"(?:hands?|palms?|fingers?|fingertips?|fists?|thumbs?|wrists?)\b",
+    re.IGNORECASE,
+)
+#: «… with her hands on the desk» closing a person's own clause.
+_WITH_HANDS = re.compile(
+    r"\s+with\s+(?:(?:her|his|their|both|one|a)\s+)*(?:(?:left|right|other)\s+)?"
+    r"(?:hands?|palms?|fingers?|fists?)\b.*$",
+    re.IGNORECASE,
+)
+
+
+def _without_hand_detail(text: str) -> str:
+    """``text`` without the hand-by-hand detail of its poses: a later piece of a clause that
+    names a hand («…, her right hand resting on the folder»), a later clause that opens on one
+    («…; her left hand lies flat on the desk») and a closing «with her hands …» are left out;
+    each clause's own head (the person and the pose) stays. For an establishing or wide still,
+    whose people are small figures in the room (2026-10-16 19:16Z, 87c05891 scene 1: «the
+    action clause that names Sarah's pose and both hands as the frame's content build the
+    picture around her», a medium close-up where the plan fixes the establishing wide)."""
+    said = " ".join(str(text or "").split())
+    sentences: list[str] = []
+    for sentence in re.split(r"(?<=[.!?])\s+", said):
+        end = sentence[-1] if sentence[-1:] in (".", "!", "?") else ""
+        body = sentence[: len(sentence) - len(end)]
+        clauses: list[str] = []
+        for index, clause in enumerate(re.split(r"\s*;\s*", body)):
+            head, *rest = re.split(r",\s+", clause)
+            if index and _HAND_LEAD.match(head.strip()):
+                continue
+            head = _WITH_HANDS.sub("", head)
+            kept = ", ".join([head, *(piece for piece in rest if not _HAND_WORDS.search(piece))])
+            kept = kept.strip(" ,")
+            if kept:
+                clauses.append(kept)
+        if clauses:
+            sentences.append("; ".join(clauses) + end)
+    return " ".join(sentences)
+
+
+def serial_still_moment(package: Mapping[str, Any]) -> str:
+    """The action as a serial still says it: its first moment (`_still_moment`), without the
+    hand-by-hand detail on an establishing or wide shot, whose people are small figures in the
+    room (`_without_hand_detail`); the clip keeps the whole action, hands included."""
+    moment = _still_moment(str(package.get("action") or ""))
+    return _without_hand_detail(moment) if _serial_wide(package) else moment
+
+
 #: After a comma, a new moment: a pronoun or «then» opening it, or a verb of motion in its
 #: first three words («pauses before», «the gesture stalls», «restarts his») — never a tail
 #: that only describes the same moment («arms crossed», «eyes on the street», «hands on
@@ -2191,7 +2246,11 @@ def compose_serial_prompt(package: dict[str, Any], look: dict[str, Any]) -> str:
     # rubrics the first episode's stills carried (2026-10-11, f06808c9), the prompt check
     # refused them (TEMPLATE_LABEL) on every rewrite, and the Director and the Video Editor
     # went round in circles while the storyboard waited.
-    action = _still_moment(str(package.get("action") or ""))
+    action = serial_still_moment(package)
+    # An establishing or wide still says its people as small figures in the room: the room and
+    # the framing lead, each person's first pose follows, and no sentence of the plan builds the
+    # picture around a hand (`_without_hand_detail`; 87c05891 scene 1, 2026-10-16 19:16Z).
+    wide = _serial_wide(package)
     head = [
         str(look.get("block") or "").strip(),
         f"Location: {package['location']}." if package.get("location") else "",
@@ -2237,6 +2296,8 @@ def compose_serial_prompt(package: dict[str, Any], look: dict[str, Any]) -> str:
         ("As in the shot before: ", package.get("continuity")),
     ):
         said = " ".join(str(value or "").split()).rstrip(". ")
+        if wide:
+            said = _without_hand_detail(said).rstrip(". ")
         if not said:
             continue
         if prefix and said[:1].isupper() and not said.startswith(("AMN", "I ")):
@@ -2274,7 +2335,27 @@ def _serial_camera_move(package: dict[str, Any], previous: list[str]) -> str:
 #: What keeps the serial's people themselves while they move (2026-10-11, 45dc313; the
 #: features named since 2026-10-15 16:41Z, a4ecf40a scene 6: «the model let the face slip
 #: from one frame to the next» — her cause: the face was never fixed as its own clause).
-SERIAL_FACES_SENTENCE = "Their faces stay expressive and the same people throughout."
+#: Never «expressive» since 2026-10-16 19:18Z (87c05891 scene 6: the clip opened the mouth and
+#: smiled, and her review blamed «Their faces stay expressive» — a word no rewrite could take
+#: out, while the plan held «lips pressed together, mouth closed»). The plan's own expression
+#: is named after it (`serial_faces_sentence`). No longer than the old words: the clip's cap
+#: (1000 UTF-16 units) is full on a held plan's long ending (87c05891 scene 7).
+SERIAL_FACES_SENTENCE = "Each face keeps its features, the same people throughout."
+#: How the plan's expression (``motion_emotion``, else ``emotion``) is named in the clip, held
+#: from the first frame to the last; the plural when the shot names several people. The lead
+#: is said only with the Editor's words after it, so it is his ``emotion`` field's sentence
+#: (`scene_rewrite._motion_sentences`), never a lock.
+SERIAL_EXPRESSION_LEAD = "Their expression holds from the first frame to the last: "
+SERIAL_EXPRESSIONS_LEAD = "Their expressions hold from the first frame to the last: "
+#: The lead of an expression the plan already says held, or one that changes over the shot
+#: («…, then tapping once»): named as the plan says it, nothing added about holding it.
+SERIAL_FEELING_LEAD = "Their faces show: "
+SERIAL_EXPRESSION_LEADS = (SERIAL_EXPRESSION_LEAD, SERIAL_EXPRESSIONS_LEAD, SERIAL_FEELING_LEAD)
+#: An expression the plan already says is held, from the first frame to the last.
+_ALREADY_HELD = re.compile(
+    r"\bfirst\s+frame\s+to\s+the\s+last\b|\bthroughout\b|\bunchanged\b|\bstart\s+to\s+finish\b",
+    re.IGNORECASE,
+)
 #: Who is in a serial clip, and nobody else: said with the shot's names (`_cast_names`),
 #: the tail fixed so a lock on it is the composer's (`scene_rewrite._composer_sentences`).
 #: 2026-10-15 16:46Z, a4ecf40a scene 7: a single on Sarah, and «a second man appears behind
@@ -2307,14 +2388,186 @@ def serial_cast_sentence(package: dict[str, Any]) -> str:
     return SERIAL_CAST_SENTENCE.format(names=said, faces="face" if len(names) == 1 else "faces")
 
 
+def serial_feeling(package: Mapping[str, Any]) -> str:
+    """The plan's feeling for the clip, on one line without its full stop: the Director's
+    motion rewrite's ``motion_emotion``, else the shot's ``emotion``; empty when neither."""
+    return " ".join(
+        str(package.get("motion_emotion") or package.get("emotion") or "").split()
+    ).rstrip(". ")
+
+
+def serial_expression_sentence(package: dict[str, Any]) -> str:
+    """The plan's expression named in the clip, held from the first frame to the last
+    (`SERIAL_EXPRESSION_LEAD`); empty when the plan names none. A plan that already says it
+    holds, or whose feeling changes over the shot, is named as it says it (`SERIAL_FEELING_LEAD`);
+    its chain words are taken out (`_continuous`), the chain kept."""
+    feeling = serial_feeling(package)
+    if not feeling:
+        return ""
+    changes = bool(lint.STILL_THEN.search(feeling) or lint.LATER_MOMENT.search(feeling))
+    # Said in the plan's own casing after the colon: a name the plan does not list in frame
+    # («Nadia calm, Sarah attentive» of a beat that names nobody) keeps its capital.
+    said = _continuous(feeling).rstrip(". ,;")
+    if not said:
+        return ""
+    names = _cast_names(package)
+    if changes or _ALREADY_HELD.search(feeling):
+        lead = SERIAL_FEELING_LEAD
+    else:
+        lead = SERIAL_EXPRESSIONS_LEAD if len(names) > 1 else SERIAL_EXPRESSION_LEAD
+    return _sentence(lead + said)
+
+
+def serial_faces_sentence(package: dict[str, Any]) -> str:
+    """The clip's faces: who they are (`SERIAL_FACES_SENTENCE`), then the plan's expression
+    held from the first frame to the last (`serial_expression_sentence`) when it names one.
+
+    2026-10-16 19:18Z, 87c05891 scene 6: «The motion prompt still says only 'Their faces stay
+    expressive and the same people throughout' and never names the plan's expression — brows
+    slightly drawn, lips pressed together…» — the plan's feeling was said last, and the cap
+    always left it out. A reaction shot keeps its listener's face as its listen sentence says
+    it (lips closed, a breath and a small nod as the words go on): no expression is held."""
+    if serial_listen_sentence(package):
+        return SERIAL_FACES_SENTENCE
+    expression = serial_expression_sentence(package)
+    return f"{SERIAL_FACES_SENTENCE} {expression}" if expression else SERIAL_FACES_SENTENCE
+
+
 #: The life of a serial shot beyond its lines: the people's bodies move as they speak, and
 #: the room — the office picture's lamps and plants, in every room of the studio's house —
 #: moves with them («Mișcare v2», 2026-10-11: the first board's clips held their people
-#: still while they spoke).
-SERIAL_LIFE_SENTENCE = (
-    "As they speak their hands gesture, heads turn and shoulders shift, and behind them the "
-    "lamp light flickers softly and the plants stir."
+#: still while they spoke). Since 2026-10-16 each half follows the plan
+#: (`serial_life_sentence`): 87c05891 scenes 1 and 6, 19:16-19:19Z, the Director refused the
+#: Video Editor's rewrites again and again because «As they speak their hands gesture…» told
+#: the model the scene is alive and lifted both hands off a desk the plan held them on, and
+#: «the lamp light flickers softly and the plants stir» moved a room the plan held steady —
+#: words no field of his could change.
+SERIAL_PEOPLE_LIFE = "As they speak their hands gesture, heads turn and shoulders shift"
+SERIAL_ROOM_LIFE = "behind them the lamp light flickers softly and the plants stir"
+SERIAL_LIFE_SENTENCE = f"{SERIAL_PEOPLE_LIFE}, and {SERIAL_ROOM_LIFE}."
+#: The people's half alone: the plan holds the room's light or the room still.
+SERIAL_PEOPLE_LIFE_SENTENCE = f"{SERIAL_PEOPLE_LIFE}."
+#: The room's half alone: the plan holds its people's pose, or they are small in a wide frame.
+SERIAL_ROOM_LIFE_SENTENCE = "The lamp light behind them flickers softly and the plants stir."
+#: Every form the life of a serial clip is said in (`serial_life_sentence`).
+SERIAL_LIFE_SENTENCES = (
+    SERIAL_LIFE_SENTENCE,
+    SERIAL_PEOPLE_LIFE_SENTENCE,
+    SERIAL_ROOM_LIFE_SENTENCE,
 )
+#: A plan that holds its people's pose in its action or its ending: hands resting, flat,
+#: folded or held; «she holds,»; a pose held still or static; nothing changed. Then the
+#: people's gestures are not said: the plan's own later moments, said whole in the action,
+#: are the life of the clip.
+_HELD_POSE = re.compile(
+    r"\b(?:hands?|palms?|fingers?|arms?|elbows?)\b[^.;]{0,48}?\b(?:rest(?:s|ing)?|lie|lies"
+    r"|lying|flat|folded|clasped|held|in\s+(?:her|his|their)\s+lap)\b"
+    r"|\b(?:rest(?:s|ing)?|lays?|laid|lie|lies|lying)\s+(?:\w+\s+){0,2}?(?:hands?|palms?)\b"
+    r"|\bat\s+(?:her|his|their)\s+sides?\b"
+    r"|\bholds?\b(?=\s*(?:[,.;:—–]|$|(?:still|steady|there|in\s+place|(?:her|his|their|the)"
+    r"\s+(?:pose|position|stance|gaze))\b))"
+    r"|\bheld\b|\bstatic\b|\bmotionless\b|\bunmoving\b|\bfrozen\b"
+    r"|\b(?:sits?|stands?|stays?|keeps?|remains?)\s+(?:\w+\s+)?still\b"
+    r"|\bnothing\s+(?:has\s+|is\s+)?chang(?:ed|es|ing)\b"
+    r"|\b(?:pose|position|expression)\s+(?:\w+\s+){0,2}?unchanged\b",
+    re.IGNORECASE,
+)
+#: A plan that asks for a steady light: «the lamp's steady warm glow», «the glow steady»,
+#: «no flicker», «the light holds».
+_STEADY_LIGHT = re.compile(
+    r"\bsteady\s+(?:[\w'’-]+\s+){0,3}?(?:light|glow|lamp\w*|flame)s?\b"
+    r"|\b(?:light|glow|lamp\w*|lighting)\s+(?:stays?\s+|holds?\s+|remains?\s+|is\s+|kept\s+)?"
+    r"(?:steady|constant|unchanged|unchanging)\b"
+    r"|\b(?:no|without|never)\s+(?:\w+\s+)?flicker\w*"
+    r"|\b(?:light|glow|lighting)\s+holds?\b",
+    re.IGNORECASE,
+)
+#: A plan that asks for a still room: «hold exactly as they are», «nothing has changed»,
+#: «every object in its place», «the room stays still», «the glow unchanged».
+_STILL_ROOM = re.compile(
+    r"\bhold(?:s|ing)?\s+exactly\s+as\b"
+    r"|\bnothing\s+(?:has\s+|is\s+)?(?:changed|changes|changing|moves|moving)\b"
+    r"|\bevery\s+object\s+(?:stays\s+|holds\s+|remains\s+)?in\s+its\s+place\b"
+    r"|\b(?:room|scene|background|world)\s+(?:\w+\s+){0,2}?(?:stays?|remains?|holds?)\s+"
+    r"(?:still|unchanged|motionless|the\s+same)\b"
+    r"|\b(?:light|glow|lamp\w*|room|scene|background|sky)\b[^.;]{0,40}?\bunchanged\b",
+    re.IGNORECASE,
+)
+#: An avoid list that names the room's moving life: a flicker, a stir, a shifting light.
+_ROOM_LIFE_AVOIDED = re.compile(
+    r"\bflicker\w*|\bstir(?:s|ring|red)?\b"
+    r"|\b(?:light|lighting|glow|shadows?)\s+(?:\w+\s+)?(?:shift\w*|chang\w*|mov\w*|drift\w*)"
+    r"|\b(?:plants?|leaves|foliage)\s+(?:\w+\s+)?(?:mov\w*|sway\w*|rustl\w*)",
+    re.IGNORECASE,
+)
+
+
+def _serial_wide(package: Mapping[str, Any]) -> bool:
+    """Whether the shot is establishing or wide: its people small in the frame."""
+    size = str(package.get("shot_size") or "").strip().lower()
+    return size == "establishing" or "wide" in size
+
+
+def serial_narrator_shot(package: Mapping[str, Any]) -> bool:
+    """Whether the montage put the shot on nobody (`montage.serial_shots`: the narrator's
+    voice in off over the room — nobody in frame speaks)."""
+    tag = beat_of(dict(package))
+    return bool(tag.get("size")) and not tag.get("on")
+
+
+def serial_holds_pose(package: Mapping[str, Any]) -> bool:
+    """Whether the plan holds its people's pose (`_HELD_POSE`, in its action or its ending)."""
+    said = " ".join(_flatten(package.get(key)) for key in ("action", "ending_frame"))
+    return bool(_HELD_POSE.search(said))
+
+
+def serial_people_free(package: dict[str, Any]) -> bool:
+    """Whether the plan leaves the people of the shot free to move as they speak: not a pose
+    it holds (`serial_holds_pose`), not an establishing or wide shot (people small in frame),
+    not a reaction shot (it has its own listen sentence), not the narrator's shot."""
+    return not (
+        _serial_wide(package)
+        or serial_listen_sentence(package)
+        or serial_narrator_shot(package)
+        or serial_holds_pose(package)
+    )
+
+
+def serial_room_free(package: Mapping[str, Any]) -> bool:
+    """Whether nothing in the plan or its avoid list asks for a steady light or a still room:
+    its lighting, background, continuity, ending, environment and motion (`_STEADY_LIGHT`,
+    `_STILL_ROOM`, the factual compile's `_FIXED_WORLD` and `_MOTIONLESS_WORLD`), the light
+    its action names, and its avoid list (`_ROOM_LIFE_AVOIDED`)."""
+    room = " ".join(
+        _flatten(package.get(key))
+        for key in ("lighting", "background", "continuity", "ending_frame", "environment", "motion")
+    )
+    if any(
+        pattern.search(room)
+        for pattern in (_STEADY_LIGHT, _STILL_ROOM, _FIXED_WORLD, _MOTIONLESS_WORLD)
+    ):
+        return False
+    if _STEADY_LIGHT.search(_flatten(package.get("action"))):
+        return False
+    avoided = "; ".join(str(item) for item in package.get("avoid") or [])
+    return not _ROOM_LIFE_AVOIDED.search(avoided)
+
+
+def serial_life_sentence(package: dict[str, Any]) -> str:
+    """The life of a serial clip as the plan allows it: the people's gestures when the plan
+    leaves them free (`serial_people_free`), the room's flicker and stir when nothing asks for
+    a steady light or a still room (`serial_room_free`), both in one sentence when both; empty
+    when neither, or on a reaction shot (its listen sentence is its life)."""
+    if serial_listen_sentence(package):
+        return ""
+    people, room = serial_people_free(package), serial_room_free(package)
+    if people and room:
+        return SERIAL_LIFE_SENTENCE
+    if people:
+        return SERIAL_PEOPLE_LIFE_SENTENCE
+    return SERIAL_ROOM_LIFE_SENTENCE if room else ""
+
+
 #: A reaction shot's life (montage, the Owner 2026-10-16: dialogue heard in off, the listener
 #: seen): said with the listener's name before it, the tail fixed so a lock on it is the
 #: composer's (`scene_rewrite._composer_sentences`). Positive words only: lips closed, never
@@ -2465,9 +2718,7 @@ def serial_motion(package: dict[str, Any], look: dict[str, Any]) -> tuple[str, b
     (review of 68fa0b4, 2026-10-12)."""
     del look  # the look is in the picture; the movement is the beat's
     action = _sentence(" ".join(str(package.get("action") or "").split()))
-    feeling = " ".join(
-        str(package.get("motion_emotion") or package.get("emotion") or "").split()
-    ).rstrip(". ")
+    feeling = serial_feeling(package)
     ending = _ending_content(package.get("ending_frame"))
     # Never «The shot ends on the shot ends on …» (`_ENDING_LEAD`): the writer's own lead-in is
     # dropped, repeatedly if it was written twice.
@@ -2518,24 +2769,47 @@ def serial_motion(package: dict[str, Any], look: dict[str, Any]) -> tuple[str, b
             ending_sentence = ""
         else:
             action = fitted
-    items = [
-        (0, 0, move_sentence),
-        (1, 1, action),
-        (2, 2, ending_sentence),
-        (2, 3, serial_cast_sentence(package)),
-        (3, 4, SERIAL_FACES_SENTENCE),
-        (4, 5, serial_listen_sentence(package) or SERIAL_LIFE_SENTENCE),
-        (6, 6, _sentence(feeling) if feeling else ""),
-        (5, 7, END_BEAT if two_beats else ""),
-        (0, 9, lint.MOTION_CLOSING),
-    ]
+    # The faces and the life follow the plan (2026-10-16, 87c05891 scenes 1 and 6): the
+    # plan's expression is named in the faces sentence, held from the first frame to the last;
+    # the people's gestures only when the plan leaves them free, the room's flicker only when
+    # nothing asks for a steady light or a still room (`serial_life_sentence`).
+    faces = serial_faces_sentence(package)
+    expressed = faces != SERIAL_FACES_SENTENCE
+    life = serial_listen_sentence(package) or serial_life_sentence(package)
+    feeling_sentence = _sentence(feeling) if feeling else ""
+    # A plan that holds its people or its room is padded with what holds, never with «keeps
+    # moving» (`MOTIONLESS_PAD`).
+    held = serial_holds_pose(package) or not serial_room_free(package)
+    pad = MOTIONLESS_PAD if held else MOTION_PAD
+
+    def items_for(faces_said: str, feeling_said: str) -> list[tuple[int, int, str]]:
+        return [
+            (0, 0, move_sentence),
+            (1, 1, action),
+            (2, 2, ending_sentence),
+            (2, 3, serial_cast_sentence(package)),
+            (3, 4, faces_said),
+            (4, 5, life),
+            (6, 6, feeling_said),
+            (5, 7, END_BEAT if two_beats else ""),
+            (0, 9, lint.MOTION_CLOSING),
+        ]
+
     required = " ".join([move_sentence, action, ending_sentence, lint.MOTION_CLOSING])
     word_budget = max(MOTION_MAX_WORDS, len(required.split()))
-    prompt = _fit_sentences(items, lint.DEFAULT_PROMPT_MAX_UTF16, word_budget)
-    if len(prompt.split()) < MOTION_MIN_WORDS:
-        prompt = _fit_sentences(
-            [*items, (6, 6, MOTION_PAD)], lint.DEFAULT_PROMPT_MAX_UTF16, word_budget
-        )
+
+    def fitted_prompt(items: list[tuple[int, int, str]]) -> str:
+        said = _fit_sentences(items, lint.DEFAULT_PROMPT_MAX_UTF16, word_budget)
+        if len(said.split()) < MOTION_MIN_WORDS:
+            said = _fit_sentences([*items, (6, 6, pad)], lint.DEFAULT_PROMPT_MAX_UTF16, word_budget)
+        return said
+
+    # The feeling is said once: inside the faces sentence when it carries the expression.
+    prompt = fitted_prompt(items_for(faces, "" if expressed else feeling_sentence))
+    if expressed and faces not in prompt:
+        # The expression does not fit beside the action and the ending: the faces are said
+        # without it (the feeling then last, while there is room), never left out for it.
+        prompt = fitted_prompt(items_for(SERIAL_FACES_SENTENCE, feeling_sentence))
     if ending_sentence and ending_sentence not in prompt:
         dropped = True  # the vendor's cap took it after all
     return prompt, dropped
@@ -3879,14 +4153,18 @@ def composition_issues(
                     f"ținuta canonică a lui {_short_name(character.get('name'))} "
                     "a fost eliminată; scurtați acțiunea"
                 )
-        first = _still_moment(str(package.get("action") or ""))
-        for clause in first.split(";"):
+        # The still says the first moment as it draws it (`serial_still_moment`: no hand-by-hand
+        # detail on an establishing or wide shot); the clip says it whole.
+        for clause in serial_still_moment(package).split(";"):
             clause = clause.strip(" .")
             if "still" in layers and clause and clause.casefold() not in still.casefold():
                 issues.append(
                     f"poza pierde o condiție a primului cadru: {clause}; "
                     "scurtați planul păstrând fiecare personaj"
                 )
+        first = _still_moment(str(package.get("action") or ""))
+        for clause in first.split(";"):
+            clause = clause.strip(" .")
             normalized_motion = " ".join(lint.without_tempo(motion).split()).casefold()
             if "motion" in layers and clause and clause.casefold() not in normalized_motion:
                 issues.append(

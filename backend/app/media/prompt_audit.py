@@ -83,8 +83,14 @@ REFUSALS_IN_A_ROW = 6
 #: at raise it a little» because both reasons share action, pointing, laser and bar.
 SAME_FINDING_OVERLAP = 0.75
 #: The guard's version, written on every TOOL_DEFECT: a defect recorded by an older, looser
-#: guard does not hold the scene once the guard is corrected.
-GUARD_VERSION = 3
+#: guard does not hold the scene once the guard is corrected — nor once the composer's words
+#: it was recorded on are corrected. 4 since 2026-10-16: the serial composer's faces and life
+#: sentences and its establishing framing follow the scene's plan (87c05891 scenes 1 and 6,
+#: refused round after round for «Their faces stay expressive», «As they speak their hands
+#: gesture…» and «Sarah small in the middle distance»); a scene held on the old sentences gets
+#: its rounds back, and the Editor's rewrite composes today's words. The refusals counted
+#: toward a new defect start again with the process (`PROCESS_STARTED_AT`).
+GUARD_VERSION = 4
 #: When this process began: a refusal from before it was of another composer's words (the
 #: developer's restart is the fix landing), and is not counted toward a tool defect. 22:19Z,
 #: 7c26a7ce scene 1: four refusals of the old composer's words plus two of the corrected one

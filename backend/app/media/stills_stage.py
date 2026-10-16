@@ -507,16 +507,18 @@ def is_serial_package(package: Mapping[str, Any] | None) -> bool:
 def serial_scene_picture(package: Mapping[str, Any]) -> str:
     """A serial scene's written picture: what the composer draws its still from — the beat's
     room, the people in frame (`in_frame`, as the beat puts them there) and the first moment of
-    its action (`prompt_agent._still_moment`) — never the writer's line.
+    its action as the still says it (`prompt_agent.serial_still_moment`: no hand-by-hand
+    detail on an establishing or wide shot, its people small in the room) — never the writer's
+    line.
 
     2026-10-12, f06808c9 scene 1 (the review of 9ac0195, finding 4): ``writer_visual`` said
     «Marcus alone at his desk» while the composed beat put Marcus and Sarah in frame; a gate
     shown the writer's line refuses every correct still of the beat as «not the scene»."""
     from app.media.prompt_agent import (  # noqa: PLC0415 - large
         _short_name,
-        _still_moment,
         partial_clothing_sentence,
         serial_partial_characters,
+        serial_still_moment,
     )
 
     people = [
@@ -525,7 +527,7 @@ def serial_scene_picture(package: Mapping[str, Any]) -> str:
         if isinstance(person, Mapping) and person.get("name")
     ]
     location = " ".join(str(package.get("location") or "").split()).rstrip(". ")
-    moment = " ".join(_still_moment(str(package.get("action") or "")).split()).rstrip(". ")
+    moment = " ".join(serial_still_moment(package).split()).rstrip(". ")
     parts = [
         f"{location}." if location else "",
         f"In frame: {', '.join(dict.fromkeys(people))}." if people else "",

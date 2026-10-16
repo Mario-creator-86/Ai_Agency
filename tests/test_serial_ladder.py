@@ -764,9 +764,14 @@ def test_a_serial_motion_rewrite_whose_finding_is_in_the_kept_action_turns_to_th
     # sentence the layer keeps (2026-10-12 evening review of a50407e).
     assert MOVE_SENTENCES[terms["camera_move"]] not in fixed
     assert terms["said_by_his_fields"]["camera_move"][0] == MOVE_SENTENCES[terms["camera_move"]]
-    # Only the composer's sentences the prompt carries: the room's life gave way to the budget.
+    # Only the composer's sentences the prompt carries. The clip's life follows the plan since
+    # 2026-10-16 (a pose or a steady room in the ending takes it out): it is the ending_frame's
+    # sentence, his to change, never one the layer keeps.
     assert all(sentence in motion_said for sentence in fixed)
-    assert (SERIAL_LIFE_SENTENCE in fixed) == (SERIAL_LIFE_SENTENCE in motion_said)
+    assert SERIAL_LIFE_SENTENCE not in fixed
+    assert (SERIAL_LIFE_SENTENCE in motion_said) == (
+        SERIAL_LIFE_SENTENCE in terms["said_by_his_fields"].get("ending_frame", [])
+    )
     # The still is kept whole and is in the prompts beside the terms: not said again.
     assert terms["still_kept_whole"] == STILL_KEPT_WHOLE
     assert review_data["prompts_after"]["still"] not in terms["fixed_sentences"]["still"]
