@@ -8,7 +8,8 @@ they are never edited or deleted, so what an agent was told on a given day can b
 
 Reading is scoped by role (../architecture/20_EMPLOYEE_AGENT_SPEC.md, Memory scope): each
 role's contract says which classes it may read and write, and `recall()` returns only those,
-studio-wide records plus the agent's own, newest first.
+studio-wide records plus the agent's own, newest first — except the prompt lessons, which
+travel on a channel of their own (`LESSON_MARKER`).
 """
 
 from __future__ import annotations
@@ -29,6 +30,15 @@ RECALL_LIMIT = 120
 #: TEMP_CONTEXT is about the current work; it should not outlive the week.
 TEMP_CONTEXT_DAYS = 3
 MAX_CONTENT = 600
+#: The head of every prompt lesson row (`app.media.prompt_agent`, which reads and writes them).
+#: A lesson is a studio-wide STRATEGY row, but it reaches a call only through
+#: `prompt_lessons(scope)` in the task's own data, which gives each kind of film its own, says
+#: which ones no picture has proven yet and sets the refuted ones apart. Through `recall()` it
+#: reached every identity of a role that reads STRATEGY whole and raw, the unverified and the
+#: other kind of film's included (audit of 2026-10-16, finding 22: the Director's prompt audit
+#: was given 3 proven lessons in its data and 59 lesson rows in her memory, 56 unverified,
+#: around the 2026-10-15 rule that she reads proven lessons only). So `recall()` leaves them out.
+LESSON_MARKER = "prompt lesson:"
 
 
 class MemoryError(ValueError):
@@ -124,7 +134,10 @@ def readable_classes(role: Role | None) -> list[str]:
 def recall(
     session: Session, agent: Agent, role: Role | None, limit: int = RECALL_LIMIT
 ) -> list[MemoryRecord]:
-    """The live records this agent may read: studio-wide ones and its own, newest first."""
+    """The live records this agent may read: studio-wide ones and its own, newest first.
+
+    Never a prompt lesson (`LESSON_MARKER`): those reach a call only in its task data.
+    """
     classes = readable_classes(role)
     if not classes:
         return []
@@ -136,6 +149,8 @@ def recall(
             or_(MemoryRecord.agent_id.is_(None), MemoryRecord.agent_id == agent.id),
             MemoryRecord.invalidated_at.is_(None),
             or_(MemoryRecord.expires_at.is_(None), MemoryRecord.expires_at > now),
+            # The same test `prompt_agent` reads its lesson rows by.
+            MemoryRecord.content.not_like(f"{LESSON_MARKER}%"),
         )
         .order_by(MemoryRecord.created_at.desc())
         .limit(limit)

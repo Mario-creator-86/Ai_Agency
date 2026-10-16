@@ -49,7 +49,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
-from app.agents.memory import agent_for_role, remember
+from app.agents.memory import LESSON_MARKER, agent_for_role, remember
 from app.db import lock_for_write
 from app.factual.editorial import SCENE_PURPOSES
 from app.factual.models import FactualClaim, ScriptDraft
@@ -117,9 +117,10 @@ REQUIRED_SHOT_FIELDS = (
     "motion",
 )
 
-#: Where prompt lessons are kept. Reuses the studio's own memory rather than a new table: a
-#: lesson is a studio-wide fact about how a vendor's model reads instructions.
-LESSON_MARKER = "prompt lesson:"
+#: Where prompt lessons are kept: rows of the studio's own memory whose content begins with
+#: `LESSON_MARKER` (defined in `app.agents.memory`), rather than a new table: a lesson is a
+#: studio-wide fact about how a vendor's model reads instructions. `recall()` leaves them out
+#: of every identity, so a lesson reaches a call only through `prompt_lessons` in its data.
 
 #: The Owner, 2026-10-12, 16:50, after 11.05 USD of the day's 19.50 went on redos and all three
 #: films still failed QC: «DIRECTOAREA ACCEPTĂ DEFECTELE MICI! DAR TREBUIE SĂ ÎNȚELEAGĂ DE CE
