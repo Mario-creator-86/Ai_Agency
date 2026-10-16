@@ -39,6 +39,7 @@ markers = [
   "film: needs FFmpeg (or the YuNet face model); set automatically from the skip marker",
   "slow: a film test or a known slow module; the quick lane is -m 'not slow'",
   "real_encode: keeps the production x264 final encode instead of the suite's quick preset",
+  "montage: runs with the montage switched on (the suite keeps it off: STUDIO_MONTAGE_ENABLED=0)",
 ]
 filterwarnings = [
   # Starlette's TestClient on httpx: deprecated upstream in favour of httpx2, harmless here.

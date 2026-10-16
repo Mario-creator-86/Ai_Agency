@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-16 — Montage; dead-process work resumed
+
+- Montage (the Owner, 2026-10-16): a filmed scene is cut into shots of about four seconds, each an ordinary storyboard scene with its own still, clip and camera move (`media/montage.py`; `Settings.montage_*`); the serial cuts with its dialogue and shows the listener in reaction shots (`reaction` size, `SERIAL_LISTEN_TAIL`); the writer's script is never rewritten.
+- What a dead process left is taken up by the studio on every worker pass: its leases given back (`release_orphaned_claims(started_at=)`), an interrupted film continuation queued again once (`resume_interrupted_continuations`).
+
 ## 2026-10-16 — Her QC letters written once
 
 - The Director's QC letter and look letter are found wherever his letters rule delivered them (`director_qc._letters_of_kind`): a retried decision no longer writes the Director the same letter every hour.

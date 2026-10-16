@@ -5,6 +5,28 @@ AGENT_SCENARIO_ACCEPTANCE later used actual Ollama Cloud calls, with normal seri
 acceptance and real GPU/media/upload still pending. Current local UI evidence is reported
 separately below and does not prove those external workflows.
 
+## A dead process's leases released on every pass; interrupted continuations resumed (2026-10-16)
+
+Claim: «Verifică și agenția, de ce nu publică» (the Owner, 06:35Z). «Speed of Light» (7c26a7ce) was accepted under the cap at 06:07:18Z and approved by the editorial viewing at 06:07:26Z; the restart onto d34e474 began at 06:05:40Z, the walk claimed at 06:05:52Z was cut at 06:07:40Z before it published, and the new process's start-up release of orphaned claims failed at 06:07:53Z (`orphaned_claims_release_failed`, OperationalError: the stopping process still held the database) and was never tried again. The walk stood CLAIMED with an hour of lease, the film unpublished; at 07:05:52Z the sweep would have dead-lettered it INTERRUPTED with a letter, and nothing would have walked the film again.
+
+Done: `workflows/services.release_orphaned_claims(started_at=)` releases, on every worker pass, the leases held from before this process began (`PROCESS_STARTED_AT`); `resume_interrupted_continuations` queues again, once, a FILM_CONTINUE dead-lettered INTERRUPTED in the last 6 hours whose film was not walked since (one more attempt, `workflow.task_resumed`); `worker_pass` runs both before the sweep. His rules: «dai singur restart» (2026-10-12) and «the day ends on its goal» (2026-10-15) — no walk waits for his hand.
+
+Tested: tests/test_dead_process_work_resumed.py (2), test_resume_interrupted_day, test_resume_after_finished_runs.
+
+## Montage: a scene cut into shots (2026-10-16)
+
+Claim: montage — a filmed scene cut into shots (the Owner, 2026-10-16, after a Seedance fan film of 150 shots in 14 minutes: «aceeași complexitate … o mică poveste, mișcare, efecte cinematice»). His decisions by card: shots on our RunPod models; dialogue heard in off with reaction shots, no lip-sync; the serial keeps its 2D look; the design «shots as ordinary storyboard scenes, cut when the storyboard is built, a switch for new storyboards only».
+
+Done:
+- `media/montage.py`: `factual_shots` (a narration line cut on clause ends into shots of about `montage_shot_seconds`, at most `montage_max_shots_per_scene`, sizes wide → medium → detail, the next beat starting where the one before stopped), `serial_shots` (one shot per speaker's run, a short answer joined as a two-shot, a run past 5.5 s cut in two with the second half a `reaction` shot on the listener, a run past the clip's 9 s cut as the clip forces, the first beat's first shot establishing, the button's last a close-up), `beat_tag` / `beat_of` (`prompt_json["beat"]` = {scene_number, shot, of, size, on}).
+- `media/services.generate_storyboard_from_script` and `media/serial_storyboard.storyboard_from_episode` build one storyboard scene per shot; the factual script is never rewritten (the shot reads the writer's scene by its tag: `prompt_agent._writer_scene`, `second_look`); the serial's own `scenes_json` is written per shot, each with its lines, so the voices follow the cut.
+- `prompt_agent`: the tag survives every package (`_validated_package`), the editor is told what a beat's shots are (one continuous moment, continuity = the previous ending_frame, a reaction shot on `on` with lips closed), `_serial_package` reads the size and the listener from the tag, `SERIAL_LISTEN_TAIL` / `serial_listen_sentence` in the still and the clip of a reaction shot (locked in `scene_rewrite` as a composer sentence), `series_look` sizes and types gain `reaction`; `config/serial_series_look.json` too.
+- `Settings.montage_enabled` (STUDIO_MONTAGE_ENABLED), `montage_shot_seconds` (4.0), `montage_max_shots_per_scene` (3). The suite keeps the montage off (`conftest.montage_off_unless_marked`); tests marked `montage` run it.
+
+Not changed, by design: the sheet, the stills stage, the assembler, quality control, the renders cap and the redo caps — a shot is a row, every count is per row. Open (roadmap): the breath of 0.12 s after each shot's words (one per beat would be truer), the paid-redo caps per film with three times the rows, continuity of one moment across its wide/medium/close (the prompt and the room reference carry it; the wide still as a reference for the closer shots later).
+
+Tested: tests/test_montage.py (7), tests/test_montage_storyboards.py (2: a factual scene of 56 words becomes three shots that read the writer's scene; a serial beat cuts with its dialogue and shows the listener, the listener's sentence in its still and clip), test_phase5_media, test_phase9_story, and the suites of the shot plan, the serial pipeline, motion, still prompts, rewrites, continuation, day stages, second look, voices (montage off).
+
 ## Her QC letters are written once (2026-10-16)
 
 Claim: the Director's QC letter and her look letter are written once. `test_director_decides_qc::test_a_refused_rejoin_keeps_her_decision_waiting_and_is_tried_again` failed on HEAD: the retry of a BOUGHT_WAITING decision wrote a second letter. Cause: since his letters rule (2026-10-12, `messages.directors_matter`) `owner_director_qc` and `owner_director_look` are redirected to the Director's inbox (`to_agent_id` = hers, body.to = "Director"), while `director_letter` / `look_letter` looked for the earlier letter only among letters addressed to him (`to_agent_id IS NULL` and `is_for_owner`), so every hourly retry wrote her the same letter again.

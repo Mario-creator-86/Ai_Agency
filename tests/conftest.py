@@ -61,6 +61,15 @@ def shipped_music_library(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def montage_off_unless_marked(request, monkeypatch):
+    """The montage (a scene cut into shots, 2026-10-16) is switched off for the suite: its
+    films were written one still and one clip a scene, and their counts stand. A test marked
+    montage runs with it on."""
+    marked = request.node.get_closest_marker("montage") is not None
+    monkeypatch.setenv("STUDIO_MONTAGE_ENABLED", "1" if marked else "0")
+
+
+@pytest.fixture(autouse=True)
 def quick_final_encode(request, monkeypatch):
     """The film's final encode on the veryfast preset, unless the test is about the encode.
 

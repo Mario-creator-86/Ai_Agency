@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime, time, timedelta
+from typing import Any
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
@@ -92,6 +93,14 @@ JOB_FIRED_EVENT = "workflow.job_fired"
 
 #: Queue states in which a task is held under a lease.
 LEASED_STATES = ("CLAIMED", "RUNNING")
+#: When this process began (the module is imported at start): a task leased or renewed
+#: before it was leased by a process that is gone (one worker per database).
+PROCESS_STARTED_AT = utc_now()
+#: A film's continuation dead-lettered INTERRUPTED and queued again by the studio itself
+#: (`resume_interrupted_continuations`).
+TASK_RESUMED_EVENT = "workflow.task_resumed"
+#: How long after its interruption a film's continuation is still the studio's to resume.
+RESUME_CONTINUATION_HOURS = 6
 
 
 # ---------------------------------------------------------------------------
@@ -391,20 +400,34 @@ def claim_task(
         return TaskQueueItemView.model_validate(eligible).model_dump()
 
 
-def release_orphaned_claims(engine: Engine, *, correlation_id: str | None = None) -> int:
-    """At the worker's start, every task still CLAIMED or RUNNING was left by a worker that
-    died with it (one worker per database, `acquire_worker_lock`): it goes back to QUEUED with
-    its lease cleared and its attempts untouched, so the work goes on at once instead of
-    waiting for the hour-long lease to lapse and then dying as INTERRUPTED. 2026-10-15
-    20:08Z: two FILM_CONTINUE tasks of 7c26a7ce, claimed by processes the Owner had stopped
-    by hand, stood CLAIMED until 20:54 and 21:04; the day-goal pass read «a film at work»
-    and queued nothing, and the walk's own key was spent on a FILM_BUSY. Returns how many."""
+def release_orphaned_claims(
+    engine: Engine, *, correlation_id: str | None = None, started_at: str | None = None
+) -> int:
+    """Every task still CLAIMED or RUNNING that was left by a worker that died with it (one
+    worker per database, `acquire_worker_lock`) goes back to QUEUED with its lease cleared
+    and its attempts untouched, so the work goes on at once instead of waiting for the
+    hour-long lease to lapse and then dying as INTERRUPTED. 2026-10-15 20:08Z: two
+    FILM_CONTINUE tasks of 7c26a7ce, claimed by processes the Owner had stopped by hand,
+    stood CLAIMED until 20:54 and 21:04; the day-goal pass read «a film at work» and queued
+    nothing, and the walk's own key was spent on a FILM_BUSY. Returns how many.
+
+    At the worker's start every leased task is such a task (``started_at`` None). On every
+    worker pass since 2026-10-16 (``started_at`` = `PROCESS_STARTED_AT`) only a task leased
+    or last renewed before this process began is: 06:07:53Z, the start's own release failed
+    on the database the stopping process still held (OperationalError) and was never tried
+    again, and the walk that had just accepted «Speed of Light» under the cap stood CLAIMED,
+    the film unpublished, until its lease lapsed and it was dead-lettered."""
     now_str = utc_now()
+    orphaned: Any = TaskQueueItem.status.in_(LEASED_STATES)
+    if started_at:
+        orphaned = orphaned & (TaskQueueItem.updated_at < started_at)
+    with Session(engine) as session:
+        if session.scalars(select(TaskQueueItem.id).where(orphaned).limit(1)).first() is None:
+            return 0
     released = 0
     with Session(engine) as session, session.begin():
-        for task in session.scalars(
-            select(TaskQueueItem).where(TaskQueueItem.status.in_(LEASED_STATES))
-        ):
+        lock_for_write(session)
+        for task in session.scalars(select(TaskQueueItem).where(orphaned)):
             previous_token = task.lease_token
             task.status = "QUEUED"
             task.lease_token = None
@@ -427,6 +450,76 @@ def release_orphaned_claims(engine: Engine, *, correlation_id: str | None = None
             )
             released += 1
     return released
+
+
+def resume_interrupted_continuations(
+    engine: Engine, *, correlation_id: str | None = None, now: str | None = None
+) -> int:
+    """A film's continuation dead-lettered INTERRUPTED in the last RESUME_CONTINUATION_HOURS
+    (the process that ran it stopped: a restart, a kill, a crash) is queued again by the
+    studio itself, once, when no later continuation of the same film was queued since: the
+    Owner's rules, 2026-10-12 («dai singur restart») and 2026-10-15 («the day ends on its
+    goal»), leave no walk waiting for his hand. It gets one more attempt and a
+    `TASK_RESUMED_EVENT`. Returns how many."""
+    now_str = now or utc_now()
+    since = (
+        datetime.fromisoformat(now_str) - timedelta(hours=RESUME_CONTINUATION_HOURS)
+    ).isoformat()
+    interrupted = (
+        (TaskQueueItem.task_type == "FILM_CONTINUE")
+        & (TaskQueueItem.status == "DEAD_LETTER")
+        & (TaskQueueItem.updated_at >= since)
+        & (TaskQueueItem.error_detail.like(f"{INTERRUPTED}%"))
+    )
+    with Session(engine) as session:
+        if session.scalars(select(TaskQueueItem.id).where(interrupted).limit(1)).first() is None:
+            return 0
+    resumed = 0
+    with Session(engine) as session, session.begin():
+        lock_for_write(session)
+        later = list(
+            session.scalars(
+                select(TaskQueueItem).where(
+                    TaskQueueItem.task_type == "FILM_CONTINUE", TaskQueueItem.created_at >= since
+                )
+            )
+        )
+        for task in session.scalars(select(TaskQueueItem).where(interrupted)):
+            storyboard_id = str((task.payload or {}).get("storyboard_id") or "")
+            if any(
+                other.id != task.id
+                and str((other.payload or {}).get("storyboard_id") or "") == storyboard_id
+                and other.created_at > task.created_at
+                for other in later
+            ):
+                continue  # the film was walked, or is queued to be, since
+            task.status = "QUEUED"
+            task.max_attempts = max(int(task.max_attempts or 1), int(task.attempts or 0) + 1)
+            task.next_attempt_at = now_str
+            task.lease_token = None
+            task.lease_expires_at = None
+            task.error_detail = None
+            task.updated_at = now_str
+            append_event_with_outbox(
+                session,
+                TASK_RESUMED_EVENT,
+                "task_queue",
+                task.id,
+                1,
+                {
+                    "task_type": task.task_type,
+                    "storyboard_id": storyboard_id,
+                    "attempts": task.attempts,
+                    "max_attempts": task.max_attempts,
+                    "reason": (
+                        "continuarea filmului fusese întreruptă de oprirea procesului; "
+                        "studioul o reia singur"
+                    ),
+                },
+                correlation_id or str(uuid4()),
+            )
+            resumed += 1
+    return resumed
 
 
 def new_lease_token(worker_id: str) -> str:

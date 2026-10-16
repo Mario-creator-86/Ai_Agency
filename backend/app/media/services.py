@@ -31,6 +31,7 @@ from app.media.models import (
     StoryboardScene,
     VideoRenderJob,
 )
+from app.media.montage import FACTUAL_SHOT_TYPES, beat_tag, factual_shots
 from app.media.production_policy import estimate_cost_usd
 from app.media.schemas import (
     CharacterBibleView,
@@ -730,6 +731,23 @@ def _characters_named_in(
     return [character_id for _, character_id in sorted(found)]
 
 
+def _montage_rows(
+    scenes_data: list[dict[str, Any]], kinds: list[dict[str, Any]]
+) -> list[tuple[int, dict[str, Any], dict[str, Any]]]:
+    """The storyboard's scenes as the montage cuts the writer's: ``(beat, scene, shot)`` per
+    row, a LIVE scene in shots of about four seconds (`montage.factual_shots`), a composed
+    scene (a card, black) one row as it was."""
+    rows: list[tuple[int, dict[str, Any], dict[str, Any]]] = []
+    for beat, scene in enumerate(scenes_data, start=1):
+        narration = str(
+            scene.get("voiceover_segment") or scene.get("voiceover") or scene.get("narration") or ""
+        ).strip()
+        live = str(kinds[beat - 1].get("kind") or "LIVE").upper() == "LIVE"
+        for shot in factual_shots(narration, beat, live=live):
+            rows.append((beat, scene, shot))
+    return rows
+
+
 def _scene_visual(scene: dict, index: int) -> str:
     """What this scene asks to be shown, whichever word the writer used for it.
 
@@ -1350,6 +1368,10 @@ def generate_storyboard_from_script(
             )
         cards_missing = [index for index, kind in enumerate(kinds, start=1) if kind["card_missing"]]
         board_style = (visual_style or "").strip() or PER_SCENE_STYLE
+        # The montage (the Owner, 2026-10-16): a filmed scene cut into shots of about four
+        # seconds, each an ordinary storyboard scene tagged with the writer's scene it came
+        # from; a card stays one scene. The script itself is never rewritten.
+        rows = _montage_rows(scenes_data, kinds)
 
         event = append_event(
             session,
@@ -1363,6 +1385,8 @@ def generate_storyboard_from_script(
                 "visual_style": board_style,
                 "aspect_ratio": aspect_ratio,
                 "scene_count": len(scenes_data),
+                # The storyboard's scenes once the montage cut the writer's into shots.
+                "shot_count": len(rows),
                 # Each scene's kind; where the words overruled the writer, the words that did;
                 # and the charts that still wait for their numbers (never made up here).
                 "scene_kinds": [kind["kind"] for kind in kinds],
@@ -1398,32 +1422,32 @@ def generate_storyboard_from_script(
             aspect_ratio=aspect_ratio,
             target_duration_seconds=script.target_duration_seconds,
             status="APPROVED",
-            total_scenes=len(scenes_data),
+            total_scenes=len(rows),
             created_at=now,
             event_id=event.event_id,
         )
         session.add(sb)
         session.flush()
 
-        # Create individual StoryboardScenes
-        for idx, s in enumerate(scenes_data, start=1):
+        # Create individual StoryboardScenes: one per shot of the montage (`_montage_rows`),
+        # each reading the writer's scene (``beat``) it was cut from.
+        for idx, (beat, s, shot) in enumerate(rows, start=1):
             scene_id = str(uuid4())
-            # The script writer's scenes say "narration" and "visual_description"; the demo
-            # fixture said "voiceover_segment" and "visual_prompt". Reading only the latter
-            # built a storyboard of eight silent scenes called "Scene 1"… "Scene 8" from a
-            # real script, and the voice artist passed it: nothing to pronounce.
-            vo = str(
-                s.get("voiceover_segment") or s.get("voiceover") or s.get("narration") or ""
-            ).strip()
-            vp = _scene_visual(s, idx)
+            # The shot's own words: the writer's narration, or the fragment of it the
+            # montage gave this shot (cut on a clause end, the sentence carried on).
+            vo = str(shot["narration"] or "").strip()
+            vp = _scene_visual(s, beat)
             # Without a stated duration a scene lasts as long as its words take to say
-            # (about 2.5 a second), within what a short's scene can hold.
-            dur = float(s.get("duration_seconds") or 0) or min(
+            # (about 2.5 a second), within what a short's scene can hold. A shot of a cut
+            # scene lasts as long as its own words.
+            dur = (float(s.get("duration_seconds") or 0) if int(shot["of"]) <= 1 else 0.0) or min(
                 9.0, max(3.0, round(len(vo.split()) / 2.5, 1))
             )
-            st = str(s.get("shot_type", "MEDIUM"))
-            tr = str(s.get("transition_in", "CUT"))
-            kind = kinds[idx - 1]
+            st = FACTUAL_SHOT_TYPES.get(str(shot.get("size") or ""), "") or str(
+                s.get("shot_type", "MEDIUM")
+            )
+            tr = str(s.get("transition_in", "CUT")) if int(shot["shot"]) <= 1 else "CUT"
+            kind = kinds[beat - 1]
             claims = list(s.get("claim_ids", script.claim_ids_json))
             # The claims a card's bars stand on are claims this scene uses.
             claims += [cid for cid in kind["card_claims"] if cid not in claims]
@@ -1447,8 +1471,15 @@ def generate_storyboard_from_script(
                 # it to the render, the factory turns it into the vendor's referenceImages,
                 # and a locked look with no reference refuses the scene from it. A guess
                 # may do none of those, so it stays on the creation event.
-                character_ids_json=casts[idx - 1][0],
+                character_ids_json=casts[beat - 1][0],
                 claim_ids_json=claims,
+                # The montage's tag (`montage.beat_tag`): the prompt agent keeps it on every
+                # package it writes for the scene.
+                prompt_json=(
+                    {"beat": beat_tag(beat, int(shot["shot"]), int(shot["of"]), shot.get("size"))}
+                    if int(shot["of"]) > 1
+                    else None
+                ),
                 created_at=now,
             )
             session.add(scene_rec)

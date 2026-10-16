@@ -56,6 +56,7 @@ from app.runbook.weekly import (
 from app.services import FILM_CONTINUE_TASK, append_event
 from app.story.services import business_date
 from app.workflows.services import (
+    PROCESS_STARTED_AT,
     TASK_LEASE_LOST_EVENT,
     LeaseLost,
     claim_task,
@@ -63,6 +64,8 @@ from app.workflows.services import (
     enqueue_task,
     fail_task,
     heartbeat_task,
+    release_orphaned_claims,
+    resume_interrupted_continuations,
     scheduler_tick,
     sweep_interrupted_tasks,
 )
@@ -747,6 +750,18 @@ def worker_pass(
     idle: dict[str, Any] = {"answered": [], "refused": []}
     if shutdown_requested(engine):
         return {"triggered": [], "ran": [], "mail": idle, "interrupted": []}
+    # What a dead process left: its leases given back (the start's own release may have
+    # failed on a database the stopping process still held, 06:07:53Z 2026-10-16), and a
+    # film's continuation it interrupted queued again — before the sweep can dead-letter it.
+    try:
+        released = release_orphaned_claims(engine, started_at=PROCESS_STARTED_AT)
+        resumed = resume_interrupted_continuations(engine)
+        if released or resumed:
+            logger.info(
+                "dead_process_work_resumed", extra={"released": released, "resumed": resumed}
+            )
+    except Exception as exc:  # noqa: BLE001 - tried again on the next pass
+        logger.warning("dead_process_work_not_resumed", extra={"error_class": type(exc).__name__})
     interrupted = announce_interrupted(engine, sweep_interrupted_tasks(engine))
     if "SCAN_FILM_SHEETS" in handlers:
         try:

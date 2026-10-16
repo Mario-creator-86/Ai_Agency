@@ -318,6 +318,17 @@ class Settings(BaseSettings):
     film_max_paid_redos_per_scene: int = Field(default=2, ge=0, le=5)
     film_max_paid_redos: int = Field(default=20, ge=0, le=20)
 
+    #: Montage (the Owner, 2026-10-16, after a Seedance fan film of 150 shots: «o mică poveste,
+    #: mișcare, efecte cinematice»): a filmed scene is cut into shots of about
+    #: ``montage_shot_seconds`` each (STUDIO_MONTAGE_SHOT_SECONDS), at most
+    #: ``montage_max_shots_per_scene`` (STUDIO_MONTAGE_MAX_SHOTS_PER_SCENE), each its own
+    #: ordinary storyboard scene with its own still, clip and camera move (`media.montage`).
+    #: STUDIO_MONTAGE_ENABLED=0 leaves every scene one shot, as before. Only storyboards built
+    #: after the switch are cut; open films are never touched.
+    montage_enabled: bool = True
+    montage_shot_seconds: float = Field(default=4.0, ge=2.0, le=9.0)
+    montage_max_shots_per_scene: int = Field(default=3, ge=1, le=4)
+
     #: How long a short should be. The Owner's answer: about thirty seconds, and the story
     #: decides — twenty-four when that is the film, thirty-four when a premium story needs it.
     #: The writer is briefed with it, and the story review measures the narration against it.

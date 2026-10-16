@@ -637,9 +637,14 @@ def scene_intent(
         dict(row.prompt_json) if row is not None and isinstance(row.prompt_json, dict) else {}
     )
     scenes = list(script.scenes_json or []) if script is not None else []
+    # The writer's scene: the shot's own number, or the beat the montage cut it from.
+    from app.media.montage import beat_of  # noqa: PLC0415
+
+    number = beat_of(package).get("scene_number")
+    writer_index = int(number) if isinstance(number, int) and number > 0 else scene_index
     entry: dict[str, Any] = (
-        dict(scenes[scene_index - 1])
-        if 1 <= scene_index <= len(scenes) and isinstance(scenes[scene_index - 1], dict)
+        dict(scenes[writer_index - 1])
+        if 1 <= writer_index <= len(scenes) and isinstance(scenes[writer_index - 1], dict)
         else {}
     )
     still_prompt = str(package.get("still_prompt") or (row.visual_prompt if row else "") or "")

@@ -57,6 +57,7 @@ from app.factual.sanitizer import wrap_in_inert_boundary
 from app.media import prompt_lint as lint
 from app.media.markings import markings_kept, planned_markings, still_exclusions
 from app.media.models import CharacterBible, Storyboard, StoryboardScene
+from app.media.montage import beat_of
 from app.media.series_look import (
     LIGHT_SLOTS,
     PART_PURPOSES,
@@ -440,8 +441,15 @@ _SHOTS_INSTRUCTIONS = (
     "the wall), without camera words. Ample is not spectacle: nothing happens that the "
     "story does not say, and the shot keeps its one primary visual idea. Name colours in "
     "words, never as hex codes or codes in capitals. When the bible says people's faces must "
-    "not be seen, show people only from behind, small and distant, or their hands. Return "
-    "only JSON: "
+    "not be seen, show people only from behind, small and distant, or their hands.\n\n"
+    "Some scenes carry a beat field {scene_number, shot, of, size}: they are the shots of ONE "
+    "moment of the story, cut together, about four seconds each, and their narration is one "
+    "sentence carried on across the cut. Describe them as a continuous moment seen at the "
+    "size the beat asks — wide: the place; medium: the subject; detail: hands, objects, "
+    "texture — with the same subject, light, weather and positions in every shot of the "
+    "beat, each shot starting where the one before ends (its continuity is the previous "
+    "shot's ending_frame), nothing new entering between them. Give each shot its own "
+    "camera_move, never the one before. Return only JSON: "
     '{"shots": [{"scene_index": 1, "story_purpose": "HOOK", "subject": "...", '
     '"action": "...", "environment": "...", "camera": "...", "camera_move": "dolly in", '
     '"lighting": "...", "composition": "...", "motion": "...", "emotion": "...", '
@@ -468,7 +476,7 @@ _SERIAL_SHOTS_INSTRUCTIONS = (
     "shows in their bodies before it shows in their words (the Owner, 2026-10-15: «Trebuie să "
     "avem dinamică, suspans dacă este cazul, caractere vii; comedie, suspans, frică; creează o "
     "scenă, spune o poveste»).\n\n"
-    "For every beat describe one shot, complete the first time, so that nothing has to be "
+    "For every scene describe one shot, complete the first time, so that nothing has to be "
     "bought twice:\n"
     "- subject: who is in frame, facing the viewer, and in what room; name the room ONLY by "
     "its own objects (the penthouse: a wide mahogany desk, a big window onto the city, a "
@@ -499,7 +507,15 @@ _SERIAL_SHOTS_INSTRUCTIONS = (
     "poster, a badge, a label, a book spine, a printed page, a sticky note, a screen with "
     "content: leave such objects out (a «blank nameplate» invites a name, a negation invites "
     "the thing). Do not add events, objects or people the beat does not have. Choose one "
-    "camera_move from: " + ", ".join(lint.CAMERA_MOVES) + ". Return only JSON: "
+    "camera_move from: " + ", ".join(lint.CAMERA_MOVES) + ". "
+    "A beat may be cut into several scenes by the montage (each carries beat: {scene_number, "
+    "shot, of, size, on}): one scene per speaker's run, cut with the dialogue, about four "
+    "seconds each. Its shots are ONE continuous moment: the room, the light and everyone's "
+    "position stay exactly as in the shot before, and each shot's continuity is the "
+    "ending_frame of the one before it. A shot whose size is reaction is on the person named "
+    "in on, listening with lips closed, eyes on the speaker beside the frame, while the words "
+    "go on in off; nobody's lips move. Give each shot its own camera_move, never the one "
+    "before. Return only JSON: "
     '{"shots": [{"scene_index": 1, "subject": "...", "action": "...", "emotion": "...", '
     '"camera": "...", "camera_move": "static", "background": "...", '
     '"continuity": "...", "ending_frame": "...", '
@@ -579,6 +595,13 @@ def _serial_scene_facts(session: Session, entry: dict[str, Any]) -> dict[str, An
     }
 
 
+def _writer_scene(scene: StoryboardScene) -> int:
+    """The writer's scene number a storyboard scene reads its script entry by: its own index,
+    or the beat it was cut from by the montage (`montage.beat_of`)."""
+    number = beat_of(scene.prompt_json).get("scene_number")
+    return int(number) if isinstance(number, int) and number > 0 else int(scene.scene_index)
+
+
 def _film_facts(session: Session, board: Storyboard) -> dict[str, Any]:
     """The story, its scenes and its characters, as the prompt agent reads them."""
     script = session.get(ScriptDraft, board.script_draft_id)
@@ -626,18 +649,22 @@ def _film_facts(session: Session, board: Storyboard) -> dict[str, Any]:
                 "scene_index": scene.scene_index,
                 "seconds": scene.duration_seconds,
                 "story_purpose": scene.story_purpose
-                or str(script_scenes.get(scene.scene_index, {}).get("purpose") or ""),
+                or str(script_scenes.get(_writer_scene(scene), {}).get("purpose") or ""),
                 "narration": scene.voiceover_segment,
                 # The writer's own line about what is seen, from the script — not from
                 # `visual_prompt`, which this step overwrites with what it composed. Reading
                 # it back would feed a second run its own output, and each pass would drift
-                # a little further from what the writer actually asked for.
+                # a little further from what the writer actually asked for. A shot of a
+                # montage reads the writer's scene it was cut from (`montage.beat_of`).
                 "writer_visual": str(
-                    script_scenes.get(scene.scene_index, {}).get("visual_description")
+                    script_scenes.get(_writer_scene(scene), {}).get("visual_description")
                     or (scene.prompt_json or {}).get("writer_visual")
                     or scene.visual_prompt
                 ),
                 "shot_type": scene.shot_type,
+                # The montage's tag: which writer's scene this shot belongs to, which of its
+                # shots it is and at what size (None for a scene that is its own one shot).
+                "beat": beat_of(scene.prompt_json) or None,
                 "claims": [claims.get(cid, "") for cid in (scene.claim_ids_json or [])],
                 "characters": [
                     {
@@ -1751,6 +1778,8 @@ def _validated_package(
         # Where this package came from. A render in PRODUCTION requires "model": template
         # prompts are a TEST convenience (SHOT_PLAN_PARSE, 2026-09-27).
         "source": SOURCE_MODEL if shot is not None else SOURCE_TEMPLATE,
+        # The montage's tag, kept on every package written for the scene (`montage.beat_tag`).
+        "beat": dict(scene["beat"]) if isinstance(scene.get("beat"), dict) else None,
     }
     # Only when the editor gave a usable one: a package without it is the package it was,
     # and the sheet's hashes of every film planned before stay what they were.
@@ -1871,11 +1900,25 @@ def _serial_package(
     speakers = [by_id[cid] for cid in scene.get("speaker_ids") or [] if cid in by_id]
     if not speakers:
         speakers = cast[:2]
-    size = serial_shot_size(scene.get("part"), int(scene.get("scene_index") or 1), len(speakers))
+    tag: dict[str, Any] = beat_of({"beat": scene.get("beat")})
+    size = str(tag.get("size") or "") or serial_shot_size(
+        scene.get("part"), int(scene.get("scene_index") or 1), len(speakers)
+    )
+    if size not in SHOT_TYPES:
+        size = serial_shot_size(
+            scene.get("part"), int(scene.get("scene_index") or 1), len(speakers)
+        )
+    # Whose face the montage put the shot on (`montage.serial_shots`): the speaker, or the
+    # listener of a reaction shot while the words go on from beside the frame.
+    on = _short_name(tag.get("on")) if tag.get("on") else ""
+    named = [c for c in cast if on and _short_name(c.get("name")) == on]
+    listening = bool(named) and size == "reaction"
     if size == "establishing":
         in_frame = speakers or cast
     elif size == "two_shot":
         in_frame = speakers[:2]
+    elif named:
+        in_frame = named[:1]
     else:
         in_frame = speakers[:1]
     # The people of the beat who do not speak stand at their own desks; a speaker outside a
@@ -1905,6 +1948,10 @@ def _serial_package(
         previous = who
     writer_line = strip_on_screen_text(str(scene.get("writer_visual") or ""))
     spoken = "; ".join(said) + "." if said else ""
+    if listening:
+        # The listener's shot: what is seen is the listening, the speaker is heard.
+        speaker = _short_name(speakers[0].get("name")) if speakers else "the other"
+        spoken = f"{focus} {SERIAL_LISTEN_TAIL} {speaker} is heard from beside the frame."
     fallback_action = " ".join(part for part in (writer_line, spoken) if part)
 
     # While the series has a look, a model may describe the shot but never restyle it: what
@@ -1925,6 +1972,7 @@ def _serial_package(
     package["location"] = str(scene.get("location") or "")
     package["shot_size"] = size
     package["in_frame"] = in_frame
+    package["listening"] = focus if listening else ""
     if look.get("in_use"):
         package["lighting"] = "the series look"
     package["avoid"] = list(
@@ -2167,7 +2215,12 @@ def compose_serial_prompt(package: dict[str, Any], look: dict[str, Any]) -> str:
         )
         for person in people
     )
-    parts = [*head, f"In frame, facing the viewer: {who}." if who else "", _sentence(action)]
+    parts = [
+        *head,
+        f"In frame, facing the viewer: {who}." if who else "",
+        serial_listen_sentence(package),
+        _sentence(action),
+    ]
     parts.extend(partial_clothing_sentence(person) for person in serial_partial_characters(package))
     text = " ".join(part for part in parts if part)
     # The exclusions are the look's own words already ("No written words ..."); a list of
@@ -2192,6 +2245,7 @@ _SERIAL_MOVE_SIZES: dict[str, str] = {
     "two_shot": "medium",
     "single": "medium",
     "close": "close",
+    "reaction": "close",
 }
 
 
@@ -2255,6 +2309,22 @@ SERIAL_LIFE_SENTENCE = (
     "As they speak their hands gesture, heads turn and shoulders shift, and behind them the "
     "lamp light flickers softly and the plants stir."
 )
+#: A reaction shot's life (montage, the Owner 2026-10-16: dialogue heard in off, the listener
+#: seen): said with the listener's name before it, the tail fixed so a lock on it is the
+#: composer's (`scene_rewrite._composer_sentences`). Positive words only: lips closed, never
+#: «not speaking».
+SERIAL_LISTEN_TAIL = (
+    "listens with lips closed, eyes on the speaker beside the frame, a breath and a small "
+    "nod as the words go on."
+)
+
+
+def serial_listen_sentence(package: dict[str, Any]) -> str:
+    """The listener's sentence of a reaction shot; empty for any other shot."""
+    name = str(package.get("listening") or "").strip()
+    return f"{name} {SERIAL_LISTEN_TAIL}" if name else ""
+
+
 #: Where a serial clip ends, from the plan's ``ending_frame``. 2026-10-12, f06808c9 scene 3:
 #: the film's QC found «ending frame shows Marcus and Sarah in profile facing each other
 #: instead of facing the viewer», and no rewrite could reach the clip's ending — the composer
@@ -2448,7 +2518,7 @@ def serial_motion(package: dict[str, Any], look: dict[str, Any]) -> tuple[str, b
         (2, 2, ending_sentence),
         (2, 3, serial_cast_sentence(package)),
         (3, 4, SERIAL_FACES_SENTENCE),
-        (4, 5, SERIAL_LIFE_SENTENCE),
+        (4, 5, serial_listen_sentence(package) or SERIAL_LIFE_SENTENCE),
         (6, 6, _sentence(feeling) if feeling else ""),
         (5, 7, END_BEAT if two_beats else ""),
         (0, 9, lint.MOTION_CLOSING),

@@ -1425,6 +1425,7 @@ def _motion_sentences(context: dict[str, Any], motion: str) -> tuple[list[str], 
             words.SERIAL_CAST_TAIL,
             words.SERIAL_FACES_SENTENCE,
             words.SERIAL_LIFE_SENTENCE,
+            words.SERIAL_LISTEN_TAIL,
         ]
     fixed = _present(constants, motion)
     if lint.MOTION_CLOSING not in fixed:
@@ -3142,6 +3143,7 @@ def _composer_sentences() -> tuple[str, ...]:
         words.SERIAL_CAST_TAIL,
         words.SERIAL_FACES_SENTENCE,
         words.SERIAL_LIFE_SENTENCE,
+        words.SERIAL_LISTEN_TAIL,
         words.SERIAL_FRAME_SENTENCE,
         words.SERIAL_BLANK_SENTENCE,
         words.COMPOSITION_SENTENCE,

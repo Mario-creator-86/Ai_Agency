@@ -56,6 +56,7 @@ from app.agents.memory import agent_for_role
 from app.agents.models import AgentRun
 from app.factual.models import ScriptDraft, StoryReview, TopicIdea
 from app.media.models import CharacterBible, Storyboard, StoryboardScene
+from app.media.montage import beat_tag, serial_shots
 from app.media.prompt_agent import PromptError, write_shot_prompts
 from app.media.series_look import (
     PART_PURPOSES,
@@ -194,6 +195,16 @@ def storyboard_from_episode(engine: Engine, episode_id: str, correlation_id: str
         dialogue = "\n\n".join(spoken)
         words = len(dialogue.split())
         target_seconds = max(30, min(75, round(words / WORDS_PER_SECOND)))
+        # The montage (the Owner, 2026-10-16): a beat cut into shots with its dialogue — one
+        # per speaker's run, a reaction shot on the listener when a run is long — each an
+        # ordinary scene of the storyboard and of the script's `scenes_json`, tagged with the
+        # beat it came from (`montage.serial_shots`, `montage.beat_tag`).
+        cuts: list[dict[str, Any]] = []
+        for number, beat in enumerate(beats, start=1):
+            for shot in serial_shots(
+                lines[number - 1], number, part=beat.get("part"), first_beat=number == 1
+            ):
+                cuts.append({"beat": number, "source": beat, **shot})
 
         topic_id, script_id, storyboard_id = str(uuid4()), str(uuid4()), str(uuid4())
         session.add(
@@ -214,27 +225,33 @@ def storyboard_from_episode(engine: Engine, episode_id: str, correlation_id: str
         scenes_json = [
             {
                 "scene_index": index,
-                "narration": spoken[index - 1],
-                "visual_description": str(beat.get("scene") or "").strip(),
-                "characters": list(beat.get("characters") or []),
-                "event_ids": list(beat.get("event_ids") or []),
-                "lines": lines[index - 1],
+                "narration": spoken_text(cut["lines"]),
+                "visual_description": str(cut["source"].get("scene") or "").strip(),
+                "characters": list(cut["source"].get("characters") or []),
+                "event_ids": list(cut["source"].get("event_ids") or []),
+                "lines": list(cut["lines"]),
                 # Which bible speaks each line: the render's takes are spoken in the voice
                 # of the character, not of the scene.
                 "speaker_bibles": {
-                    name: bibles[name].id
-                    for name in speakers_of(lines[index - 1])
-                    if name in bibles
+                    name: bibles[name].id for name in speakers_of(cut["lines"]) if name in bibles
                 },
-                "part": beat.get("part"),
-                "location": beat.get("location"),
+                "part": cut["source"].get("part"),
+                "location": cut["source"].get("location"),
                 # The room as the shot prompts name it, and who stands in the background.
                 "location_name": (
-                    location_name(beat["location"], locations) if beat.get("location") else ""
+                    location_name(cut["source"]["location"], locations)
+                    if cut["source"].get("location")
+                    else ""
                 ),
-                "background": [str(name) for name in beat.get("background") or []],
+                "background": [str(name) for name in cut["source"].get("background") or []],
+                # The beat this shot was cut from, and which of its shots it is.
+                "beat": (
+                    beat_tag(cut["beat"], cut["shot"], cut["of"], cut.get("size"), on=cut.get("on"))
+                    if int(cut["of"]) > 1
+                    else None
+                ),
             }
-            for index, beat in enumerate(beats, start=1)
+            for index, cut in enumerate(cuts, start=1)
         ]
         session.add(
             ScriptDraft(
@@ -302,7 +319,7 @@ def storyboard_from_episode(engine: Engine, episode_id: str, correlation_id: str
                 aspect_ratio=ASPECT_RATIO,
                 target_duration_seconds=target_seconds,
                 status="APPROVED",
-                total_scenes=len(beats),
+                total_scenes=len(cuts),
                 channel_id=channel.id if channel else None,
                 series_key=SERIES_KEY,
                 production_overrides_json={},
@@ -313,12 +330,14 @@ def storyboard_from_episode(engine: Engine, episode_id: str, correlation_id: str
             )
         )
         session.flush()
-        for index, beat in enumerate(beats, start=1):
-            narration = spoken[index - 1]
-            speakers = speakers_of(lines[index - 1])
-            cast = speakers + [
-                str(name) for name in (beat.get("characters") or []) if name not in speakers
-            ]
+        for index, cut in enumerate(cuts, start=1):
+            beat = cut["source"]
+            narration = spoken_text(cut["lines"])
+            speakers = speakers_of(cut["lines"])
+            # A reaction shot is on the listener: first in the cast, so the still is theirs.
+            listener = [str(cut["on"])] if cut.get("size") == "reaction" and cut.get("on") else []
+            cast = listener + [name for name in speakers if name not in listener]
+            cast += [str(name) for name in (beat.get("characters") or []) if name not in cast]
             present = [bibles[name] for name in cast if name in bibles]
             visual = str(beat.get("scene") or "").strip()
             if beat.get("location"):
@@ -332,9 +351,18 @@ def storyboard_from_episode(engine: Engine, episode_id: str, correlation_id: str
             # (about 2.5 a second), within what a short's scene can hold — the same rule as
             # the factual storyboard, so the assembler sees nothing new.
             duration = min(9.0, max(3.0, round(len(narration.split()) / WORDS_PER_SECOND, 1)))
-            # The camera varies across the episode by the beat's part; the prompt pass
-            # below writes the same size into the shot's prompt.
-            size = serial_shot_size(beat.get("part"), index, len(speakers))
+            # The camera varies across the episode by the beat's part, and across a beat by
+            # the montage's cut; the prompt pass below writes the same size into the shot.
+            size = str(cut.get("size") or "") or serial_shot_size(
+                beat.get("part"), cut["beat"], len(speakers)
+            )
+            if size not in SHOT_TYPES:
+                size = serial_shot_size(beat.get("part"), cut["beat"], len(speakers))
+            tag = (
+                beat_tag(cut["beat"], cut["shot"], cut["of"], size, on=cut.get("on"))
+                if int(cut["of"]) > 1
+                else None
+            )
             session.add(
                 StoryboardScene(
                     id=str(uuid4()),
@@ -350,6 +378,7 @@ def storyboard_from_episode(engine: Engine, episode_id: str, correlation_id: str
                     character_ids_json=[b.id for b in present],
                     claim_ids_json=[],
                     production_overrides_json={},
+                    prompt_json={"beat": tag} if tag else None,
                     created_at=now,
                 )
             )

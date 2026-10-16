@@ -1,5 +1,11 @@
 # Architectural / Product Decision Log v5
 
+## Montage shots are scenes; interrupted continuations resumed (2026-10-16)
+
+**Montage: shots are scenes.** The Owner (2026-10-16, after a Seedance fan film of 150 shots) asked for the same complexity of montage in the shorts and the serial and decided by card: shots made with the studio's RunPod models; dialogue heard in off with reaction shots instead of lip-synced speech; the serial keeps its 2D look; the design «cadrele devin scene obișnuite tăiate la construirea storyboard-ului». A writer's scene (a beat) becomes N storyboard scenes tagged `prompt_json["beat"]`; every rule that counts per scene — one still per scene (2026-10-15), the renders cap of three a layer a scene (2026-10-15), the paid redos per scene, «one camera move per clip» (Mișcare v2) — now counts per shot, by the same code. The review's «one beat = one scene = one clip» (`story/review._filmable`) stays as the beat's length limit before the cut. The script and the episode's beats are never rewritten by the montage.
+
+**A dead process's work is the studio's to resume.** The 2026-10-02 rule (REL-03: an interrupted continuation is never re-run on its own) is amended by his rules of 2026-10-12 («dai singur restart») and 2026-10-15 («the day ends on its goal»): the leases a dead process held are released on every pass, and a film continuation dead-lettered INTERRUPTED is queued again once within six hours when its film was not walked since. A day run keeps its own resume pass.
+
 ## The renders cap holds before assembly: the closest still stands (2026-10-16)
 
 The Owner's rule of 2026-10-15 («Randările odată făcute, de maxim 3x pentru fiecare imagine sau mișcare … publicăm cu ce Directoarea alege ca fiind cel mai apropiat») applies before assembly as well: a scene whose still was made three times keeps the closest refused candidate as its picture (approved «director_cap», the refusal recorded as the lesson), instead of waiting for a fourth. The alternative — unlimited rewrite-and-rebuy rounds in the stills stage — kept the serial episode 87c05891 from buying four of its eight scenes while scene 1 was bought three times (01:46Z). Hard-limit refusals (a face where faces are forbidden, writing) are still chosen among by fewest faults; the clip QC and the Director's QC decision judge the assembled film afterwards.

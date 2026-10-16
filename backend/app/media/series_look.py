@@ -45,6 +45,12 @@ DEFAULT_SHOT_SIZES = {
     "two_shot": "Medium two-shot at eye level, both speakers facing the viewer",
     "single": "Medium close-up single at eye level on {name}, facing the viewer",
     "close": "Close-up at eye level on {name}'s reaction, facing the viewer",
+    # The listener while the other goes on speaking from beside the frame (montage, the
+    # Owner 2026-10-16: dialogue heard in off, reaction shots instead of moving lips).
+    "reaction": (
+        "Close-up at eye level on {name} listening, lips closed, eyes on the speaker beside "
+        "the frame"
+    ),
 }
 
 
@@ -54,6 +60,7 @@ SHOT_TYPES = {
     "two_shot": "MEDIUM_TWO_SHOT",
     "single": "MEDIUM_CLOSEUP",
     "close": "CLOSEUP",
+    "reaction": "CLOSEUP_REACTION",
 }
 
 #: The part a beat plays (the showrunner's structure, S4) as the scene purpose a shot records.

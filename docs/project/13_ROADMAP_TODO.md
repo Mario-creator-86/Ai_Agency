@@ -2151,3 +2151,29 @@ No provider was called, no run was queued, no credit was spent, and
   the same look, before the shot is bought — or the clip QC's look should run on the still
   first.
 
+- 2026-10-16 06:50Z — montage (the Owner's decision, `media/montage.py`), open after the first
+  cut: (a) the breath of 0.12 s (`SPOKEN_TAIL_SECONDS`) is planned after every shot's words; one
+  per beat would be truer to a sentence carried across a cut; (b) `film_max_paid_redos` (20 per
+  film) and `MAX_STORY_SCENES` are per row, with up to three times the rows — measure the first
+  montage films before raising either; (c) the wide still of a beat as a reference image for
+  its closer shots (today the prompt and the room reference carry the continuity); (d) the
+  sheet could show a beat's shots together (display only); (e) the serial review's `_filmable`
+  still measures the whole beat against one clip (right as a length rule for the writers; the
+  cut makes it looser than it needs to be).
+- 2026-10-16 06:50Z — next: a film ACCEPTED (under the cap or by her looks) whose walk ended
+  without publishing has no pass of its own: `passes/director_qc_review` walks it again only
+  after a refused viewing. A pass should queue one walk for any film with a PASSED report, no
+  publication record and no standing continuation (the dead-process resume covers today's
+  case, 7c26a7ce 06:05Z, but not a walk that ended on its own without publishing).
+- 2026-10-16 06:50Z — failing on HEAD before the montage, unrelated: `test_motion_v2::
+  test_the_ending_survives_a_long_action_whose_later_moments_give_way`, `…_a_single_long_clause_
+  keeps_the_ending_with_the_move_said_short`, `…_three_peoples_moments_give_way_word_by_word_
+  before_the_ending_does`, `…_an_ending_that_fits_beside_nothing_is_left_out_and_said_so` (they
+  assume the old word band: «assert 92 > 900» since the bands went to 900, 2026-10-15 20:07Z —
+  rewrite them against a band the test sets itself), and `test_rewrite_learns::
+  test_the_films_findings_reach_the_brief_with_the_cause_she_found` (rewritten False, layer
+  motion; read its reason).
+- 2026-10-16 06:50Z — the restart chain's boundary (`wait_round_end.py`) passed at 06:05:40Z and a
+  walk claimed at 06:05:52Z, twelve seconds later, was cut by the stop: the boundary and the
+  stop must be one step (`restart.py` taking a lock the worker respects, or the stop refusing
+  while a FILM_CONTINUE is claimed), not a check followed by a stop.
