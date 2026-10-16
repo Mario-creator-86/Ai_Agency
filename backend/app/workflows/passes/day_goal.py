@@ -152,6 +152,13 @@ def _budget_spent(engine: Any, owed: list[str]) -> list[str]:
     2026-10-16): until then the newest refusal of any film stopped the whole day, and a short
     whose next round still fitted waited, with no run, card or reason, behind the episode's.
 
+    Only a film the day can still make counts, either way: a refusal of a film that is closed
+    (`shooting_sheet.film_is_closed`: retired by the Director, replaced by a newer board of its
+    script, closed by the Owner, or out on the channel) is not the round the next run needs. Its
+    round that fits kept a spent day going until the run cap wrote him «6 rulări», and its round
+    over what is left held back a live film of its kind that was never refused (review of
+    2026-10-16).
+
     A refusal whose storyboard the studio cannot find is read as before, for every owed film:
     the day cannot tell which film it was."""
     from sqlalchemy import select  # noqa: PLC0415
@@ -159,7 +166,10 @@ def _budget_spent(engine: Any, owed: list[str]) -> list[str]:
 
     from app.economy.budget import budget_status  # noqa: PLC0415
     from app.media.models import Storyboard  # noqa: PLC0415
-    from app.media.shooting_sheet import STEP_HOLD_REFUSED_EVENT  # noqa: PLC0415
+    from app.media.shooting_sheet import (  # noqa: PLC0415
+        STEP_HOLD_REFUSED_EVENT,
+        film_is_closed,
+    )
     from app.models import DomainEvent  # noqa: PLC0415
 
     if not owed:
@@ -173,7 +183,7 @@ def _budget_spent(engine: Any, owed: list[str]) -> list[str]:
         return []
     if int(daily["remaining_usd_micros"]) <= 0:
         return list(owed)
-    newest: dict[str, dict[str, Any]] = {}
+    newest: dict[str, dict[str, Any] | None] = {}
     with Session(engine) as session:
         for event in session.scalars(
             select(DomainEvent)
@@ -187,6 +197,9 @@ def _budget_spent(engine: Any, owed: list[str]) -> list[str]:
             if board_id in newest:
                 continue  # an older refusal of a film whose newest is already read
             board = session.get(Storyboard, board_id) if board_id else None
+            if board is not None and film_is_closed(session, board_id):
+                newest[board_id] = None  # not a film the day can still make
+                continue
             kinds = (
                 list(owed)
                 if board is None
@@ -201,6 +214,8 @@ def _budget_spent(engine: Any, owed: list[str]) -> list[str]:
     over: set[str] = set()
     fits: set[str] = set()
     for refusal in newest.values():
+        if refusal is None:
+            continue
         payload = refusal["payload"]
         period = periods.get(str(payload.get("period") or ""))
         if period is None:

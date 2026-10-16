@@ -137,3 +137,41 @@ def test_another_film_of_the_owed_kind_whose_round_fits_keeps_the_day_going(engi
     result = _pass(engine, settings)
 
     assert result["queued"], result
+
+
+def _retired(engine, board: str) -> None:
+    """The film is closed: the Director retired it, or a newer board of its script replaced it
+    (both leave it REJECTED with no render, `shooting_sheet.film_is_closed`)."""
+    with Session(engine) as session, session.begin():
+        session.get(Storyboard, board).status = "REJECTED"
+
+
+def test_a_retired_films_round_that_fits_does_not_keep_a_spent_day_going(engine, settings):
+    """The review of 2026-10-16: a refused round of a board that is no longer the film the day
+    needs read as «this kind still fits», and the day queued run after run until the run cap
+    wrote him «6 rulări» for what was his budget."""
+    _a_day_with_three_dollars_left(engine)
+    retired, live = _board(engine, serial=False), _board(engine, serial=False)
+    _refused(engine, retired, 1.0)  # it fits, but the film is closed
+    _retired(engine, retired)
+    _refused(engine, live, 3.2)  # the live short does not fit
+    _refused(engine, _board(engine, serial=True), 3.61)
+
+    result = _pass(engine, settings)
+
+    assert result["queued"] is None and result["budget"] is True, result
+    assert result["letter"] is False
+    assert result["waiting_on_budget"] == ["short", "serial"]
+
+
+def test_a_retired_films_refusal_does_not_hold_back_a_live_film_never_refused(engine, settings):
+    _a_day_with_three_dollars_left(engine)
+    retired = _board(engine, serial=False)
+    _refused(engine, retired, 3.2)  # over what is left, but the film is closed
+    _retired(engine, retired)
+    _board(engine, serial=False)  # the live short: never refused
+    _refused(engine, _board(engine, serial=True), 3.61)
+
+    result = _pass(engine, settings)
+
+    assert result["queued"], result
