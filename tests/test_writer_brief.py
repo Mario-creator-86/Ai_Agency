@@ -19,6 +19,7 @@ network is refused by conftest). Nothing here proves a live model answered.
 
 from __future__ import annotations
 
+import contextlib
 import json
 from typing import Any
 from uuid import uuid4
@@ -46,12 +47,13 @@ from app.media.cost_plan import plan_film
 from app.media.models import MediaAsset, Storyboard, VideoRenderJob
 from app.media.shooting_sheet import film_ceiling_micros
 from app.publishing.models import ChannelRecord, PublicationRecord
+from app.runbook.stages import script_work
 from app.runbook.weekly import execute_weekly_review
 from app.services import append_event, utc_now
 from app.wording import review_verdict, usd
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-from test_editorial_judgement import GOOD, StandIn, her_answer
+from test_editorial_judgement import GOOD, WEAK, StandIn, her_answer
 from test_editorial_judgement import registry_with as judgement_registry
 from test_editorial_quality import (  # noqa: F401 - `studio` is a fixture
     GOOD_SCENES,
@@ -276,7 +278,7 @@ def _she_says(verdict: str, *notes: str):
     return answer
 
 
-def test_her_letter_reaches_the_writer_by_mail_and_is_settled_when_a_later_draft_passes(
+def test_her_letter_reaches_the_writers_next_prompt_and_is_settled_when_a_later_draft_passes(
     engine,
     studio,  # noqa: F811 - the fixture
 ):
@@ -310,8 +312,10 @@ def test_her_letter_reaches_the_writer_by_mail_and_is_settled_when_a_later_draft
         )
         assert "0% la 5 s" not in letter.body_text  # a mark she did not give is not said
         # It is a letter his mail round answers, with its whole text (2026-10-16, «Context pe
-        # sarcină»: the inbox is the mail tasks'); no identity of his carries it, and his
-        # rewrite gets her notes in its own data (`agent_write_script(notes=...)`).
+        # sarcină»: the inbox is the mail tasks'); no identity of his carries it. What it says
+        # reaches his next draft in the rewrite's own data: her notes and her retention row,
+        # the span where she loses the viewer and why (`rewrite_notes`) — here through the
+        # topic the runbook carries to its next exchange (`script_work`).
         from app.agents.mail import letters_awaiting_answer
 
         assert letter_id in letters_awaiting_answer(session)
@@ -319,7 +323,27 @@ def test_her_letter_reaches_the_writer_by_mail_and_is_settled_when_a_later_draft
             identity = compose_identity(session, writer, task_type=task)
             assert letter.subject not in identity.system, task
             assert identity.context["open_message_ids"] == [], task
+        ((owed_topic, owed_notes),) = script_work(session, [topic_id])
+        assert owed_topic == topic_id
+        assert owed_notes == [
+            "Strânge scena 3.",
+            "Reținerea la care se așteaptă Directorul: 100% la 0 s, 70% la 3 s, 55% la 10 s, "
+            "45% la final; pierde publicul la 3-9: the setup repeats the hook.",
+        ]
         director_name = director.display_name
+
+    # It enters his next prompt: the rewrite is asked with those notes.
+    rewriting, model = registry_with(studio, lambda prompt: "{}")
+    with contextlib.suppress(Exception):  # the stand-in's empty answer is no script
+        agent_write_script(
+            engine, rewriting, topic_id, str(uuid4()), target_duration_seconds=20, notes=owed_notes
+        )
+    (asked,) = [prompt for prompt in model.prompts if "CE TREBUIE SCHIMBAT:" in prompt][:1]
+    changes = asked.split("CE TREBUIE SCHIMBAT:", 1)[1]
+    assert "- Strânge scena 3." in changes
+    assert (
+        "70% la 3 s" in changes and "pierde publicul la 3-9: the setup repeats the hook" in changes
+    )
 
     # A later draft of the same story passes: the letter is resolved and leaves his mail.
     second = a_script(engine, topic_id, status="VERIFIED_PASS")
@@ -333,6 +357,93 @@ def test_her_letter_reaches_the_writer_by_mail_and_is_settled_when_a_later_draft
         assert letter.resolved_by == director_name
         assert letter.resolution == f"Versiunea {second[:8]} a trecut recenzia de poveste."
         assert letter_id not in letters_awaiting_answer(session)
+
+
+def test_the_revise_loop_gives_the_rewrite_her_retention_row(engine, studio):  # noqa: F811
+    """The runbook's REVISE loop (`_script_and_storyboard`): the rewrite after her REVISE is
+    asked with her notes and her retention row — where she loses the viewer, and why — in its
+    own data, since no identity carries her letter (2026-10-16)."""
+    from app.runbook.stages import _script_and_storyboard
+
+    a_topic(engine)
+    readings = {"count": 0}
+
+    def answer(prompt: str) -> str:
+        if "You are the Director" in prompt:
+            readings["count"] += 1
+            if readings["count"] == 1:
+                return _she_says("REVISE", "Strânge scena 3.")(prompt)
+            return _she_says("PASS")(prompt)
+        return json.dumps(
+            {
+                "title": "The address nobody may buy",
+                "core_message": "One web address is reserved so nobody can ever own it.",
+                "takeaway": "Some addresses are reserved by the registry, on purpose.",
+                "hook": "There is one web address nobody on earth is allowed to buy.",
+                "ending": "Reserved on purpose, by the registry itself.",
+                "cta": "Which reserved address surprised you most?",
+                "cta_kind": "COMMENT",
+                "scenes": [
+                    {
+                        "narration": scene["narration"],
+                        "visual": scene["visual_description"],
+                        "purpose": scene["purpose"],
+                        "claim_ids": scene["claim_ids"],
+                    }
+                    for scene in GOOD_SCENES
+                ],
+            }
+        )
+
+    registry, model = registry_with(studio, answer)
+    _script_and_storyboard(engine, registry, "en", 20)
+    rewrites = [prompt for prompt in model.prompts if "CE TREBUIE SCHIMBAT:" in prompt]
+    assert rewrites, "her REVISE was followed by a rewrite"
+    changes = rewrites[0].split("CE TREBUIE SCHIMBAT:", 1)[1]
+    assert "- Strânge scena 3." in changes
+    assert "70% la 3 s" in changes
+    assert "pierde publicul la 3-9: the setup repeats the hook" in changes
+
+
+def test_the_editorial_rewrite_is_written_to_her_retention_row(
+    engine,
+    studio,  # noqa: F811
+    monkeypatch,
+):
+    """After a PASS below her editorial bar, the rewrite on her brief also carries the
+    retention row of the version she judged (`judged_story`)."""
+    from app.factual import story_review
+
+    topic_id = a_topic(engine)
+    script_id = a_script(engine, topic_id, status="VERIFIED_PASS")
+    asked: list[list[str]] = []
+
+    def writer(*_args: Any, notes: list[str], **_kwargs: Any) -> dict:
+        asked.append(list(notes))
+        raise ValueError("no draft in this test")
+
+    monkeypatch.setattr(story_review, "agent_write_script", writer)
+    judge = StandIn(lambda _prompt: her_answer(WEAK))
+    judged_story(
+        engine,
+        judgement_registry(studio, judge),
+        script_id,
+        target_seconds=20,
+        rounds=2,
+        review={
+            "verdict": "PASS",
+            "failed": [],
+            "notes": [],
+            "retention": {"at_3": 70, "at_end": 45, "collapse_at": "3-9", "why": "a slow setup"},
+        },
+    )
+    assert len(asked) == 1
+    brief, retention = asked[0]
+    assert brief and "Reținerea" not in brief
+    assert retention == (
+        "Reținerea la care se așteaptă Directorul: 70% la 3 s, 45% la final; pierde publicul "
+        "la 3-9: a slow setup."
+    )
 
 
 # ---------------------------------------------------------------------------

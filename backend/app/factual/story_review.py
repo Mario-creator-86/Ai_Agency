@@ -37,8 +37,11 @@ money, because rewriting text costs nothing and re-filming a shot costs dollars.
   own inbox, where the Scriptwriter never read it. It is now a REQUEST_REVIEW addressed to
   him, with her retention row and the span where she loses the viewer in its words
   (`letter_to_writer`); his mail round answers it (since 2026-10-16 no identity carries a
-  letter: `agents.identity`), his rewrite is given her notes in its own data, and it stays
-  open until a later draft of the story passes and `_settle_writer_letters` resolves it.
+  letter: `agents.identity`), and it stays open until a later draft of the story passes and
+  `_settle_writer_letters` resolves it. His rewrite is given, in its own data, her notes and
+  that same retention row as a sentence (`rewrite_notes`): the REVISE loop of the runbook,
+  a topic carried to the next day, the editorial rewrite on her brief and the shooting
+  sheet's story repair all pass it.
   When a story ships, what it scored and her last note become one AGENT_OPINION on his
   memory (`remember_shipped_story`).
 """
@@ -266,10 +269,24 @@ def retention_sentence(retention: dict[str, Any]) -> str:
     return said + "."
 
 
+def rewrite_notes(notes: Any, retention: Any) -> list[str]:
+    """The notes a rewrite of the story is given in its own data: her notes, whole and in
+    order, then her retention row as a sentence (`retention_sentence`: the marks, where she
+    expects to lose the viewer and why), so the next draft is written to the row she judged
+    against, not only to the notes (2026-10-13). Since 2026-10-16 («Context pe sarcină») no
+    identity carries her letter, so the rewrite's data is where the row must ride. Nothing is
+    added when she gave no row, or when the notes already say it."""
+    out = [str(note) for note in (notes or []) if str(note).strip()]
+    said = retention_sentence(retention) if isinstance(retention, dict) else ""
+    if said and said not in out:
+        out.append(said)
+    return out
+
+
 def letter_to_writer(verdict: str, notes: list[str], retention: dict[str, Any]) -> str:
     """The words of her letter to the Scriptwriter: the verdict, her notes, and where she
-    expects to lose the viewer (`retention_sentence`), so the next draft is written to the
-    row she judged against, not only to the notes."""
+    expects to lose the viewer (`retention_sentence`). It is his mail round's to answer; the
+    rewrite itself is given the same row in its own data (`rewrite_notes`)."""
     words = (
         f"Scenariul nu poate intra în producție așa cum e ({review_verdict(verdict)}). "
         + " ".join(str(note) for note in notes)
@@ -962,6 +979,9 @@ def judged_story(
         director_id = director.id if director is not None else None
         first = _version_of_script(script, passed)
     reviews: dict[str, dict[str, Any]] = {script_id: passed}
+    # The retention row of the version her brief is about (the newest read): the rewrite is
+    # written to it as well as to the brief (`rewrite_notes`).
+    judged_row: dict[str, Any] = {"retention": passed.get("retention")}
 
     def rewrite(brief: str, number: int) -> Version | None:
         try:
@@ -972,7 +992,7 @@ def judged_story(
                 str(uuid4()),
                 target_duration_seconds=target_seconds,
                 language=language,
-                notes=[brief],
+                notes=rewrite_notes([brief], judged_row["retention"]),
             )
         except (ScriptRejected, NoVerifiedClaims, FactualGateError, ValueError) as exc:
             # Unattributable narration, no claims, a claim refuted meanwhile, or no answer:
@@ -988,11 +1008,13 @@ def judged_story(
                 engine, registry, new_id, str(uuid4()), target_seconds=target_seconds
             )
         except StoryReviewError as exc:
+            judged_row["retention"] = None  # this version has no row of hers
             with Session(engine) as session:
                 row = session.get(ScriptDraft, new_id)
                 assert row is not None  # stored above, in this same process
                 return _version_of_script(row, None, note=str(exc))
         reviews[new_id] = verdict
+        judged_row["retention"] = verdict.get("retention")
         with Session(engine) as session:
             row = session.get(ScriptDraft, new_id)
             assert row is not None

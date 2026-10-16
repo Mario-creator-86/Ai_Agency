@@ -120,6 +120,7 @@ from app.factual.story_review import (
     judged_story,
     latest_review,
     review_story,
+    rewrite_notes,
     story_gate,
 )
 from app.integrations.services import selected_youtube
@@ -1057,7 +1058,8 @@ def script_work(session: Session, selected: list[str]) -> list[tuple[str, list[s
             continue
         if review.verdict != "REVISE":
             continue  # approved and waiting to be shot, or refused and not ours to retry
-        notes = list((review.notes_json or {}).get("notes") or [])
+        # Her notes and the retention row she judged the draft against (`rewrite_notes`).
+        notes = rewrite_notes((review.notes_json or {}).get("notes") or [], review.retention_json)
         owed.append((topic_id, notes))
     return owed
 
@@ -1217,7 +1219,9 @@ def _script_and_storyboard(
                     break  # she approved it; the camera is next
                 if review["verdict"] == "REJECT":
                     break  # the budget is spent or the story is unsupportable; let it go
-                notes = list(review["notes"])
+                # Her notes, and her retention row — where she expects to lose the viewer, and
+                # why — in the rewrite's own data: no identity carries her letter (2026-10-16).
+                notes = rewrite_notes(review["notes"], review.get("retention"))
             except ScriptBlocked as exc:
                 # The writer's honest stop: what he was given cannot be written. The topic
                 # goes back to research with his reason, through the Director, and the day
