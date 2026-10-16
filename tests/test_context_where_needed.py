@@ -166,11 +166,25 @@ def test_her_company_decision_reaches_the_work_of_the_department_it_directs(engi
     assert "ACTION FOR ScriptWriter" not in script.system
     with Session(engine) as session, session.begin():
         session.get(DirectorDecision, newer["decision_id"]).state = "REVIEWED"
-    assert "NEWER ACTION." not in identity_of(engine, marcus.id, "write_script").system
-    with Session(engine) as session, session.begin():
-        lyra_letter = session.get(AgentMessage, letters[staffed["agents"]["VoiceArtist"].id].id)
-        lyra_letter.status = "RESOLVED"
+    script = identity_of(engine, marcus.id, "write_script")
+    assert "NEWER ACTION." not in script.system
+    # The newest decision on the matter decides it: the older one, its letter still open, does
+    # not come back when the newer is reviewed.
+    assert "ACTION FOR ScriptWriter" not in script.system
+    assert script.context["decision_message_ids"] == []
     lyra = staffed["agents"]["VoiceArtist"]
+    newer_lyra = _decide(engine, staffed, "VoiceArtist", "retention_voiceartist", "LYRA NEWER.")
+    assert "LYRA NEWER." in identity_of(engine, lyra.id, "sound_design").system
+    with Session(engine) as session, session.begin():
+        decision = session.get(DirectorDecision, newer_lyra["decision_id"])
+        session.get(AgentMessage, decision.message_id).status = "RESOLVED"
+    # Its newest letter closed, the matter rides nowhere, though the older letter is open.
+    sound = identity_of(engine, lyra.id, "sound_design").system
+    assert "LYRA NEWER." not in sound and "ACTION FOR VoiceArtist" not in sound
+    with Session(engine) as session, session.begin():
+        lyra_letter = session.get(AgentMessage, letters[lyra.id].id)
+        assert lyra_letter.status == "OPEN"
+        lyra_letter.status = "RESOLVED"
     assert "ACTION FOR VoiceArtist" not in identity_of(engine, lyra.id, "sound_design").system
 
 

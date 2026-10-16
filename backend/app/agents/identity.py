@@ -673,46 +673,62 @@ def standing_direction(session: Session, agent: Agent) -> list[AgentMessage]:
     return list(newest.values())
 
 
-def standing_decisions(session: Session, agent: Agent) -> list[AgentMessage]:
-    """The Director's company decisions assigned to this employee's department, while their
-    letter is open: the HANDOFF `agents.command._assign` files (body «kind» direction, its
-    «matter_key», «DE FĂCUT: …» in its words), the newest per matter, unless the decision it
-    carries was since reviewed or closed. Not the inbox: an instruction the department's work
-    acts on — the writer's next script, the editor's next shot prompts, the voice's next mix —
-    and the decision's review after N films measures exactly that."""
-    from app.analytics.models import DirectorDecision  # noqa: PLC0415 - analytics imports agents
-
-    letters = [
+def _decision_letters(rows: Iterable[AgentMessage]) -> list[AgentMessage]:
+    """The letters among ``rows`` that carry one of her company decisions (`_assign`)."""
+    return [
         row
-        for row in session.scalars(
-            select(AgentMessage)
-            .where(
-                AgentMessage.to_agent_id == agent.id,
-                AgentMessage.status == "OPEN",
-                AgentMessage.intent == "HANDOFF",
-            )
-            .order_by(AgentMessage.created_at.desc())
-        )
+        for row in rows
         if isinstance(row.body_json, dict)
         and row.body_json.get("kind") == "direction"
         and row.body_json.get("matter_key")
     ]
-    if not letters:
+
+
+def standing_decisions(session: Session, agent: Agent) -> list[AgentMessage]:
+    """The Director's company decisions assigned to this employee's department, while their
+    letter is open: the HANDOFF `agents.command._assign` files (body «kind» direction, its
+    «matter_key», «DE FĂCUT: …» in its words). The newest letter on each matter decides it: it
+    is told while it is open and the decision it carries is still open; an older letter on the
+    same matter is never told, even open, once a newer one was filed. Not the inbox: an
+    instruction the department's work acts on — the writer's next script, the editor's next
+    shot prompts, the voice's next mix — and the decision's review after N films measures
+    exactly that."""
+    from app.analytics.models import DirectorDecision  # noqa: PLC0415 - analytics imports agents
+
+    handoffs = (
+        AgentMessage.to_agent_id == agent.id,
+        AgentMessage.intent == "HANDOFF",
+    )
+    open_letters = _decision_letters(
+        session.scalars(select(AgentMessage).where(*handoffs, AgentMessage.status == "OPEN"))
+    )
+    if not open_letters:
+        return []
+    # Every letter on these matters since the oldest open one, whatever its state: a newer
+    # letter, open or not, replaces an older one on its matter.
+    since = min(str(row.created_at) for row in open_letters)
+    newest: dict[str, AgentMessage] = {}
+    for row in _decision_letters(
+        session.scalars(
+            select(AgentMessage)
+            .where(*handoffs, AgentMessage.created_at >= since)
+            .order_by(AgentMessage.created_at.desc())
+        )
+    ):
+        newest.setdefault(str(row.body_json["matter_key"]), row)
+    told = [row for row in newest.values() if row.status == "OPEN"]
+    if not told:
         return []
     states: dict[str, str] = {
         str(message_id): str(state)
         for message_id, state in session.execute(
             select(DirectorDecision.message_id, DirectorDecision.state).where(
-                DirectorDecision.message_id.in_([row.id for row in letters])
+                DirectorDecision.message_id.in_([row.id for row in told])
             )
         ).all()
     }
-    newest: dict[str, AgentMessage] = {}
-    for row in letters:
-        if states.get(row.id, "OPEN") != "OPEN":
-            continue  # its decision was reviewed or closed: the letter only lingers
-        newest.setdefault(str(row.body_json["matter_key"]), row)
-    return list(newest.values())
+    # Its decision reviewed or closed, the letter only lingers.
+    return [row for row in told if states.get(row.id, "OPEN") == "OPEN"]
 
 
 def _direction_line(row: AgentMessage) -> str:
