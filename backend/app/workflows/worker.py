@@ -57,10 +57,12 @@ from app.services import FILM_CONTINUE_TASK, append_event
 from app.story.services import business_date
 from app.workflows.services import (
     PROCESS_STARTED_AT,
+    RESUME_CONTINUATION_HOURS,
     TASK_LEASE_LOST_EVENT,
     LeaseLost,
     claim_task,
     complete_task,
+    continuation_resumed,
     continuation_resumes,
     enqueue_task,
     fail_task,
@@ -70,6 +72,7 @@ from app.workflows.services import (
     resume_interrupted_continuations,
     scheduler_tick,
     sweep_interrupted_tasks,
+    unresumed_continuations,
 )
 
 logger = logging.getLogger("studio.worker")
@@ -684,11 +687,15 @@ def announce_interrupted(engine: Engine, tasks: list[dict[str, Any]]) -> list[di
     """Tell the Owner about interrupted work he cares for: a day, a film's continuation.
 
     Called with what `sweep_interrupted_tasks` or `interrupt_orphaned_claims` just
-    dead-lettered, so each is told once. A continuation the studio queues again itself
-    (`continuation_resumes`, asked before `resume_interrupted_continuations` runs) is no
+    dead-lettered, so each is told once. A continuation the studio queues again itself is no
     letter: his rule of 2026-10-12 keeps his letters for accounts, authorisations and security,
     and review 2026-10-16 measured the letter saying «nu o repornesc singur» seconds before
-    the next pass walked the film. One that is not resumed is told, as before.
+    the next pass walked the film. Asked after `resume_interrupted_continuations` ran (the
+    audit of 2026-10-16, SAFE-007): «resumes» only when it was queued again
+    (`continuation_resumed`); «resume_pending» when it is still the studio's to resume but the
+    resume failed — no letter, tried again on the next pass, and a note for the developer if
+    its window closes first (`note_unresumed_continuations`). One the studio does not resume
+    is told, as before.
     """
     told: list[dict[str, Any]] = []
     for task in tasks:
@@ -697,8 +704,10 @@ def announce_interrupted(engine: Engine, tasks: list[dict[str, Any]]) -> list[di
             if task["task_type"] == DAILY_RUN:
                 record["day"] = interrupt_task_day(engine, task)
             elif task["task_type"] == FILM_CONTINUE:
-                if continuation_resumes(engine, task["id"]):
+                if continuation_resumed(engine, task["id"]):
                     record["resumes"] = True
+                elif continuation_resumes(engine, task["id"]):
+                    record["resume_pending"] = True
                 else:
                     record["letter_id"] = _tell_continue_interrupted(engine, task)
         except Exception as exc:  # noqa: BLE001 - one letter must not lose the others
@@ -738,6 +747,86 @@ def _tell_continue_interrupted(engine: Engine, task: dict[str, Any]) -> str:
             correlation_id=task["id"],
         )
         return row.id
+
+
+#: The developer's note about a continuation the studio did not resume in its window.
+UNRESUMED_DEFECT = "continuation_not_resumed"
+UNRESUMED_NOTE_SUBJECT = "Pentru dezvoltator: continuarea unui film nu a fost reluată"
+
+
+def note_unresumed_continuations(engine: Engine) -> list[str]:
+    """A note for the developer, once, about each continuation the studio was to resume itself
+    and did not within RESUME_CONTINUATION_HOURS (`unresumed_continuations`): its resume kept
+    failing (a warning in the log only), and past the window nothing resumes it. Never the
+    Owner's letter — his rule of 2026-10-12: his letters are accounts, authorisations and
+    security; a tool's defect is the developer's (the audit of 2026-10-16, SAFE-007). Written
+    in the Director's own thread and resolved at once, as her other developer notes are. The
+    notes written."""
+    return [
+        note_id
+        for item in unresumed_continuations(engine)
+        if (note_id := _note_unresumed(engine, item))
+    ]
+
+
+def _note_unresumed(engine: Engine, item: dict[str, Any]) -> str | None:
+    from app.agents.director import DEVELOPER_DEFECT_KIND  # noqa: PLC0415 - agents import us
+    from app.agents.memory import agent_for_role  # noqa: PLC0415
+    from app.agents.messages import post_message, resolve_message  # noqa: PLC0415
+    from app.agents.models import AgentMessage  # noqa: PLC0415
+    from app.db import lock_for_write  # noqa: PLC0415
+    from app.media.models import Storyboard  # noqa: PLC0415
+
+    with Session(engine) as session, session.begin():
+        lock_for_write(session)
+        for row in session.scalars(
+            select(AgentMessage).where(AgentMessage.subject.like(f"{UNRESUMED_NOTE_SUBJECT}%"))
+        ):
+            body = row.body_json if isinstance(row.body_json, dict) else {}
+            if body.get("defect") == UNRESUMED_DEFECT and body.get("task_id") == item["id"]:
+                return None
+        director = agent_for_role(session, "Director")
+        if director is None:
+            logger.warning("unresumed_continuation_not_noted", extra={"task_id": item["id"]})
+            return None
+        storyboard_id = str(item.get("storyboard_id") or "")
+        board = session.get(Storyboard, storyboard_id) if storyboard_id else None
+        title = str(getattr(board, "title", "") or storyboard_id[:8] or "fără nume").strip()
+        at = str(item.get("interrupted_at") or "")[:16].replace("T", " ")
+        note = (
+            f"Continuarea filmului «{title[:120]}» a fost întreruptă de oprirea procesului la "
+            f"{at} (UTC), iar studioul trebuia s-o reia singur, o dată, în "
+            f"{RESUME_CONTINUATION_HOURS} ore. Reluarea nu s-a făcut în acest timp (un eșec al "
+            "ei apare în jurnalul worker-ului ca «dead_process_work_not_resumed»), iar după "
+            "fereastră studioul nu o mai reia singur. E un defect al uneltei: îl repară "
+            "dezvoltatorul, nu Proprietarul."
+        )
+        row = post_message(
+            session,
+            intent="STATUS",
+            subject=f"{UNRESUMED_NOTE_SUBJECT}: «{title[:80]}»",
+            body={
+                "kind": DEVELOPER_DEFECT_KIND,
+                "defect": UNRESUMED_DEFECT,
+                "task_id": item["id"],
+                "storyboard_id": storyboard_id,
+                "interrupted_at": item.get("interrupted_at"),
+                "note": note,
+            },
+            body_text=note,
+            from_agent_id=director.id,
+            to_agent_id=director.id,
+            correlation_id=item["id"],
+        )
+        resolve_message(
+            session,
+            row.id,
+            resolution="Notat pentru dezvoltator.",
+            resolved_by=director.display_name,
+            status="RESOLVED",
+            correlation_id=item["id"],
+        )
+        return str(row.id)
 
 
 def close_orphaned_days(engine: Engine, *, started_at: str | None = None) -> list[dict[str, Any]]:
@@ -782,13 +871,22 @@ def worker_pass(
         closed = close_orphaned_days(engine, started_at=PROCESS_STARTED_AT)
     except Exception as exc:  # noqa: BLE001 - tried again on the next pass
         logger.warning("dead_process_work_not_resumed", extra={"error_class": type(exc).__name__})
-    # Told before the resume below and decided the same way (`continuation_resumes`): a
-    # continuation the studio queues again is no letter, one it does not is.
-    interrupted = closed + announce_interrupted(engine, sweep_interrupted_tasks(engine))
+    swept = sweep_interrupted_tasks(engine)
     try:
         resumed = resume_interrupted_continuations(engine)
     except Exception as exc:  # noqa: BLE001 - tried again on the next pass
         logger.warning("dead_process_work_not_resumed", extra={"error_class": type(exc).__name__})
+    # Told after the resume (SAFE-007): a continuation the studio queued again is no letter
+    # and is said to resume; one whose resume failed waits for the next pass, with no letter;
+    # one it does not resume is told. Until 2026-10-16 this was decided before the resume ran,
+    # and a resume that failed was reported as made.
+    interrupted = closed + announce_interrupted(engine, swept)
+    try:
+        note_unresumed_continuations(engine)
+    except Exception as exc:  # noqa: BLE001 - tried again on the next pass
+        logger.warning(
+            "unresumed_continuation_not_noted", extra={"error_class": type(exc).__name__}
+        )
     if released or closed or resumed:
         logger.info(
             "dead_process_work_resumed",

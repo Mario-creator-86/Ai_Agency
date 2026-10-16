@@ -603,7 +603,9 @@ def continuation_resumes(engine: Engine, task_id: str, *, now: str | None = None
     """Whether `resume_interrupted_continuations` queues this dead-lettered continuation again,
     asked before the Owner is told about it: one the studio resumes itself is no letter of
     his (review 2026-10-16: the letter said «nu o repornesc singur» and the next pass, seconds
-    later, walked the film)."""
+    later, walked the film). The worker asks it after the resume ran, of one not resumed: True
+    then means the resume failed and is tried again on the next pass (`continuation_resumed`
+    says whether it happened)."""
     since = _resume_since(now or utc_now())
     with Session(engine) as session:
         task = session.scalars(
@@ -612,6 +614,52 @@ def continuation_resumes(engine: Engine, task_id: str, *, now: str | None = None
             )
         ).first()
         return task is not None and bool(_to_resume(session, [task], since))
+
+
+def continuation_resumed(engine: Engine, task_id: str) -> bool:
+    """Whether `resume_interrupted_continuations` has queued this continuation again since it
+    was last cut off: it is no longer a dead letter, and its `TASK_RESUMED_EVENT` is recorded.
+    Asked after the resume ran, so «the studio resumes it» is said of a resume that happened
+    (the audit of 2026-10-16, SAFE-007: it was decided before, and a resume that failed was
+    reported as made)."""
+    with Session(engine) as session:
+        task = session.get(TaskQueueItem, task_id)
+        if task is None or task.status == "DEAD_LETTER":
+            return False
+        resumed = select(DomainEvent.sequence).where(
+            DomainEvent.event_type == TASK_RESUMED_EVENT, DomainEvent.aggregate_id == task_id
+        )
+        return session.scalars(resumed.limit(1)).first() is not None
+
+
+def unresumed_continuations(engine: Engine, *, now: str | None = None) -> list[dict[str, Any]]:
+    """The continuations the studio was to resume itself (`_to_resume`) whose window
+    (RESUME_CONTINUATION_HOURS) closed with no resume: still dead letters, cut off between two
+    windows and one window ago, never resumed, no later continuation of their film queued.
+    Their resume kept failing, or never ran; past the window nothing resumes them, so the
+    worker notes each for the developer (`worker.note_unresumed_continuations`). Read only;
+    an older one is history and is not read."""
+    now_str = now or utc_now()
+    closed_at = _resume_since(now_str)
+    scan_from = _resume_since(closed_at)
+    with Session(engine) as session:
+        candidates = list(
+            session.scalars(
+                select(TaskQueueItem).where(
+                    _interrupted_continuations(scan_from), TaskQueueItem.updated_at < closed_at
+                )
+            )
+        )
+        chosen = set(_to_resume(session, candidates, scan_from))
+        return [
+            {
+                "id": task.id,
+                "storyboard_id": str((task.payload or {}).get("storyboard_id") or ""),
+                "interrupted_at": str(task.updated_at or ""),
+            }
+            for task in candidates
+            if task.id in chosen
+        ]
 
 
 def resume_interrupted_continuations(
