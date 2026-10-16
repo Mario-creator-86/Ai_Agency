@@ -723,9 +723,16 @@ def _rewrite_words(
     reason = str(payload.get("reason") or "")
     layer = str(payload.get("layer") or "")
     if reason == "serial_recompose":
+        # On the motion layer only the clip's words changed: the picture stays as it was
+        # bought (`scene_rewrite.recomposed_layer`, 2026-10-16).
+        what = (
+            "imaginea rămâne, se reface doar mișcarea"
+            if layer == "motion"
+            else "imaginea se reface"
+        )
         return (
             f"Scena {scene} a serialului {named} a fost compusă din nou cu cuvintele de azi; "
-            "imaginea se reface.",
+            f"{what}.",
             f"Scena {scene} e compusă din nou.",
         )
     if reason == "serial_reroll":

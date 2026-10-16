@@ -563,7 +563,11 @@ def test_the_directors_brief_names_the_layer_and_whether_the_rewrite_landed(engi
             "reason": "Rescrierea a dat același prompt; nimic nou de cumpărat.",
         },
     )
-    for scene, reason, layer in ((5, "director_brief", "still"), (3, "serial_recompose", "still")):
+    for scene, reason, layer in (
+        (5, "director_brief", "still"),
+        (3, "serial_recompose", "still"),
+        (7, "serial_recompose", "motion"),
+    ):
         record(
             engine,
             "media.prompts_rewritten",
@@ -613,6 +617,11 @@ def test_the_directors_brief_names_the_layer_and_whether_the_rewrite_landed(engi
     assert rewrites[3]["words_ro"] == (
         f"Scena 3 a serialului «{TITLE}» a fost compusă din nou cu cuvintele de azi; imaginea "
         "se reface."
+    )
+    # Said again on the motion layer: only the clip's words changed, the picture stays.
+    assert rewrites[7]["words_ro"] == (
+        f"Scena 7 a serialului «{TITLE}» a fost compusă din nou cu cuvintele de azi; imaginea "
+        "rămâne, se reface doar mișcarea."
     )
     assert rewrites[6]["words_ro"] == (
         f"Scena 6 a serialului «{TITLE}»: cadrul se reface pe aceleași cuvinte, cu altă sămânță."
