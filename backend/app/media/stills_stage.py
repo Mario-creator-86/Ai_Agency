@@ -1239,6 +1239,113 @@ def _approve_under_cap(engine: Engine, take_id: str, reasons: list[str]) -> None
         )
 
 
+#: A refused still judged again by the gate, free (`rejudge_refused_stills`).
+REJUDGED_EVENT = "media.still_rejudged"
+#: The gate's own words when its local checks stopped a still before any look at it.
+LOCAL_STOP_MARK = "verificările locale au oprit-o"
+#: How many of a scene's refused stills are judged again at one ladder stop.
+MAX_REJUDGED = 2
+
+
+def rejudge_refused_stills(
+    engine: Engine,
+    storyboard_id: str,
+    scene_index: int,
+    correlation_id: str,
+    *,
+    registry: Any | None = None,
+    judge: Judge = judge_still,
+    face_counter: FaceCounter | None = None,
+    measure: Sequence[str] = ALL_CHECKS,
+    ffmpeg_path: str | None = None,
+) -> bool:
+    """A scene's refused stills that the gate's LOCAL checks stopped before any look are
+    judged again, by today's gate, when the scene has no approved still: 0 credits, no
+    purchase. The gate reads differently after a fix (2026-10-16 05:04Z, the band rule:
+    87c05891's desk fronts read as a pasted strip, then as a surface), but the refusal stood
+    on the take, the Director's brief had pinned it to the composer's fixed sentences, and
+    `scene_rewrite.scene_waits` stopped the ladder from asking her again — the episode could
+    not start («Directoarea nu a putut încă rescrie scena 8», ×14). A still the gate now
+    passes, local checks then the look, is APPROVED by the gate; one it refuses keeps its
+    refusal in today's words. Returns True when a still was approved."""
+    from app.services import studio_environment, utc_now  # noqa: PLC0415 - it imports media
+
+    bible, scenes = _read_scenes(engine, storyboard_id)
+    scene = next((entry for entry in scenes if entry.index == int(scene_index)), None)
+    if scene is None or scene.kind != LIVE_KIND or scene.reuse is not None:
+        return False
+    with Session(engine) as session:
+        candidates = [
+            (str(row.id), Path(str(row.path)))
+            for row in session.scalars(
+                select(SceneTake)
+                .where(
+                    SceneTake.storyboard_id == storyboard_id,
+                    SceneTake.scene_number == int(scene_index),
+                    SceneTake.kind == "still",
+                    SceneTake.status == "REJECTED",
+                    SceneTake.failure_code == GATE_FAILURE_CODE,
+                )
+                .order_by(SceneTake.created_at.desc())
+            )
+            if LOCAL_STOP_MARK in str(row.failure_detail or "")
+            and row.path
+            and Path(str(row.path)).is_file()
+        ][:MAX_REJUDGED]
+    if not candidates:
+        return False
+    environment = studio_environment(engine)
+    plan = _still_plan(
+        scene, faces_forbidden=bible_face_rule(bible) is not None, rules=_bible_rules(bible)
+    )
+    for take_id, path in candidates:
+        report = _judge_candidate(
+            engine,
+            registry,
+            path,
+            plan,
+            correlation_id,
+            environment=environment,
+            judge=judge,
+            face_counter=face_counter,
+            measure=measure,
+            ffmpeg_path=ffmpeg_path,
+        )
+        _event(
+            engine,
+            REJUDGED_EVENT,
+            storyboard_id,
+            {
+                "scene_index": int(scene_index),
+                "take_id": take_id,
+                "decision": report.decision,
+                "reasons_ro": list(report.reasons_ro)[:6],
+            },
+            correlation_id,
+        )
+        if report.decision == "PASSED":
+            _set_verdicts(engine, [(take_id, report)], report)
+            with Session(engine) as session, session.begin():
+                lock_for_write(session)
+                row = session.get(SceneTake, take_id)
+                if row is not None:
+                    # The old refusal goes with the approval (`_set_verdicts` clears only
+                    # the «not judged yet» mark).
+                    row.failure_code = None
+                    row.failure_detail = None
+                    row.updated_at = utc_now()
+            return True
+        # Refused again, in today's words: the Director's next look reads today's reasons.
+        with Session(engine) as session, session.begin():
+            lock_for_write(session)
+            row = session.get(SceneTake, take_id)
+            if row is not None:
+                row.failure_detail = ("; ".join(report.reasons_ro) or "respinsă")[:500]
+                row.updated_at = utc_now()
+                sync_take_quality(session, row, accepted=False, reason="; ".join(report.reasons_ro))
+    return False
+
+
 def settle_scene_under_cap(
     engine: Engine, storyboard_id: str, scene_index: int, correlation_id: str
 ) -> bool:

@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-16 — Refused stills judged again
+
+- A refused still the gate's local checks stopped is judged again by today's gate, free, at the Director's ladder (`stills_stage.rejudge_refused_stills`; `media.still_rejudged`): 87c05891 scene 8 stood refused on a band rule fixed hours before, the ladder locked on the composer's sentences.
+
 ## 2026-10-16 — Montage; dead-process work resumed
 
 - Montage (the Owner, 2026-10-16): a filmed scene is cut into shots of about four seconds, each an ordinary storyboard scene with its own still, clip and camera move (`media/montage.py`; `Settings.montage_*`); the serial cuts with its dialogue and shows the listener in reaction shots (`reaction` size, `SERIAL_LISTEN_TAIL`); the writer's script is never rewritten.

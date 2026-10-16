@@ -5,6 +5,14 @@ AGENT_SCENARIO_ACCEPTANCE later used actual Ollama Cloud calls, with normal seri
 acceptance and real GPU/media/upload still pending. Current local UI evidence is reported
 separately below and does not prove those external workflows.
 
+## Refused stills judged again by today's gate (2026-10-16)
+
+Claim: «Avem o problemă» (the Owner, 06:50Z): the episode «Zero Scripts, Blocked Log» (87c05891) could not start — «Directoarea nu a putut încă rescrie scena 8» on fourteen walks. Scene 8's two stills were refused by the gate's local panels check (a flat band at the bottom: the desk front, grey 6-7, textured 7-8), the Director's brief of 05:10Z pinned the band to the composer's fixed framing sentences (`composer_locked`), and `scene_rewrite.scene_waits` then stopped the ladder from asking her again. The band rule was fixed at 05:04Z (1940bca: a textured dark band is a surface) and both files read «surface» today — but the refusal stood on the takes and nothing ever judged them again.
+
+Done: `stills_stage.rejudge_refused_stills` — a scene with no approved still has its refused stills that the local checks stopped («verificările locale au oprit-o») judged again by today's gate (local checks, then the look; 0 credits), at most two per ladder stop; a passing still is APPROVED by the gate (`still_gate`), its refusal cleared, `media.still_rejudged` written; a refused one keeps today's reasons. `stages._ladder_scenes(registry=, settings=)` runs it before the cap settlement, lists the scene on `film["rejudged"]`, and the walk goes on.
+
+Tested: tests/test_still_rejudged.py (2), test_stills_renders_cap, test_director_decides_qc, test_stills_stage (129 passed).
+
 ## A dead process's leases released on every pass; interrupted continuations resumed (2026-10-16)
 
 Claim: «Verifică și agenția, de ce nu publică» (the Owner, 06:35Z). «Speed of Light» (7c26a7ce) was accepted under the cap at 06:07:18Z and approved by the editorial viewing at 06:07:26Z; the restart onto d34e474 began at 06:05:40Z, the walk claimed at 06:05:52Z was cut at 06:07:40Z before it published, and the new process's start-up release of orphaned claims failed at 06:07:53Z (`orphaned_claims_release_failed`, OperationalError: the stopping process still held the database) and was never tried again. The walk stood CLAIMED with an hour of lease, the film unpublished; at 07:05:52Z the sweep would have dead-lettered it INTERRUPTED with a letter, and nothing would have walked the film again.

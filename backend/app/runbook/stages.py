@@ -1775,9 +1775,15 @@ def _film_staircase(
                     engine, settings, registry, storyboard_id, wiring, environment, correlation
                 )
                 bought.extend(film.get("bought") or [])
-                refused = _ladder_scenes(engine, storyboard_id, film)
-                if not refused and film.get("settled_under_cap") and not stop_requested(engine):
-                    continue  # what the cap settled is bought nowhere: the film is walked on
+                refused = _ladder_scenes(
+                    engine, storyboard_id, film, registry=registry, settings=settings
+                )
+                if (
+                    not refused
+                    and (film.get("settled_under_cap") or film.get("rejudged"))
+                    and not stop_requested(engine)
+                ):
+                    continue  # settled or judged again, bought nowhere: the film is walked on
                 if not refused or stop_requested(engine):
                     break
                 if len(rounds) >= DIRECTOR_LADDER_ROUNDS:
@@ -1829,22 +1835,46 @@ LADDER_REFUSALS = frozenset({"NEEDS_OWNER", "TAKES_NOT_ACCEPTED"})
 LADDER_CAUSE = "director_ladder"
 
 
-def _ladder_scenes(engine: Engine, storyboard_id: str, film: dict[str, Any]) -> list[int]:
+def _ladder_scenes(
+    engine: Engine,
+    storyboard_id: str,
+    film: dict[str, Any],
+    *,
+    registry: ProviderRegistry | None = None,
+    settings: Settings | None = None,
+) -> list[int]:
     """The scenes of a stopped walk that quality control refused (the Director's to answer).
-    A refused scene whose picture has had its three renders is not rewritten: what it has
-    stands under the Owner's cap (`stills_stage.settle_scene_under_cap`) and the scene is
-    listed on ``film["settled_under_cap"]`` instead, so the walk goes on."""
+    First, free: a refused still the gate's local checks stopped is judged again by today's
+    gate (`stills_stage.rejudge_refused_stills`); one it passes is the scene's picture and the
+    scene is listed on ``film["rejudged"]``. Then a refused scene whose picture has had its
+    three renders is not rewritten: what it has stands under the Owner's cap
+    (`stills_stage.settle_scene_under_cap`) and the scene is listed on
+    ``film["settled_under_cap"]`` instead, so the walk goes on."""
     if film.get("status") != "WAITING" or film.get("refusal") not in LADDER_REFUSALS:
         return []
     scenes = [int(scene) for scene in film.get("scenes") or [] if isinstance(scene, int)]
     refused = _quality_scenes(engine, storyboard_id, scenes) if scenes else []
     if not refused:
         return []
-    from app.media.stills_stage import settle_scene_under_cap  # noqa: PLC0415
+    from app.media.stills_stage import (  # noqa: PLC0415
+        rejudge_refused_stills,
+        settle_scene_under_cap,
+    )
 
     settled: list[int] = []
+    rejudged: list[int] = []
     for scene in refused:
         try:
+            if rejudge_refused_stills(
+                engine,
+                storyboard_id,
+                scene,
+                str(uuid4()),
+                registry=registry,
+                ffmpeg_path=getattr(settings, "ffmpeg_path", None),
+            ):
+                rejudged.append(scene)
+                continue
             if settle_scene_under_cap(engine, storyboard_id, scene, str(uuid4())):
                 settled.append(scene)
         except Exception as exc:  # noqa: BLE001 - the ladder's stop stands for this scene
@@ -1854,7 +1884,9 @@ def _ladder_scenes(engine: Engine, storyboard_id: str, film: dict[str, Any]) -> 
             )
     if settled:
         film.setdefault("settled_under_cap", []).extend(settled)
-    return [scene for scene in refused if scene not in settled]
+    if rejudged:
+        film.setdefault("rejudged", []).extend(rejudged)
+    return [scene for scene in refused if scene not in settled and scene not in rejudged]
 
 
 def _quality_scenes(engine: Engine, storyboard_id: str, scenes: list[int]) -> list[int]:
@@ -3307,9 +3339,9 @@ def _media_staircase(
             if film.get("approval_id") and not asked_correlation:
                 asked_correlation = correlation
         elif film["status"] == "WAITING":
-            if _ladder_scenes(engine, storyboard_id, film) or (
-                film.get("refusal") == "NEEDS_PROMPT_APPROVAL"
-            ):
+            if _ladder_scenes(
+                engine, storyboard_id, film, registry=registry, settings=settings
+            ) or (film.get("refusal") == "NEEDS_PROMPT_APPROVAL"):
                 # Her rounds on the words (no cap, 18:15Z) are hers, never «așteaptă
                 # Proprietarul» (15:41Z, a4ecf40a: the register said so of her audit).
                 director_waiting.append(f"«{title}»: {reason}")
