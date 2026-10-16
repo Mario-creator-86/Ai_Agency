@@ -337,6 +337,12 @@ class StillPlan:
     #: is told their scale is not writing, and a writing refusal of such a still is the
     #: Director's to overturn (`may_be_overturned`), never a hard limit of the bible.
     expected_markings: tuple[str, ...] = ()
+    #: The shot's form when the montage cut the scene into shots (`montage.beat_tag`):
+    #: {"shot": k, "of": n, "size": "wide" | "medium" | "detail"}, for a factual shot only
+    #: (`stills_stage.montage_shot`). Its ``scene_picture`` and ``narration`` are then this
+    #: shot's own, and the look is told it is shot k of n at that size (`picture_qc.judge_still`).
+    #: None for a scene that is its own one shot, which is asked exactly as before.
+    shot_form: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True)

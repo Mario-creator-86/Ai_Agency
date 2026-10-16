@@ -1879,14 +1879,21 @@ STILL_TASK = "still_qc"
 #: moments ("A slow drift through a dark particle-detector cavern…", "…dissolving into a
 #: glowing spiral of particles, then a vast laboratory complex…" on the database copy): the
 #: still is judged against its first moment, as against the plan's.
-STILL_TEMPLATE_VERSION = "still-qc-v4"
+#: v6 (2026-10-16, audit finding 27): a shot the montage cut from a scene is told its form,
+#: shot k of n at its size (`StillPlan.shot_form`, `_SHOT_NOTE`), and its `scene_picture` and
+#: `narration` are the shot's own; a scene that is its own one shot is asked as under v4.
+#: (v5 is skipped: «still-qc-v5-contract» named v4 with the current plan's conditions.)
+STILL_TEMPLATE_VERSION = "still-qc-v6"
 #: The same, for a still bought after its scene's words were rewritten: it is also asked, item
 #: by item, whether each mistake the rewrite answered is gone (`StillPlan.must_fix`,
 #: `_FIXES_NOTE`). Only such a still is asked this way; any other is asked as above.
 #: fixes2 (2026-10-12, late evening): each item is answered gone, minor or persists (the
 #: Owner: «DIRECTOAREA ACCEPTĂ DEFECTELE MICI!»), the correction's words are guidance, not a
 #: second plan, and an item about the movement is left to the clip, which is checked for it.
-STILL_FIX_TEMPLATE_VERSION = "still-qc-v4-fixes"
+STILL_FIX_TEMPLATE_VERSION = "still-qc-v6-fixes"
+#: The same with the current plan's explicit conditions (a cropped person, unruled pages) to
+#: verify on the pixels (`stills_stage._still_plan`, ``source == "current_plan"``).
+STILL_CONTRACT_TEMPLATE_VERSION = "still-qc-v6-contract"
 #: The answers one item may get (`fix_check.FIX_STATUSES`).
 FixStatus = Literal["gone", "minor", "persists"]
 #: The width the still is shown at. A 2K still (1530x2720) is scaled down to it.
@@ -2178,6 +2185,44 @@ _FIXES_NOTE = (
     "item.\n"
 )
 
+#: Added to `_STILL_INSTRUCTIONS` for a shot the montage cut from a scene (`montage.beat_tag`,
+#: `StillPlan.shot_form`; 2026-10-16, audit finding 27): a wide, medium or detail of one scene
+#: is judged as that view of it, its `scene_picture` and `narration` being the shot's own.
+_SHOT_NOTE = (
+    "This still is shot {shot} of {of} of the scene below, a {size} view: `scene_picture` is "
+    "what this shot shows of the scene and `narration` the part of the narration spoken over "
+    "this shot. For shows_scene, judge whether it is a plausible {size} view of that scene."
+    "{detail}\n"
+)
+#: Said after `_SHOT_NOTE` for a detail: close on hands, an object or a texture, the place
+#: out of frame by design.
+_DETAIL_NOTE = (
+    " A detail view is close on hands, an object or a texture and leaves the wider place out "
+    "of frame: judge shows_scene against this shot's own narration fragment (`narration`) and "
+    "its picture (`scene_picture`), not against the place around it."
+)
+
+
+def _shot_form(plan: Any) -> dict[str, Any] | None:
+    """The montage shot's form a still is judged as (`StillPlan.shot_form`), or None."""
+    form = getattr(plan, "shot_form", None)
+    if not isinstance(form, Mapping):
+        return None
+    shot, of, size = form.get("shot"), form.get("of"), str(form.get("size") or "")
+    if not isinstance(shot, int) or not isinstance(of, int) or of <= 1 or not size:
+        return None
+    return {"shot": shot, "of": of, "size": size}
+
+
+def _shot_note(form: Mapping[str, Any]) -> str:
+    """`_SHOT_NOTE` for one shot, with `_DETAIL_NOTE` when it is a detail."""
+    return _SHOT_NOTE.format(
+        shot=form["shot"],
+        of=form["of"],
+        size=form["size"],
+        detail=_DETAIL_NOTE if form["size"] == "detail" else "",
+    )
+
 
 def still_image(ffmpeg: str | None, path: Path | str, width: int = STILL_WIDTH) -> str | None:
     """The still scaled to `width` px as base64 JPEG, or None when it cannot be made."""
@@ -2272,13 +2317,20 @@ def judge_still(
     # What the scene's words were rewritten to fix (`fix_check.open_findings`); empty for a
     # still with nothing open, which is then asked exactly as before (STILL_TEMPLATE_VERSION).
     must_fix = fix_items(plan)
-    shown: dict[str, Any] = {
-        "scene": plan.scene,
-        "plan": plan.still_prompt,
-        "scene_picture": getattr(plan, "scene_picture", "") or "",
-        "narration": getattr(plan, "narration", "") or "",
-        "purpose": getattr(plan, "purpose", "") or "",
-    }
+    # A shot of the montage (2026-10-16): judged as shot k of n at its size, against its own
+    # picture and narration; a scene that is its own one shot is shown nothing more.
+    shot = _shot_form(plan)
+    shown: dict[str, Any] = {"scene": plan.scene}
+    if shot is not None:
+        shown["shot"] = shot
+    shown.update(
+        {
+            "plan": plan.still_prompt,
+            "scene_picture": getattr(plan, "scene_picture", "") or "",
+            "narration": getattr(plan, "narration", "") or "",
+            "purpose": getattr(plan, "purpose", "") or "",
+        }
+    )
     if must_fix:
         # Each required correction travels whole with the scene's rules.
         shown["must_fix"] = [{"item": number, **item} for number, item in enumerate(must_fix, 1)]
@@ -2297,6 +2349,7 @@ def judge_still(
         shown["planned_markings"] = list(marked)
     prompt = (
         _STILL_INSTRUCTIONS.format(scene=plan.scene)
+        + (_shot_note(shot) if shot is not None else "")
         + (_FIXES_NOTE if must_fix else "")
         + (
             "\nSome must_fix items are explicit conditions of the current plan. Verify them "
@@ -2318,7 +2371,7 @@ def judge_still(
         looker_id,
         STILL_TASK,
         prompt,
-        "still-qc-v5-contract"
+        STILL_CONTRACT_TEMPLATE_VERSION
         if any(item.get("source") == "current_plan" for item in plan.must_fix)
         else STILL_FIX_TEMPLATE_VERSION
         if must_fix

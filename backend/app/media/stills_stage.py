@@ -164,6 +164,7 @@ from app.media.fix_check import STILL_LAYER, open_findings
 from app.media.markings import planned_markings
 from app.media.mode_guard import PurchaseGuard, unasked_refusal
 from app.media.models import SceneTake, Storyboard, StoryboardScene
+from app.media.montage import FACTUAL_SIZES, beat_of
 from app.media.picture_qc import StillJudgement, judge_still
 from app.media.prepared_batch import RoundWork, purchase_flow
 from app.media.prompt_lint import (
@@ -409,6 +410,9 @@ class _Scene:
     #: The room the beat names (a serial scene's plan ``location``; empty for a factual
     #: scene): the film's Figure 1 goes only to a scene in its own room (`_references`).
     location: str = ""
+    #: The shot's form when the montage cut a factual scene into shots (`montage_shot`):
+    #: {"shot", "of", "size"}, for the gate (`still_gate.StillPlan.shot_form`); None otherwise.
+    shot_form: dict[str, Any] | None = None
 
 
 @dataclass
@@ -516,6 +520,45 @@ def serial_scene_picture(package: Mapping[str, Any]) -> str:
     return " ".join(part for part in parts if part)
 
 
+def montage_shot(package: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """The form of a factual shot the montage cut from a writer's scene (`montage.beat_tag`):
+    ``{"shot": k, "of": n, "size": "wide" | "medium" | "detail"}``; None for a scene that is
+    its own one shot (the montage off, a short scene, a card) and for a serial beat, whose
+    picture is its own composed beat already (`serial_scene_picture`)."""
+    if not package or is_serial_package(package):
+        return None
+    tag = beat_of(dict(package))
+    shot, of, size = tag.get("shot"), tag.get("of"), str(tag.get("size") or "")
+    if not isinstance(shot, int) or not isinstance(of, int) or of <= 1 or not 1 <= shot <= of:
+        return None
+    if size not in FACTUAL_SIZES:
+        return None
+    return {"shot": shot, "of": of, "size": size}
+
+
+def factual_shot_picture(package: Mapping[str, Any]) -> str:
+    """A factual montage shot's written picture: the Editor's subject for this shot and the
+    first moment of its action (`prompt_agent._still_moment`, the moment its still is drawn
+    from), as `serial_scene_picture` gives a serial beat its own; empty when the shot's plan
+    names neither.
+
+    2026-10-16, audit finding 27: every shot of a cut scene (wide, medium, detail) was judged
+    against the writer's line for the WHOLE scene, so a right «detail: hands on the ledger»
+    of a scene written as «a slow drift through a dark detector cavern» failed shows_scene and
+    the Director's ladder bought it again."""
+    from app.media.prompt_agent import _still_moment  # noqa: PLC0415 - large
+
+    subject = " ".join(str(package.get("subject") or "").split()).rstrip(". ")
+    moment = " ".join(_still_moment(str(package.get("action") or "")).split()).rstrip(". ")
+    if moment and subject and moment.casefold() in subject.casefold():
+        moment = ""  # the plan's action is its subject (a template plan): said once
+    parts = [
+        f"{subject[:1].upper()}{subject[1:]}." if subject else "",
+        f"{moment[:1].upper()}{moment[1:]}." if moment else "",
+    ]
+    return " ".join(part for part in parts if part)
+
+
 def _scene_picture(
     package: Mapping[str, Any], visual: str, words: str, *, serial: bool = False
 ) -> str:
@@ -532,6 +575,11 @@ def _scene_picture(
     line is «Return to the dark detector cavern from the opening shot…» — matched itself."""
     if serial or is_serial_package(package):
         return serial_scene_picture(package)
+    # A shot the montage cut from the writer's scene shows one part of it at its size: its
+    # picture is the shot's own (`factual_shot_picture`), never the whole scene's line.
+    shot = factual_shot_picture(package) if montage_shot(package) is not None else ""
+    if shot:
+        return shot
     writer = " ".join(str(package.get("writer_visual") or "").split())
     if writer:
         return writer
@@ -602,6 +650,7 @@ def _still_plan(scene: _Scene, *, faces_forbidden: bool, rules: tuple[str, ...])
         purpose=scene.purpose,
         must_fix=(*scene.must_fix, *requirements),
         expected_markings=scene.expected_markings,
+        shot_form=scene.shot_form,
     )
 
 
@@ -672,6 +721,7 @@ def _read_scenes(engine: Engine, storyboard_id: str) -> tuple[dict[str, Any], li
                 expected_markings=marked,
                 prompt_issues=tuple(incomplete_plan_fields(package, layers=("still",))),
                 location=" ".join(str(package.get("location") or "").split()),
+                shot_form=None if serial else montage_shot(package),
             )
             if kind == LIVE_KIND:
                 # The picture's open items only: a finding treated in the motion's words is
