@@ -1634,14 +1634,16 @@ WARN_VIDEO_BITRATE = 8_000_000
 #: How much longer than its narration, its planned breaths and its silent cards a film may
 #: run (film_length_budget).
 DURATION_OVER_NARRATION_SECONDS = 1.0
-#: The breath the timeline plans after each scene's words: the assembler's SPOKEN_TAIL_SECONDS,
-#: read from production['timeline']['spoken_tail_seconds'] when the render recorded it. The
-#: film used to be held within narration + 1.0 s, so the timeline shrank every breath to keep
-#: under 0.9 s: six speaking scenes kept about 0.11 s each and every cut felt rushed. A breath
-#: the writer planned is part of the film, not film over the narration. This is the fallback
-#: for a render that did not record its breath; renders since 2026-10-02 record 0.12 s, taken
-#: after the vendor's silence was trimmed from each take, and that recorded value is what
-#: counts (the narration they record is the trimmed words, so nothing is counted twice).
+#: The breath the timeline plans after each scene's words: the assembler's
+#: LEGACY_SPOKEN_TAIL_SECONDS, read from production['timeline']['spoken_tail_seconds'] when
+#: the render recorded it. The film used to be held within narration + 1.0 s, so the
+#: timeline shrank every breath to keep under 0.9 s: six speaking scenes kept about 0.11 s
+#: each and every cut felt rushed. A breath the writer planned is part of the film, not film
+#: over the narration. This is the fallback for a render that did not record its breath;
+#: renders since 2026-10-02 record 0.12 s, taken after the vendor's silence was trimmed from
+#: each take, and that recorded value is what counts (the narration they record is the
+#: trimmed words, so nothing is counted twice). A film timed by its frozen pauses (2026-10-16)
+#: records each scene's own pad instead (`_recorded_pads`).
 BREATH_SECONDS = 0.35
 #: The scenes the studio composes itself: never filmed, never sent to a model.
 COMPOSED_KINDS = ("DATA_CARD", "TITLE_CARD", "BLACK")
@@ -3401,6 +3403,29 @@ def timeline_spans(
     return out
 
 
+def _recorded_pads(timeline: Any) -> dict[int, float] | None:
+    """Per scene, the silence the render added after its words and between its own takes
+    (``spans[].pause``: ``pad`` and each inner ``pad``), for a film timed by its frozen
+    pauses; None for a film recorded before them."""
+    spans = timeline.get("spans") if isinstance(timeline, dict) else None
+    if not isinstance(spans, list) or not spans:
+        return None
+    found: dict[int, float] = {}
+    for span in spans:
+        pause = span.get("pause") if isinstance(span, dict) else None
+        if not isinstance(pause, dict):
+            return None
+        added = _seconds(pause.get("pad")) or 0.0
+        for inner in pause.get("inner") or []:
+            if isinstance(inner, dict):
+                added += _seconds(inner.get("pad")) or 0.0
+        try:
+            found[int(span["scene_index"])] = round(added, 4)
+        except (KeyError, TypeError, ValueError):
+            return None
+    return found
+
+
 def film_length_budget(
     production: dict[str, Any], planned: Mapping[int, float] | None = None
 ) -> dict[str, Any]:
@@ -3430,6 +3455,10 @@ def film_length_budget(
         _seconds(timeline.get("spoken_tail_seconds")) if isinstance(timeline, dict) else None
     )
     breath = recorded_tail if recorded_tail is not None and recorded_tail >= 0 else BREATH_SECONDS
+    # A film timed by its frozen pauses («pauza vocii», 2026-10-16) recorded, per scene, the
+    # silence the render added after its words (``pause.pad``, and between its own takes):
+    # each speaking scene's breath is that, never a constant.
+    pads = _recorded_pads(timeline)
     speaking = sum(
         1
         for span in spans
@@ -3444,7 +3473,8 @@ def film_length_budget(
             spoken = span["spoken"]
             if spoken is None or spoken < SILENT_SPOKEN_SECONDS:
                 continue
-            rounding += min(frame, max(0.0, float(span["seconds"]) - spoken - breath))
+            tail = pads.get(int(span["scene_index"]), breath) if pads is not None else breath
+            rounding += min(frame, max(0.0, float(span["seconds"]) - spoken - tail))
     silent_cards: list[dict[str, Any]] = []
     overruns: list[str] = []
     allowance = 0.0
@@ -3472,6 +3502,15 @@ def film_length_budget(
                 f"maximul de {_ro_number(maximum)} s al unui {word} fără narațiune"
             )
     breaths = round(breath * speaking, 3)
+    if pads is not None:
+        breaths = round(
+            sum(
+                pads.get(int(span["scene_index"]), 0.0)
+                for span in spans
+                if span["spoken"] is not None and span["spoken"] >= SILENT_SPOKEN_SECONDS
+            ),
+            3,
+        )
     silent = round(allowance, 3)
     rounded = round(rounding, 3)
     return {
@@ -4062,7 +4101,7 @@ def span_picture_qc(
 EDITORIAL_WIDTH = 270
 #: The longest silence allowed inside the narration, measured at -45 dB on the voice track,
 #: beyond the pause the timeline planned there: since 2026-10-16 every shot keeps a 0.4 s
-#: breath after its words (`assembler.SPOKEN_TAIL_SECONDS`), and the silence at a cut is
+#: breath after its words (`assembler.LEGACY_SPOKEN_TAIL_SECONDS`), and the silence at a cut is
 #: that breath plus the takes' kept edges and a frame of rounding; only what runs past the
 #: recorded breath is dead air (`_planned_pauses`).
 MAX_NARRATION_SILENCE_SECONDS = 0.25
@@ -4281,9 +4320,10 @@ def average_shot_limit(production: Mapping[str, Any], settings: Any | None = Non
         _seconds(timeline.get("spoken_tail_seconds")) if isinstance(timeline, Mapping) else None
     )
     if breath is None:
-        from app.media.assembler import SPOKEN_TAIL_SECONDS  # noqa: PLC0415 - assembler reads qc
+        # The assembler reads qc: imported when measured.
+        from app.media.assembler import LEGACY_SPOKEN_TAIL_SECONDS  # noqa: PLC0415
 
-        breath = SPOKEN_TAIL_SECONDS
+        breath = LEGACY_SPOKEN_TAIL_SECONDS
     return round(float(options["shot_seconds"]) * (1 + MONTAGE_SHOT_TOLERANCE) + breath, 2)
 
 

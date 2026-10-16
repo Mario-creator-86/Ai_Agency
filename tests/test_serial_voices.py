@@ -204,7 +204,6 @@ def test_a_two_speaker_beat_is_two_takes_in_two_voices_and_one_caption_track(
     in the voice the Owner bound to her; two takes, two voice ids, and one SRT whose cues
     carry the words in order with no name and no stage direction."""
     from app.media.assembler import assemble_video_job
-    from app.media.speaker_voices import SPEAKER_GAP_SECONDS
 
     use_cast(monkeypatch, tmp_path, {"Kael Video Editor": voices["first"]})
     bind(client, headers, bible(engine, "Sarah").id, voices["integration"], voices["second"])
@@ -249,7 +248,12 @@ def test_a_two_speaker_beat_is_two_takes_in_two_voices_and_one_caption_track(
     takes = first["segments"]
     assert [t["voice_id"] for t in takes] == [voices["first"], voices["second"]]
     assert [t["voice_source"] for t in takes] == ["voice_cast_proposal", "character_binding"]
-    spoken = sum(t["audio_seconds"] for t in takes) + SPEAKER_GAP_SECONDS
+    # Between the two speakers the frozen turn (`pause_plan`, «pauza vocii» 2026-10-16): the
+    # conversational gap, the pad the render adds being the turn less what the trim kept.
+    (turn,) = production["timeline"]["spans"][0]["pause"]["inner"]
+    assert turn["class"] == "TURN" and turn["pad"] >= 0
+    assert turn["heard"] == pytest.approx(turn["keep_tail"] + turn["pad"] + turn["head"], abs=1e-3)
+    spoken = sum(t["audio_seconds"] for t in takes) + turn["pad"]
     assert first["audio_seconds"] == pytest.approx(spoken, abs=0.002)
 
     # One caption track, and it follows the speakers.
@@ -265,7 +269,7 @@ def test_a_two_speaker_beat_is_two_takes_in_two_voices_and_one_caption_track(
     assert all(2 <= len(c["text"].split()) <= 5 for c in kael + sarah)
     # Each take's first card comes up on its first word (the voice's own word timing), inside
     # that take: Kael's from the scene's start, Sarah's after Kael's take and the breath.
-    sarah_from = takes[0]["audio_seconds"] + SPEAKER_GAP_SECONDS
+    sarah_from = takes[0]["audio_seconds"] + turn["pad"]
     assert 0.0 <= kael[0]["start"] < 0.5
     assert kael[-1]["end"] == pytest.approx(takes[0]["audio_seconds"], abs=0.002)
     assert sarah_from - 0.002 <= sarah[0]["start"] < sarah_from + 0.5

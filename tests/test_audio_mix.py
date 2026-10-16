@@ -25,7 +25,7 @@ from uuid import uuid4
 
 import pytest
 from app.media import music_library, toolchain
-from app.media.assembler import SPOKEN_TAIL_SECONDS, VOICE_TRACK_NAME, assemble_video_job
+from app.media.assembler import VOICE_TRACK_NAME, assemble_video_job
 from app.media.toolchain import find_ffmpeg, measure_loudness
 
 FFMPEG = find_ffmpeg()
@@ -289,17 +289,23 @@ def test_the_vendors_silence_is_trimmed_and_no_cut_carries_dead_air(
     film = Path(render["file_path"])
     srt = (film.parent / "captions.srt").read_text(encoding="utf-8")
     assert srt.split("\n")[1].startswith("00:00:00,0")
-    # The joined narration: at each cut the shot's planned breath (the Owner, 2026-10-16: 0.4 s
-    # after every shot's words) and less than 0.25 s more at -45 dB, the kept edges and a
-    # frame of rounding: the vendor's own silence (0.37 s before, 0.42 s after) is gone.
+    # The joined narration (the Owner's «pauza vocii», 2026-10-16): at each cut the pause
+    # frozen for it when the film was built, heard to within a frame (the kept edges, the pad
+    # and the frame rounding), and nothing more: the vendor's own silence (0.37 s before,
+    # 0.45 s after) is gone, and no silence inside the voice runs past the 1.2 s ceiling.
+    spans = production["timeline"]["spans"]
+    joins = [span["pause"] for span in spans]
+    assert all(pause is not None for pause in joins)
+    for pause in joins:
+        assert pause["heard"] == pytest.approx(pause["planned"], abs=1 / 24 + 1e-3), pause
     voice_track = film.parent / VOICE_TRACK_NAME
     with wave.open(str(voice_track), "rb") as out:
         length = out.getnframes() / out.getframerate()
     inside = [(a, b) for a, b in _gaps(voice_track) if b < length - 0.01 and a > 0.01]
     assert inside, "the cuts are measured"
-    breath = production["timeline"]["spoken_tail_seconds"]
-    assert breath == SPOKEN_TAIL_SECONDS
-    assert all(b - a - breath < 0.25 for a, b in inside), inside
+    longest = max(pause["planned"] for pause in joins[:-1])
+    assert all(b - a <= longest + 1 / 24 + 0.01 for a, b in inside), (inside, joins)
+    assert all(b - a <= 1.2 for a, b in inside), inside
 
 
 @requires_ffmpeg

@@ -1114,7 +1114,7 @@ def _montage_day(engine: Engine, settings: Settings, films: int) -> dict[str, An
     price a part."""
     import math  # noqa: PLC0415
 
-    from app.media.assembler import SPOKEN_TAIL_SECONDS, TRANSITION_SECONDS  # noqa: PLC0415
+    from app.media.assembler import LEGACY_SPOKEN_TAIL_SECONDS, TRANSITION_SECONDS  # noqa: PLC0415
     from app.media.cost_plan import (  # noqa: PLC0415
         STILL_CANDIDATES,
         STILLS_RESOLUTION,
@@ -1141,7 +1141,7 @@ def _montage_day(engine: Engine, settings: Settings, films: int) -> dict[str, An
         clip = price_shot(
             video,
             str(getattr(settings, "motion_resolution", "1080p")),
-            shot + SPOKEN_TAIL_SECONDS + TRANSITION_SECONDS,
+            shot + LEGACY_SPOKEN_TAIL_SECONDS + TRANSITION_SECONDS,
             table=table,
         )
     except (UnpricedError, KeyError):

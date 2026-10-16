@@ -809,12 +809,12 @@ def test_a_scene_lasts_its_words_and_its_full_breath_and_a_silent_card_one_beat(
     cut felt rushed). A silent composed scene lasts at most what QC allows its kind
     (qc.MAX_SILENT_CARD_SECONDS); a writer's longer plan is cut to it, not failed."""
     from app.media import assembler
-    from app.media.assembler import SPOKEN_TAIL_SECONDS, TIMELINE_FPS, scene_spans
+    from app.media.assembler import LEGACY_SPOKEN_TAIL_SECONDS, TIMELINE_FPS, scene_spans
     from app.media.qc import MAX_SILENT_CARD_SECONDS
 
     # 0.12 s since 2026-10-02, after each take's own silence is trimmed (audit Q4); 0.4 s
     # since 2026-10-16 (the Owner: the movement must finish before the cut).
-    assert SPOKEN_TAIL_SECONDS == 0.4
+    assert LEGACY_SPOKEN_TAIL_SECONDS == 0.4
     assert not hasattr(assembler, "FILM_OVER_NARRATION_SECONDS")
 
     def whole_frames(spans: list[float]) -> bool:
@@ -838,9 +838,9 @@ def test_a_scene_lasts_its_words_and_its_full_breath_and_a_silent_card_one_beat(
     planned, spoken = [5.0] * 6, [4.0, 3.2, 4.4, 3.9, 4.1, 2.8]
     six = scene_spans(planned, spoken)
     assert whole_frames(six)
-    assert six == pytest.approx([up(s + SPOKEN_TAIL_SECONDS) for s in spoken])
-    assert sum(six) - sum(spoken) >= 6 * SPOKEN_TAIL_SECONDS - 1e-9
-    assert sum(six) - sum(spoken) <= 6 * SPOKEN_TAIL_SECONDS + 6 / TIMELINE_FPS
+    assert six == pytest.approx([up(s + LEGACY_SPOKEN_TAIL_SECONDS) for s in spoken])
+    assert sum(six) - sum(spoken) >= 6 * LEGACY_SPOKEN_TAIL_SECONDS - 1e-9
+    assert sum(six) - sum(spoken) <= 6 * LEGACY_SPOKEN_TAIL_SECONDS + 6 / TIMELINE_FPS
 
     # Silent composed scenes: one beat each, never longer than QC allows their kind.
     kinds = ["LIVE", "BLACK", "DATA_CARD", "TITLE_CARD", "BLACK", "LIVE"]
@@ -849,7 +849,7 @@ def test_a_scene_lasts_its_words_and_its_full_breath_and_a_silent_card_one_beat(
     )
     assert spans == pytest.approx(
         [
-            up(4.0 + SPOKEN_TAIL_SECONDS),
+            up(4.0 + LEGACY_SPOKEN_TAIL_SECONDS),
             MAX_SILENT_CARD_SECONDS["BLACK"],
             MAX_SILENT_CARD_SECONDS["DATA_CARD"],
             MAX_SILENT_CARD_SECONDS["TITLE_CARD"],
@@ -1006,14 +1006,16 @@ def test_a_real_film_is_24_fps_within_a_second_of_its_words_with_captions_in_the
     assert probe["video_fps"] == pytest.approx(24.0)
     # Within a second of the narration: the planned six seconds are not padded with silence.
     narration = sum(scene["audio_seconds"] for scene in production["scenes"])
-    breaths = 2 * production["timeline"]["spoken_tail_seconds"]
-    assert breaths == pytest.approx(0.8)
+    # The pauses are the film's own, frozen when it was built (the Owner's «pauza vocii»,
+    # 2026-10-16): the silence the render added after each scene's words is its pad.
+    breaths = sum(span["pause"]["pad"] for span in production["timeline"]["spans"])
+    assert all(span["pause"]["planned"] <= 1.2 for span in production["timeline"]["spans"])
     assert probe["duration_seconds"] <= narration + breaths + 1.0, (
         probe["duration_seconds"],
         narration,
     )
-    # Each scene keeps its words and its full breath, rounded up to a frame at most.
-    assert render["duration_seconds"] <= narration + breaths + 2 / TIMELINE_FPS + 1e-6
+    # Each scene keeps its words and its pause, every cut on a frame of the timeline.
+    assert render["duration_seconds"] == pytest.approx(narration + breaths, abs=1 / TIMELINE_FPS)
     spans = production["timeline"]["spans"]
     assert [s["scene_index"] for s in spans] == [1, 2]
     # What quality control reads of each span: its kind and how long its words are.

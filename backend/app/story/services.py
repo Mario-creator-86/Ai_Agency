@@ -129,7 +129,7 @@ WORDS_PER_BEAT = (15, 45)
 #: Spoken words in the whole episode, the narrator's included (the Owner, 2026-10-16:
 #: «90-180 s, 250-450 cuvinte», and «maxim 180»). The ceiling is what the film the montage
 #: cuts from them can carry under YouTube's 180-second wall: every shot keeps a 0.4 s breath
-#: after its words (`assembler.SPOKEN_TAIL_SECONDS`), and 390 words cut into 23-43 shots
+#: after its words (`assembler.LEGACY_SPOKEN_TAIL_SECONDS`), and 390 words cut into 23-43 shots
 #: estimate at 167-177 s (`media.film_length.serial_film_length`, measured 2026-10-16 on 6-12
 #: beats of 2-4 lines). It was 430: 35 shots of those words came out at 189 s, past the wall
 #: quality control refuses after every still, clip and voice was bought.

@@ -37,7 +37,7 @@ from sqlalchemy.orm import Session
 from app.config import ROOT
 from app.db import lock_for_write
 from app.factual.editorial import dangles
-from app.media import music_library
+from app.media import music_library, pause_plan
 from app.media import pauses as pause_rules
 from app.media.balance_rule import (
     DEFAULT_MARGIN,
@@ -194,7 +194,11 @@ DISSOLVE_WORDS: tuple[str, ...] = ("DISSOLVE", "CROSSFADE", "CROSS_DISSOLVE", "M
 #: 2026-10-16, the Owner («de ce se taie cadrul? de ce nu-l lăsăm complet?»): every shot
 #: breathes 0.4 s after its words, so its movement ends before the cut; the clip is bought
 #: for it (`_voiced_clip_seconds`) and quality control counts it (`qc.film_length_budget`).
-SPOKEN_TAIL_SECONDS = 0.4
+LEGACY_SPOKEN_TAIL_SECONDS = 0.4
+#: Since 2026-10-16 («pauza vocii», the Owner) a film built under the pause rules has each
+#: row's pause frozen on its storyboard (`pause_plan.freeze_rows`) and the render lays its
+#: voice out by them (`pause_plan.voice_layout`); this constant only reads a film built before
+#: (no frozen pause), and the estimators that are still to read the frozen pauses.
 
 #: How long one scene's motion may take, and how often the task is asked about.
 MOTION_DEADLINE_SECONDS = 600
@@ -1915,10 +1919,18 @@ def scene_spans(
     *,
     fps: int = TIMELINE_FPS,
     kinds: Sequence[str | None] | None = None,
+    pauses: Sequence[float | None] | None = None,
 ) -> list[float]:
     """How long each scene lasts on the timeline, on whole frames.
 
-    A scene with words lasts spoken + SPOKEN_TAIL_SECONDS, whatever its plan said: a word
+    With ``pauses`` (a film whose pauses were frozen when it was built, «pauza vocii», the
+    Owner 2026-10-16): a scene with words lasts its words plus the silence the film adds after
+    them (the frozen pause, or what the render pads after the take: 0.0 for a cut inside one
+    take), a silent card its kind's length, and every cut lands on the frame nearest its exact
+    time on the cumulative timeline (`pauses.snap_cumulative`), so many rows never drift from
+    the voice. Without ``pauses`` (a film built before them):
+
+    A scene with words lasts spoken + LEGACY_SPOKEN_TAIL_SECONDS, whatever its plan said: a word
     is never cut, and the breath after the last word is the shot's (2026-10-16, the Owner:
     the clip used to be cut the moment the words ended, when the plan ran short, and the
     movement never finished). Every speaking scene keeps its whole breath, rounded up to a
@@ -1931,10 +1943,20 @@ def scene_spans(
     from app.media.qc import MAX_SILENT_CARD_SECONDS  # noqa: PLC0415 - qc reads the models
 
     kinds = list(kinds) if kinds is not None else [None] * len(planned)
+    if pauses is not None:
+        exact: list[float] = []
+        for plan, said, kind, pause in zip(planned, spoken, kinds, pauses, strict=True):
+            if isinstance(said, int | float) and float(said) > 0:
+                exact.append(float(said) + max(0.0, float(pause or 0.0)))
+            elif kind in MAX_SILENT_CARD_SECONDS:
+                exact.append(min(float(plan), MAX_SILENT_CARD_SECONDS[kind]))
+            else:
+                exact.append(float(plan))
+        return pause_rules.snap_cumulative(exact, fps)
     spans: list[float] = []
     for plan, said, kind in zip(planned, spoken, kinds, strict=True):
         if isinstance(said, int | float) and float(said) > 0:
-            spans.append(whole_frames(float(said) + SPOKEN_TAIL_SECONDS, fps, up=True))
+            spans.append(whole_frames(float(said) + LEGACY_SPOKEN_TAIL_SECONDS, fps, up=True))
         elif kind in MAX_SILENT_CARD_SECONDS:
             spans.append(whole_frames(min(float(plan), MAX_SILENT_CARD_SECONDS[kind]), fps))
         else:
@@ -3231,6 +3253,371 @@ def _context_fields(context: dict[str, Any] | None) -> dict[str, str] | None:
     return kept or None
 
 
+# ----------------------------------------------------------------- one take per voice group
+# 2026-10-16, the Owner («pauza vocii»): one voice take per writer's scene (factual) and per
+# speaker's run inside a beat (serial), the montage cutting the picture on the take's own
+# word timing. A film built before the pause rules is voiced row by row, as it always was.
+
+
+def frozen_film(scenes: Sequence[Mapping[str, Any]]) -> bool:
+    """Whether this film is timed by its frozen pauses: the pause rules are in use and every
+    row carries the pause frozen when its storyboard was built (`scene_view`)."""
+    return (
+        bool(scenes)
+        and pause_rules.active_rules() is not None
+        and all(isinstance(scene.get("pause_after"), Mapping) for scene in scenes)
+    )
+
+
+@dataclass
+class _VoiceUnit:
+    """One row's words, or one speaker's part of them, in the voice track: the take they are
+    said in (its index), where they begin inside it, how long they last there, their words
+    timed from their own beginning and the voice's own pause after them inside the take."""
+
+    row: int
+    part: dict[str, Any]
+    voice: Any
+    text: str
+    take: int = -1
+    offset: float = 0.0
+    seconds: float = 0.0
+    words: tuple[dict[str, Any], ...] | None = None
+    gap_after: float | None = None
+
+
+@dataclass
+class _VoiceTake:
+    """One take of the voice track: its units in order, the voice and the group it is said in,
+    and, once said, the recording, its narration take, what it cost and how it was trimmed."""
+
+    units: list[_VoiceUnit]
+    voice: Any
+    group: Any
+    said: Any = None
+    take_id: str | None = None
+    reused: bool = False
+    bought: int = 0
+    trim: dict[str, Any] | None = None
+    timed: bool = True
+
+    @property
+    def text(self) -> str:
+        return " ".join(unit.text for unit in self.units)
+
+    @property
+    def direction(self) -> str:
+        notes: list[str] = []
+        for unit in self.units:
+            note = " ".join(str(unit.part.get("direction") or "").split())
+            if note and note not in notes:
+                notes.append(note)
+        return "; ".join(notes)
+
+    @property
+    def first_row(self) -> int:
+        return self.units[0].row
+
+
+def voice_takes(
+    scenes: Sequence[Mapping[str, Any]],
+    parts: Sequence[tuple[list[dict[str, Any]], bool]],
+    voices: Sequence[Any],
+    *,
+    grouped: bool,
+) -> tuple[list[_VoiceTake], list[list[_VoiceUnit]]]:
+    """The film's words as the voice track says them: (the takes in order, each row's units).
+
+    With ``grouped`` the units of one voice group (a factual row's ``voice_group``, a serial
+    part's) said one after another in one voice are one take; a voice that says it cannot
+    time its words (``TIMES_WORDS`` False) is voiced row by row, its cuts unplaceable. Without
+    it every unit is a take of its own, as a film was voiced before the groups. A row with no
+    words has no unit."""
+    takes: list[_VoiceTake] = []
+    rows: list[list[_VoiceUnit]] = []
+    for row, (scene, (scene_parts, by_speaker)) in enumerate(zip(scenes, parts, strict=True)):
+        units: list[_VoiceUnit] = []
+        for part in scene_parts:
+            text = " ".join(str(part.get("text") or "").split())
+            if not text:
+                continue
+            voice = part.get("adapter") or voices[row]
+            unit = _VoiceUnit(row=row, part=part, voice=voice, text=text)
+            group = None
+            if grouped and getattr(type(voice), "TIMES_WORDS", True) is not False:
+                group = part.get("voice_group") if by_speaker else scene.get("voice_group")
+            last = takes[-1] if takes else None
+            if (
+                group is not None
+                and last is not None
+                and last.group == group
+                and last.voice is voice
+                and last.units[-1].row in (row, row - 1)
+            ):
+                last.units.append(unit)
+            else:
+                takes.append(_VoiceTake(units=[unit], voice=voice, group=group))
+            unit.take = len(takes) - 1
+            units.append(unit)
+        rows.append(units)
+    return takes, rows
+
+
+def _unit_join(scene: Mapping[str, Any], position: int, count: int) -> dict[str, Any]:
+    """The frozen join after the ``position``-th of a row's ``count`` units: its pause after
+    for its last unit, else the row's inner pause there (the row's pause after when the two
+    no longer line up)."""
+    inner = scene.get("inner_pauses") or []
+    if position < count - 1 and position < len(inner) and isinstance(inner[position], Mapping):
+        return dict(inner[position])
+    return dict(scene.get("pause_after") or {})
+
+
+def _join_seconds(record: Mapping[str, Any]) -> tuple[str, float, float]:
+    """(class, seconds, floor) of a frozen join between two takes. A join frozen as a cut
+    inside a take that is voiced as two takes after all (the voice groups off, a voice that
+    cannot time its words) is the join it would be voiced alone (``fallback``)."""
+    chosen = record
+    if record.get("class") == pause_rules.IN_TAKE and isinstance(record.get("fallback"), Mapping):
+        chosen = record["fallback"]
+    seconds = float(chosen.get("seconds") or 0.0)
+    floor = chosen.get("floor")
+    return (
+        str(chosen.get("class") or pause_rules.WORD),
+        seconds,
+        min(seconds, float(floor) if isinstance(floor, int | float) else seconds),
+    )
+
+
+@dataclass
+class _FrozenTiming:
+    """A film's voice laid out by its frozen pauses (`_lay_out_voice`): the layout, each row's
+    pause record for the timeline, the room each row's pause leaves a short clip, the take
+    whose pad follows each row, each row's words measured from its start, and the wall."""
+
+    layout: pause_plan.Layout
+    pauses: list[dict[str, Any]]
+    room: list[float]
+    pad_take: list[int | None]
+    audio: list[float]
+    pieces: list[list[dict[str, Any]]]
+    wall: float | None
+    wall_factors: list[float] | None
+
+
+def _lay_out_voice(
+    scenes: Sequence[Mapping[str, Any]],
+    takes: Sequence[_VoiceTake],
+    rows: Sequence[Sequence[_VoiceUnit]],
+    *,
+    cut_in_pause: float,
+    wall: float | None,
+    rules: pause_rules.PauseRules,
+    fps: int = TIMELINE_FPS,
+) -> _FrozenTiming:
+    """The voice laid under the pictures by the film's frozen pauses (the Owner's «pauza
+    vocii», 2026-10-16): each take's join is the frozen pause after its last words less the
+    silence its trim kept and the next take's head (`pauses.render_pad`), a silent card the
+    pause it is, every cut on a frame of the cumulative timeline (`pause_plan.voice_layout`).
+    A film over its wall gives up its pauses toward their floors, the ladder keeping its order
+    (`pauses.fit_to_wall`); a BEAT and a card are never compressed."""
+    from app.media.qc import MAX_SILENT_CARD_SECONDS  # noqa: PLC0415 - qc reads the models
+
+    layout_rows: list[Sequence[pause_plan.Unit] | float] = []
+    for row, scene in enumerate(scenes):
+        units = rows[row]
+        if units:
+            layout_rows.append([pause_plan.Unit(u.take, u.offset, u.seconds) for u in units])
+            continue
+        kind = scene_kind_of(dict(scene))
+        plan = float(scene.get("duration_seconds") or 0.0)
+        layout_rows.append(
+            min(plan, MAX_SILENT_CARD_SECONDS[kind]) if kind in MAX_SILENT_CARD_SECONDS else plan
+        )
+    joins: list[dict[str, Any]] = []
+    for k, take in enumerate(takes):
+        last = take.units[-1]
+        units = rows[last.row]
+        where = next(i for i, unit in enumerate(units) if unit is last)
+        cls, seconds, floor = _join_seconds(_unit_join(scenes[last.row], where, len(units)))
+        following = takes[k + 1] if k + 1 < len(takes) else None
+        head = 0.0
+        if following is not None and following.first_row in (last.row, last.row + 1):
+            head = max(0.0, float((following.trim or {}).get("kept_head_seconds") or 0.0))
+        tail = max(0.0, float((take.trim or {}).get("kept_tail_seconds") or 0.0))
+        joins.append(
+            {
+                "class": cls,
+                "seconds": seconds,
+                "floor": floor,
+                "tail": tail,
+                "head": head,
+                "pad": pause_rules.render_pad(seconds, tail, head),
+            }
+        )
+
+    def laid(pads: Sequence[float]) -> pause_plan.Layout:
+        return pause_plan.voice_layout(
+            layout_rows,
+            [
+                pause_plan.TakeJoin(float(take.said.duration_seconds), pad)
+                for take, pad in zip(takes, pads, strict=True)
+            ],
+            fps=fps,
+            cut_in_pause=cut_in_pause,
+        )
+
+    pads = [float(join["pad"]) for join in joins]
+    layout = laid(pads)
+    factors: list[float] | None = None
+    total = round(sum(layout.spans), 6)
+    if wall is not None and total > wall + 1e-6 and pads:
+        fit = pause_rules.fit_to_wall(
+            [
+                {
+                    "class": join["class"],
+                    "seconds": join["pad"],
+                    "floor": max(
+                        0.0, min(join["pad"], join["floor"] - join["tail"] - join["head"])
+                    ),
+                }
+                for join in joins
+            ],
+            fixed_seconds=total - sum(pads),
+            wall=wall,
+            rules=rules,
+        )
+        factors = list(fit.factors)
+        pads = list(fit.seconds)
+        for join, pad in zip(joins, pads, strict=True):
+            if pad < join["pad"]:
+                join["wall_pad"] = pad
+        layout = laid(pads)
+    count = len(scenes)
+    ends = [round(start + span, 6) for start, span in zip(layout.starts, layout.spans, strict=True)]
+    records: list[dict[str, Any]] = []
+    room = [0.0] * count
+    pad_take: list[int | None] = [None] * count
+    audio = [0.0] * count
+    pieces: list[list[dict[str, Any]]] = [[] for _ in range(count)]
+
+    def join_record(unit: _VoiceUnit, at: float) -> dict[str, Any]:
+        take = takes[unit.take]
+        if unit is not take.units[-1]:
+            return {
+                "class": pause_rules.IN_TAKE,
+                "planned": 0.0,
+                "heard": unit.gap_after,
+                "keep_tail": None,
+                "pad": 0.0,
+                "head": None,
+                "cut_at": at,
+                "wall_k": None,
+            }
+        join = joins[unit.take]
+        written = layout.pads[unit.take]
+        planned = float(join["seconds"])
+        if "wall_pad" in join:
+            planned = min(planned, round(join["wall_pad"] + join["tail"] + join["head"], 4))
+        return {
+            "class": join["class"],
+            "planned": round(planned, 4),
+            "heard": round(join["tail"] + written + join["head"], 4),
+            "keep_tail": round(join["tail"], 4),
+            "pad": round(written, 4),
+            "head": round(join["head"], 4),
+            "cut_at": at,
+            "wall_k": factors if "wall_pad" in join else None,
+            "floor": join["floor"],
+        }
+
+    for row, scene in enumerate(scenes):
+        units = rows[row]
+        cut_at = round(ends[row], 4)
+        if not units:
+            frozen = scene.get("pause_after")
+            frozen = frozen if isinstance(frozen, Mapping) else {}
+            records.append(
+                {
+                    "class": str(frozen.get("class") or pause_rules.CARD),
+                    "planned": 0.0,
+                    "heard": round(layout.spans[row], 4),
+                    "keep_tail": None,
+                    "pad": 0.0,
+                    "head": None,
+                    "cut_at": cut_at,
+                    "wall_k": None,
+                }
+            )
+            continue
+        start = layout.starts[row]
+        for unit in units:
+            offset = max(0.0, layout.take_starts[unit.take] + unit.offset - start)
+            pieces[row].append(
+                {
+                    "text": unit.text,
+                    "offset": round(offset, 4),
+                    "seconds": round(unit.seconds, 4),
+                    "words": [dict(word) for word in unit.words]
+                    if unit.words is not None
+                    else None,
+                }
+            )
+        audio[row] = round(max(piece["offset"] + piece["seconds"] for piece in pieces[row]), 3)
+        record = join_record(units[-1], cut_at)
+        inner = [
+            join_record(unit, round(start + pieces[row][i + 1]["offset"], 4))
+            for i, unit in enumerate(units[:-1])
+        ]
+        if inner:
+            record["inner"] = inner
+        records.append(record)
+        last = units[-1]
+        if last is takes[last.take].units[-1]:
+            pad_take[row] = last.take
+            if record["class"] not in (pause_rules.BEAT, pause_rules.CARD) and (
+                record["class"] not in pause_rules.EDGES_ONLY
+            ):
+                room[row] = max(0.0, min(record["pad"], record["planned"] - record["floor"]))
+    return _FrozenTiming(
+        layout=layout,
+        pauses=records,
+        room=room,
+        pad_take=pad_take,
+        audio=audio,
+        pieces=pieces,
+        wall=wall,
+        wall_factors=factors,
+    )
+
+
+def _placed_pauses(
+    timing: _FrozenTiming, scenes: Sequence[Mapping[str, Any]]
+) -> list[dict[str, Any] | None]:
+    """Each row's pause record with the cut where the final timeline puts it (a pause given
+    up for a clip moved every cut after it)."""
+    clock = 0.0
+    placed: list[dict[str, Any] | None] = []
+    for scene, record in zip(scenes, timing.pauses, strict=True):
+        clock += float(scene["duration_seconds"])
+        placed.append({**record, "cut_at": round(clock, 4)})
+    return placed
+
+
+def _silence_wav(path: Path, seconds: float, rate: int = MASTER_SAMPLE_RATE) -> Path:
+    """A silent mono 16-bit WAV of ``seconds``: the voice track before a film's first take
+    when the film opens on a silent card."""
+    import wave  # noqa: PLC0415
+
+    frames = max(1, int(round(seconds * rate)))
+    with wave.open(str(path), "wb") as out:
+        out.setnchannels(1)
+        out.setsampwidth(2)
+        out.setframerate(rate)
+        out.writeframes(bytes(2 * frames))
+    return path
+
+
 def narration_fields(
     text: str, voice: Any, context: dict[str, Any] | None = None
 ) -> dict[str, Any]:
@@ -3355,8 +3742,14 @@ def keep_narration(
     part: int,
     parts: int,
     correlation_id: str,
+    take_text: str | None = None,
+    rows: Sequence[int] | None = None,
 ) -> str | None:
     """A narration just bought, kept as a PAID take with its audio and its sidecar.
+
+    A take said over several rows (one voice group, `voice_takes`) also keeps its own words
+    (``take_text``) and the rows it is said over (``rows``), so the sheet can price every one
+    of them at 0 once it is kept (`voiced_scenes`).
 
     Never fails the render that bought it: a narration that could not be kept is logged and
     the film goes on (it would only be bought again next time)."""
@@ -3378,6 +3771,14 @@ def keep_narration(
                     "part": part,
                     "parts": parts,
                     "characters": len(" ".join(str(scene_text).split())),
+                    **(
+                        {
+                            "take_text_sha256": _text_sha(take_text),
+                            "rows": [int(row) for row in rows],
+                        }
+                        if take_text is not None and rows
+                        else {}
+                    ),
                 },
                 ensure_ascii=False,
                 default=str,
@@ -3428,8 +3829,13 @@ def voiced_scenes(
         int(scene["scene_index"]): _text_sha(str(scene.get("voiceover_segment") or ""))
         for scene in scenes
     }
+    texts_by_row = {
+        int(scene["scene_index"]): " ".join(str(scene.get("voiceover_segment") or "").split())
+        for scene in scenes
+    }
     covered: dict[tuple[int, str], set[int]] = {}
     needed: dict[tuple[int, str], int] = {}
+    spread: dict[tuple[int, str], set[int]] = {}
     for row in rows:
         if not row.path or wanted.get(int(row.scene_number)) is None:
             continue
@@ -3445,9 +3851,22 @@ def voiced_scenes(
         group = (int(row.scene_number), str(kept.get("voice_key") or ""))
         covered.setdefault(group, set()).add(int(kept.get("part") or 0))
         needed[group] = int(kept.get("parts") or 1)
-    return {
+        # A take said over several rows (one voice group): every row it is said over is
+        # voiced while the take holds their words as they are now.
+        said_over = kept.get("rows")
+        if isinstance(said_over, list) and len(said_over) > 1 and kept.get("take_text_sha256"):
+            texts = [texts_by_row.get(int(number)) for number in said_over]
+            if all(text is not None for text in texts) and kept["take_text_sha256"] == _text_sha(
+                " ".join(str(text) for text in texts)
+            ):
+                spread.setdefault(group, set()).update(int(number) for number in said_over)
+    voiced = {
         scene for (scene, _voice), parts in covered.items() if len(parts) >= needed[(scene, _voice)]
     }
+    for (scene, _voice), over in spread.items():
+        if scene in voiced:
+            voiced.update(over)
+    return voiced
 
 
 def _scene_parts(
@@ -3484,6 +3903,31 @@ def narration_to_buy(
     if not voices or any(voice is None for voice in voices):
         return 0  # the placeholder narrates: nothing is bought
     characters = 0
+    if frozen_film(scenes):
+        # One take per voice group, as the render says them (`voice_takes`): the same words,
+        # the same voices, the same neighbours, so the same keys are found kept or bought.
+        given = [
+            voice_segments_for_scene(scene) if voice_segments_for_scene else None
+            for scene in scenes
+        ]
+        grouped_parts: list[tuple[list[dict[str, Any]], bool]] = []
+        for scene, listed in zip(scenes, given, strict=True):
+            said = [p for p in (listed or []) if str(p.get("text") or "")]
+            grouped_parts.append(
+                (said, True) if said else ([{"text": scene["voiceover_segment"]}], False)
+            )
+        takes, _rows = voice_takes(
+            scenes, grouped_parts, voices, grouped=pause_rules.switch("voice_groups")
+        )
+        contexts = narration_context([[take.text] for take in takes])
+        for take, around in zip(takes, contexts, strict=True):
+            if not bought_voice(take.voice):
+                continue
+            key = narration_key(take.text, take.voice, around[0])
+            number = int(scenes[take.first_row]["scene_index"])
+            if reused_narration(engine, storyboard_id, number, key) is None:
+                characters += len(take.text)
+        return characters
     spoken = [
         _scene_parts(scene, voice, voice_segments_for_scene)
         for scene, voice in zip(scenes, voices, strict=True)
@@ -4023,9 +4467,15 @@ def _clip_slowdowns(
     card_clips: list[Path | None],
     lengths: list[float],
     production: dict[str, Any],
+    shrink: Callable[[int, float], float] | None = None,
 ) -> list[float]:
     """How many times slower each LIVE clip plays to fill its shot: 1.0 for a clip that covers
     it (it is cut), and for every scene without a clip.
+
+    ``shrink(position, have)`` (a film timed by its frozen pauses, `pause_plan`): before a
+    clip is declared too short, the pause after the scene's words gives up whole frames toward
+    its floor until the clip fills the span (the Owner's «pauza vocii», 2026-10-16); it
+    updates the timeline and the voice and returns the seconds it took off ``lengths``.
 
     The clip is measured, not read from its take: a vendor may deliver less than it billed.
     One short of its span by at most SLOWDOWN_ALLOWANCE is slowed (the factor asks
@@ -4048,6 +4498,12 @@ def _clip_slowdowns(
         if record is not None:
             record["clip_seconds"] = round(have, 3)
         need = lengths[position]
+        if shrink is not None and not clip_fits(have, need):
+            taken = shrink(position, have)
+            if taken > 0:
+                need = lengths[position]
+                if record is not None:
+                    record["pause_shrunk_seconds"] = round(taken, 3)
         stretch = clip_stretch(have, need)
         if stretch <= 1.0:
             continue
@@ -4113,13 +4569,21 @@ def _timeline_record(
     dither: bool,
     framings: list[dict[str, Any] | None] | None = None,
     slows: list[float] | None = None,
+    pauses: list[dict[str, Any] | None] | None = None,
+    pause_profile: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """The film's timeline as the manifest keeps it, and as quality control reads it: the
     frame rate, and each scene's place (start, end), how it is joined from the scene before,
     its shot's length and whether its shot is a generated clip (``moving``), slowed down to
     fill its span (``slow_factor``, `_clip_slowdowns`). A scene cut to a second framing of its
     picture carries it (``second_framing``), and the film counts the shots on screen and their
-    average length (audit Q6)."""
+    average length (audit Q6).
+
+    A film timed by its frozen pauses («pauza vocii», 2026-10-16) records each scene's pause
+    after its words (``pause``: its class, the seconds planned and heard, the silence the trim
+    kept, the pad the render added, the next take's head, where the cut fell, the wall's
+    factor) and every number they came from (``pause_profile``); a film built before them
+    keeps the legacy ``spoken_tail_seconds``."""
     spans: list[dict[str, Any]] = []
     clock = 0.0
     framings = framings if framings is not None else [None] * len(scenes)
@@ -4145,6 +4609,8 @@ def _timeline_record(
                 "second_framing": framings[position],
             }
         )
+        if pauses is not None:
+            spans[-1]["pause"] = pauses[position]
         clock += length
     spoken = [scene.get("audio_seconds") for scene in scenes]
     narration = (
@@ -4153,10 +4619,18 @@ def _timeline_record(
         else None
     )
     on_screen = len(spans) + sum(1 for framing in framings if framing)
+    timing: dict[str, Any] = (
+        {
+            "pause_profile": pause_profile,
+            "pause_rule_version": (pause_profile or {}).get("rule_version"),
+        }
+        if pauses is not None
+        else {"spoken_tail_seconds": LEGACY_SPOKEN_TAIL_SECONDS}
+    )
     return {
         "fps": TIMELINE_FPS,
         "dither": "zscale error_diffusion" if dither else "swscale",
-        "spoken_tail_seconds": SPOKEN_TAIL_SECONDS,
+        **timing,
         "film_seconds": round(clock, 6),
         "narration_seconds": narration,
         "spans": spans,
@@ -4695,7 +5169,7 @@ def _voiced_clip_seconds(said: float, source: str, dissolve: float) -> float:
         if source == NARRATION_ESTIMATED
         else MEASURED_NARRATION_MARGIN_SECONDS
     )
-    return round(whole_frames(said + SPOKEN_TAIL_SECONDS + dissolve + margin, up=True), 3)
+    return round(whole_frames(said + LEGACY_SPOKEN_TAIL_SECONDS + dissolve + margin, up=True), 3)
 
 
 def script_clip_seconds(scenes: Sequence[dict[str, Any]]) -> dict[int, float]:
@@ -7157,6 +7631,101 @@ def assemble_video_job(
     part_contexts = narration_context(
         [[str(part["text"] or "") for part in parts] for parts, _ in scene_parts]
     )
+    # «Pauza vocii» (the Owner, 2026-10-16): a film built under the pause rules is said one
+    # take per voice group — a writer's scene, a speaker's run inside a beat — the montage
+    # cutting the picture on the take's own word timing, and laid out by its frozen pauses
+    # (`_lay_out_voice`). A film built before them is voiced row by row below, as it was.
+    voicing: list[_VoiceTake] | None = None
+    voicing_rows: list[list[_VoiceUnit]] = []
+    take_contexts: list[dict[str, str | None]] = []
+    frozen_profile: dict[str, Any] = {}
+    if all_real and ffmpeg_exe and frozen_film(scenes_data):
+        voicing, voicing_rows = voice_takes(
+            scenes_data,
+            scene_parts,
+            scene_voices,
+            grouped=pause_rules.switch("voice_groups"),
+        )
+        take_contexts = [around[0] for around in narration_context([[t.text] for t in voicing])]
+        first_frozen = frozen_beat(scenes_data[0].get("prompt_json")) or {}
+        frozen_profile = dict(first_frozen.get("pause_profile") or {})
+    frozen_knobs = dict(frozen_profile.get("knobs") or {})
+    cut_in_pause = float(frozen_knobs.get("cut_in_pause", 1.0))
+    slide_words = int(frozen_knobs.get("picture_slide_words", 0) or 0)
+
+    def _say_take(k: int, part: int, parts_here: int) -> None:
+        """Take ``k`` of the voice track said (or a kept narration of the same words in the
+        same voice reused), trimmed, and its units placed on its own word timing."""
+        assert voicing is not None and ffmpeg_exe
+        take = voicing[k]
+        first = scenes_data[take.first_row]
+        number = int(first["scene_index"])
+        voice = take.voice
+        context = take_contexts[k]
+        key = narration_key(take.text, voice, context) if bought_voice(voice) else None
+        kept = reused_narration(engine, storyboard_id, number, key) if key else None
+        if kept is not None:
+            said, take.take_id = kept
+            take.reused = True
+        else:
+            with _at_work(engine, "VoiceArtist", "synthesize_voice", f"vocea scenei {number}"):
+                stitched = _context_fields(context) if stitches(voice) else None
+                # The lines' acting notes go with their words: the voice plays them.
+                direction = take.direction
+                extra_fields = {
+                    **(stitched or {}),
+                    **({"direction": direction} if direction else {}),
+                }
+                said = asyncio.run(
+                    voice.synthesize(take.text, extra=extra_fields)
+                    if extra_fields
+                    else voice.synthesize(take.text)
+                )
+            take.bought = len(take.text)
+            if key:
+                # Kept the moment it is bought: a later failure never buys it again. Filed
+                # under the first row it is said in; its identity is its words and voice,
+                # never a pause or a cut (`narration_key`).
+                take.take_id = keep_narration(
+                    engine,
+                    storyboard_id=storyboard_id,
+                    scene_number=number,
+                    key=key,
+                    voice=voice,
+                    said=said,
+                    folder=work_dir / NARRATION_FOLDER,
+                    scene_text=str(first.get("voiceover_segment") or ""),
+                    part=part,
+                    parts=parts_here,
+                    correlation_id=correlation_id,
+                    take_text=take.text,
+                    rows=list(
+                        dict.fromkeys(int(scenes_data[u.row]["scene_index"]) for u in take.units)
+                    ),
+                )
+        said, trim = _trimmed_take(ffmpeg_exe, said, work_dir, f"take_{number:02d}_{part + 1:02d}")
+        take.said, take.trim = said, trim
+        cuts = pause_plan.take_cuts(
+            [unit.text for unit in take.units],
+            float(said.duration_seconds),
+            pause_plan.take_words(said.raw_response, said.word_timings),
+            cut_in_pause=cut_in_pause,
+            picture_slide_words=slide_words,
+        )
+        take.timed = cuts.timed
+        ends = [*cuts.offsets[1:], float(said.duration_seconds)]
+        for unit, start, end, words, gap in zip(
+            take.units, cuts.offsets, ends, cuts.words, cuts.gaps, strict=True
+        ):
+            unit.offset = float(start)
+            unit.seconds = max(0.0, float(end) - float(start))
+            unit.words = words
+            unit.gap_after = gap
+        segment = work_dir / f"voice_{number:02d}_{part + 1:02d}.{said.format}"
+        segment.write_bytes(said.audio_bytes)
+        voice_segments.append(segment)
+        voice_pads.append(0.0)
+
     try:
         for position, scene in enumerate(scenes_data):
             if position:
@@ -7214,6 +7783,93 @@ def assemble_video_job(
             real_voice = scene_voices[scene_position]
             parts, by_speaker = scene_parts[scene_position]
             voice_started = time.monotonic()
+            if voicing is not None:
+                opened = [k for k, take in enumerate(voicing) if take.first_row == scene_position]
+                for number, k in enumerate(opened):
+                    _say_take(k, number, len(opened))
+                units = voicing_rows[scene_position]
+                said_in = list(dict.fromkeys(unit.take for unit in units))
+                speaking = units[0].voice if units else real_voice
+                frozen_trims: list[dict[str, Any]] = [
+                    trim for trim in (voicing[k].trim for k in opened) if trim
+                ]
+                frozen_record: dict[str, Any] = {
+                    "scene_index": index,
+                    "voice_provider": getattr(
+                        speaking, "PROVIDER_NAME", PLACEHOLDER_VOICE_PROVIDER
+                    ),
+                    "model_id": getattr(speaking, "model", None) or None,
+                    "voice_id": getattr(speaking, "voice_id", None) or None,
+                    "voice_integration_ids": sorted(
+                        {
+                            str(getattr(unit.voice, "integration_id", None))
+                            for unit in units
+                            if getattr(unit.voice, "integration_id", None)
+                        }
+                    ),
+                    # The takes this row's words are said in (bought now or reused): a take
+                    # said over several rows is named on each, and paid on the first.
+                    "narration_takes": [
+                        str(voicing[k].take_id) for k in said_in if voicing[k].take_id
+                    ],
+                    "characters": sum(len(unit.text) for unit in units),
+                    "characters_bought": sum(voicing[k].bought for k in opened),
+                    "narration_reused": [
+                        str(voicing[k].take_id)
+                        for k in opened
+                        if voicing[k].reused and voicing[k].take_id
+                    ],
+                    "audio_seconds": None,
+                    "synthesis_ms": round((time.monotonic() - voice_started) * 1000, 1),
+                    "attempts": 1,
+                    "image": image_attempts[-1] if image_attempts else None,
+                    "scene_kind": scene_kind_of(scene),
+                    "story_purpose": scene.get("story_purpose"),
+                    "still_take": still_take,
+                    # Which take of the voice track each part of the row is said in, and
+                    # where that take was filed (`pause_plan`).
+                    "voice_takes": [
+                        {
+                            "take": k,
+                            "take_id": voicing[k].take_id,
+                            "filed_under": int(scenes_data[voicing[k].first_row]["scene_index"]),
+                            "units": len(voicing[k].units),
+                            "cuts_timed": voicing[k].timed,
+                        }
+                        for k in said_in
+                    ],
+                }
+                if frozen_trims:
+                    frozen_record["trimmed_silence"] = {
+                        "lead_seconds": frozen_trims[0]["lead_seconds"],
+                        "trail_seconds": frozen_trims[-1]["trail_seconds"],
+                        "takes": frozen_trims,
+                    }
+                if by_speaker:
+                    frozen_record["segments"] = [
+                        {
+                            "speaker": unit.part.get("speaker"),
+                            "character_id": unit.part.get("character_id"),
+                            "voice_provider": getattr(
+                                unit.voice, "PROVIDER_NAME", PLACEHOLDER_VOICE_PROVIDER
+                            ),
+                            "model_id": getattr(unit.voice, "model", None) or None,
+                            "voice_id": getattr(unit.voice, "voice_id", None) or None,
+                            "voice_source": (
+                                unit.part.get("voice_source")
+                                if unit.part.get("adapter")
+                                else "scene_voice"
+                            ),
+                            "characters": len(unit.text),
+                            "audio_seconds": None,
+                        }
+                        for unit in units
+                    ]
+                production["scenes"].append(frozen_record)
+                production.setdefault("image_attempts", []).append(
+                    {"scene_index": index, "attempts": image_attempts}
+                )
+                continue
             takes: list[tuple[dict[str, Any], TTSProvider, Any]] = []
             #: Characters this render paid a voice for; a reused narration take costs 0.
             characters_bought = 0
@@ -7423,7 +8079,67 @@ def assemble_video_job(
     # so the Nepal film carried seconds of silence under still pictures. Without real
     # narration the plan stands, on whole frames.
     planned_lengths = [float(scene["duration_seconds"] or 0.0) for scene in scenes_data]
-    if all_real:
+    timing: _FrozenTiming | None = None
+    #: Where the take pads start in `voice_pads` (1 when a silence opens the track).
+    pad_base = 0
+    if voicing is not None:
+        # The film's frozen pauses lay its voice out (`_lay_out_voice`): the pad after a take
+        # is the frozen pause less the silence its trim kept, a cut inside a take adds nothing,
+        # and every cut is on a frame of the cumulative timeline.
+        with Session(engine) as session:
+            board = session.get(Storyboard, storyboard_id)
+            active = pause_rules.active_rules()
+            wall = (
+                pause_plan.board_wall(session, board, active)
+                if board is not None and active is not None
+                else None
+            )
+        timing = _lay_out_voice(
+            scenes_data,
+            voicing,
+            voicing_rows,
+            cut_in_pause=cut_in_pause,
+            wall=wall,
+            rules=active or pause_rules.load_rules(),
+        )
+        for row, scene in enumerate(scenes_data):
+            scene["duration_seconds"] = timing.layout.spans[row]
+            scene["audio_seconds"] = timing.audio[row]
+            row_record = production["scenes"][row]
+            row_record["audio_seconds"] = timing.audio[row]
+            pieces = timing.pieces[row]
+            for segment_record, piece in zip(
+                row_record.get("segments") or [], pieces, strict=False
+            ):
+                segment_record["audio_seconds"] = round(piece["seconds"], 3)
+            if not pieces:
+                continue
+            if scene_parts[row][1]:
+                scene["voice_segments"] = [dict(piece) for piece in pieces]
+            else:
+                (piece,) = pieces[:1]
+                words = piece.get("words")
+                scene["word_timings"] = (
+                    [
+                        {
+                            **word,
+                            "start": round(float(word["start"]) + piece["offset"], 4),
+                            "end": round(float(word["end"]) + piece["offset"], 4),
+                        }
+                        for word in words
+                    ]
+                    if isinstance(words, list)
+                    else None
+                )
+        voice_pads[:] = list(timing.layout.pads)
+        if timing.layout.lead > 0:
+            # The film opens on a silent card: the voice track opens with its silence.
+            voice_segments.insert(
+                0, _silence_wav(work_dir / "voice_00_lead.wav", timing.layout.lead)
+            )
+            voice_pads.insert(0, 0.0)
+            pad_base = 1
+    elif all_real:
         spoken_lengths = [float(scene.get("audio_seconds") or 0.0) for scene in scenes_data]
         for scene, span, pad_at, words_for in zip(
             scenes_data,
@@ -7479,6 +8195,13 @@ def assemble_video_job(
             # shot it fills is the scene plus the dissolve into the next one, if any.
             wanted = float(scene["duration_seconds"]) + TRANSITION_SECONDS
             needed = lengths[position]
+            # A kept clip a little short of its span is still used when the pause after the
+            # scene's words can give up the difference toward its floor (`_clip_slowdowns`).
+            fit_span = needed
+            if timing is not None and timing.room[position] > 0:
+                fit_span = needed - math.floor(timing.room[position] * TIMELINE_FPS + 1e-6) / (
+                    TIMELINE_FPS
+                )
             tier = scene_tier(scene, len(scenes_data))
             # A shot already paid for with this package, from this still, long enough for
             # its shot once slowed down by at most SLOWDOWN_ALLOWANCE, is used as it is: the
@@ -7499,7 +8222,7 @@ def assemble_video_job(
                         storyboard_id,
                         scene,
                         still_sha,
-                        span=needed,
+                        span=fit_span,
                         environment=environment,
                         from_prompt=motion_from_prompt,
                     )
@@ -7513,7 +8236,7 @@ def assemble_video_job(
                     not_accepted, found_take = (str(reading["why_ro"] or "") or None), None
             else:
                 found_take = _usable_motion_take(
-                    engine, storyboard_id, scene, fields, min_clip_seconds(needed)
+                    engine, storyboard_id, scene, fields, min_clip_seconds(fit_span)
                 )
                 if found_take is not None:
                     with Session(engine) as session:
@@ -7769,11 +8492,47 @@ def assemble_video_job(
         run_kind=run_kind,
         credit_price=credit_price,
     )
+
     # Each clip is measured against the shot it fills. A clip that covers its shot is cut; one
     # short of it by at most SLOWDOWN_ALLOWANCE is slowed down locally to fill it (0 USD,
     # recorded on the scene); one shorter still is not cut in at all: never a frozen frame
     # (the Owner, 2026-10-09). Held last frames remain only in the shots of older films.
-    slows = _clip_slowdowns(ffmpeg_exe, scenes_data, motion_clips, card_clips, lengths, production)
+    def _shrink_pause(position: int, have: float) -> float:
+        """The pause after scene ``position``'s words shortened, in whole frames toward its
+        floor, until a clip of ``have`` seconds fills the scene: the scene, its shot and the
+        voice's pad after it all lose the same seconds. Returns them (0.0: none)."""
+        if timing is None or timing.room[position] <= 0 or timing.pad_take[position] is None:
+            return 0.0
+        frames = pause_plan.shrink_frames(
+            have, lengths[position], timing.room[position], TIMELINE_FPS, clip_fits
+        )
+        if frames <= 0:
+            return 0.0
+        seconds = frames / TIMELINE_FPS
+        scene = scenes_data[position]
+        scene["duration_seconds"] = round(float(scene["duration_seconds"]) - seconds, 6)
+        lengths[position] = round(lengths[position] - seconds, 6)
+        at = pad_base + int(timing.pad_take[position] or 0)
+        voice_pads[at] = round(max(0.0, voice_pads[at] - seconds), 4)
+        timing.room[position] = max(0.0, timing.room[position] - seconds)
+        record = timing.pauses[position]
+        record["pad"] = round(max(0.0, float(record["pad"]) - seconds), 4)
+        record["heard"] = round(float(record["heard"]) - seconds, 4)
+        record["shrunk_for_clip"] = round(float(record.get("shrunk_for_clip") or 0.0) + seconds, 4)
+        return seconds
+
+    slows = _clip_slowdowns(
+        ffmpeg_exe,
+        scenes_data,
+        motion_clips,
+        card_clips,
+        lengths,
+        production,
+        shrink=_shrink_pause if timing is not None else None,
+    )
+    if timing is not None:
+        # A pause given up for a clip shortened the film: its length is read again.
+        total_duration = sum(s["duration_seconds"] for s in scenes_data)
     interpolate = slowdown_filter(ffmpeg_exe) or "framerate"
     holds = [0.0] * len(scenes_data)
     # A scene the model was asked for and did not deliver — refused, failed, or priced past
@@ -7974,6 +8733,16 @@ def assemble_video_job(
         dither=dither,
         framings=framings,
         slows=slows,
+        pauses=_placed_pauses(timing, scenes_data) if timing is not None else None,
+        pause_profile=(
+            {
+                **frozen_profile,
+                "render_wall": timing.wall,
+                "render_wall_factors": timing.wall_factors,
+            }
+            if timing is not None
+            else None
+        ),
     )
     lut_name: str | None = None
     if real_stills and frame_files:

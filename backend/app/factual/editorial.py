@@ -247,8 +247,8 @@ def narration_budget(target_seconds: float) -> dict[str, Any]:
     target = max(float(target_seconds), 0.0)
 
     # A film is its words plus its breaths, and since 2026-10-16 a breath is the montage's:
-    # every shot with words keeps SPOKEN_TAIL_SECONDS, and a scene of fifteen words or more is
-    # cut into two or three shots. The brief used to price 0.35 s per writer's scene, and a
+    # every shot with words keeps LEGACY_SPOKEN_TAIL_SECONDS, and a scene of fifteen words or
+    # more is cut into two or three shots. The brief used to price 0.35 s per writer's scene, and a
     # script written to its ceiling became a 194 s film. The words are now priced on the film
     # the montage cuts from them (`film_length.factual_film_length`, the very estimate the
     # length check applies), for the brief's own shape: its scene count, the words spread

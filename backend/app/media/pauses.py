@@ -1,7 +1,7 @@
 """«Pauza vocii»: the silence at every cut is the pause this voice makes at this kind of boundary.
 
 Measured before this module (2026-10-16, the 55 kept ElevenLabs takes of 8 films): one value,
-`assembler.SPOKEN_TAIL_SECONDS` (0.4 s), was added after every storyboard row, on top of the
+`assembler.LEGACY_SPOKEN_TAIL_SECONDS` (0.4 s), was added after every storyboard row, on top of the
 vendor's own trailing silence, which `assembler._trimmed_take` never cut (the vendor stretches a
 take's final "." to the end of its file, and the trim let the vendor's clock veto the meter). A
 cut carried 0.92 [0.82-1.05] s whatever the boundary, up to 1.56 s, even between two words; a

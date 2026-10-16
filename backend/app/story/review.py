@@ -545,9 +545,9 @@ def beat_clip_seconds(lines: list[dict[str, Any]]) -> float:
     (`storyboard_from_episode`), so no dissolve is added.
     """
     from app.media.assembler import (  # noqa: PLC0415 - the assembler is heavy; read when measured
+        LEGACY_SPOKEN_TAIL_SECONDS,
         NARRATION_ESTIMATE_MARGIN,
         SECONDS_PER_SPOKEN_WORD,
-        SPOKEN_TAIL_SECONDS,
         spoken_words,
     )
     from app.media.speaker_voices import SPEAKER_GAP_SECONDS, speaker_segments  # noqa: PLC0415
@@ -555,7 +555,7 @@ def beat_clip_seconds(lines: list[dict[str, Any]]) -> float:
     takes = speaker_segments(lines)
     said = sum(spoken_words(take["text"]) for take in takes) * SECONDS_PER_SPOKEN_WORD
     said += SPEAKER_GAP_SECONDS * max(0, len(takes) - 1)
-    return round(said * (1 + NARRATION_ESTIMATE_MARGIN) + SPOKEN_TAIL_SECONDS, 2)
+    return round(said * (1 + NARRATION_ESTIMATE_MARGIN) + LEGACY_SPOKEN_TAIL_SECONDS, 2)
 
 
 def _filmable(

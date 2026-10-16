@@ -4,7 +4,7 @@
 at 2.6 words a second plus 0.35 s per writer's scene, and the serial review at 2.5 words a
 second with 5 s left for every breath. The montage cuts a writer's scene or a beat into shots
 (`montage.factual_shots`, `montage.serial_shots`), and the assembler gives every shot with
-words a breath of its own (`assembler.scene_spans`: SPOKEN_TAIL_SECONDS, rounded up to a
+words a breath of its own (`assembler.scene_spans`: LEGACY_SPOKEN_TAIL_SECONDS, rounded up to a
 frame). A 442-word script the review passed became a 194 s film, which quality control refused
 at YouTube's 180 s wall after the stills, clips and voice of its 56 shots were bought, and no
 repair can make words shorter.
@@ -15,7 +15,7 @@ as the assembler does:
 
 - a row with words lasts its takes, each its words at SECONDS_PER_SPOKEN_WORD (`spoken_words`:
   a number is said in words) plus the EDGE_KEEP_SECONDS `_trimmed_take` keeps either side;
-  SPEAKER_GAP_SECONDS between two speakers' takes in one row; then SPOKEN_TAIL_SECONDS, the
+  SPEAKER_GAP_SECONDS between two speakers' takes in one row; then LEGACY_SPOKEN_TAIL_SECONDS, the
   whole rounded up to a frame of the 24 fps timeline (`scene_spans`);
 - a silent card (BLACK, TITLE_CARD, DATA_CARD) lasts its plan, at most what quality control
   allows its kind (`qc.MAX_SILENT_CARD_SECONDS`); any other silent row its plan; on whole
@@ -94,8 +94,8 @@ def _timing() -> SimpleNamespace:
     """The assembler's own timing numbers, read once (the assembler is heavy and imports
     quality control, which imports the editorial rules that import this module)."""
     from app.media.assembler import (  # noqa: PLC0415
+        LEGACY_SPOKEN_TAIL_SECONDS,
         SECONDS_PER_SPOKEN_WORD,
-        SPOKEN_TAIL_SECONDS,
         TIMELINE_FPS,
         spoken_words,
         whole_frames,
@@ -106,7 +106,7 @@ def _timing() -> SimpleNamespace:
 
     return SimpleNamespace(
         per_word=SECONDS_PER_SPOKEN_WORD,
-        tail=SPOKEN_TAIL_SECONDS,
+        tail=LEGACY_SPOKEN_TAIL_SECONDS,
         fps=TIMELINE_FPS,
         edge=EDGE_KEEP_SECONDS,
         gap=SPEAKER_GAP_SECONDS,
@@ -198,7 +198,7 @@ def planned_seconds(row: dict[str, Any]) -> float:
 def spoken_row_seconds(takes: Sequence[str]) -> float:
     """A row with words, as `assembler.scene_spans` times it: its takes (each trimmed to its
     words plus EDGE_KEEP_SECONDS either side), SPEAKER_GAP_SECONDS between two of them, then
-    SPOKEN_TAIL_SECONDS, rounded up to a whole frame. 0.0 for a row with no words."""
+    LEGACY_SPOKEN_TAIL_SECONDS, rounded up to a whole frame. 0.0 for a row with no words."""
     timing = _timing()
     said = [timing.spoken_words(text) for text in takes]
     said = [words for words in said if words > 0]
