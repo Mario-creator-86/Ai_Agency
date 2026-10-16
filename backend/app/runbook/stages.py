@@ -828,6 +828,50 @@ def _research_and_verification(
 PUBLISH_WAIT_DAYS = 3
 
 
+def superseded(draft: ScriptDraft) -> bool:
+    """Whether the Director's editorial judgement shipped another version of this draft's
+    topic in its place (2026-10-11): a later, lower-scored rewrite that owes nobody anything."""
+    return bool(((draft.story_json or {}).get("editorial") or {}).get("superseded_by"))
+
+
+def topic_scripts(session: Session) -> dict[str, ScriptDraft]:
+    """Each topic's script as production follows it: its newest draft that no editorial
+    judgement superseded.
+
+    Not simply its newest draft (2026-10-16): «Why the Speed of Light Is Exactly 299,792,458
+    m/s» shipped its second draft and the judgement's two later rewrites, read and scored after
+    it, stayed newer. The film of the second draft was published at 06:43Z, yet the topic was
+    read by a rewrite with no storyboard, counted as «live», and no new subject was chosen.
+    `script_work` and `_script_awaiting_owner` already skip a superseded draft; this is the
+    same reading for the topic as a whole."""
+    current: dict[str, ScriptDraft] = {}
+    for draft in session.scalars(select(ScriptDraft).order_by(ScriptDraft.created_at)):
+        if draft.topic_id and not superseded(draft):
+            current[draft.topic_id] = draft  # ordered by age, so the last one wins
+    return current
+
+
+def topics_with_a_published_film(session: Session) -> set[str]:
+    """The topics with a film out: a render of one of their storyboards, of any of their
+    drafts, whose output asset has a publication record (the reading `topics_in_production`
+    always gave a published film). The asset is matched, never a title the publisher may
+    have changed."""
+    return {
+        str(topic_id)
+        for topic_id in session.scalars(
+            select(ScriptDraft.topic_id)
+            .join(Storyboard, Storyboard.script_draft_id == ScriptDraft.id)
+            .join(VideoRenderJob, VideoRenderJob.storyboard_id == Storyboard.id)
+            .join(
+                PublicationRecord,
+                PublicationRecord.media_asset_id == VideoRenderJob.output_asset_id,
+            )
+            .where(ScriptDraft.topic_id.is_not(None))
+            .distinct()
+        )
+    }
+
+
 def topics_in_production(session: Session) -> tuple[list[str], list[str]]:
     """SELECTED topics with work genuinely in flight, and the ones that have stalled.
 
@@ -844,17 +888,21 @@ def topics_in_production(session: Session) -> tuple[list[str], list[str]]:
     topic whose film has been published is simply done: it used to fall through to the stalled
     bucket and be reported as "selected earlier, renders failed quality control", which was
     said of a film that had gone out an hour before.
+
+    Done whichever of its drafts the film came from (2026-10-16): the topic used to be read by
+    its newest draft alone, and a rewrite written after the published one (the editorial
+    judgement's lower-scored versions) held the factual channel «în producție» with nothing
+    owed. A topic is read by its current script (`topic_scripts`), and one with any film out
+    (`topics_with_a_published_film`) is neither live nor stalled.
     """
     selected = list(session.scalars(select(TopicIdea).where(TopicIdea.status == "SELECTED")))
     if not selected:
         return [], []
-    # Newest per topic and per script: with two drafts of one topic, or two storyboards of one
-    # script, which row won used to depend on the order the rows came back in.
-    scripts = {
-        s.topic_id: s
-        for s in session.scalars(select(ScriptDraft).order_by(ScriptDraft.created_at))
-        if s.topic_id
-    }
+    # The current script per topic (`topic_scripts`) and the newest storyboard per script: with
+    # two drafts of one topic, or two storyboards of one script, which row won used to depend on
+    # the order the rows came back in.
+    scripts = topic_scripts(session)
+    done = topics_with_a_published_film(session)
     boards = {
         b.script_draft_id: b
         for b in session.scalars(select(Storyboard).order_by(Storyboard.created_at))
@@ -868,19 +916,16 @@ def topics_in_production(session: Session) -> tuple[list[str], list[str]]:
         select(QualityControlReport).order_by(QualityControlReport.verified_at)
     ):
         verdicts[verdict_row.media_asset_id] = verdict_row.status  # the newest per asset
-    published = set(session.scalars(select(PublicationRecord.media_asset_id)))
     rejected = _viewing_rejected(session)
     live: list[str] = []
     stalled: list[str] = []
     for topic in selected:
+        if topic.id in done:
+            continue  # a film of it is out; this topic is finished, neither live nor stuck
         script = scripts.get(topic.id)
         board = boards.get(script.id) if script else None
         last = jobs.get(board.id) if board else None
-        if (
-            board is not None
-            and board.status == "REJECTED"
-            and (last is None or last.output_asset_id not in published)
-        ):
+        if board is not None and board.status == "REJECTED":
             # Closed by the Director (a film she retired after it stood still, or a viewing
             # she refused): nothing more is owed on it, and the topic must not hold the
             # studio. It used to count as in production until a render COMPLETED (A4).
@@ -899,8 +944,6 @@ def topics_in_production(session: Session) -> tuple[list[str], list[str]]:
             live.append(topic.id)  # writing, storyboarding or rendering still owed
             continue
         verdict = verdicts.get(last.output_asset_id)
-        if last.output_asset_id in published:
-            continue  # the film is out; this topic is finished, neither live nor stuck
         if last.output_asset_id in rejected:
             stalled.append(topic.id)  # the Director said no; the departments hold the notes
         elif verdict == "PASSED":
@@ -1050,7 +1093,7 @@ def script_work(session: Session, selected: list[str]) -> list[tuple[str, list[s
             continue
         if latest.id in storyboarded:
             continue  # the film is past the page
-        if ((latest.story_json or {}).get("editorial") or {}).get("superseded_by"):
+        if superseded(latest):
             # The Director's editorial judgement shipped an earlier version of this topic
             # (2026-10-11): this later, lower-scored draft owes the room nothing.
             continue
@@ -1085,7 +1128,7 @@ def _script_awaiting_owner(session: Session) -> str | None:
     for draft in newest.values():
         if draft.status != "VERIFIED_PASS" or draft.id in storyboarded:
             continue
-        if ((draft.story_json or {}).get("editorial") or {}).get("superseded_by"):
+        if superseded(draft):
             continue  # the judgement shipped an earlier version; this one waits for nobody
         review = latest_review(session, draft.id)
         if review is not None and review.verdict == "PASS":

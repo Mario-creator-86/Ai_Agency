@@ -361,9 +361,9 @@ def _withdraw_questions(
 
 def _topic_after_close(session: Session, board: Storyboard) -> dict[str, Any]:
     """What holds the film's topic once the film is closed, read the way the day's selection
-    reads it (`runbook.stages.topics_in_production`: a topic by its newest script, and that
-    script's newest storyboard). Asked before the close it says what the close will do; asked
-    after it, what it did. Returns:
+    reads it (`runbook.stages.topics_in_production`: a topic by its current script, the newest
+    one no editorial judgement superseded, and that script's newest storyboard). Asked before
+    the close it says what the close will do; asked after it, what it did. Returns:
 
     - ``freed``: the topic no longer holds the studio (this film was what held it, or the
       topic is not in production at all);
@@ -373,7 +373,10 @@ def _topic_after_close(session: Session, board: Storyboard) -> dict[str, Any]:
     - ``others``: how many other topics are in production; the next run continues them before
       it chooses a new one (`_selection` refuses while any is live)."""
     from app.factual.models import ScriptDraft  # noqa: PLC0415
-    from app.runbook.stages import topics_in_production  # noqa: PLC0415 - runbook imports media
+    from app.runbook.stages import (  # noqa: PLC0415 - runbook imports media
+        topic_scripts,
+        topics_in_production,
+    )
 
     live, _stalled = topics_in_production(session)
     script = session.get(ScriptDraft, board.script_draft_id) if board.script_draft_id else None
@@ -382,18 +385,14 @@ def _topic_after_close(session: Session, board: Storyboard) -> dict[str, Any]:
     freed = {"topic_id": topic_id, "freed": True, "held_by": None, "others": others}
     if topic_id is None or topic_id not in live:
         return freed
-    # The newest script of the topic, and its newest storyboard, as `topics_in_production`
+    # The current script of the topic, and its newest storyboard, as `topics_in_production`
     # picks them (oldest first, the last one wins).
-    newest: ScriptDraft | None = None
-    for row in session.scalars(
-        select(ScriptDraft).where(ScriptDraft.topic_id == topic_id).order_by(ScriptDraft.created_at)
-    ):
-        newest = row
+    current: ScriptDraft | None = topic_scripts(session).get(topic_id)
     holder: Storyboard | None = None
-    if newest is not None:
+    if current is not None:
         for candidate in session.scalars(
             select(Storyboard)
-            .where(Storyboard.script_draft_id == newest.id)
+            .where(Storyboard.script_draft_id == current.id)
             .order_by(Storyboard.created_at)
         ):
             holder = candidate
