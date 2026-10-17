@@ -48,20 +48,22 @@ def test_audit_explains_instrument_markings_and_still_framing(monkeypatch, marki
     assert "A picture has no camera move" in prompt
     assert "no text, subtitle, caption, logo or" in prompt
     assert "markings_policy" in prompt
+    assert "still framing contract takes precedence" in prompt
     if markings:
         assert markings_note(markings) in prompt
     else:
         assert "The plan asks for a ruler:" not in prompt
 
 
-def test_old_contradictory_audit_cannot_hold_but_new_refusal_still_can(engine):
+@pytest.mark.parametrize("old_version", ["director_prompt_audit-v5", "director_prompt_audit-v6"])
+def test_old_contradictory_audit_cannot_hold_but_new_refusal_still_can(engine, old_version):
     payload = {
         "scene_index": 15,
         "layer": "still",
         "digest": "d" * 64,
         "verdict": prompt_audit.TOOL_DEFECT,
         "guard": prompt_audit.GUARD_VERSION,
-        "instructions": "director_prompt_audit-v5",
+        "instructions": old_version,
         "reason": "Ruler markings are forbidden",
     }
     with Session(engine) as session, session.begin():
@@ -150,3 +152,54 @@ def test_malformed_audit_gets_one_corrective_attempt_without_inventing_approval(
     assert len(calls) == 2 and second is not None
     assert "scenes" in first["refusal"] and "previous answer was refused" in calls[1]
     assert parsed is not None and parsed.scenes[0].approved is False
+
+
+@pytest.mark.parametrize("operation", ["writer", "review"])
+@pytest.mark.parametrize("layer", ["still", "motion"])
+def test_still_writer_and_review_receive_the_same_contract_over_obsolete_lessons(
+    engine, monkeypatch, operation, layer
+):
+    from types import SimpleNamespace
+
+    from app.media import prompt_agent, scene_rewrite
+
+    class Captured(Exception):
+        pass
+
+    calls = []
+
+    def capture(*args, **kwargs):
+        calls.append(args[5] if operation == "writer" else args[4])
+        raise Captured
+
+    monkeypatch.setattr(scene_rewrite, "agent_for_role", lambda *args: SimpleNamespace(id="d"))
+    monkeypatch.setattr(
+        prompt_agent,
+        "prompt_lessons",
+        lambda *a, **k: ["Keep every camera word out of the picture's words. (unverified)"],
+    )
+    monkeypatch.setattr(scene_rewrite, "layer_terms", lambda *a, **k: {"fields_he_may_change": []})
+    monkeypatch.setattr(scene_rewrite, "_data", lambda *a, **k: {})
+    monkeypatch.setattr(scene_rewrite, "lock_texts", lambda *a, **k: [])
+    monkeypatch.setattr(scene_rewrite, "review_schema", lambda *a, **k: prompt_audit.PromptAudit)
+    monkeypatch.setattr(scene_rewrite, "_editor_rewrite", capture)
+    monkeypatch.setattr("app.agents.structured.structured_run", capture)
+    context = {
+        "scene_index": 34,
+        "title": "Supernova",
+        "bible": {},
+        "package": {"still_prompt": "Wide establishing shot."},
+        "visual_prompt": "Wide establishing shot.",
+    }
+    brief = {"layer": layer, "diagnosis": "Wrong frame size", "source": "prompt_audit"}
+    with pytest.raises(Captured):
+        if operation == "writer":
+            scene_rewrite.rewrite_scene(engine, object(), context, brief, "c")
+        else:
+            scene_rewrite.review_rewrite(
+                engine, object(), context, brief, layer, {}, "Medium shot.", "c"
+            )
+    assert ("still framing contract takes precedence" in calls[0]) == (layer == "still")
+    assert ("Judge whether the framing matches the requested scene" in calls[0]) == (
+        layer == "still"
+    )

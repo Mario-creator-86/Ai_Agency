@@ -3267,6 +3267,16 @@ MEASURED_SENTENCE = (
 COMPOSITION_SENTENCE = (
     "Vertical 9:16 frame, main subject in the upper two thirds, lower quarter calm and uncluttered."
 )
+STILL_FRAMING_RULE = (
+    "\nThe compiler's still framing contract takes precedence over earlier briefs, learned "
+    "lessons and blanket avoid-list bans on camera words: shot size, lens, angle and framing "
+    "distance are valid image instructions, not visible lettering or camera movement. "
+    "Judge whether the framing matches the requested scene, not whether its words mention "
+    "a shot or lens. Replacing an incorrect shot size with the required size can treat a "
+    "framing finding; do not demand removal of all framing words. Keep checking the actual "
+    "subject, composition, distance, continuity and other defects. Camera movement belongs "
+    "to the clip, not the still.\n"
+)
 STILL_EXCLUSIONS = "No text, no logo."
 PEOPLE_SENTENCE = (
     "Any people appear only as small distant figures seen from behind, faces turned away."

@@ -48,7 +48,7 @@ AUDIT_TASK = "director_prompt_audit"
 #: defect are those made under the same instructions (20:54Z, 7c26a7ce scene 2: the guard
 #: fired at once on seven refusals made under instructions that let her ask a picture for a
 #: static frame and read a duplication off the plan — the corrected audit never judged).
-AUDIT_TEMPLATE = "director_prompt_audit-v6"
+AUDIT_TEMPLATE = "director_prompt_audit-v7"
 AUDIT_EVENT = "media.prompt_audited"
 #: Her rounds on one scene's layer inside ONE walk before the scene waits for her next walk:
 #: a bound on the walk's LLM time, not on her rounds (the Owner, 2026-10-15 18:15Z: no cap
@@ -455,7 +455,7 @@ def _ask(
 ) -> tuple[PromptAudit | None, dict[str, Any]]:
     from app.agents.structured import structured_run  # noqa: PLC0415 - it imports services
     from app.factual.sanitizer import wrap_in_inert_boundary  # noqa: PLC0415
-    from app.media.prompt_agent import lessons_rule  # noqa: PLC0415
+    from app.media.prompt_agent import STILL_FRAMING_RULE, lessons_rule  # noqa: PLC0415
 
     data = {
         "layer": layer,
@@ -497,6 +497,7 @@ def _ask(
         _INSTRUCTIONS.format(what=_WHAT[layer], layer=layer)
         + (_MOTION_NOTE if layer == "motion" else _STILL_NOTE)
         + lessons_rule(lessons)
+        + (STILL_FRAMING_RULE if layer == "still" else "")
         + wrap_in_inert_boundary(json.dumps(data, ensure_ascii=False, default=str), "prompt-audit")
     )
     parsed, first, _second = structured_run(

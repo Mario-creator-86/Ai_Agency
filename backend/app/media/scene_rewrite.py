@@ -131,10 +131,10 @@ DECIDED_BY = "director"
 BRIEF_TASK = "director_scene_brief"
 BRIEF_TEMPLATE = "director-scene-brief-v4"
 REWRITE_TASK = "scene_prompt_rewrite"
-REWRITE_TEMPLATE = "scene-prompt-rewrite-v3"
+REWRITE_TEMPLATE = "scene-prompt-rewrite-v4"
 #: Her review of his rewrite against the findings, before anything is bought on it.
 REVIEW_TASK = "director_rewrite_review"
-REVIEW_TEMPLATE = "director-rewrite-review-v3"
+REVIEW_TEMPLATE = "director-rewrite-review-v4"
 TREATS, MISSES = "TREATS", "MISSES"
 #: Her review when every one of quality control's findings is minor (2026-10-12 evening review
 #: of a50407e: a rewrite that treated nothing was stored and bought because each finding was
@@ -2223,7 +2223,11 @@ def review_rewrite(
     answer (`findings_to_treat`, computed once per rung); one that names a hard limit of the
     bible is serious whatever she says (`hard_limit`)."""
     from app.agents.structured import structured_run  # noqa: PLC0415 - it imports services
-    from app.media.prompt_agent import lessons_rule, prompt_lessons  # noqa: PLC0415
+    from app.media.prompt_agent import (  # noqa: PLC0415
+        STILL_FRAMING_RULE,
+        lessons_rule,
+        prompt_lessons,
+    )
 
     with Session(engine) as session:
         director = agent_for_role(session, "Director")
@@ -2275,6 +2279,7 @@ def review_rewrite(
         + _markings_note(context)
         + lessons_rule(lessons)
         + (_REVIEW_LESSONS_NOTE if lessons else "")
+        + (STILL_FRAMING_RULE if layer == STILL else "")
         + wrap_in_inert_boundary(_fitted(data, lessons), "rewrite-review")
     )
     editable = tuple(terms["fields_he_may_change"])
@@ -2853,6 +2858,7 @@ def rewrite_scene(
     she passes stores the scene and her lesson, unverified (`learn_from_review`)."""
     from app.media.prompt_agent import (  # noqa: PLC0415 - it imports us
         PROMPT_ROLE,
+        STILL_FRAMING_RULE,
         lessons_rule,
         prompt_lessons,
     )
@@ -2871,14 +2877,18 @@ def rewrite_scene(
         lessons = prompt_lessons(session, scope=lesson_scope(context))
     qc = findings_to_treat(context, brief)
     outcome["qc_findings"] = qc
-    instructions = _REWRITE_INSTRUCTIONS.format(
-        scene=index,
-        title=context["title"],
-        layer=(_SERIAL_LAYER_RULE if serial else _LAYER_RULE)[layer],
-        # The whole vocabulary («Mișcare v2», 2026-10-12): the old ten slow moves alone sent
-        # every redo back to a slow move.
-        moves=", ".join(lint.CAMERA_MOVES),
-    ) + lessons_rule(lessons)
+    instructions = (
+        _REWRITE_INSTRUCTIONS.format(
+            scene=index,
+            title=context["title"],
+            layer=(_SERIAL_LAYER_RULE if serial else _LAYER_RULE)[layer],
+            # The whole vocabulary («Mișcare v2», 2026-10-12): the old ten slow moves alone sent
+            # every redo back to a slow move.
+            moves=", ".join(lint.CAMERA_MOVES),
+        )
+        + lessons_rule(lessons)
+        + (STILL_FRAMING_RULE if layer == STILL else "")
+    )
     data = _data(
         context,
         director_brief=brief,
