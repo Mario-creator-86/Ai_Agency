@@ -119,15 +119,26 @@ _RO: dict[str, str] = {
 }
 
 
-def planned_markings(*texts: object) -> tuple[str, ...]:
+def planned_markings(*texts: object, excluded: Sequence[str] = ()) -> tuple[str, ...]:
     """The objects of `MARKED_OBJECTS` the plan's ``texts`` name, in the order they are first
     named, each once; empty when the plan names none. A text that is not a string is read as
-    its words; None and empty texts say nothing."""
+    its words; None and empty texts say nothing. An object-specific exclusion of its markings
+    takes precedence; a generic ban on captions does not make real instruments blank."""
     said = " ".join(" ".join(str(text).split()) for text in texts if text)
     if not said:
         return ()
     found: list[tuple[int, str]] = []
     for name, pattern in _PATTERNS.items():
+        if any(
+            pattern.search(str(item))
+            and re.search(
+                r"\b(?:markings?|numbers?|digits?|labels?|graduations?|ticks?|scale)\b",
+                str(item),
+                re.IGNORECASE,
+            )
+            for item in excluded
+        ):
+            continue
         match = pattern.search(said)
         if match:
             found.append((match.start(), name))

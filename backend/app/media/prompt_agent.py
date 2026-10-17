@@ -3707,7 +3707,9 @@ def shot_frame(camera: Any, shot_type: Any = "") -> tuple[str, str]:
     fallback = str(shot_type or "").lower().replace("_", " ")
     size = ""
     label = ""
-    for source in (text, fallback):
+    # The leading shot label wins over a later subject adjective ("Medium shot, the
+    # galaxy wide" must not become a wide shot). Full text remains the legacy fallback.
+    for source in (re.split(r"[,;:—–]", text, maxsplit=1)[0], text, fallback):
         if re.search(r"extreme\s+wide", source):
             size, label = "wide", "Extreme wide shot"
         elif re.search(r"\baerial\b|\bdrone\b|bird'?s[- ]eye", source):
@@ -4468,6 +4470,7 @@ def compile_prompts(
         package.get("action"),
         package.get("environment"),
         package.get("writer_visual"),
+        excluded=package.get("avoid") or [],
     )
     items = [
         (0, 0, block),

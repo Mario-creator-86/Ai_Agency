@@ -1308,6 +1308,7 @@ def scene_context(engine: Engine, storyboard_id: str, scene_index: int) -> dict[
                 package.get("subject"),
                 package.get("action"),
                 package.get("environment"),
+                excluded=package.get("avoid") or [],
             ),
             "layers": open_layers(session, storyboard_id, scene_index, last_code=last_code),
             "local_move": _local_move(session, storyboard_id, scene_index),

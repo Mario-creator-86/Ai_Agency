@@ -231,7 +231,7 @@ class AuditedScene(BaseModel):
 
 class PromptAudit(BaseModel):
     model_config = ConfigDict(extra="ignore")
-    scenes: list[AuditedScene] = Field(default_factory=list)
+    scenes: list[AuditedScene] = Field(min_length=1)
 
 
 def prompt_text(package: dict[str, Any], layer: str) -> str:
