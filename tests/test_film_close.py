@@ -964,7 +964,20 @@ def test_a_film_closed_while_its_shot_plan_is_written_stays_closed(
     )
     calls: list[str] = []
 
-    def model(engine_, registry, agent_id, task, prompt, template, correlation, summary, tokens):
+    def model(
+        engine_,
+        registry,
+        agent_id,
+        task,
+        prompt,
+        template,
+        correlation,
+        summary,
+        tokens,
+        *,
+        native_thinking=None,
+        subject=None,
+    ):
         if not calls:
             closed = client.post(close_url(film), headers=headers, json=command())
             assert closed.status_code == 200, closed.text

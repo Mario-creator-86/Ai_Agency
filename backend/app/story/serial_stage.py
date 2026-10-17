@@ -34,6 +34,12 @@ from app.media.serial_storyboard import (
 )
 from app.models import OwnerPolicy
 from app.services import command_hash, queue_film_continue, recall_command, remember_command
+from app.story.duplicates import (
+    repair_duplicate_days,
+    repair_words,
+    second_approval,
+    superseded_by,
+)
 from app.story.models import DailyStudioLog, StoryEpisode
 from app.story.review import (
     ReviewError,
@@ -271,18 +277,32 @@ def unfinished_episodes(session: Session, before: str) -> list[tuple[str, StoryE
     `RESUME_WINDOW_DAYS`: the Owner's own data holds one DRAFT of 2026-09-12, written before
     the review existed and never read; a draft that old tells a day long gone, and neither a
     model call nor the serial's waiting is spent on it.
+
+    Never a superseded draft (2026-10-17, `duplicates.superseded_by`): one whose day already
+    has its approved episode, or that a newer standing version of it replaced; nor an episode
+    approved after its day's first (`duplicates.second_approval`). Measured 2026-10-16 23:15Z:
+    the held PASS 8caad7d9, rewritten as b8684fc5 and approved the evening before, was taken
+    up here as «owner», approved, and became a second film of the same day.
     """
     since = (date.fromisoformat(before) - timedelta(days=RESUME_WINDOW_DAYS)).isoformat()
-    rows = session.scalars(
-        select(StoryEpisode)
-        .join(DailyStudioLog, DailyStudioLog.id == StoryEpisode.log_id)
-        .where(
-            DailyStudioLog.business_date < before,
-            DailyStudioLog.business_date >= since,
-            StoryEpisode.status.in_(("APPROVED", "DRAFT")),
+    rows = [
+        episode
+        for episode in session.scalars(
+            select(StoryEpisode)
+            .join(DailyStudioLog, DailyStudioLog.id == StoryEpisode.log_id)
+            .where(
+                DailyStudioLog.business_date < before,
+                DailyStudioLog.business_date >= since,
+                StoryEpisode.status.in_(("APPROVED", "DRAFT")),
+            )
+            .order_by(DailyStudioLog.business_date, StoryEpisode.created_at)
+        ).all()
+        if (
+            superseded_by(session, episode) is None
+            if episode.status == "DRAFT"
+            else not second_approval(session, episode)
         )
-        .order_by(DailyStudioLog.business_date, StoryEpisode.created_at)
-    ).all()
+    ]
     found: list[tuple[str, StoryEpisode]] = []
     found += [("storyboard", e) for e in rows if e.status == "APPROVED" and not e.storyboard_id]
     found += [("review", e) for e in rows if e.status == "DRAFT" and not e.review_json]
@@ -491,6 +511,14 @@ def _tell_the_day(
         with Session(engine) as session:
             episode = session.get(StoryEpisode, episode_id)
             title = episode.title if episode is not None else ""
+        if review.get("superseded_by"):
+            # The day had its approved episode already (`duplicates.approved_sibling`).
+            return _outcome(
+                COMPLETED,
+                f"Episodul „{title}” pentru {date_iso} nu a fost aprobat: ziua are deja "
+                "episodul ei aprobat, iar o zi a serialului are un singur film.",
+                **counts,
+            )
         return _outcome(
             COMPLETED,
             f"Episodul „{title}” pentru {date_iso} a trecut citirea Directorului și "
@@ -574,6 +602,18 @@ def _new_counts() -> dict[str, Any]:
     }
 
 
+def _repair_duplicates(engine: Engine, correlation: str) -> dict[str, Any] | None:
+    """`duplicates.repair_duplicate_days`, before the stage reads anything; None when it did
+    nothing. A fault is logged and the stage goes on: the approvals, the storyboard build and
+    the purchase lease refuse a day's second episode and film on their own."""
+    try:
+        done = repair_duplicate_days(engine, correlation)
+    except Exception:  # noqa: BLE001 - the repair is an addition; the guards still hold
+        logger.exception("serial_duplicates_not_repaired")
+        return None
+    return done if (done["retired"] or done["waiting"] or done["drafts_closed"]) else None
+
+
 def run_serial_stage(
     engine: Engine, registry: Any, settings: Any, vault: Any = None
 ) -> dict[str, Any]:
@@ -586,7 +626,28 @@ def run_serial_stage(
     refused day is told again with its reasons (`day_to_retell`). One of these per run, as
     the media stage films one episode a day. Readying and naming need no model, so they run
     before the stage asks for one.
+
+    First, a day with two approved episodes is put back to one, its second film retired and
+    canon told again without it, and a draft left beside a day's approved episode is closed
+    (`duplicates.repair_duplicate_days`, 2026-10-17); the reason starts with what was done.
     """
+    repaired = _repair_duplicates(engine, str(uuid4()))
+    outcome = _run_serial_stage(engine, registry, settings, vault)
+    if repaired is None:
+        return outcome
+    words = repair_words(repaired)
+    artefacts = {**(outcome.get("artefacts") or {}), "duplicates": repaired}
+    return {
+        **outcome,
+        "reason": (f"{words} {outcome['reason']}" if words else outcome["reason"]),
+        "artefacts": artefacts,
+    }
+
+
+def _run_serial_stage(
+    engine: Engine, registry: Any, settings: Any, vault: Any = None
+) -> dict[str, Any]:
+    """`run_serial_stage` after its repair."""
     counts = _new_counts()
     language = getattr(settings, "content_language", "en")
     rounds = getattr(settings, "editorial_rounds", None)
@@ -640,6 +701,8 @@ def run_serial_stage(
                 # approved under the policy here, as that run would have, and readied — a
                 # script is never left stuck. Without the policy it waits for him, below.
                 approval = approve_reviewed_episode(engine, item["episode_id"], correlation)
+                if approval.get("superseded_by"):
+                    continue  # its day has its episode, or a newer version replaced it
                 if approval["status"] == "APPROVED":
                     counts["approved"] += 1
                     if not _ready_for_filming(

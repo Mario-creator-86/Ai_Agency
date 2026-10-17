@@ -101,6 +101,8 @@ _ROLE_BY_PREFIX: tuple[tuple[str, str], ...] = (
     ("story.episode_approved", "Director"),
     ("editorial.judged", "Director"),
     ("story.episode_rejected", "Director"),
+    ("story.episode_superseded", "Director"),
+    ("story.continuity_corrected", "Director"),
     ("story.", "ScriptWriter"),
     ("factual.script", "ScriptWriter"),
     ("factual.claim_verified", "FactChecker"),
@@ -1375,6 +1377,9 @@ def _words(
         said = f"Pasul «{step}» pentru {named} s-a încheiat: {bought_ro}"
         said += f", {reused} refolosite" if reused else ""
         return said + (f"; {why}" if why else "") + ".", None
+    if kind == "runbook.film_retired":
+        why = _short(payload.get("reason"), 160)
+        return f"Filmul {named} a fost închis." + (f" {_end(why.rstrip('.'))}" if why else ""), None
     if kind == "runbook.film_continued":
         status = str(payload.get("status") or "")
         reason = _FILM_LEAD.sub("", str(payload.get("reason") or "").replace("Oprit: ", ""), 1)
@@ -1662,6 +1667,20 @@ def _words(
         if payload.get("reviewed_by") == "checks":
             return "Episodul serialului nu a trecut verificările calculate; se rescrie.", None
         return "Episodul serialului nu a trecut; se rescrie.", None
+    if kind == "story.episode_superseded":
+        # A day of the serial has one approved episode and one film (2026-10-17).
+        title = _short(payload.get("title"), 80)
+        kept_title = _short(payload.get("superseded_by_title"), 80)
+        what = "Aprobarea dublă a episodului" if payload.get("was") == "APPROVED" else "Ciorna"
+        said = f"{what} «{title}» a fost retrasă: ziua are deja episodul aprobat «{kept_title}»"
+        return said + "; o zi a serialului are un singur film.", None
+    if kind == "story.continuity_corrected":
+        number = payload.get("canon_episode_number")
+        return (
+            f"Numărătoarea serialului a fost corectată: episodul curent este {number}, "
+            "fără dublura retrasă.",
+            None,
+        )
     if kind == "story.daily_log_closed":
         safe = int(payload.get("public_safe_events") or 0)
         told = count(safe, "întâmplare", "întâmplări")

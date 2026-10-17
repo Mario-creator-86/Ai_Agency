@@ -79,6 +79,7 @@ from app.agents.language import audience_language_line, looks_like_english
 from app.agents.memory import agent_for_role, remember
 from app.agents.messages import post_message
 from app.agents.services import run_agent_task
+from app.db import lock_for_write
 from app.factual.sanitizer import wrap_in_inert_boundary
 from app.media.film_length import (
     SERIAL,
@@ -94,6 +95,12 @@ from app.media.film_length import (
 from app.providers.registry import ProviderRegistry
 from app.publishing.models import ChannelRecord
 from app.services import append_event, utc_now
+from app.story.duplicates import (
+    approved_sibling,
+    close_as_superseded,
+    close_superseded_drafts,
+    superseded_by,
+)
 from app.story.lines import (
     NameBook,
     beat_lines,
@@ -1132,7 +1139,10 @@ def _held_to_her_rubric(verdict: EpisodeVerdict, director_name: str) -> EpisodeV
 
 def _approve(session: Session, episode: StoryEpisode, story: str, correlation: str) -> None:
     """The approval a PASS gets under the channel's policy: APPROVED as the Director's, her
-    one-sentence story as the note, the event, and the serial's canon advanced."""
+    one-sentence story as the note, the event, and the serial's canon advanced. The day's
+    other drafts are closed as superseded by it (`duplicates.close_superseded_drafts`): one
+    left standing was approved again the next morning (2026-10-16 23:15Z). The callers have
+    made sure the day has no approved episode yet (`duplicates.approved_sibling`)."""
     episode.status = "APPROVED"
     episode.reviewed_by = "director"
     episode.notes = (story or None) and story[:2000]
@@ -1146,6 +1156,7 @@ def _approve(session: Session, episode: StoryEpisode, story: str, correlation: s
         correlation,
     ).event_id
     advance_continuity(session, episode, correlation)
+    close_superseded_drafts(session, episode, correlation)
 
 
 #: What the approval under the drafts cap writes as the episode's note.
@@ -1165,11 +1176,14 @@ def approve_under_drafts_cap(
     hers to wave through), or when the channel's policy does not let her approve alone.
     Returns {"episode_id", "status": "APPROVED", "note"}."""
     with Session(engine) as session, session.begin():
+        lock_for_write(session)
         episode = session.get(StoryEpisode, episode_id)
         if episode is None or str(episode.reviewed_by or "") != "director":
             return None
         if episode.status != "REJECTED" or not director_may_approve_episodes(session):
             return None
+        if approved_sibling(session, episode) is not None:
+            return None  # the day has its approved episode: one day, one film
         note = f"{DRAFTS_CAP_NOTE} Observațiile ei: {' '.join(str(notes or '').split())[:600]}"
         _approve(session, episode, note, correlation)
         append_event(
@@ -1268,8 +1282,11 @@ def review_episode(
         raise ReviewError("Niciun model de limbaj: Directorul nu poate citi episodul")
 
     with Session(engine) as session, session.begin():
+        lock_for_write(session)
         episode = session.get(StoryEpisode, episode_id)
         assert episode is not None  # read above, in this same process
+        if episode.status != "DRAFT" or episode.review_json:
+            raise ReviewError("Episodul a fost decis în timp ce Directorul îl citea")
         may_approve = (
             verdict.verdict == "PASS" and approve and director_may_approve_episodes(session)
         )
@@ -1336,6 +1353,9 @@ def review_episode(
                     run_id=None,
                     correlation_id=correlation,
                 )
+        elif may_approve and (kept := approved_sibling(session, episode)) is not None:
+            # The day already has its approved episode: a second would be a second film.
+            close_as_superseded(session, episode, kept, correlation)
         elif may_approve:
             _approve(session, episode, verdict.story, correlation)
         remember(
@@ -1420,9 +1440,16 @@ def approve_reviewed_episode(engine: Engine, episode_id: str, correlation_id: st
     chose it: under the channel's policy it is APPROVED as the Director's and canon advances;
     without the policy it stays a DRAFT with its review, for the Owner's `decide_episode`.
     Returns ``{"episode_id", "status", "approved_by_policy"}``; an episode that is not a held
-    PASS is left as it is."""
+    PASS is left as it is.
+
+    A superseded PASS is never approved (2026-10-17, `duplicates.superseded_by`): one whose day
+    already has its approved episode is closed as superseded by it (REJECTED, with the
+    reason); one a newer standing version of it replaced is left as it is, for that version.
+    Measured 2026-10-16 23:15Z: an older held PASS, rewritten and approved the evening before,
+    was approved again here and became a second film of the same day."""
     correlation = correlation_id or str(uuid4())
     with Session(engine) as session, session.begin():
+        lock_for_write(session)
         episode = session.get(StoryEpisode, episode_id)
         if episode is None:
             raise ReviewError("Episodul nu există")
@@ -1432,6 +1459,16 @@ def approve_reviewed_episode(engine: Engine, episode_id: str, correlation_id: st
                 "episode_id": episode_id,
                 "status": episode.status,
                 "approved_by_policy": bool(review.get("approved_by_policy")),
+            }
+        newer = superseded_by(session, episode)
+        if newer is not None:
+            if newer.status == "APPROVED":
+                close_as_superseded(session, episode, newer, correlation)
+            return {
+                "episode_id": episode_id,
+                "status": episode.status,
+                "approved_by_policy": False,
+                "superseded_by": newer.id,
             }
         may_approve = director_may_approve_episodes(session)
         episode.review_json = {
@@ -1630,5 +1667,6 @@ def judged_review(
         "episode_id": shipped_id,
         "status": approval["status"],
         "approved_by_policy": approval["approved_by_policy"],
+        "superseded_by": approval.get("superseded_by"),
         "editorial": outcome.record(),
     }

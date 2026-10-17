@@ -54,6 +54,7 @@ from sqlalchemy.orm import Session
 
 from app.agents.memory import agent_for_role
 from app.agents.models import AgentRun
+from app.db import lock_for_write
 from app.factual.models import ScriptDraft, StoryReview, TopicIdea
 from app.media.models import CharacterBible, Storyboard, StoryboardScene
 from app.media.montage import beat_tag, serial_shots
@@ -160,12 +161,27 @@ def storyboard_from_episode(engine: Engine, episode_id: str, correlation_id: str
     """Build the storyboard for one APPROVED episode and return its id. Once per episode."""
     now = utc_now()
     with Session(engine) as session, session.begin():
+        lock_for_write(session)
         episode = session.get(StoryEpisode, episode_id)
         if episode is None:
             raise SerialStoryboardError("Episodul nu există")
         if episode.status != "APPROVED":
             raise SerialStoryboardError(
                 f"Episodul este {episode.status.lower()}; doar un episod aprobat se filmează"
+            )
+        from app.story.duplicates import (  # noqa: PLC0415 - story imports media
+            approved_sibling,
+            live_film_of_day,
+            second_approval,
+        )
+
+        held = live_film_of_day(session, episode)
+        if second_approval(session, episode) or (held is not None and not episode.storyboard_id):
+            kept = approved_sibling(session, episode)
+            title = kept.title if kept is not None else episode.title
+            raise SerialStoryboardError(
+                f"Ziua episodului are deja filmul pentru «{title}»; un al doilea film al "
+                "aceleiași zile nu se face."
             )
         if episode.storyboard_id:
             existing = session.get(Storyboard, episode.storyboard_id)

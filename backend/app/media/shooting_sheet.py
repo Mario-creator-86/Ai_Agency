@@ -1981,10 +1981,12 @@ def film_is_closed(session: Session, storyboard_id: str) -> bool:
     """Whether no further production is allowed: confirmed upload or closed unrendered film.
 
     That is a film the Owner closed («Închide filmul»), one the Director retired after it stood
-    still, or one a newer storyboard of its script replaced. A REJECTED film that has a
-    finished render is a viewing the Director refused: its redos are the way back to a film,
-    so it is not closed here. A render already uploaded to a channel is final for production,
-    even when its storyboard still says APPROVED/RENDERED; privacy/metadata work stays separate.
+    still, or one a newer storyboard of its script replaced; and a serial film that is its
+    day's second, or whose episode is no longer approved (`story.duplicates`). A REJECTED film
+    that has a finished render is a viewing the Director refused: its redos are the way back
+    to a film, so it is not closed here. A render already uploaded to a channel is final for
+    production, even when its storyboard still says APPROVED/RENDERED; privacy/metadata work
+    stays separate.
     Match the immutable render asset, never a title that may have changed for publication."""
     from app.media.models import VideoRenderJob  # noqa: PLC0415
     from app.publishing.models import PublicationRecord  # noqa: PLC0415
@@ -2005,6 +2007,12 @@ def film_is_closed(session: Session, storyboard_id: str) -> bool:
         .limit(1)
     )
     if uploaded is not None:
+        return True
+    from app.story.duplicates import serial_film_superseded  # noqa: PLC0415 - story imports us
+
+    if serial_film_superseded(session, storyboard_id):
+        # A serial day's second film, or one whose episode is no longer approved (2026-10-17):
+        # nothing is bought for it (a7db1594 beside 87c05891, the same day of the serial).
         return True
     if board.status != "REJECTED":
         return False

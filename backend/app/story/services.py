@@ -55,11 +55,13 @@ from app.agents.language import audience_language_line
 from app.agents.memory import agent_for_role, remember
 from app.agents.models import Agent, Role
 from app.agents.services import run_agent_task
+from app.db import lock_for_write
 from app.factual.sanitizer import wrap_in_inert_boundary
 from app.media.models import CharacterBible
 from app.models import DomainEvent
 from app.providers.registry import ProviderRegistry
 from app.services import append_event, utc_now
+from app.story.duplicates import approved_sibling, close_superseded_drafts
 from app.story.lines import (
     NameBook,
     beat_lines,
@@ -683,6 +685,46 @@ def _next_thread_id(threads: list[dict]) -> str:
     return f"T{max(used, default=0) + 1}"
 
 
+def _canon_step(
+    number: int, threads: list, recurring: list, summaries: list, episode: StoryEpisode
+) -> tuple[int, list[dict], list[str], list[dict]]:
+    """One episode added to canon, as plain values: its number, the open threads, what
+    recurs, the summaries — uncapped (`_canon_caps` is what is stored)."""
+    continuity = dict(episode.continuity_json or {})
+    number = number + 1
+    closed = {str(t) for t in continuity.get("threads_closed") or []}
+    threads = [dict(t) for t in (threads or []) if str(t.get("id")) not in closed]
+    for text in continuity.get("threads_opened") or []:
+        text = str(text).strip()
+        if text and all(t.get("text") != text for t in threads):
+            threads.append(
+                {"id": _next_thread_id(threads), "text": text[:300], "opened_in": number}
+            )
+    recurring = list(recurring or [])
+    for item in continuity.get("recurring") or []:
+        item = str(item).strip()[:120]
+        if item and item not in recurring:
+            recurring.append(item)
+    summaries = [
+        *(summaries or []),
+        {
+            "episode_number": number,
+            "episode_id": episode.id,
+            "title": episode.title,
+            "summary": str(continuity.get("summary") or ""),
+            "business_date": continuity.get("business_date"),
+        },
+    ]
+    return number, threads, recurring, summaries
+
+
+def _canon_caps(
+    threads: list[dict], recurring: list[str], summaries: list[dict]
+) -> tuple[list[dict], list[str], list[dict]]:
+    """What the continuity row keeps of each list."""
+    return threads[:12], recurring[-12:], summaries[-CONTINUITY_SUMMARIES:]
+
+
 def advance_continuity(session: Session, episode: StoryEpisode, correlation_id: str) -> dict:
     """Move canon forward for an APPROVED episode: number, threads, summaries. Once per episode.
 
@@ -696,28 +738,12 @@ def advance_continuity(session: Session, episode: StoryEpisode, correlation_id: 
     continuity = dict(episode.continuity_json or {})
     if isinstance(judged := continuity.get("plan"), dict):
         _judge_the_plan(session, judged, episode.id)
-    number = row.canon_episode_number + 1
-    closed = {str(t) for t in continuity.get("threads_closed") or []}
-    threads = [dict(t) for t in (row.threads_json or []) if str(t.get("id")) not in closed]
-    for text in continuity.get("threads_opened") or []:
-        text = str(text).strip()
-        if text and all(t.get("text") != text for t in threads):
-            threads.append(
-                {"id": _next_thread_id(threads), "text": text[:300], "opened_in": number}
-            )
-    recurring = list(row.recurring_json or [])
-    for item in continuity.get("recurring") or []:
-        item = str(item).strip()[:120]
-        if item and item not in recurring:
-            recurring.append(item)
-    summaries.append(
-        {
-            "episode_number": number,
-            "episode_id": episode.id,
-            "title": episode.title,
-            "summary": str(continuity.get("summary") or ""),
-            "business_date": continuity.get("business_date"),
-        }
+    number, threads, recurring, summaries = _canon_step(
+        row.canon_episode_number,
+        list(row.threads_json or []),
+        list(row.recurring_json or []),
+        summaries,
+        episode,
     )
     event = append_event(
         session,
@@ -733,14 +759,122 @@ def advance_continuity(session: Session, episode: StoryEpisode, correlation_id: 
         correlation_id,
     )
     row.canon_episode_number = number
-    row.threads_json = threads[:12]
-    row.recurring_json = recurring[-12:]
-    row.summaries_json = summaries[-CONTINUITY_SUMMARIES:]
+    row.threads_json, row.recurring_json, row.summaries_json = _canon_caps(
+        threads, recurring, summaries
+    )
     row.version += 1
     row.updated_at = utc_now()
     row.event_id = event.event_id
     session.flush()
     return _public_continuity(row)
+
+
+#: The event each step of canon leaves (`advance_continuity`): the order canon was told in.
+CANON_EVENT = "story.continuity_advanced"
+#: The event of canon told again without an episode that should never have entered it.
+CONTINUITY_CORRECTED_EVENT = "story.continuity_corrected"
+
+
+def _canon_fold(
+    session: Session, episode_ids: list[str]
+) -> tuple[int, list[dict], list[str], list[dict]] | None:
+    """Canon as `advance_continuity` would hold it after ``episode_ids``, in that order, from
+    an empty serial; None when one of them is no longer a row."""
+    number = 0
+    threads: list[dict] = []
+    recurring: list[str] = []
+    summaries: list[dict] = []
+    for episode_id in episode_ids:
+        episode = session.get(StoryEpisode, episode_id)
+        if episode is None:
+            return None
+        number, threads, recurring, summaries = _canon_step(
+            number, threads, recurring, summaries, episode
+        )
+        threads, recurring, summaries = _canon_caps(threads, recurring, summaries)
+    return number, threads, recurring, summaries
+
+
+def rebuild_continuity(
+    session: Session, without: set[str], reason: str, correlation_id: str
+) -> dict[str, Any] | None:
+    """Canon told again without ``without``: episodes approved a second time for a day that
+    already had its approved episode (`app.story.duplicates`, 2026-10-17). None when none of
+    them is in canon.
+
+    The row is a fold of the approved episodes in the order `CANON_EVENT` recorded them, and
+    nothing else writes it; so canon is folded again from those events, first with every
+    episode — which must give the row exactly as it stands, or the history is not the one the
+    row was made from — and then without ``without``. The second fold is stored: the number
+    goes back, the threads they opened close, what they added to the recurring and the
+    summaries goes, and the older summary they pushed out comes back. When the first fold does
+    not give the row, the history cannot be trusted to rebuild it, and only what can be undone
+    by itself is: the summaries of ``without`` go, and when the newest of canon is one of
+    them, the number goes back by one and the threads it opened close. One
+    `CONTINUITY_CORRECTED_EVENT`, with the reason, either way.
+    """
+    row = _continuity_row(session)
+    canon: list[str] = []
+    for payload in session.scalars(
+        select(DomainEvent.payload)
+        .where(DomainEvent.event_type == CANON_EVENT)
+        .order_by(DomainEvent.sequence)
+    ):
+        episode_id = str((payload or {}).get("episode_id") or "")
+        if not episode_id or episode_id in canon:
+            continue
+        episode = session.get(StoryEpisode, episode_id)
+        # An episode retired from canon earlier is no longer APPROVED: never counted again.
+        if episode is None or episode.status == "APPROVED" or episode_id in without:
+            canon.append(episode_id)
+    summaries = list(row.summaries_json or [])
+    if not any(episode_id in without for episode_id in canon) and not any(
+        item.get("episode_id") in without for item in summaries
+    ):
+        return None
+    before = row.canon_episode_number
+    stands = (
+        before,
+        list(row.threads_json or []),
+        list(row.recurring_json or []),
+        summaries,
+    )
+    if _canon_fold(session, canon) == stands:
+        folded = _canon_fold(session, [e for e in canon if e not in without])
+        assert folded is not None  # every row was read by the fold just above
+        number, threads, recurring, summaries = folded
+        method = "refold"
+    else:
+        number, threads, recurring = before, list(row.threads_json or []), stands[2]
+        newest = summaries[-1] if summaries else {}
+        if newest.get("episode_id") in without and newest.get("episode_number") == before:
+            number = before - 1
+            threads = [t for t in threads if t.get("opened_in") != before]
+        summaries = [item for item in summaries if item.get("episode_id") not in without]
+        method = "undo_newest" if number != before else "summaries_only"
+    event = append_event(
+        session,
+        CONTINUITY_CORRECTED_EVENT,
+        "continuity_state",
+        "1",
+        row.version + 1,
+        {
+            "removed_episode_ids": sorted(without),
+            "canon_episode_number_before": before,
+            "canon_episode_number": number,
+            "newest_episode_id": (summaries[-1].get("episode_id") if summaries else None),
+            "method": method,
+            "reason": reason[:600],
+        },
+        correlation_id,
+    )
+    row.canon_episode_number = number
+    row.threads_json, row.recurring_json, row.summaries_json = threads, recurring, summaries
+    row.version += 1
+    row.updated_at = utc_now()
+    row.event_id = event.event_id
+    session.flush()
+    return {**_public_continuity(row), "before": before, "method": method}
 
 
 # --- the cast, from the bibles -------------------------------------------------------------
@@ -2052,11 +2186,20 @@ def decide_episode(
     """The Owner accepts or rejects a dramatisation of their own studio."""
     correlation = correlation_id or str(uuid4())
     with Session(engine) as session, session.begin():
+        lock_for_write(session)
         episode = session.get(StoryEpisode, episode_id)
         if episode is None:
             raise StoryError("Episodul nu există")
         if episode.status != "DRAFT":
             raise StoryError(f"Episodul este deja {work_status(episode.status)}")
+        if approve and (kept := approved_sibling(session, episode)) is not None:
+            # One day, one approved episode, one film (2026-10-17): a second approval made a
+            # second film of the same day and claimed the next canon number.
+            raise StoryError(
+                f"Ziua acestui episod are deja episodul aprobat «{kept.title}», care se "
+                "filmează; un al doilea ar face al doilea film al aceleiași zile. Nimic nu s-a "
+                "schimbat."
+            )
         episode.status = "APPROVED" if approve else "REJECTED"
         episode.notes = notes.strip() or None
         episode.reviewed_by = "owner"
@@ -2071,6 +2214,7 @@ def decide_episode(
         ).event_id
         if approve:
             advance_continuity(session, episode, correlation)
+            close_superseded_drafts(session, episode, correlation)
         showrunner = agent_for_role(session, PREFERRED_SHOWRUNNER_ROLE)
         remember(
             session,
