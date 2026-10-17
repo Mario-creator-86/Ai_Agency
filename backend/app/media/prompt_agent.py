@@ -3275,7 +3275,8 @@ STILL_FRAMING_RULE = (
     "a shot or lens. Replacing an incorrect shot size with the required size can treat a "
     "framing finding; do not demand removal of all framing words. Keep checking the actual "
     "subject, composition, distance, continuity and other defects. Camera movement belongs "
-    "to the clip, not the still.\n"
+    "to the clip, not the still. The compiler adds the configured style and frame once; "
+    "write scene content in subject and action, not a pasted copy of the completed prompt.\n"
 )
 STILL_EXCLUSIONS = "No text, no logo."
 PEOPLE_SENTENCE = (
@@ -3978,15 +3979,22 @@ def _motion_intent(
     }
 
 
-def _without_composer_sentences(text: Any) -> str:
+def _without_composer_sentences(text: Any, *, extra: Sequence[str] = ()) -> str:
     """The plan's words without the composer's fixed sentences (the drift default, the pads,
     the beats, the face rule, the closing line): a rewrite that pasted a sent prompt back
-    into a field gave the composer its own words as the plan's."""
+    into a field gave the composer its own words as the plan's. ``extra`` supplies the
+    current configured look and frame, with punctuation changes allowed."""
     said = " ".join(str(text or "").split())
     if not said:
         return ""
     for sentence in _COMPOSER_SENTENCES:
         said = said.replace(sentence, " ")
+    for sentence in extra:
+        words = re.findall(r"\w+", sentence)
+        if words:
+            # Rewrites also paste the configured look with commas replacing its periods.
+            pattern = r"\b" + r"[\W_]+".join(re.escape(word) for word in words) + r"\b[.,;]?"
+            said = re.sub(pattern, " ", said, flags=re.IGNORECASE)
     return " ".join(said.split())
 
 
@@ -4445,11 +4453,16 @@ def compile_prompts(
         omit |= LIGHT_SLOTS
     block = look_block(bible, factual_look, omit=omit)
     size, frame = shot_frame(package.get("camera"), package.get("shot_type"))
+    owned_still = (frame, *re.split(r"(?<=[.!?])\s+", block))
 
     def said(field: str) -> str:
         # The composer's own sentences pasted into a field by a rewrite («The frame holds only
         # the place and the things named» inside scene 1's subject, 03:12Z) are not the plan's.
-        text = _sentence(", ".join(_clauses_of(_without_composer_sentences(package.get(field)))))
+        text = _sentence(
+            ", ".join(
+                _clauses_of(_without_composer_sentences(package.get(field), extra=owned_still))
+            )
+        )
         return hide_faces(text) if faces_banned else text
 
     subject = said("subject")

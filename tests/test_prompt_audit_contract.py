@@ -55,7 +55,10 @@ def test_audit_explains_instrument_markings_and_still_framing(monkeypatch, marki
         assert "The plan asks for a ruler:" not in prompt
 
 
-@pytest.mark.parametrize("old_version", ["director_prompt_audit-v5", "director_prompt_audit-v6"])
+@pytest.mark.parametrize(
+    "old_version",
+    ["director_prompt_audit-v5", "director_prompt_audit-v6", "director_prompt_audit-v7"],
+)
 def test_old_contradictory_audit_cannot_hold_but_new_refusal_still_can(engine, old_version):
     payload = {
         "scene_index": 15,
@@ -202,4 +205,36 @@ def test_still_writer_and_review_receive_the_same_contract_over_obsolete_lessons
     assert ("still framing contract takes precedence" in calls[0]) == (layer == "still")
     assert ("Judge whether the framing matches the requested scene" in calls[0]) == (
         layer == "still"
+    )
+
+
+@pytest.mark.parametrize("punctuation", ["sentences", "commas"])
+def test_pasted_compiler_style_and_frame_are_said_once(punctuation):
+    from app.media.prompt_agent import compile_prompts
+
+    package = {
+        "subject": "A faint cool blue-white smudge beside a spiral arm",
+        "environment": "Void black deep space",
+        "lighting": "cold light",
+        "camera": "Medium shot, 85mm lens",
+    }
+    clean = compile_prompts(package, {})["still_prompt"]
+    style = clean.split("Medium shot, 85mm lens.", 1)[0]
+    if punctuation == "commas":
+        style = style.replace(". ", ", ")
+    polluted = {**package, "subject": style + package["subject"] + ". Medium shot, 85mm lens."}
+    result = compile_prompts(polluted, {})["still_prompt"]
+    assert result.count("Documentary photograph") == 1
+    assert result.count("Medium shot, 85mm lens") == 1
+    assert "faint cool blue-white smudge beside a spiral arm" in result
+
+
+def test_removing_tempo_keeps_visible_glow_instead_of_dropping_the_clause():
+    from app.media.prompt_agent import _clauses_of
+    from app.media.prompt_lint import without_tempo
+
+    assert without_tempo("the smudge glowing faintly and steadily") == "the smudge glowing faintly"
+    assert _clauses_of("the smudge glowing faintly and steadily") == ["the smudge glowing faintly"]
+    assert without_tempo("a steady blue glow beside the spiral arm") == (
+        "a steady blue glow beside the spiral arm"
     )

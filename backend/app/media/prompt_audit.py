@@ -48,7 +48,7 @@ AUDIT_TASK = "director_prompt_audit"
 #: defect are those made under the same instructions (20:54Z, 7c26a7ce scene 2: the guard
 #: fired at once on seven refusals made under instructions that let her ask a picture for a
 #: static frame and read a duplication off the plan — the corrected audit never judged).
-AUDIT_TEMPLATE = "director_prompt_audit-v7"
+AUDIT_TEMPLATE = "director_prompt_audit-v8"
 AUDIT_EVENT = "media.prompt_audited"
 #: Her rounds on one scene's layer inside ONE walk before the scene waits for her next walk:
 #: a bound on the walk's LLM time, not on her rounds (the Owner, 2026-10-15 18:15Z: no cap

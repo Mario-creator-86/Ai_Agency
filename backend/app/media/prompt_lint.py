@@ -248,6 +248,10 @@ def without_tempo(text: str) -> str:
     the punctuation closed up: "cloud rolls steadily across the ridges" is "cloud rolls across
     the ridges"."""
     said = STILL_TEMPO.sub(" ", text)
+    # Removing the last adverb in "faintly and steadily" must not leave a dangling
+    # conjunction: the compiler otherwise discards the whole visible-state clause.
+    if said != text:
+        said = re.sub(r"\s+\b(?:and|or|but)\b(?=\s*[,;.!?]|\s*$)", "", said)
     said = re.sub(r"\s+([,;.!?])", r"\1", re.sub(r"\s{2,}", " ", said))
     return said.strip()
 
