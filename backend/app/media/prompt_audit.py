@@ -38,6 +38,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.media.markings import markings_note
 from app.models import DomainEvent
 
 logger = logging.getLogger("studio.prompt_audit")
@@ -47,7 +48,7 @@ AUDIT_TASK = "director_prompt_audit"
 #: defect are those made under the same instructions (20:54Z, 7c26a7ce scene 2: the guard
 #: fired at once on seven refusals made under instructions that let her ask a picture for a
 #: static frame and read a duplication off the plan — the corrected audit never judged).
-AUDIT_TEMPLATE = "director_prompt_audit-v5"
+AUDIT_TEMPLATE = "director_prompt_audit-v6"
 AUDIT_EVENT = "media.prompt_audited"
 #: Her rounds on one scene's layer inside ONE walk before the scene waits for her next walk:
 #: a bound on the walk's LLM time, not on her rounds (the Owner, 2026-10-15 18:15Z: no cap
@@ -109,12 +110,19 @@ _INSTRUCTIONS = (
     "words that say explicitly everything the picture must obey: screens, monitors, papers and "
     "notebooks blank unless the plan needs them written on; no text, subtitle, caption, logo or "
     "watermark laid over the picture; faces as the bible rules; the people as their bible "
-    "describes them, facing the viewer where the look says so; the camera as the plan says (a "
-    "static frame named static); one continuous picture; nothing that invites the model to add "
-    "a name, a label or a screen full of content (a «blank nameplate» invites a name: leave the "
+    "describes them, facing the viewer where the look says so; the camera as the plan says (for "
+    "a clip, a static frame named static); one continuous picture; nothing that invites the "
+    "model to add a name, a label or a screen full of content (a «blank nameplate» invites a "
+    "name: leave the "
     "object out). Judge ONLY words_to_send: that is the whole text the model receives. The "
     "plan, the bible and the look are context — an object named there and absent from "
     "words_to_send is NOT sent and is no reason to refuse. A doubt is not an approval. A scene "
+    "with planned_markings permits the intrinsic markings of ONLY those named instruments: "
+    "its markings_policy explains the existing Owner rule. Their own scale, numbers and "
+    "graduations are part of the object, not overlay text. Captions, logos and writing "
+    "elsewhere remain subject to the normal checks. Earlier briefs and learned lessons "
+    "must not override these rules; assess the current words against them, not against a "
+    "previous refusal's authority. A scene "
     "with previous_round shows your earlier brief and why the Video Editor's rewrite could not "
     "answer it: judge the same words again knowing that, and a brief he can act on names the "
     "exact words to write in change. When "
@@ -135,8 +143,11 @@ _WHAT = {"still": "picture", "motion": "clip"}
 #: is the clip's) and for the missing room (a budget matter: the subject was too long).
 _STILL_NOTE = (
     "A picture has no camera move and needs no «static frame» statement: the composer leaves "
-    "every camera word out of the picture's words by rule, and the plan's camera_move is the "
-    "clip's — never refuse a picture for lacking one. A duplication or a missing clause is "
+    "camera MOVEMENT out of the picture's words, and the plan's camera_move is the clip's — "
+    "never refuse a picture for lacking one. Shot size, lens, angle and framing distance are valid "
+    "photographic instructions in a still (for example «Wide establishing shot, 85mm lens»), "
+    "not a camera move and not lettering to draw. Judge whether this framing fits the plan, "
+    "not whether the words mention a camera. A duplication or a missing clause is "
     "refused only when you can quote it from words_to_send itself: the plan's subject and "
     "the shot_plan are the Editor's fields, not what is sent, and a clause that stands in "
     "the plan but not in words_to_send is not said twice.\n"
@@ -145,7 +156,9 @@ _STILL_NOTE = (
     "negative channel and the gate that measures the picture — never refuse the words for "
     "lacking a «no …»; ask instead that the present thing be named (the one light, the "
     "closed dark room). A thing's colour, shape or light is missing only when words_to_send "
-    "does not carry it: quote the subject sentence before saying so.\n"
+    "does not carry it: quote the subject sentence before saying so. Evaluate required "
+    "attributes wherever they occur in words_to_send, not only in a particular field; "
+    "never demand that a colour already present be repeated in the subject.\n"
     "The picture is ONE frozen moment, the first of the plan: the plan's later moments "
     "(«then…», «lowers», «points») belong to the clip's words and are never in a picture's — "
     "do not refuse a picture for lacking them. When the picture must show a LATER moment of "
@@ -465,6 +478,7 @@ def _ask(
                     context["package"], "motion" if layer == "still" else "still"
                 ),
                 "planned_markings": list(context.get("markings") or []),
+                "markings_policy": markings_note(context.get("markings") or []),
                 **(
                     {"previous_round": (previous or {})[index]} if index in (previous or {}) else {}
                 ),

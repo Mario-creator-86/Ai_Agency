@@ -1,0 +1,9 @@
+# Supernova pre-purchase audit repair — 2026-10-17
+
+At 13:46 Europe/Bucharest the API was HEALTHY, scheduled Director/watchdog tasks continued, but Supernova storyboard 1efc3319-44ac-416f-a75a-3217ca9c2070 was held by TOOL_DEFECT findings on scenes 15 and 34. The earlier serial 87c05891 independently published at 10:57 (14WqqfoMVjs); this was not a YouTube outage.
+
+Root cause: audit v5 falsely said the compiler strips every camera word from still prompts, while shot_frame intentionally emits photographic shot size/lens/angle. The model consequently demanded removal of composer-owned framing, and interpreted the natural ruler markings as forbidden lettering despite the existing Owner markings exception. The audit passed planned_markings only as a list without the existing explanatory markings_note. Its repeated-refusal guard durably held those unchanged words, as designed.
+
+Fix: audit v6 distinguishes still framing from clip movement, supplies the existing per-scene markings policy, requires evaluating attributes throughout the actual sent text, and explains that previous briefs/learned lessons cannot override the established rules. Versioning releases old v5 defect holds for a fresh Director judgement; no approval or quality pass is manufactured, and current-version real refusals still hold. No plan/media/database rewrite, spending limit, policy or UI changes.
+
+Verified four new regression failures before the change; 95 relevant tests pass after it (audit/publishing, instrument markings, composer contract, hard QC/cap behavior). Ruff and documentation inventory/integrity checks pass. Server stopped gracefully at 13:48:18 after observing no open GPU operations or claimed task, no force termination. Scoped commit and normal startup follow; live autonomous result must be recorded separately.
