@@ -3276,7 +3276,10 @@ STILL_FRAMING_RULE = (
     "framing finding; do not demand removal of all framing words. Keep checking the actual "
     "subject, composition, distance, continuity and other defects. Camera movement belongs "
     "to the clip, not the still. The compiler adds the configured style and frame once; "
-    "write scene content in subject and action, not a pasted copy of the completed prompt.\n"
+    "write scene content in subject and action, not a pasted copy of the completed prompt. "
+    "Judge visible qualities from the complete still prompt: a colour, glow or state already "
+    "named there is not missing because another field does not repeat it. The still is one "
+    "moment by construction; assess the visible moment, not a mandatory frozen-moment label.\n"
 )
 STILL_EXCLUSIONS = "No text, no logo."
 PEOPLE_SENTENCE = (
@@ -3606,11 +3609,16 @@ def _phrase(clauses: list[str], max_words: int) -> str:
 
 
 def _without_clauses_said_by(action: str, subject: str) -> str:
-    """The action without the clauses whose content words the subject already carries
-    (`lesson_overlap` >= 0.7); whole when nothing of it is said twice, empty when all is."""
+    """Remove only clauses already present as contiguous words, ignoring case/punctuation.
+
+    Approximate lesson similarity is unsafe here: a new verb or a reversed relation is new
+    scene information even when most of its words already occur in the subject.
+    """
+    existing = " " + " ".join(re.findall(r"\w+", subject.casefold())) + " "
     kept: list[str] = []
     for clause in re.split(r"\s*[;,]\s*", " ".join(str(action or "").split()).rstrip(". ")):
-        if clause and lesson_overlap(clause, subject) < 0.7:
+        words = " ".join(re.findall(r"\w+", clause.casefold()))
+        if clause and (not words or f" {words} " not in existing):
             kept.append(clause)
     said = ", ".join(kept)
     return _sentence(said) if said else ""

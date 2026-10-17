@@ -57,7 +57,12 @@ def test_audit_explains_instrument_markings_and_still_framing(monkeypatch, marki
 
 @pytest.mark.parametrize(
     "old_version",
-    ["director_prompt_audit-v5", "director_prompt_audit-v6", "director_prompt_audit-v7"],
+    [
+        "director_prompt_audit-v5",
+        "director_prompt_audit-v6",
+        "director_prompt_audit-v7",
+        "director_prompt_audit-v8",
+    ],
 )
 def test_old_contradictory_audit_cannot_hold_but_new_refusal_still_can(engine, old_version):
     payload = {
@@ -238,3 +243,38 @@ def test_removing_tempo_keeps_visible_glow_instead_of_dropping_the_clause():
     assert without_tempo("a steady blue glow beside the spiral arm") == (
         "a steady blue glow beside the spiral arm"
     )
+
+
+@pytest.mark.parametrize(
+    ("subject", "action"),
+    [
+        (
+            "A faint cool blue-white smudge in a distant galaxy",
+            "The faint cool blue-white smudge glowing faintly",
+        ),
+        ("A star behind a planet", "A planet behind a star"),
+        ("A blue sphere", "A blue sphere dimming"),
+    ],
+)
+def test_action_dedup_keeps_new_information_and_word_order(subject, action):
+    from app.media.prompt_agent import _without_clauses_said_by
+
+    assert _without_clauses_said_by(action, subject) == action + "."
+
+
+def test_complete_still_keeps_new_glow_beside_the_existing_subject():
+    from app.media.prompt_agent import compile_prompts
+
+    still = compile_prompts(
+        {
+            "subject": "A faint cool blue-white smudge of light in a distant galaxy",
+            "action": (
+                "One frozen moment, the faint cool blue-white smudge glowing faintly and steadily, "
+                "the spiral arm holding its shape"
+            ),
+            "camera": "Medium shot",
+            "environment": "void black deep space",
+        },
+        {},
+    )["still_prompt"]
+    assert "smudge glowing faintly" in still

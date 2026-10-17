@@ -131,10 +131,10 @@ DECIDED_BY = "director"
 BRIEF_TASK = "director_scene_brief"
 BRIEF_TEMPLATE = "director-scene-brief-v4"
 REWRITE_TASK = "scene_prompt_rewrite"
-REWRITE_TEMPLATE = "scene-prompt-rewrite-v5"
+REWRITE_TEMPLATE = "scene-prompt-rewrite-v6"
 #: Her review of his rewrite against the findings, before anything is bought on it.
 REVIEW_TASK = "director_rewrite_review"
-REVIEW_TEMPLATE = "director-rewrite-review-v5"
+REVIEW_TEMPLATE = "director-rewrite-review-v6"
 TREATS, MISSES = "TREATS", "MISSES"
 #: Her review when every one of quality control's findings is minor (2026-10-12 evening review
 #: of a50407e: a rewrite that treated nothing was stored and bought because each finding was
