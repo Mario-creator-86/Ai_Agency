@@ -1344,6 +1344,17 @@ def write_shot_prompts(
     from app.factual.story_review import story_gate  # noqa: PLC0415
     from app.media.shooting_sheet import film_is_closed  # noqa: PLC0415 - it imports us
 
+    # A sheet repair names the affected scenes. Unscoped/film-wide findings retain the
+    # existing whole-film path; an indexed repair never rewrites another scene's plan.
+    issues = (repair_context or {}).get("issues") or []
+    targets: set[int] | None = None
+    if issues and all(
+        isinstance(item, dict)
+        and isinstance(item.get("scene_index"), int)
+        and not isinstance(item.get("scene_index"), bool)
+        for item in issues
+    ):
+        targets = {item["scene_index"] for item in issues}
     correlation = correlation_id or str(uuid4())
     # The lessons learned since the last writer are read by the Director first (free; review of
     # 68fa0b4, 2026-10-12): a correction retires the rule it corrects before the shots are
@@ -1372,6 +1383,16 @@ def write_shot_prompts(
         # «show people only from behind» never reaches the serial's beats, whose people face
         # the viewer, and the serial's lessons never reach a factual film's shots.
         lessons = prompt_lessons(session, scope=_scope_of(bool(facts.get("serial"))))
+    if targets is not None:
+        known = {int(scene["scene_index"]) for scene in facts["scenes"]}
+        if not targets <= known:
+            raise PromptError("Remedierea indică un cadru care nu există în acest film")
+    generation_facts = {
+        **facts,
+        "scenes": [
+            s for s in facts["scenes"] if targets is None or int(s["scene_index"]) in targets
+        ],
+    }
     serial = bool(facts.get("serial"))
     # An episode of the serial does not decide a look: it has the series' one, read from the
     # Owner's proposal and written onto the storyboard every time, never asked of a model.
@@ -1381,7 +1402,7 @@ def write_shot_prompts(
             board = session.get(Storyboard, storyboard_id)
             if board is not None:
                 board.visual_bible_json = series_bible(look, board.aspect_ratio)
-    elif need_bible:
+    elif need_bible and (targets is None or not board.visual_bible_json):
         build_visual_bible(engine, registry, storyboard_id, correlation)
     with Session(engine) as session:
         board = session.get(Storyboard, storyboard_id)
@@ -1404,11 +1425,11 @@ def write_shot_prompts(
                     "version": look.get("version"),
                     "continuity_rules": look.get("continuity_rules") or [],
                 },
-                "episode": facts,
+                "episode": generation_facts,
             }
             instructions, template = _SERIAL_SHOTS_INSTRUCTIONS, SERIAL_SHOTS_TEMPLATE
         else:
-            data = {"visual_bible": bible, "film": facts}
+            data = {"visual_bible": bible, "film": generation_facts}
             instructions, template = _SHOTS_INSTRUCTIONS, SHOTS_TEMPLATE
         if repair_context:
             data["repair_context"] = repair_context
@@ -1514,8 +1535,15 @@ def write_shot_prompts(
             )
         )
         facts_by_index = {int(s["scene_index"]): s for s in facts["scenes"]}
-        lost = answered and not serial and any(s.scene_index not in packs for s in scenes)
+        selected = [s for s in scenes if targets is None or s.scene_index in targets]
+        lost = answered and not serial and any(s.scene_index not in packs for s in selected)
         for scene in scenes:
+            if targets is not None and scene.scene_index not in targets:
+                previous = dict(scene.prompt_json or {})
+                previous_ending = str(previous.get("ending_frame") or "")
+                if previous.get("camera_move"):
+                    moves.append(str(previous["camera_move"]))
+                continue
             scene_facts = facts_by_index.get(scene.scene_index, {})
             shot = packs.get(scene.scene_index)
             earlier = dict(scene.prompt_json or {})
@@ -1579,7 +1607,7 @@ def write_shot_prompts(
             )
         missing = [
             s.scene_index
-            for s in scenes
+            for s in selected
             if s.scene_index not in packs and s.scene_index not in kept_from_before
         ]
         board = session.get(Storyboard, storyboard_id)
@@ -1605,7 +1633,15 @@ def write_shot_prompts(
                 correlation,
             )
         else:
-            if board is not None and board.status == NEEDS_SHOT_PLAN:
+            all_planned = all(
+                (s.prompt_json or {}).get("source") in (SOURCE_MODEL, SOURCE_SERIES_LOOK)
+                for s in scenes
+            )
+            if (
+                board is not None
+                and board.status == NEEDS_SHOT_PLAN
+                and (targets is None or all_planned)
+            ):
                 board.status = "APPROVED"  # the plan it was waiting for is written
             append_event(
                 session,

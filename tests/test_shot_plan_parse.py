@@ -509,3 +509,89 @@ def test_trim_payload_keeps_all_claims_and_scenes_without_slicing():
     assert [s["scene_index"] for s in tiny["scenes"]] == list(range(1, len(tiny["scenes"]) + 1)), (
         "every scene remains complete"
     )
+
+
+def test_sheet_repair_requests_and_changes_only_the_named_scene(engine, studio):
+    import copy
+
+    board_id = _nepal_board(engine)
+    initial = ShotModel([json.dumps(_valid_pack())])
+    registry, _ = registry_with(studio, initial)
+    write_shot_prompts(engine, registry, board_id, "initial")
+    before = {
+        s.scene_index: (copy.deepcopy(s.prompt_json), s.visual_prompt, s.story_purpose)
+        for s in _scenes(engine, board_id)
+    }
+    changed = _valid_pack()
+    for shot in changed["shots"]:
+        shot["subject"] = (
+            "Corrected valley" if shot["scene_index"] == 2 else "Unrelated changed subject"
+        )
+    model = ShotModel([json.dumps(changed)])
+    registry, _ = registry_with(studio, model)
+
+    result = write_shot_prompts(
+        engine,
+        registry,
+        board_id,
+        "repair",
+        repair_context={
+            "instructions": "Repair only scene 2",
+            "issues": [{"kind": "PROMPT", "scene_index": 2, "code": "REQUIRED_CONTENT_LOST"}],
+        },
+    )
+    assert len(model.shot_prompts) == 1
+    assert "Return shots only for these scene_index values: [2]." in model.shot_prompts[0]
+    assert [x["scene_index"] for x in result["shots"]] == [2]
+    for scene in _scenes(engine, board_id):
+        if scene.scene_index != 2:
+            assert (scene.prompt_json, scene.visual_prompt, scene.story_purpose) == before[
+                scene.scene_index
+            ]
+    assert not _events(engine, "media.shot_prompts_incomplete")
+
+
+def test_scoped_repair_does_not_reopen_an_incomplete_unrelated_plan(engine, studio):
+    board_id = _nepal_board(engine)
+    model = ShotModel([json.dumps(_valid_pack())])
+    registry, _ = registry_with(studio, model)
+    write_shot_prompts(engine, registry, board_id, "initial")
+    with Session(engine) as session, session.begin():
+        scene = session.scalar(
+            select(StoryboardScene).where(
+                StoryboardScene.storyboard_id == board_id, StoryboardScene.scene_index == 6
+            )
+        )
+        scene.prompt_json = {}
+        session.get(Storyboard, board_id).status = "NEEDS_SHOT_PLAN"
+    model = ShotModel([json.dumps(_valid_pack())])
+    registry, _ = registry_with(studio, model)
+    write_shot_prompts(
+        engine,
+        registry,
+        board_id,
+        "repair",
+        repair_context={"issues": [{"kind": "PROMPT", "scene_index": 2}]},
+    )
+    with Session(engine) as session:
+        assert session.get(Storyboard, board_id).status == "NEEDS_SHOT_PLAN"
+    assert _scenes(engine, board_id)[-1].prompt_json == {}
+
+
+def test_indexed_repair_refuses_a_nonexistent_scene_without_a_shot_call(engine, studio):
+    from app.media.prompt_agent import PromptError
+
+    board_id = _nepal_board(engine)
+    model = ShotModel([json.dumps(_valid_pack())])
+    registry, _ = registry_with(studio, model)
+    with pytest.raises(PromptError, match="nu există"):
+        write_shot_prompts(
+            engine,
+            registry,
+            board_id,
+            "invalid",
+            repair_context={
+                "issues": [{"kind": "PROMPT", "scene_index": 999}],
+            },
+        )
+    assert model.shot_prompts == []
