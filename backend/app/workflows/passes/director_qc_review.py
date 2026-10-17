@@ -159,20 +159,93 @@ def _developer_waits(session: Any, report_id: str) -> bool:
     """Whether this failed report waits on the developer: its only fix, a free one, was made
     `runbook.stages.FREE_FIXES_PER_FILM` times without curing a measured serious defect, and
     the Director noted it for the developer (`runbook.stages._free_fix_defect_note`). She is
-    not asked again about the same report every hour; a new report (a new film) reads anew."""
-    from sqlalchemy import select  # noqa: PLC0415
+    not asked again about the same report every hour; a new report (a new film) reads anew.
+    So for a REPAIR that met the same lasting stop below the caps walk after walk
+    (`runbook.stages._impossible_repair_note`, the loop guard), for
+    `runbook.stages.IMPOSSIBLE_NOTE_HOURS` after its note: then she is asked again."""
+    from sqlalchemy import or_, select  # noqa: PLC0415
 
     from app.agents.director import DEVELOPER_DEFECT_KIND  # noqa: PLC0415
     from app.agents.models import AgentMessage  # noqa: PLC0415
-    from app.runbook.stages import FREE_FIX_NOTE_SUBJECT  # noqa: PLC0415
+    from app.runbook.stages import (  # noqa: PLC0415
+        FREE_FIX_NOTE_SUBJECT,
+        IMPOSSIBLE_DEFECT,
+        IMPOSSIBLE_NOTE_SUBJECT,
+        impossible_note_holds,
+    )
 
     for row in session.scalars(
-        select(AgentMessage).where(AgentMessage.subject.like(f"{FREE_FIX_NOTE_SUBJECT}%"))
+        select(AgentMessage).where(
+            or_(
+                AgentMessage.subject.like(f"{FREE_FIX_NOTE_SUBJECT}%"),
+                AgentMessage.subject.like(f"{IMPOSSIBLE_NOTE_SUBJECT}%"),
+            )
+        )
     ):
         body = row.body_json if isinstance(row.body_json, dict) else {}
-        if body.get("kind") == DEVELOPER_DEFECT_KIND and body.get("report_id") == report_id:
-            return True
+        if body.get("kind") != DEVELOPER_DEFECT_KIND or body.get("report_id") != report_id:
+            continue
+        if body.get("defect") == IMPOSSIBLE_DEFECT and not impossible_note_holds(row.created_at):
+            continue
+        return True
     return False
+
+
+def _stopped_by_caps(context: WatchdogContext, state: dict[str, Any]) -> bool:
+    """Whether her newest decision on the report is a REPAIR that carried out nothing and now
+    publishes the film with what it has (`runbook.stages.stored_repair_ships_under_cap`: only
+    the caps, or a redo she met as impossible, stop it, and no verdict is one that is not hers):
+    the walk publishes it from that decision without asking her (`stages._ship_stored_repair`)."""
+    from app.runbook.stages import stored_repair_ships_under_cap  # noqa: PLC0415
+
+    return (
+        stored_repair_ships_under_cap(context.engine, context.settings, state.get("decision"))
+        is not None
+    )
+
+
+#: The walks that publish a film from her stored REPAIR stopped only by the caps, after her
+#: tries ran out: the first at once, each next one twice as long after the last walk, up to
+#: `MAX_WAIT_MINUTES` — never only once (the review of 2026-10-17: a walk stopped, refused by
+#: safe mode or his mode, or failing, would have left f06808c9 standing for good).
+CAP_SETTLE_KEY = "film-continue-{storyboard_id}-cap-settle-{report_id}-"
+
+
+def _cap_settle_owed(
+    session: Any, storyboard_id: str, report_id: str, runs: list[str], now: datetime
+) -> str | None:
+    """The key of the next cap-settle walk of this report when one is owed, else None: none
+    queued or at work under it, and the wait after the newest walk of the report (its
+    `runbook.film_continued`, written by every walk, a refused one too) or the newest such
+    task's last change has passed."""
+    from sqlalchemy import select  # noqa: PLC0415
+
+    from app.workflows.models import TaskQueueItem  # noqa: PLC0415
+
+    prefix = CAP_SETTLE_KEY.format(storyboard_id=storyboard_id, report_id=report_id)
+    tasks = list(
+        session.scalars(
+            select(TaskQueueItem).where(TaskQueueItem.idempotency_key.like(f"{prefix}%"))
+        )
+    )
+    if any(task.status in PENDING_TASK_STATES for task in tasks):
+        return None
+    if tasks:
+        moments = [
+            moment
+            for moment in (*runs, *(str(task.updated_at or task.created_at) for task in tasks))
+            if moment
+        ]
+        last = datetime.fromisoformat(max(moments))
+        if last.tzinfo is None:
+            last = last.replace(tzinfo=UTC)
+        wait = min(RETRY_MINUTES * 2 ** (len(tasks) - 1), MAX_WAIT_MINUTES)
+        if now - last < timedelta(minutes=wait):
+            return None
+    key = f"{prefix}{len(tasks)}"
+    if session.scalar(select(TaskQueueItem.id).where(TaskQueueItem.idempotency_key == key)):
+        return None
+    return key
 
 
 @watchdog_pass("director_qc_review", order=160, on_error={"queued": []})
@@ -283,9 +356,19 @@ def queue_director_reviews(context: WatchdogContext) -> dict[str, Any]:
                 if (event.payload or {}).get("cause") == cause and event.timestamp
             )
             if int(state["tries"]) >= MAX_TRIES:
-                # It waits in her inbox; a new report or his answer moves it — except once
-                # under the renders cap: a film whose tries ran out before the cap rule has
-                # never been judged under it, and is walked one more time (CAP_RULE_SINCE).
+                # It waits in her inbox; a new report or his answer moves it — except a REPAIR
+                # stopped only by the Owner's caps: walked until it is published, from her
+                # stored decision and without a model call (`stages._ship_stored_repair`), the
+                # walks spaced out (`_cap_settle_owed`). 2026-10-16, f06808c9: 26 tries, its
+                # one cap-rule walk at 22:21Z the night before the continuation's cap fix, and
+                # nothing walked it again.
+                if _stopped_by_caps(context, state):
+                    settle = _cap_settle_owed(session, storyboard_id, str(report.id), runs, now)
+                    if settle is not None:
+                        owed.append((storyboard_id, settle, cause, str(report.id)))
+                    continue
+                # Once under the renders cap: a film whose tries ran out before the cap rule
+                # has never been judged under it, and is walked one more time (CAP_RULE_SINCE).
                 if any(moment >= CAP_RULE_SINCE for moment in runs):
                     continue
                 key = f"film-continue-{storyboard_id}-cap-rule-{report.id}"

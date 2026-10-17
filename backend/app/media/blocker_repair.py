@@ -300,6 +300,103 @@ def _close_pause_letters(session: Session, identifier: str) -> None:
             )
 
 
+#: The end of a repair whose film goes to publication with what it has: it passed quality
+#: control (her ACCEPT among them), or her REPAIR is stopped only by the Owner's caps and her
+#: next walk publishes it (`runbook.stages.stored_repair_ships_under_cap`).
+SETTLED_FILM_NOTE = (
+    "Filmul este asamblat și merge la publicare cu ce are (a trecut controlul calității, sau "
+    "limita de randări ori de refaceri a fost atinsă): foaia lui nu se mai remediază și nu se "
+    "cumpără nimic pentru el."
+)
+
+
+def film_settled_for_publication(engine: Engine, storyboard_id: str, settings: Any = None) -> bool:
+    """Whether the film is rendered and nothing more is filmed for it: its newest finished
+    render's newest quality report PASSED (it goes to publication), or FAILED with the
+    Director's newest decision a REPAIR that nothing but the Owner's caps stopped (the next
+    walk publishes it from that decision, `runbook.stages.stored_repair_ships_under_cap`;
+    never one with a verdict that is not hers).
+
+    2026-10-16 (f06808c9, «The Zero Script Club»): rendered on 13 October, its REPAIR held by
+    the renders cap, the scan still queued a sheet repair on its lint blockers; each asked the
+    Video Editor for the whole film's shot plans, 16 minutes on the one worker, one came back
+    empty, and the words it rewrote took the approved stills from scenes the film had passed.
+    Such a film's sheet is not repaired. Read only; False when unreadable."""
+    from app.media.models import QualityControlReport, VideoRenderJob  # noqa: PLC0415
+
+    try:
+        with Session(engine) as session:
+            asset_id = session.scalar(
+                select(VideoRenderJob.output_asset_id)
+                .where(
+                    VideoRenderJob.storyboard_id == storyboard_id,
+                    VideoRenderJob.status == "COMPLETED",
+                    VideoRenderJob.output_asset_id.is_not(None),
+                )
+                .order_by(VideoRenderJob.finished_at.desc(), VideoRenderJob.started_at.desc())
+                .limit(1)
+            )
+            if asset_id is None:
+                return False
+            report = session.scalar(
+                select(QualityControlReport)
+                .where(
+                    QualityControlReport.media_asset_id == str(asset_id),
+                    QualityControlReport.status != "INVALIDATED",
+                )
+                .order_by(QualityControlReport.verified_at.desc())
+                .limit(1)
+            )
+            if report is None:
+                return False
+            status, report_id = str(report.status), str(report.id)
+        if status == "PASSED":
+            return True
+        if status != "FAILED":
+            return False
+        from app.media.director_qc import decision_state  # noqa: PLC0415 - it imports runbook
+        from app.runbook.stages import stored_repair_ships_under_cap  # noqa: PLC0415
+
+        state = decision_state(engine, report_id)
+        return stored_repair_ships_under_cap(engine, settings, state.get("decision")) is not None
+    except Exception as exc:  # noqa: BLE001 - unread, the sheet is read as before
+        logger.warning(
+            "film_settled_unread",
+            extra={"storyboard_id": storyboard_id, "error_type": type(exc).__name__},
+        )
+        return False
+
+
+def withdraw_sheet_repairs(engine: Engine, storyboard_id: str, reason: str) -> list[str]:
+    """The film's sheet-repair letters still open (the blockers' report, the Editor's work, a
+    pause or a limit note) answered with ``reason``: the film goes to publication with what it
+    has, so nothing of its sheet is repaired any more. A repair already queued ends at its start
+    without a model call (`process_sheet_repair`: `film_settled_for_publication`). Returns the
+    letters answered; nothing is bought."""
+    answered: list[str] = []
+    with Session(engine) as session, session.begin():
+        lock_for_write(session)
+        for message in session.scalars(select(AgentMessage).where(AgentMessage.status == "OPEN")):
+            body = message.body_json or {}
+            if body.get("storyboard_id") != storyboard_id or body.get("kind") not in (
+                REPORT_KIND,
+                WORK_KIND,
+                PAUSED_KIND,
+                "sheet_repair_owner",
+                "sheet_repair_limit",
+            ):
+                continue
+            resolve_message(
+                session,
+                message.id,
+                resolution=reason,
+                resolved_by="Director",
+                correlation_id=str(uuid4()),
+            )
+            answered.append(str(message.id))
+    return answered
+
+
 def allowed(engine: Engine) -> bool:
     with Session(engine) as session:
         policy = session.get(OwnerPolicy, 1)
@@ -423,10 +520,14 @@ def sheet_issues(sheet: dict[str, Any]) -> list[dict[str, Any]]:
     return issues
 
 
-def submit_sheet_issues(engine: Engine, sheet: dict[str, Any]) -> dict[str, Any]:
+def submit_sheet_issues(
+    engine: Engine, sheet: dict[str, Any], *, settings: Any = None
+) -> dict[str, Any]:
     with Session(engine) as session:
         if film_is_closed(session, str(sheet["storyboard_id"])):
             return {"status": "FILM_CLOSED", "reason_ro": CLOSED_FILM_NOTE}
+    if film_settled_for_publication(engine, str(sheet["storyboard_id"]), settings):
+        return {"status": "FILM_SETTLED", "reason_ro": SETTLED_FILM_NOTE}
     successor = story_progress(engine, str(sheet["storyboard_id"]))
     if successor.get("replacement_storyboard_id"):
         return {"status": "REVISED", **successor}
@@ -641,6 +742,8 @@ def _finish(
     note: str,
     correlation: str,
     details: dict[str, Any] | None = None,
+    *,
+    settled: bool = False,
 ) -> dict[str, Any]:
     with Session(engine) as session, session.begin():
         lock_for_write(session)
@@ -655,7 +758,10 @@ def _finish(
             "storyboard_id": payload["storyboard_id"],
             **(details or {}),
         }
-        closed_stale = status == "STALE" and film_is_closed(session, payload["storyboard_id"])
+        # A film that goes to publication with what it has ends its repairs as a closed one.
+        closed_stale = status == "STALE" and (
+            settled or film_is_closed(session, payload["storyboard_id"])
+        )
         report = session.get(AgentMessage, payload["message_id"])
         director = agent_for_role(session, "Director")
         editor = agent_for_role(session, PROMPT_ROLE)
@@ -742,6 +848,10 @@ def process_sheet_repair(
         # Closed while it runs (the Director's assignment holds no lease), it meets the closed
         # film at the repair's own lease (`FilmClosed`, below) and ends the same way.
         return _finish(engine, payload, "STALE", [], CLOSED_FILM_NOTE, correlation)
+    if film_settled_for_publication(engine, identifier, settings):
+        # Rendered and going to publication with what it has (2026-10-16, f06808c9): queued
+        # before that, the repair is withdrawn here, without a model call.
+        return _finish(engine, payload, "STALE", [], SETTLED_FILM_NOTE, correlation, settled=True)
     context = dict(sheet_context or {})
     context.pop("read_live", None)
 
@@ -976,11 +1086,15 @@ def scan_sheet_issues(engine: Engine, **context: Any) -> dict[str, Any]:
             with Session(engine) as session:
                 if film_is_closed(session, identifier):
                     continue
+            if film_settled_for_publication(engine, identifier, context.get("settings")):
+                # Rendered, and going to publication with what it has: nothing more is filmed
+                # for it, so its sheet is not repaired (2026-10-16, f06808c9).
+                continue
             if story_progress(engine, identifier).get("replacement_storyboard_id"):
                 continue
             reading = build_sheet(engine, identifier, **({"read_live": False} | context))
             if sheet_issues(reading):
-                submit_sheet_issues(engine, reading)
+                submit_sheet_issues(engine, reading, settings=context.get("settings"))
                 reported.append(identifier)
             elif context.get("read_live") and not reading.get("in_progress"):
                 # Funding/configuration corrected outside the task is verified on the next scan.

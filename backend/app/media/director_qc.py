@@ -2290,10 +2290,17 @@ def accepted_by_cap(decided: Mapping[str, Any], ship: Mapping[str, Any]) -> dict
         if isinstance(item, Mapping) and isinstance(item.get("scene_index"), int)
     ]
     summary = " ".join(str(decided.get("summary") or "").split())
+    # A REPAIR nothing of which can be made at all, no cap reached (`runbook.stages.
+    # repair_stopped_by_caps`' «impossible»), is not said to be the cap's.
+    heading = (
+        "Acceptat sub plafonul Proprietarului (2026-10-15)"
+        if limited
+        else "Acceptat cu ce are: nimic din refacerea hotărâtă nu se poate face"
+    )
     words = (
-        f"Acceptat sub plafonul Proprietarului (2026-10-15): {ship.get('reason_ro') or ''} "
-        f"Scenele oprite de plafon: {', '.join(str(s) for s in limited) or 'niciuna'}. "
-        "Filmul se publică așa cum este; ce a rămas sub standard este lecție pentru următorul."
+        f"{heading}: {ship.get('reason_ro') or ''} "
+        + (f"Scenele oprite de plafon: {', '.join(str(s) for s in limited)}. " if limited else "")
+        + "Filmul se publică așa cum este; ce a rămas sub standard este lecție pentru următorul."
     )
     return {
         **dict(decided),
