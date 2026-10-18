@@ -9,7 +9,7 @@ Following docs/architecture/08_VIDEO_PIPELINE.md:
 - Picture spans QC: every filmed scene is judged on the first, middle and last frame of its
   span on the film's timeline, at the delivered 1080 px, with the per-clip checklist
   (picture_qc.judge_clip), YuNet counts faces on each frame when the bible forbids them, and
-  each frame is read for a flat band that splits it into panels (`flat_band`).
+  the model's required `one_picture` verdict decides whether a frame is a collage.
 - Character Drift QC: the same look, against the Character Bible's canonical description.
 - Rights/License QC: all assets must be clear of copyright blocks.
 - Audio QC: the film measures at the platform's loudness, under the true-peak ceiling.
@@ -312,12 +312,12 @@ DEGENERATE_SSIM = 0.94
 
 
 def still_is_degenerate(ffmpeg: str | None, path: Path) -> str | None:
-    """Why a still is not a picture (stripes, bands, a blank field), or None when it is one.
+    """Whether a still is essentially uniform/blank, or None when it is not.
 
-    Measured with the encoder the studio already has: the still is squeezed to a single row
-    (and then to a single column), stretched back, and compared with itself. No image library,
-    no model, no opinion. None also when it cannot be measured — this check refuses pictures,
-    it never invents a refusal.
+    Compare the image to a row/column-collapsed version. Only BOTH axes above
+    the uniformity threshold cause an automatic refusal. A stripe or dark band
+    alone never does: a vision model checks composition and scene relevance.
+    None also means the image could not be measured.
     """
     import re  # noqa: PLC0415
     import subprocess  # noqa: PLC0415
@@ -2206,9 +2206,8 @@ def _panels_check(
 def _still_must_change(
     measured: dict[str, Any], judgement: Any, *, fixes: Sequence[Mapping[str, Any]] = ()
 ) -> bool:
-    """Whether the clip's fault is its still's: the first frame (the still the clip was made
-    from) is split by a flat band, or the look saw more than one picture or asked for the
-    still to change, or an item checked on the clip that lives in the PICTURE (layer still,
+    """Whether a measured vision finding says the clip's initial still must change,
+    or an item checked on the clip that lives in the PICTURE (layer still,
     or both: no still was approved since it was found) is there again. Another seed on the
     same still buys the same fault (2026-10-09: scene 5 was a triptych, and its clip animated
     the triptych). A clip that repeats a mistake its MOVEMENT was rewritten to correct (layer
@@ -3949,8 +3948,8 @@ def span_picture_qc(
                     )
                     judgement = judge([path for _at, _moment, path in looked_at], plan)
                 picture = _picture_check(judgement, faces_forbidden=faces_forbidden)
-            # The same flat-band reading as the still's and the clip's: the scene's frames
-            # are one picture each, or the scene is panels (2026-10-09, scene 5).
+            # Compatibility-only report: geometric flat bands are no longer judged
+            # here; the vision model's required one_picture field decides panels.
             panels = _panels_check(band_reader, frames, measured=measured)
             entry["faces"] = {
                 "status": faces.status,
@@ -3984,9 +3983,12 @@ def span_picture_qc(
                 problems.append(panels.detail_ro)
             if picture.status == "FAILED":
                 problems.append(picture.detail_ro)
-            # A carried look measured nothing today; the faces and the band did, if they ran.
+            # A previously verified AI verdict may be reused for an unchanged shot.
+            # It is evidence, unlike the removed geometric panel detector.
             today = (faces, panels) if earlier is not None else (faces, picture, panels)
-            if any(item.status in ("PASSED", "FAILED") for item in today):
+            if earlier is not None or any(
+                item.status in ("PASSED", "FAILED") for item in today
+            ):
                 measured_any = True
             if problems:
                 entry.update(status="FAILED", passed=False, reason="; ".join(problems))
