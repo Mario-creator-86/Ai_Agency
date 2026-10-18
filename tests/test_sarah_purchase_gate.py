@@ -109,3 +109,28 @@ def test_sarah_approval_is_bound_to_current_exact_vendor_words(
 def test_unknown_or_unplanned_scene_is_not_treated_as_approved(engine, tmp_path, studio):
     board = a_planned_film(engine, tmp_path)
     assert prompt_audit.purchase_approval_gaps(engine, board, "motion", [1, 99]) == [1, 99]
+
+def test_historical_under_cap_verdict_does_not_authorize_a_new_purchase(
+    engine, tmp_path, studio
+):
+    """Keep the historical verdict visible, but do not interpret it as a fresh yes."""
+    board = a_planned_film(engine, tmp_path)
+    with Session(engine) as session:
+        row = session.scalar(
+            select(StoryboardScene).where(StoryboardScene.storyboard_id == board)
+        )
+        package = dict(row.prompt_json or {})
+        words = prompt_audit.prompt_text(package, "motion")
+        digest = prompt_audit.prompt_digest(
+            words, exact=package.get("prompt_format") == "editor_final_v1"
+        )
+    prompt_audit._record(
+        engine, storyboard_id=board, scene=1, layer="motion",
+        digest=digest, verdict=prompt_audit.APPROVED_UNDER_CAP,
+        reason="Historical under-cap verdict", run_id=str(uuid4()),
+        correlation_id=str(uuid4()),
+    )
+    with Session(engine) as session:
+        assert prompt_audit.approved_words(session, board, 1, "motion", digest)
+        assert not prompt_audit.approved_for_purchase(session, board, 1, "motion", digest)
+    assert prompt_audit.purchase_approval_gaps(engine, board, "test_shot", [1]) == [1]
