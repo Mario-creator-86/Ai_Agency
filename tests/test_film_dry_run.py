@@ -679,11 +679,12 @@ def test_the_film_assembled_from_its_takes_passes_qc_and_the_report_names_measur
     quoted = sum(float(t.credits_quoted or 0) for t in rows)
     measured = sum(float(t.credits_measured or 0) for t in rows)
     stills_quote = 4 * 18
-    hero_quote = price_shot("seedance2_5", "1080p", 5)
+    # The purchased hero covers the full six-second shot, including its voiced tail.
+    hero_quote = price_shot("seedance2_5", "1080p", 6)
     rest_quote = 3 * price_shot("veo3.1_fast", "1080p", 6)
-    assert quoted == pytest.approx(stills_quote + hero_quote + rest_quote)  # 72 + 340 + 180
+    assert quoted == pytest.approx(stills_quote + hero_quote + rest_quote)  # 72 + 408 + 180
     requests = 4 + 1 + 3
-    assert measured == pytest.approx(quoted - REBATE * requests)  # 592 - 16 = 576
+    assert measured == pytest.approx(quoted - REBATE * requests)  # 660 - 16 = 644
     spend = measured_spend(engine, storyboard_id)
     assert set(spend) == {"stills", "test_shot", "motion"}
     assert sum(item["spent"] for item in spend.values()) == pytest.approx(measured)
