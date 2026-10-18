@@ -257,8 +257,11 @@ def prompt_text(package: dict[str, Any], layer: str) -> str:
     return " ".join(str(package.get("motion_prompt") or "").split())
 
 
-def prompt_digest(text: str) -> str:
-    return hashlib.sha256(" ".join(str(text).split()).encode("utf-8")).hexdigest()
+def prompt_digest(text: str, *, exact: bool = False) -> str:
+    # Legacy approvals deliberately normalized spaces. Editor-owned finals
+    # must be bound to the byte-for-byte text that Sarah saw and the vendor gets.
+    words = str(text) if exact else " ".join(str(text).split())
+    return hashlib.sha256(words.encode("utf-8")).hexdigest()
 
 
 def _audits(session: Session, storyboard_id: str, scene: int, layer: str) -> list[dict[str, Any]]:
@@ -688,7 +691,9 @@ def audit_before_purchase(
         if not text:
             result["skipped"].append(scene)
             continue
-        digest = prompt_digest(text)
+        digest = prompt_digest(
+            text, exact=context["package"].get("prompt_format") == "editor_final_v1"
+        )
         with Session(engine) as session:
             if approved_words(session, storyboard_id, scene, layer, digest):
                 result["approved"].append(scene)
