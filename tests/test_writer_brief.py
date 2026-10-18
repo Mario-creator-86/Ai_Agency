@@ -105,6 +105,31 @@ def test_the_brief_names_the_platform_and_the_audience_and_says_the_hook_window_
     assert "first two seconds" in criteria_lines()
 
 
+def test_marcus_knows_the_film_mission_and_the_visual_handoff():
+    brief = _write_instructions(
+        30, target_audience="science_enthusiasts",
+    )
+    for instruction in (
+        "MISIUNEA LUI MARCUS",
+        "PENTRU CINE",
+        "DE CE SĂ SE UITE",
+        "CE PROMIȚI ȘI LIVREZI",
+        "CE ÎI PREDAI LUI KAEL",
+        "CE VA VERIFICA SARAH",
+        '"core_message"',
+        '"takeaway"',
+        '"purpose"',
+        '"visual"',
+    ):
+        assert instruction in brief
+    # Audience is inert data, not arbitrary instructions or invented demographics.
+    assert inside_a_boundary(brief, '"target_audience": "science_enthusiasts"')
+    assert "fără să-i inventezi interese sau date demografice" in brief
+    # An unspecified audience must not create fictitious persona details.
+    unknown = _write_instructions(30)
+    assert "SEGMENTUL PUBLICULUI-ȚINTĂ PENTRU ACEST EPISOD" not in unknown
+
+
 def test_the_brief_carries_the_judges_own_criteria_and_her_bar():
     brief = _write_instructions(30)
     # The judge's lines, verbatim: the brief and the judgement cannot drift apart.
@@ -247,6 +272,40 @@ def test_the_writers_prompt_carries_the_platform_the_idea_and_the_money(
     assert "MĂSURAT PE ACEST CANAL" not in prompt
     # The brief ends where it always did: the claims, then the subject.
     assert prompt.index("AFIRMAȚII VERIFICATE") < prompt.index("SUBIECT:")
+
+
+def test_marcus_gets_audience_even_when_topic_has_no_thesis(
+    engine, studio, monkeypatch
+):
+    topic_id = a_topic(engine)
+    with Session(engine) as session, session.begin():
+        topic = session.get(TopicIdea, topic_id)
+        topic.thesis_json = {}
+        topic.target_audience = "science_enthusiasts"
+
+    seen = []
+
+    def fake_run(_engine, _registry, _agent_id, _task_type, prompt, *args, **kwargs):
+        seen.append(prompt)
+        return {
+            "id": str(uuid4()),
+            "status": "SUCCEEDED",
+            "output_text": _writer_answer(),
+            "error_detail": None,
+        }
+
+    monkeypatch.setattr(agent_pipeline, "run_agent_task", fake_run)
+    monkeypatch.setattr(agent_pipeline, "_announce", lambda *args, **kwargs: None)
+    output = agent_write_script(
+        engine, object(), topic_id, str(uuid4()), target_duration_seconds=20
+    )
+    assert output["script"]["id"]
+    assert seen
+    assert inside_a_boundary(
+        seen[0], '"target_audience": "science_enthusiasts"'
+    )
+    assert "CE ÎI PREDAI LUI KAEL" in seen[0]
+    assert "MISIUNEA LUI MARCUS" in seen[0]
 
 
 # ---------------------------------------------------------------------------
