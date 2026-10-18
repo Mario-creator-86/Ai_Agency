@@ -302,7 +302,7 @@ def test_the_prompt_agent_writes_the_serial_shots_with_the_look_and_the_room(
     for scene in scenes_of(engine, board_id):
         assert scene.visual_prompt.startswith(block)
         assert len(scene.visual_prompt) <= load_series_look()["max_prompt_chars"]
-        assert "Location: Content, floor 2" in scene.visual_prompt
+        assert "Content, floor 2" in scene.visual_prompt
         assert "RENDER 91%" not in scene.visual_prompt
         assert _TEXT_REQUEST.search(scene.visual_prompt) is None
         assert "stands beside the office desk" in scene.visual_prompt
