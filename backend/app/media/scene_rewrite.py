@@ -1663,6 +1663,21 @@ def lock_texts(
     says}. 2026-10-12 evening review of a50407e: the chosen move's own sentence and the people
     rule were read as words the layer keeps, so a lock on them turned the scene to a paid
     still although another choice of the field says other words."""
+    active = package or context["package"]
+    if active.get("prompt_format") == "editor_final_v1":
+        still = str(visual or active.get("still_prompt") or context.get("visual_prompt") or "")
+        motion = str(active.get("motion_prompt") or "")
+        # No fixed Python sentences exist in editor-final text. Only the still
+        # itself is locked during a motion-only repair.
+        return {
+            "said": (still, motion),
+            "constants": (),
+            "picture": (still,) if layer == MOTION else (),
+            "fields": {
+                "still_prompt": (still,) if layer == STILL else (),
+                "motion_prompt": (motion,),
+            },
+        }
     words = _layer_words(context, layer, package, visual)
     constants = [*words["still_fixed"], *words["motion_fixed"]]
     picture: list[str] = []
