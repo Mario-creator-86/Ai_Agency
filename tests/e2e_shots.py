@@ -75,7 +75,7 @@ def _serial_fake_shot(scene: dict, index: int, move: str) -> dict:
     still_prompt = " ".join(part for part in (
         str(look.get("block") or ""),
         room_sentence(look, place),
-        f"A single, eye-level, vertical office shot of {focus}, facing the viewer.",
+        f"In the {place} office, a single eye-level vertical shot of {focus}, facing the viewer.",
         f"The characters retain their canonical appearances: {identities}." if identities else "",
         f"{first_moment}.",
     ) if part)
