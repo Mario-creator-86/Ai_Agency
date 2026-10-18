@@ -213,6 +213,20 @@ def fake_showrunner(monkeypatch, answer: str, seen: list[str] | None = None):
 
     monkeypatch.setattr(services, "run_agent_task", fake_run)
 
+    # Unlike the Showrunner, Kael invokes run_agent_task from the agent kernel
+    # inside prompt_agent._run. Route only his shot requests to the deterministic
+    # final-prompt adapter; leave the Director's other tasks untouched.
+    from app.agents import services as agent_services
+
+    kernel_run = agent_services.run_agent_task
+
+    def shot_or_kernel(*args, **kwargs):
+        if len(args) >= 4 and args[3] == "shot_prompts":
+            return fake_run(*args, **kwargs)
+        return kernel_run(*args, **kwargs)
+
+    monkeypatch.setattr(agent_services, "run_agent_task", shot_or_kernel)
+
 
 #: The Director's rubric (review v2) with every part working: what a PASS carries.
 RUBRIC = {"hook": 4, "situation": 4, "turn": 4, "payoff": 4, "voices": 4, "button": 4}
