@@ -4819,29 +4819,46 @@ def compile_prompts(
             if all(text in candidate for text in needed):
                 still, subject = candidate, shorter
                 break
-    # A long scene description can push out the one fact that makes the
-    # lighting physically coherent ("the flame is the only light source").
-    # Retry with that short, indispensable lighting clause, NOT the entire
-    # verbose lighting paragraph. Keep action and room if they can all fit.
-    # Never truncate a source-of-light statement in the vendor prompt.
+    # For explicitly single-source scenes (a candle in an otherwise dark room)
+    # omission of the only light source is physically wrong, not a minor style
+    # choice. Keep the short source-of-light fact while shortening verbose
+    # subject and room descriptions, without inventing new scene content.
     light_first = _sentence(light.split(",", 1)[0]) if light else ""
     if (
         light_first
         and re.search(r"\b(?:only|sole|single)\s+light\s+source\b", light_first, re.I)
         and light_first not in still
     ):
-        for shorter in (subject, *_shorter_subject(subject)):
-            retry = [
-                (
-                    0 if order == 8 else rank,
-                    order,
-                    light_first if order == 8 else shorter if order == 2 else text,
+        # Preserve original descriptions wherever possible; shorten the room
+        # before dropping it. The Director's downstream audit remains the final
+        # gate if even the essential facts cannot fit into the vendor cap.
+        room_options = [environment, *_shorter_subject(environment)] if environment else [""]
+        for room in room_options:
+            for shorter in (subject, *_shorter_subject(subject)):
+                retry = [
+                    (
+                        0 if order == 8 else rank,
+                        order,
+                        (
+                            light_first if order == 8
+                            else shorter if order == 2
+                            else room if order == 5
+                            else text
+                        ),
+                    )
+                    for rank, order, text in items
+                ]
+                candidate = _fit_sentences(
+                    retry, lint.prompt_cap(contract, "still"), STILL_MAX_WORDS
                 )
-                for rank, order, text in items
-            ]
-            candidate = _fit_sentences(retry, lint.prompt_cap(contract, "still"), STILL_MAX_WORDS)
-            if light_first in candidate and all(text in candidate for text in needed):
-                still = candidate
+                if all(
+                    phrase in candidate
+                    for phrase in (light_first, action, room)
+                    if phrase
+                ):
+                    still = candidate
+                    break
+            if light_first in still:
                 break
     # People kept faceless are shown from behind: an orbit around them turns their faces to
     # the camera, so it is never the compiler's choice for such a scene (a plan may ask).
