@@ -240,6 +240,10 @@ def prompt_text(package: dict[str, Any], layer: str) -> str:
     renders every purchase from the intent — 22:19Z, 7c26a7ce scene 1: the audit read the
     stored string of a composer since corrected and refused words the sheet would not have
     sent), or the stored string of a scene from before the intents."""
+    if package.get("prompt_format") == "editor_final_v1":
+        # What Sarah reviews must be byte-for-byte the text the vendor reads;
+        # a whitespace-join here would silently change the audited identity.
+        return str(package.get("still_prompt" if layer == "still" else "motion_prompt") or "")
     if layer == "still":
         return " ".join(str(package.get("still_prompt") or "").split())
     from app.media import prompt_lint as lint  # noqa: PLC0415
