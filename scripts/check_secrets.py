@@ -79,10 +79,15 @@ _INDEX_HASH = re.compile(r'\s*"(?:original_)?sha256": "[0-9a-f]{64}",?\s*')
 #: either: only a whole line holding one of them passes, so a key elsewhere is still caught.
 _LOCK_PIN = re.compile(r'\s*"(?:sha256": "[0-9a-f]{64}|revision": "[0-9a-f]{40})",?\s*')
 #: mirrors.lock.json pins his private mirror's commit the same way (after the copy, 2026-10-09).
+#: Public UI sound sources record SHA-256 digests of the shipped .ogg/.wav assets, never
+#: credentials. Match only the entire sha256 line in that exact attribution manifest;
+#: a token or another field in the same JSON file remains subject to the secret scan.
+_UI_SOUND_SHA256 = re.compile(r'\\s*"sha256": "[0-9a-f]{64}",?\\s*')
 _PINNED = {
     _INDEX: _INDEX_HASH,
     "backend/runpod_worker/models.lock.json": _LOCK_PIN,
     "backend/runpod_worker/mirrors.lock.json": _LOCK_PIN,
+    "frontend/public/sounds/ui/sources.json": _UI_SOUND_SHA256,
 }
 #: The studio's configuration (config/*.json) and its state file record content checksums of
 #: reviewed files: pixel art, ComfyUI workflows, the office background. Each new one failed the
