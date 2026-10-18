@@ -3632,6 +3632,26 @@ def _run_sheet_step(
     if not info["to_buy"]:
         raise SheetStepRefused("NOTHING_TO_BUY", info["waiting_ro"] or "Nimic de cumpărat.")
 
+    if environment == "PRODUCTION":
+        # This is the last shared entry to a paid step, including an Owner/API
+        # press that bypasses the automatic staircase. Neither an old approval
+        # for changed words nor an omitted Director review can buy media.
+        from app.media.prompt_audit import (  # noqa: PLC0415 - circular runbook imports
+            NEEDS_PROMPT_APPROVAL,
+            purchase_approval_gaps,
+        )
+
+        unaudited = purchase_approval_gaps(
+            engine, storyboard_id, step, [int(scene) for scene in info["to_buy"]]
+        )
+        if unaudited:
+            raise SheetStepRefused(
+                NEEDS_PROMPT_APPROVAL,
+                "Directoarea Sarah nu a aprobat cuvintele actuale ale scenelor "
+                + ", ".join(map(str, unaudited))
+                + "; nimic nu se cumpără. Cere verificarea sau rescrierea prompturilor.",
+            )
+
     cap = int(info["cap_credits"])
     margin = margin_of(settings)
     if unasked:
