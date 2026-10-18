@@ -2372,6 +2372,19 @@ def _walk_staircase(
         # sent (`prompt_audit.audit_before_purchase`): her yes is kept on those words, her no
         # is a brief the Editor rewrites from, and the sheet is rebuilt on the new words; a
         # scene she cannot approve waits for her, never bought. Text only.
+        # A paid PRODUCTION step must never treat an unavailable Director or model
+        # registry as permission to skip her review. TEST/DEMO may rehearse with
+        # deterministic local adapters, but a production purchase needs her approval.
+        if environment == "PRODUCTION" and step in LAYER_OF_STEP and registry is None:
+            scenes = [int(scene) for scene in sheet["steps"][step]["to_buy"]]
+            return stop(
+                "WAITING",
+                step,
+                "Directoarea nu este disponibilă pentru verificarea prompturilor; "
+                "nu se cumpără nimic fără aprobarea ei.",
+                refusal=NEEDS_PROMPT_APPROVAL,
+                scenes=scenes,
+            )
         if registry is not None and step in LAYER_OF_STEP:
             try:
                 audit = audit_before_purchase(
@@ -2408,6 +2421,23 @@ def _walk_staircase(
                     scenes=[int(item["scene_index"]) for item in audit["held"]],
                     audit=audit,
                 )
+            if environment == "PRODUCTION":
+                # An audit can skip scenes when her role is missing or its input
+                # cannot be read. Never interpret those omissions as a yes to pay.
+                needed = {int(scene) for scene in sheet["steps"][step]["to_buy"]}
+                confirmed = {int(scene) for scene in audit["approved"]}
+                unaudited = sorted(needed - confirmed)
+                if unaudited:
+                    return stop(
+                        "WAITING",
+                        step,
+                        "Directoarea nu a aprobat prompturile scenelor "
+                        + ", ".join(map(str, unaudited))
+                        + "; nu se cumpără nimic fără aprobarea ei.",
+                        refusal=NEEDS_PROMPT_APPROVAL,
+                        scenes=unaudited,
+                        audit=audit,
+                    )
         try:
             result = run_sheet_step(
                 engine,
