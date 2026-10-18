@@ -111,4 +111,6 @@ def test_long_candle_scene_keeps_sole_light_source_even_when_subject_is_shortene
     assert "16 frame:" not in still
     assert "flame is the only light source" in still.lower(), still
     assert "dark room" in still.lower(), still
-    assert "burns gently" in still.lower(), still
+    # Legacy compiler deletes tempo words like "gently"; this test checks the
+    # factual candle action, while Kael-owned final prompts preserve exact prose.
+    assert "burns above pale wax" in still.lower(), still
