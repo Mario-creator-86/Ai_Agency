@@ -790,7 +790,7 @@ def test_in_production_the_daily_budget_that_cannot_hold_two_films_is_said_befor
     assert "daily_budget_films" not in roomy["degrading_failures"]
 
 
-def test_a_daily_budget_below_one_film_says_the_first_film_is_refused(
+def test_a_shared_daily_budget_without_a_film_cap_is_not_misreported_as_one_film_cap(
     engine, settings, vault, studio
 ):
     seed_default_channels(engine)
@@ -798,8 +798,12 @@ def test_a_daily_budget_below_one_film_says_the_first_film_is_refused(
     set_environment(engine, "PRODUCTION")
 
     films = named(preflight_at(engine, settings, vault), "daily_budget_films")
-    assert films["ok"] is False and films["severity"] == DEGRADING
-    assert "scurtul factual" in films["message"] and "Niciun film" in films["message"]
+    # No explicit per-film cap: the daily budget is shared and each paid step
+    # checks the remaining funds. It cannot claim the first film is refused
+    # *before* its step pricing is known, or guarantee a whole film fits.
+    assert films["ok"] is True and films["severity"] == INFORMATIONAL
+    assert "Nu ai stabilit un plafon separat pe film" in films["message"]
+    assert "suma rămasă" in films["message"]
 
 
 def test_in_test_the_production_budget_is_said_as_information_only(engine, settings, vault, studio):
