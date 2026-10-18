@@ -1354,6 +1354,187 @@ def _avoid_list(raw: Any) -> list[str]:
 # ------------------------------------------------------------------ the shots
 
 
+# The Editor gets two scoped chances to repair a scene's blocking prompt before
+# ANY picture/video is purchased. The film also has a global budget: a bad
+# provider answer cannot fan out into unbounded token spending.
+PREFLIGHT_REWRITES_PER_SCENE = 2
+PREFLIGHT_REWRITES_PER_FILM = 8
+
+
+def _preflight_findings(
+    shot: ShotPrompt,
+    facts: dict[str, Any],
+    bible: dict[str, Any],
+    allowed: str,
+    previous_ending: str,
+    previous_moves: list[str],
+    shot_type: str,
+) -> tuple[list[lint.Finding], dict[str, Any]]:
+    """Check the exact compiled still/motion before ever handing them to a vendor."""
+    package, _notes = _validated_package(
+        shot, facts, bible, allowed, previous_ending
+    )
+    package.update(scene_kind=LIVE_KIND, shot_type=shot_type)
+    compiled = compile_prompts(package, bible, previous_moves=previous_moves)
+    issues = lint.lint_scene(
+        lint.LintScene(
+            scene=int(facts["scene_index"]),
+            still_prompt=str(compiled.get("still_prompt") or ""),
+            motion_prompt=str(compiled.get("motion_prompt") or ""),
+            composition_issues=tuple(compiled.get("composition_issues") or []),
+        ),
+        bible=bible,
+    )
+    return [item for item in issues if item.severity == lint.BLOCK], compiled
+
+
+def _preflight_repair_factual_shots(
+    engine: Engine,
+    registry: Any,
+    editor_id: str,
+    storyboard_id: str,
+    correlation: str,
+    bible: dict[str, Any],
+    facts: dict[str, Any],
+    packs: dict[int, ShotPrompt],
+    targets: set[int] | None,
+    profile: ShotGenerationProfile,
+) -> tuple[dict[int, list[str]], list[dict[str, Any]], list[str], set[int]]:
+    """Bounded AI fix-review loop for new factual shots, outside any DB write lock.
+
+    Already bought scene numbers are protected even if called on the full film.
+    A failed repair is NOT saved and later cannot be purchased. The daily ladder
+    can try again on another day, but no step here auto-buys images or clips.
+    """
+    from app.media.models import SceneTake  # noqa: PLC0415 - no media purchases
+
+    with Session(engine) as session:
+        rows = list(
+            session.scalars(
+                select(StoryboardScene)
+                .where(StoryboardScene.storyboard_id == storyboard_id)
+                .order_by(StoryboardScene.scene_index)
+            )
+        )
+        protected = set(
+            session.scalars(
+                select(SceneTake.scene_number).where(
+                    SceneTake.storyboard_id == storyboard_id,
+                    SceneTake.status.in_(("SUBMITTED", "PAID", "APPROVED", "REJECTED", "LOST")),
+                )
+            )
+        )
+        snapshot = [
+            (
+                int(row.scene_index),
+                str(row.shot_type),
+                str((row.prompt_json or {}).get("ending_frame") or ""),
+                str((row.prompt_json or {}).get("camera_move") or ""),
+                str(row.scene_kind or LIVE_KIND),
+            )
+            for row in rows
+        ]
+    allowed = _allowed_text(facts)
+    by_index = {int(item["scene_index"]): item for item in facts["scenes"]}
+    previous_ending = ""
+    previous_moves: list[str] = []
+    failed: dict[int, list[str]] = {}
+    repaired: list[dict[str, Any]] = []
+    run_ids: list[str] = []
+    remaining = PREFLIGHT_REWRITES_PER_FILM
+    for index, shot_type, old_ending, old_move, kind in snapshot:
+        if (targets is not None and index not in targets) or index not in packs or kind != LIVE_KIND:
+            previous_ending = old_ending
+            if old_move:
+                previous_moves.append(old_move)
+            continue
+        # The existing shot belongs to its paid media; never silently invalidate it.
+        if index in protected:
+            previous_ending = old_ending
+            if old_move:
+                previous_moves.append(old_move)
+            continue
+        scene_facts = by_index.get(index)
+        if scene_facts is None:
+            continue
+        candidate = packs[index]
+        blockers: list[lint.Finding] = []
+        compiled: dict[str, Any] = {}
+        seen: set[str] = set()
+        for turn in range(PREFLIGHT_REWRITES_PER_SCENE + 1):
+            blockers, compiled = _preflight_findings(
+                candidate, scene_facts, bible, allowed, previous_ending, previous_moves,
+                shot_type,
+            )
+            if not blockers:
+                packs[index] = candidate
+                if turn:
+                    repaired.append({"scene_index": index, "rounds": turn})
+                break
+            if turn >= PREFLIGHT_REWRITES_PER_SCENE or remaining <= 0 or registry is None:
+                failed[index] = [item.message_ro for item in blockers]
+                break
+            # Reusing an earlier candidate/review is not progress.
+            signature = json.dumps(candidate.model_dump(), sort_keys=True, ensure_ascii=False)
+            if signature in seen:
+                failed[index] = [item.message_ro for item in blockers]
+                break
+            seen.add(signature)
+            remaining -= 1
+            payload = {
+                "scene_index": index,
+                "scene_narration_and_facts": scene_facts,
+                "bible": bible,
+                "current_shot": candidate.model_dump(),
+                "vendor_still": compiled.get("still_prompt"),
+                "vendor_motion": compiled.get("motion_prompt"),
+                "blocking_findings": [
+                    {"code": item.code, "evidence": item.evidence, "reason": item.message_ro}
+                    for item in blockers
+                ],
+            }
+            prompt = (
+                _SHOTS_INSTRUCTIONS
+                + _GENERATION_QC_INSTRUCTIONS
+                + "\nRepair ONLY this shot's fields that caused the BLOCK findings. "
+                "Keep the story, approved narration, characters and location. "
+                "Medals on a person's chest require a frontal or three-quarter shot; "
+                "a vacuum cosmic web cannot have terrestrial ground or horizon camera moves. "
+                "Write the first frame as a STATIC moment. Camera travel is only video. "
+                "Return one shot in JSON: {\"shots\":[{\"scene_index\": ..., ...}]}. "
+                "Do not propose a new scene or new narration.\n"
+                + wrap_in_inert_boundary(_dumps(payload), "prompt-preflight")
+            )
+            reply = _run(
+                engine, registry, editor_id, "shot_prompts", prompt,
+                SHOTS_TEMPLATE, correlation,
+                f"Corectez numai promptul cadrului {index} înainte de cumpărare.",
+                profile.max_tokens,
+                native_thinking=profile.native_thinking,
+                subject={"storyboard_id": storyboard_id, "scene_indexes": [index],
+                         "preflight_repair": True},
+            )
+            if reply is None:
+                failed[index] = [item.message_ro for item in blockers]
+                break
+            run_ids.append(str(reply["id"]))
+            next_shot = parse_shot_plan(reply.get("output_text") or "").shots.get(index)
+            if next_shot is None or next_shot.model_dump() == candidate.model_dump():
+                failed[index] = [item.message_ro for item in blockers]
+                break
+            candidate = next_shot
+        # Subsequent shots take their continuity from the candidate that actually passed.
+        if index not in failed and compiled:
+            previous_ending = str(candidate.ending_frame or "")
+            if compiled.get("camera_move"):
+                previous_moves.append(str(compiled["camera_move"]))
+        else:
+            previous_ending = old_ending
+            if old_move:
+                previous_moves.append(old_move)
+    return failed, repaired, run_ids, protected
+
+
 def write_shot_prompts(
     engine: Engine,
     registry: Any,
@@ -1540,6 +1721,18 @@ def write_shot_prompts(
                             packs.setdefault(index, answer)
                     parsed = ShotPlanParse(packs, second.method, second.error)
 
+    preflight_failed: dict[int, list[str]] = {}
+    preflight_repaired: list[dict[str, Any]] = []
+    preflight_protected: set[int] = set()
+    if not serial and editor_id is not None and registry is not None and packs:
+        profile = shot_generation_profile(engine, editor_id)
+        preflight_failed, preflight_repaired, preflight_run_ids, preflight_protected = (
+            _preflight_repair_factual_shots(
+                engine, registry, editor_id, storyboard_id, correlation, bible,
+                facts, packs, targets, profile,
+            )
+        )
+        run_ids.extend(preflight_run_ids)
     allowed = _allowed_text(facts)
     written: list[dict[str, Any]] = []
     refused: list[str] = []
@@ -1563,8 +1756,17 @@ def write_shot_prompts(
         )
         facts_by_index = {int(s["scene_index"]): s for s in facts["scenes"]}
         selected = [s for s in scenes if targets is None or s.scene_index in targets]
-        lost = answered and not serial and any(s.scene_index not in packs for s in selected)
+        lost = bool(preflight_failed) or (
+            answered and not serial and any(s.scene_index not in packs for s in selected)
+        )
         for scene in scenes:
+            if scene.scene_index in preflight_protected or scene.scene_index in preflight_failed:
+                # Never overwrite a paid identity or save a scene whose review still BLOCKS.
+                previous = dict(scene.prompt_json or {})
+                previous_ending = str(previous.get("ending_frame") or "")
+                if previous.get("camera_move"):
+                    moves.append(str(previous["camera_move"]))
+                continue
             if targets is not None and scene.scene_index not in targets:
                 previous = dict(scene.prompt_json or {})
                 previous_ending = str(previous.get("ending_frame") or "")
@@ -1635,7 +1837,8 @@ def write_shot_prompts(
         missing = [
             s.scene_index
             for s in selected
-            if s.scene_index not in packs and s.scene_index not in kept_from_before
+            if (s.scene_index not in packs or s.scene_index in preflight_failed)
+            and s.scene_index not in kept_from_before
         ]
         board = session.get(Storyboard, storyboard_id)
         if lost and missing:
@@ -1654,6 +1857,8 @@ def write_shot_prompts(
                     "kept_from_before": kept_from_before,
                     "decoder_error": parsed.error,
                     "parse_method": parsed.method,
+                    "preflight_failed": preflight_failed,
+                    "preflight_repaired": preflight_repaired,
                     "reasked": reasked,
                     "run_ids": run_ids,
                 },
@@ -1683,6 +1888,7 @@ def write_shot_prompts(
                     "parse_method": parsed.method,
                     "reasked": reasked,
                     "ending_dropped": ending_dropped,
+                    "preflight_repaired": preflight_repaired,
                 },
                 correlation,
             )
@@ -1695,8 +1901,9 @@ def write_shot_prompts(
             storyboard_id,
             missing,
             f"Planul de cadre al editorului nu a putut fi citit pentru cadrele "
-            f"{_listed(missing)}, nici după a doua cerere; filmul așteaptă un plan "
-            f"({NEEDS_SHOT_PLAN}).",
+            f"{_listed(missing)}, după verificarea și corecția automată limitată; "
+            f"filmul așteaptă un plan valid ({NEEDS_SHOT_PLAN}). "
+            f"Blocaje: {str(preflight_failed)[:600]}",
         )
     logger.info(
         "shot_prompts_written",
