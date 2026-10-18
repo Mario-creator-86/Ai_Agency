@@ -80,3 +80,35 @@ def test_no_people_clause_is_not_forced_into_a_face_allowed_scene() -> None:
     assert "only light source" in still
     assert CLOSE_PEOPLE_SENTENCE not in still
     assert PEOPLE_SENTENCE not in still
+
+
+def test_long_candle_scene_keeps_sole_light_source_even_when_subject_is_shortened() -> None:
+    package = {
+        "scene_kind": "LIVE",
+        "shot_type": "WIDE",
+        "subject": (
+            "A single candle flame, a teardrop of burning gas, amber with a hard bright "
+            "rim, small and burning above the wax, seated in the lower third of the frame, "
+            "its edges crisp and defined, the base blue, the rest of the dark room black."
+        ),
+        "action": "It burns gently above pale wax, alone in the dark room.",
+        "environment": (
+            "A dark room at night, the candle is a physical column of wax with a lit "
+            "wick standing on a flat surface, absolute darkness fills the room at "
+            "every height, a still unmoving interior."
+        ),
+        "camera": (
+            "Wide establishing shot, 24mm lens, vertical 9:16 frame: "
+            "The whole frame is one dark empty room with the small flame "
+            "and its surface near the lower third."
+        ),
+        "lighting": (
+            "The flame is the only light source in the frame, a warm pool of "
+            "amber glow around the wick, all shadows remaining dark, no second light."
+        ),
+    }
+    still = compile_prompts(package, {"face_policy": "ALLOW"})["still_prompt"]
+    assert "16 frame:" not in still
+    assert "flame is the only light source" in still.lower(), still
+    assert "dark room" in still.lower(), still
+    assert "burns gently" in still.lower(), still
