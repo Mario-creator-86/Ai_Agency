@@ -2382,6 +2382,7 @@ class _StillRounds:
         requests = self._requests(state)
         identity = identity_of_request(requests[0])
         with Session(self.engine) as session, session.begin():
+            lock_for_write(session)
             refusal = refused_before(session, identity)
             if refusal is not None:
                 record_refusal(session, identity, refusal, correlation_id=self.correlation_id)
