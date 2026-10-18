@@ -794,7 +794,7 @@ def test_a_daily_budget_below_one_film_says_the_first_film_is_refused(
     engine, settings, vault, studio
 ):
     seed_default_channels(engine)
-    set_budget(engine, BudgetCommand(period="DAILY", limit_usd="10"))
+    set_budget(engine, BudgetCommand(period="DAILY", limit_usd="1"))
     set_environment(engine, "PRODUCTION")
 
     films = named(preflight_at(engine, settings, vault), "daily_budget_films")
