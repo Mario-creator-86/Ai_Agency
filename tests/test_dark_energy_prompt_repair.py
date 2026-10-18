@@ -78,7 +78,7 @@ def test_cosmic_repair_preserves_paid_still_and_rewrites_motion_only() -> None:
     assert visual == COSMIC_STILL
     assert new["still_prompt"] == COSMIC_STILL
     assert new["subject"] == OLD_COSMOS["subject"]
-    assert new["writer_visual"] == OLD_COSMOS.get("writer_visual")
+    assert new.get("writer_visual") == OLD_COSMOS.get("writer_visual")
     assert new["camera_move"] == "dolly in"
     assert "ground sliding beneath" not in new["motion_prompt"].lower()
     assert "horizon opening ahead" not in new["motion_prompt"].lower()
