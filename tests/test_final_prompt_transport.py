@@ -69,8 +69,12 @@ def test_sarah_audits_exact_vendor_prompts_without_rematerialisation() -> None:
 def test_bad_or_overlong_final_text_fails_closed() -> None:
     with pytest.raises(FinalPromptError, match="still_prompt"):
         validate_final({**_raw(), "still_prompt": ""})
+    # The overlength fixture must NOT also end with whitespace: the validator
+    # correctly rejects that independent problem first.
     with pytest.raises(FinalPromptError, match="UTF-16"):
-        validate_final({**_raw(), "still_prompt": "word " * 250})
+        validate_final({**_raw(), "still_prompt": ("word " * 250).strip()})
+    with pytest.raises(FinalPromptError, match="spatii exterioare"):
+        validate_final({**_raw(), "still_prompt": STILL_TEXT + " "})
     with pytest.raises(FinalPromptError, match="camera_move"):
         validate_final({**_raw(), "camera_move": "teleport camera"})
     with pytest.raises(FinalPromptError, match="motion_prompt"):
