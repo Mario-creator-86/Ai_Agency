@@ -184,7 +184,9 @@ def test_the_shot_writer_still_gets_its_lessons_in_its_data_and_nobody_in_their_
         calls.append(
             {"task": task_type, "prompt": prompt, "system": system_of(agent_id, task_type)}
         )
-        answer = json.dumps(shot_pack(len(scenes_of(engine, board_id))))
+        from e2e_shots import make_shot_plan
+
+        answer = make_shot_plan(prompt)
         return {"id": str(uuid4()), "status": "SUCCEEDED", "output_text": answer}
 
     def fake_reading(
