@@ -64,3 +64,17 @@ def test_ssim_single_axis_never_refuses_as_band(tmp_path, monkeypatch, columns, 
     assert (problem is not None) is blank
     if blank:
         assert "blank or uniform" in problem
+
+
+def test_vision_instructions_distinguish_real_collages_from_dark_surfaces():
+    from app.media.picture_qc import (
+        _CLIP_INSTRUCTIONS,
+        _INSTRUCTIONS,
+        _STILL_INSTRUCTIONS,
+    )
+
+    assert "horizon, dark sky, desk" in _INSTRUCTIONS
+    assert "desk front, shadow" in _STILL_INSTRUCTIONS
+    assert "dark sky, desk, floor" in _CLIP_INSTRUCTIONS
+    assert "one_picture" in _STILL_INSTRUCTIONS
+    assert "one_picture" in _CLIP_INSTRUCTIONS
