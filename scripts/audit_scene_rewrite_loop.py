@@ -25,7 +25,8 @@ from app.config import ROOT, Settings  # noqa: E402
 
 BRIEFS = "media.director_scene_brief"
 REWRITES = "media.prompts_rewritten"
-CODES = (BRIEFS, REWRITES, "media.shot_prompts_written", "media.shot_prompts_incomplete")
+AUDITED = "media.prompt_audited"
+CODES = (BRIEFS, REWRITES, AUDITED, "media.shot_prompts_written", "media.shot_prompts_incomplete")
 
 
 def _short(value: Any, length: int = 280) -> str:
@@ -127,6 +128,18 @@ def main() -> None:
                 for key in ("brief_run_id", "rewrite_run_id", "review_run_id"):
                     if p.get(key):
                         run_ids.add(str(p[key]))
+            elif row["event_type"] == AUDITED:
+                print(
+                    f"  audit_verdict={p.get('verdict')} "
+                    f"rewritten={p.get('rewritten')} "
+                    f"digest={str(p.get('digest') or '')[:14]} "
+                    f"template={p.get('instructions')}"
+                )
+                print(f"  reason={_short(p.get('reason'), 340)}")
+                if p.get("finding"):
+                    print(f"  finding={_short(p['finding'], 340)}")
+                if p.get("run_id"):
+                    run_ids.add(str(p["run_id"]))
             else:
                 print(f"  reason={_short(p.get('reason'), 170)}")
                 for key in ("old_still_prompt", "still_prompt", "old_motion_prompt", "motion_prompt"):
@@ -138,6 +151,11 @@ def main() -> None:
                 for row, p in chosen if row["event_type"] == BRIEFS
             )
             print("\nREZUMAT BRIEF-URI:", dict(counts))
+            audit_counts = Counter(
+                (p.get("scene_index"), p.get("verdict"))
+                for row, p in chosen if row["event_type"] == AUDITED
+            )
+            print("REZUMAT AUDIT INAINTE DE PLATA:", dict(audit_counts))
         else:
             print("Nu exista evenimente de acest tip pentru selectia ceruta.")
 
