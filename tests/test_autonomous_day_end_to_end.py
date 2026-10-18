@@ -691,6 +691,7 @@ VENDOR_FAKES = (
     ("app.media.factory", "tts_provider"),
     ("app.media.factory", "render_plan"),
     ("app.media.factory", "motion_for_scene"),
+    ("app.media.factory", "reference_image_adapter"),
     ("app.runbook.stages", "selected_youtube"),
     ("app.runbook.stages", "analytics_provider_for_channel"),
     ("app.economy.credits", "credit_balances"),
@@ -730,6 +731,9 @@ def install_vendor_fakes(monkeypatch, *, publisher: Any, motion: FakeMotionChoos
             "plan": {},
         },
         ("app.media.factory", "motion_for_scene"): motion,
+        # Never construct a second RunPod image adapter in an offline day.
+        # The original image adapter is already a fully local test double.
+        ("app.media.factory", "reference_image_adapter"): lambda _engine, _board, adapter: adapter,
         ("app.runbook.stages", "selected_youtube"): lambda *a, **k: publisher,
         ("app.runbook.stages", "analytics_provider_for_channel"): analytics,
         # What the vendors say the account holds: nobody is asked, so nothing is measured,
