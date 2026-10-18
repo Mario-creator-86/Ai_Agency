@@ -305,7 +305,7 @@ def test_the_prompt_agent_writes_the_serial_shots_with_the_look_and_the_room(
         assert "Location: Content, floor 2" in scene.visual_prompt
         assert "RENDER 91%" not in scene.visual_prompt
         assert _TEXT_REQUEST.search(scene.visual_prompt) is None
-        assert "standing beside the office desk" in scene.visual_prompt
+        assert "stands beside the office desk" in scene.visual_prompt
         # The light is the series', not the model's idea of the day.
         assert "noon sunlight" not in scene.visual_prompt
         assert scene.prompt_json["from_model"] is True
@@ -446,7 +446,7 @@ def test_a_serial_still_is_one_moment_in_a_fixed_frame(engine, staffed, monkeypa
         assert package["prompt_format"] == "editor_final_v1"
         assert still == scene.visual_prompt
         assert still.startswith(look["block"]), still[:160]
-        assert "standing beside the office desk" in still
+        assert "stands beside the office desk" in still
         assert "taps the brass pen" not in still
         assert "then lays the pen flat" not in still
         assert _sequence_in(still) == "" and _panels_in(still) == ""
