@@ -42,6 +42,7 @@ from app.media.prompt_lint import (
     ENUM_CODE,
     MOTION_CLOSING,
     MOTION_WORDS,
+    STILL_WORDS,
     NEGATION,
     LintScene,
     camera_moves,
@@ -206,7 +207,9 @@ def test_nepal_still_prompts_are_prose_that_opens_with_one_look_and_hides_every_
             assert "diffuse daylight" not in block.lower(), block
         if package.get("environment"):
             assert "as it is today" not in block.lower(), block
-        assert 60 <= len(still.split()) <= 120, len(still.split())
+        # The Owner raised the still-word allowance to 900 in October 2026. Check the
+        # current configured policy rather than the obsolete 120-word Nepal-era limit.
+        assert STILL_WORDS[0] <= len(still.split()) <= STILL_WORDS[1], len(still.split())
         # Every person the prompt shows is kept from behind or in the distance, within the
         # words around it, in its own sentence.
         for sentence in re.split(r"(?<=[.!?;])\s+", still):
