@@ -1456,6 +1456,9 @@ def _preflight_repair_factual_shots(
             continue
         scene_facts = by_index.get(index)
         if scene_facts is None:
+            previous_ending = old_ending
+            if old_move:
+                previous_moves.append(old_move)
             continue
         candidate = packs[index]
         blockers: list[lint.Finding] = []
@@ -1754,6 +1757,21 @@ def write_shot_prompts(
                 .order_by(StoryboardScene.scene_index)
             )
         )
+        # Takes may have arrived while Kael was answering a preflight question.
+        # Recheck under the write lock: never replace the words of paid media.
+        from app.media.models import SceneTake  # noqa: PLC0415
+
+        protected_now = set(
+            session.scalars(
+                select(SceneTake.scene_number).where(
+                    SceneTake.storyboard_id == storyboard_id,
+                    SceneTake.status.in_(
+                        ("SUBMITTED", "PAID", "APPROVED", "REJECTED", "LOST")
+                    ),
+                )
+            )
+        )
+        preflight_protected.update(protected_now)
         facts_by_index = {int(s["scene_index"]): s for s in facts["scenes"]}
         selected = [s for s in scenes if targets is None or s.scene_index in targets]
         lost = bool(preflight_failed) or (
