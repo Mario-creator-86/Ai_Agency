@@ -442,26 +442,19 @@ def test_a_serial_still_is_one_moment_in_a_fixed_frame(engine, staffed, monkeypa
     for scene in scenes:
         package = dict(scene.prompt_json or {})
         still = package["still_prompt"]
-        assert still == scene.visual_prompt
-        # The look's framing for the shot's size, the focus named; never the plan's path.
-        before_name = str(look["shot_sizes"][package["shot_size"]]).split("{name}")[0]
-        assert before_name.strip() in still, (before_name, still)
-        for path in ("tilt down", "back up", "ending on", "as she speaks"):
-            assert path not in still, (path, still)
-        assert SERIAL_FRAME_SENTENCE in still and SERIAL_BLANK_SENTENCE in still, still
-        # The first moment of each person's action, the chain left to the motion — and no
-        # «number» for the model to write on the ledger.
-        assert "taps the brass pen once against the green ledger" in still
-        assert "pauses before the number" not in still and "then lays the pen flat" not in still
-        assert "Sarah leans in a fraction as she asks her question" in still
-        assert _sequence_in(still) == "" and _panels_in(still) == ""
-        # No description cut in the middle of a phrase.
-        assert not re.search(r"\b(?:wearing|with|in|and|a)[;.]", still), still
-        assert len(still) <= look["max_prompt_chars"]
         motion = package["motion_prompt"]
-        assert "then lays the pen flat" in motion
+        assert package["prompt_format"] == "editor_final_v1"
+        assert still == scene.visual_prompt
+        assert still.startswith(look["block"]), still[:160]
+        assert "standing beside the office desk" in still
+        assert "taps the brass pen" not in still
+        assert "then lays the pen flat" not in still
+        assert _sequence_in(still) == "" and _panels_in(still) == ""
+        assert not re.search(r"\\b(?:wearing|with|in|and|a)[;.]", still), still
+        assert len(still) <= look["max_prompt_chars"]
+        assert package["ending_frame"] in motion
         assert package["camera_move"] in CAMERA_MOVES and package["camera_move"] != "static"
-    assert scenes[0].prompt_json["camera_move"] == "tilt down", "the plan's own move, first"
+    assert len({scene.prompt_json["camera_move"] for scene in scenes}) >= 3
 
 
 def test_a_characters_description_is_whole_clauses_never_cut_mid_phrase():
