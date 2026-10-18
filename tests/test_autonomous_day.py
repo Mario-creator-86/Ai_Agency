@@ -169,9 +169,11 @@ def _varied_shot_plan(studio_, monkeypatch) -> None:
                 "illuminates the foreground, with one warm lamp behind the subject. "
                 "A single continuous vertical 9:16 frame, carefully composed."
             )
+            ending_frame = f"{subject}, centred"
             motion_prompt = (
                 f"A steady {move} at a measured pace while {action}. "
-                "The world and subject remain consistent in one uninterrupted shot."
+                "The world and subject remain consistent in one uninterrupted shot. "
+                f"The shot ends on {ending_frame}."
             )
             planned.append(
                 {
@@ -191,7 +193,7 @@ def _varied_shot_plan(studio_, monkeypatch) -> None:
                     "emotion": "quiet anticipation",
                     "background": "stars, unmoving",
                     "continuity": "the same night sky as the previous shot",
-                    "ending_frame": f"{subject}, centred",
+                    "ending_frame": ending_frame,
                     "audio_intent": "wind, distant",
                     "transition": "cut",
                     "avoid": ["text of any kind"],
