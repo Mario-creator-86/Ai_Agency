@@ -319,32 +319,10 @@ class StudioModel:
         )
 
     def _shots(self, prompt: str) -> str:
-        indices = sorted({int(n) for n in re.findall(r'"scene_index":\s*(\d+)', prompt)}) or [1]
-        return json.dumps(
-            {
-                "shots": [
-                    {
-                        "scene_index": index,
-                        "story_purpose": "EVIDENCE",
-                        "subject": "the observatory dome against the night",
-                        "action": "the dome turns slowly, its shutter opening on the sky",
-                        "environment": "a cold hillside under clear stars",
-                        "camera": "wide, low angle, static",
-                        "lighting": "moonlight from the left, one warm lamp behind",
-                        "composition": "vertical, the dome low in frame",
-                        "motion": "slow rotation, nothing else moves",
-                        "emotion": "quiet anticipation",
-                        "background": "stars, unmoving",
-                        "continuity": "the same sky as the previous shot",
-                        "ending_frame": "the open shutter, centred",
-                        "audio_intent": "wind, distant",
-                        "transition": "cut",
-                        "avoid": ["text of any kind"],
-                    }
-                    for index in indices
-                ]
-            }
-        )
+        # The very same Kael final-text fixture as the paid-mode day tests.
+        from e2e_shots import make_shot_plan
+
+        return make_shot_plan(prompt)
 
     def _episode(self, prompt: str) -> str:
         # Written as the brief (v3) asks, from its data alone: the names from ALLOWED_NAMES,
