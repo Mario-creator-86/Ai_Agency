@@ -556,7 +556,16 @@ def test_a_step_ended_on_the_budget_waits_on_his_budget_not_on_a_fault(
         },
     )
 
-    film = stages._walk_staircase(engine, settings, None, "film-1", {}, "PRODUCTION", "c")
+    # The money boundary is under test; Sarah's review is supplied by a
+    # deterministic stand-in so the unrelated Director gate cannot hide it.
+    monkeypatch.setattr(
+        "app.media.prompt_audit.audit_before_purchase",
+        lambda *a, **k: {
+            "approved": list(k["scenes"]), "rewritten": [], "held": [],
+            "skipped": [], "asked": True,
+        },
+    )
+    film = stages._walk_staircase(engine, settings, object(), "film-1", {}, "PRODUCTION", "c")
 
     assert film["status"] == "WAITING" and film["refusal"] == "OVER_DAILY_BUDGET"
     assert film["step"] == "stills" and film["reason"] == words
