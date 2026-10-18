@@ -113,8 +113,13 @@ def _valid_pack() -> dict[str, Any]:
         "shots": [
             {
                 **parsed.shots[index].model_dump(),
+                # The final motion text describes the precise end frame in its
+                # own plan. Reuse THAT end frame too: keeping the old Nepal
+                # ending while transporting the synthetic observatory video
+                # falsely reports REQUIRED_CONTENT_LOST at the sheet gate.
                 **{name: final[index][name] for name in (
-                    "still_prompt", "motion_prompt", "negative_prompt", "camera_move"
+                    "still_prompt", "motion_prompt", "negative_prompt", "camera_move",
+                    "ending_frame",
                 )},
             }
             for index in sorted(parsed.shots)
