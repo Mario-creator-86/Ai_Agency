@@ -703,8 +703,7 @@ def test_a_clip_animated_from_a_panel_still_goes_back_to_the_still_and_buys_noth
     assert report.back_to_still is False
     assert report.passed
     decision = clip_retry_decision(
-        report, seed=5, retries_done=0, committed_credits=0, price_credits=100,
-        cap_credits=10_000
+        report, seed=5, retries_done=0, committed_credits=0, price_credits=100, cap_credits=10_000
     )
     assert decision.action == "ACCEPT"
 
