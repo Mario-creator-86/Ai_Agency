@@ -797,8 +797,17 @@ def classify_kind_phrase(text: str) -> tuple[str, str] | None:
 
 
 def bible_face_rule(bible: Mapping[str, Any] | None) -> str | None:
-    """The bible's own words when it forbids faces, else None."""
+    """Return an intentional no-visible-faces rule, never a blanket platform ban.
+
+    Explicit ALLOW/REQUIRE override legacy generated "no faces" prose. Explicit HIDE
+    preserves the restriction even if the bible does not repeat it in words.
+    Bibles without a policy keep their previous semantics: old films are not silently
+    reinterpreted in the middle of a paid production.
+    """
     if not isinstance(bible, Mapping):
+        return None
+    policy = str(bible.get("face_policy") or "").strip().upper()
+    if policy in ("ALLOW", "REQUIRE"):
         return None
     rules: list[str] = []
     for key in ("continuity_rules", "rules", "people_rule"):
@@ -816,6 +825,8 @@ def bible_face_rule(bible: Mapping[str, Any] | None) -> str | None:
             text = str(item)
             if BIBLE_AVOID_FACES.match(text) or BIBLE_NO_FACES.search(text):
                 return text
+    if policy == "HIDE":
+        return "Faces must not be visible (explicit face_policy: HIDE)"
     return None
 
 
