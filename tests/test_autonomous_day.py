@@ -126,7 +126,9 @@ def _runway(monkeypatch, tmp_path, *, balance: float = 10_000) -> dict[str, Any]
 
 #: A shot plan with a different frame and subject per scene, as a real Video Editor writes
 #: one: the end-to-end stand-in answers every scene alike, which the sheet's lint rightly
-#: BLOCKs in PRODUCTION ("every filmed scene has the same framing").
+#: BLOCKs in PRODUCTION ("every filmed scene has the same framing"). The fake editor
+#: must also return complete Kael-owned still/motion vendor texts and camera_move; legacy
+#: plan-only shots are correctly rejected by the production prompt gate.
 VARIED_SHOTS = (
     (
         "a wide, low angle, 24mm lens",
@@ -160,10 +162,25 @@ def _varied_shot_plan(studio_, monkeypatch) -> None:
         planned = []
         for index in indices:
             camera, subject, action = VARIED_SHOTS[(index - 1) % len(VARIED_SHOTS)]
+            move = ("dolly in", "tracking left", "crane up", "slow pan right")[(index - 1) % 4]
+            still_prompt = (
+                f"Documentary photograph, {camera}. The first instant shows {subject} "
+                "at a remote observatory beneath a dark, clear sky. Cold moonlight "
+                "illuminates the foreground, with one warm lamp behind the subject. "
+                "A single continuous vertical 9:16 frame, carefully composed."
+            )
+            motion_prompt = (
+                f"A steady {move} at a measured pace while {action}. "
+                "The world and subject remain consistent in one uninterrupted shot."
+            )
             planned.append(
                 {
                     "scene_index": index,
                     "story_purpose": "EVIDENCE",
+                    "camera_move": move,
+                    "still_prompt": still_prompt,
+                    "motion_prompt": motion_prompt,
+                    "negative_prompt": "letters, logos",
                     "subject": subject,
                     "action": action,
                     "environment": "a remote observatory far from any city",
