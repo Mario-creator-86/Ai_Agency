@@ -69,7 +69,9 @@ def _serial_fake_shot(scene: dict, index: int, move: str) -> dict:
         f"wearing {person.get('outfit') or 'office clothes'}"
         for person in people
     )
-    place = str(scene.get("location") or "studio house")
+    # Reduced test payloads can omit location; keep the test serial in its
+    # canonical Content room rather than replacing a missing room with the house.
+    place = str(scene.get("location") or "Content, floor 2")
     still_prompt = " ".join(part for part in (
         str(look.get("block") or ""),
         room_sentence(look, place),
