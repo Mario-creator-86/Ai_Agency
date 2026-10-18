@@ -1794,7 +1794,7 @@ def _fixture_sarah_approves(monkeypatch) -> None:
         return {"approved": list(scenes), "rewritten": [], "held": [], "skipped": [], "asked": True}
 
     monkeypatch.setattr(stages, "_walk_staircase", with_director)
-    monkeypatch.setattr(stages, "audit_before_purchase", approved)
+    monkeypatch.setattr("app.media.prompt_audit.audit_before_purchase", approved)
 
 
 def _staircase_world(engine, tmp_path, monkeypatch, *, stills=None) -> dict[str, Any]:
@@ -2930,6 +2930,7 @@ def _assembled_staircase_film(engine, settings, tmp_path, monkeypatch):
 
     _production(engine)
     _paid_media_mode(engine)
+    _fixture_sarah_approves(monkeypatch)
     storyboard_id = _bottom_of_the_staircase(engine, tmp_path, scenes=2)
     stills = _noise_stills(tmp_path)
 
