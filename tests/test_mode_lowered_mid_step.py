@@ -280,8 +280,9 @@ def test_a_mode_lowered_during_an_unasked_still_redo_buys_no_reroll(engine, tmp_
     assert len(images.asked) == 1, "a re-roll was bought after the mode was lowered"
     # A rejected frame also requires Sarah to approve replacement words before a reroll.
     assert "Directoarea le rescrie" in result["still"]["reason"]
-    (event,) = stopped_events(engine)
-    assert event["step"] == "scene_redo"
+    # Sarah's mandatory rewrite gate refused the reroll first: no second purchase
+    # was attempted, so the mode guard had no purchase to refuse or log.
+    assert stopped_events(engine) == []
 
 
 # ------------------------------------------------- 4. the mode before the balance, unasked
