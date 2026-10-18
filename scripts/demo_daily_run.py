@@ -46,6 +46,12 @@ def demo_folder_settings(folder: Path):  # type: ignore[no-untyped-def]
         log_dir=folder / "logs",
         demo_mode=True,
         worker_enabled=False,
+        # The scripted DEMO model supplies a fixed four-scene short, not a
+        # production-length 160-second script. The test suite pins this to 30 s
+        # through its autouse fixtures; the standalone CLI must use the same
+        # profile without depending on pytest or the machine's STUDIO_* env.
+        target_video_seconds=30,
+        montage_enabled=False,
         ffmpeg_path=shutil.which("ffmpeg"),
     )
 
