@@ -430,7 +430,7 @@ def record_cap_choice(
             # The run field is only provenance metadata, never a call to any
             # model's run() method. Read it as data, not as an executable edge
             # in the paid-path audit's conservative call graph.
-            **dict(vars(choice).get("run") or {}),
+            **dict(vars(choice)["run"]),
             **({"previous": dict(previous)} if previous else {}),
         },
         correlation_id,
