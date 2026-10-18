@@ -299,6 +299,19 @@ def test_the_demo_process_connects_to_nothing_beyond_this_machine():
     assert socket.socket.connect is before
 
 
+def test_the_web_demo_pins_a_short_without_changing_production_defaults(tmp_path):
+    from app.demo import demo_settings
+
+    production = _demo_settings(
+        tmp_path, target_video_seconds=160, montage_enabled=True
+    )
+    demo = demo_settings(production)
+    assert demo.target_video_seconds == 30
+    assert demo.montage_enabled is False
+    assert production.target_video_seconds == 160
+    assert production.montage_enabled is True
+
+
 @requires_ffmpeg
 def test_the_shipped_demo_script_ends_with_a_film(tmp_path, capsys, monkeypatch):
     """The standalone CLI must film with real production defaults, not pytest's 30 s pin."""
