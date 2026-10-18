@@ -1662,10 +1662,14 @@ def test_quality_control_without_a_seeing_model_fails_a_panel_scene_and_asks_for
     ids = _spanned_film(engine, tmp_path, film=_panel_film(tmp_path))
     report = evaluate_media_qc(engine, ids["asset"], str(uuid4()))
     spans = report["checks_json"]["picture_spans_qc"]
+    # evaluate_media_qc intentionally moves span failures to failure_reasons_json.
+    # With no vision, a band alone must never be a measured refusal.
     assert spans["passed"] is None
-    assert spans["failures"] == []
-    assert all(entry["panels"]["status"] == "NOT_APPLICABLE" for entry in spans["scenes"]
-               if entry["kind"] == "LIVE")
+    live = [entry for entry in spans["scenes"] if entry["kind"] == "LIVE"]
+    assert len(live) == 2
+    assert all(entry["passed"] is None for entry in live)
+    assert all(entry["panels"]["status"] == "NOT_APPLICABLE" for entry in live)
+    assert not any("bandă plată" in reason for reason in report["failure_reasons_json"])
 
 
 @requires_ffmpeg
@@ -1809,9 +1813,12 @@ def test_a_scene_made_of_panels_fails_the_span_check_on_the_band_alone(
     record = span_picture_qc(engine, None, ids["asset"], str(uuid4()), judge=_Judge())
     assert record["status"] == "MEASURED" and record["passed"] is True
     scenes = {entry["scene_index"]: entry for entry in record["scenes"]}
-    for scene in scenes.values():
-        assert scene["passed"] is True
-        assert scene["panels"]["status"] == "NOT_APPLICABLE"
+    # Scene 3 is a locally composed BLACK card; it has no AI picture verdict.
+    assert scenes[3]["passed"] is None and scenes[3]["status"] == "NOT_APPLICABLE"
+    for index in (1, 2):
+        assert scenes[index]["passed"] is True
+        assert scenes[index]["picture"]["status"] == "PASSED"
+        assert scenes[index]["panels"]["status"] == "NOT_APPLICABLE"
     assert record["failures"] == []
 
 
@@ -1826,9 +1833,12 @@ def test_quality_control_fails_a_panel_scene_and_the_studio_asks_for_a_new_still
     )
     spans = report["checks_json"]["picture_spans_qc"]
     assert spans["passed"] is True
-    assert spans["failures"] == []
-    assert all(entry["panels"]["status"] == "NOT_APPLICABLE" for entry in spans["scenes"]
-               if entry["kind"] == "LIVE")
+    live = [entry for entry in spans["scenes"] if entry["kind"] == "LIVE"]
+    assert len(live) == 2
+    assert all(entry["passed"] is True for entry in live)
+    assert all(entry["picture"]["status"] == "PASSED" for entry in live)
+    assert all(entry["panels"]["status"] == "NOT_APPLICABLE" for entry in live)
+    assert not any("bandă plată" in reason for reason in report["failure_reasons_json"])
 
 
 @requires_ffmpeg
