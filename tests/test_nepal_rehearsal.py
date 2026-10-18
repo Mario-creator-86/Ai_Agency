@@ -667,7 +667,7 @@ def test_stills_failing_the_face_check_are_listed_for_a_new_still_and_nothing_is
     for n in (3, 4):
         assert STILL_REDO in rows[n]["line_ro"]
         assert rows[n]["still"]["status"] == "PAID"
-        assert rows[n]["credits_needed"] == 18
+        assert rows[n]["credits_needed"] == 9
         assert any("față" in reason or "fețe" in reason for reason in rows[n]["still"]["reasons"])
     for n in (1, 2):
         assert STILL_REDO not in rows[n]["line_ro"]
@@ -677,7 +677,7 @@ def test_stills_failing_the_face_check_are_listed_for_a_new_still_and_nothing_is
         assert rows[n]["credits_needed"] == 0
     assert sheet["needs_new_still"] == [3, 4]
     assert sheet["credits_spent"] == 0
-    assert sheet["credits_needed_for_stills"] == 36
+    assert sheet["credits_needed_for_stills"] == 18
 
     before = takes_of(engine, storyboard_id)
     # Without the Owner's choice to see them anyway, the film is not assembled around them.
