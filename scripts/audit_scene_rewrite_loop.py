@@ -36,7 +36,7 @@ def _short(value: Any, length: int = 280) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--storyboard", required=True)
+    parser.add_argument("--storyboard", help="UUID; implicit ultimul film cu discutii de rescriere")
     parser.add_argument("--scene", type=int)
     parser.add_argument("--limit", type=int, default=20)
     args = parser.parse_args()
@@ -53,8 +53,18 @@ def main() -> None:
 
     with sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True, timeout=3) as con:
         con.row_factory = sqlite3.Row
+        storyboard_id = args.storyboard
+        if not storyboard_id:
+            most_recent = con.execute(
+                "SELECT aggregate_id FROM domain_event WHERE event_type = ? "
+                "ORDER BY sequence DESC LIMIT 1", (BRIEFS,)
+            ).fetchone()
+            if most_recent is None:
+                parser.error("Nicio rescriere Sarah-Kael gasita in baza de date.")
+            storyboard_id = most_recent["aggregate_id"]
+            print("AUTODETECTIE: cel mai recent film cu dialog Sarah-Kael:", storyboard_id)
         board = con.execute(
-            "SELECT title, status FROM storyboard WHERE id=?", (args.storyboard,)
+            "SELECT title, status FROM storyboard WHERE id=?", (storyboard_id,)
         ).fetchone()
         if board is None:
             parser.error("Storyboard inexistent.")
@@ -65,7 +75,7 @@ def main() -> None:
         rows = con.execute(
             f"SELECT sequence, timestamp, event_type, payload FROM domain_event "
             f"WHERE aggregate_id=? AND event_type IN ({event_types}) "
-            f"ORDER BY sequence DESC LIMIT 1500", (args.storyboard, *CODES)
+            f"ORDER BY sequence DESC LIMIT 1500", (storyboard_id, *CODES)
         ).fetchall()
         chosen = []
         for row in rows:
@@ -153,7 +163,7 @@ def main() -> None:
             "AND t.scene_number=s.scene_index WHERE s.storyboard_id=? "
             + ("AND s.scene_index=? " if args.scene is not None else "") +
             "ORDER BY s.scene_index, t.created_at DESC LIMIT 80",
-            (args.storyboard, args.scene) if args.scene is not None else (args.storyboard,)
+            (storyboard_id, args.scene) if args.scene is not None else (storyboard_id,)
         ).fetchall()
         print("\n=== TAKE-URI (max. 80 randuri) ===")
         for t in latest:
