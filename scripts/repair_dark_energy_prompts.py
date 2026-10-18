@@ -92,9 +92,10 @@ def _repair19(old: dict, bible: dict, shot_type: str) -> tuple[dict, str]:
             "An elegant ceremony hall with stage curtains, architectural details "
             "and an audience in subdued darkness."
         ),
+        # Keep the first frame static: the camera move belongs in motion_prompt.
         camera=(
-            "Medium shot, 85mm lens, frontal three-quarter view; crane up: "
-            "a slow rise from the medal recipients to reveal the upper hall."
+            "Medium shot, 85mm lens, eye-level angle: all three recipients "
+            "and their medals visible in a frontal three-quarter view."
         ),
         camera_move="crane up",
         lighting="Warm overhead spotlights catch the medals, with gentle shadows in the hall.",
@@ -103,12 +104,12 @@ def _repair19(old: dict, bible: dict, shot_type: str) -> tuple[dict, str]:
             "in the upper two thirds, hall architecture continuing behind them."
         ),
         motion=(
-            "The medals reflect the warm stage lighting while the three recipients "
-            "remain together and the spotlights remain steady."
+            "The scientists hold their medals as faint gold reflections glint "
+            "across the polished surfaces while the spotlights remain steady."
         ),
         continuity=(
             "Three recipients, frontal three-quarter view, medals held in front "
-            "of their jackets, matching warm stage lighting throughout."
+            "of their jackets; the lighting remains fixed throughout."
         ),
         ending_frame=(
             "The medal recipients seen from the front, with their medals in front "
@@ -123,6 +124,10 @@ def _repair19(old: dict, bible: dict, shot_type: str) -> tuple[dict, str]:
     _validate(19, package, still, bible)
     if "from behind" in (still + " " + str(package["motion_prompt"])).lower():
         raise ValueError("Scena 19 mai contine o restrictie pentru vedere din spate.")
+    if "slow rise" in still.lower() or "crane up" in still.lower():
+        raise ValueError("Scena 19 are inca instructiuni de miscare in STILL.")
+    if "shadows drift" in str(package["motion_prompt"]).lower():
+        raise ValueError("Scena 19 introduce miscare a umbrelor in ceremonia statica.")
     return package, still
 
 
@@ -131,14 +136,18 @@ def _repair20(old: dict, visual: str, bible: dict, shot_type: str) -> tuple[dict
     # Do not change the still, visual_prompt, subject or first-frame composition.
     # Every paid/approved still from this scene must retain its prompt identity.
     package.update(
+        # The original action describes changing light, so the compiler repeats
+        # the same pulse alongside the newly supplied motion. Freeze it here;
+        # visual_prompt and still_prompt retain their exact paid identity.
+        action="Galaxy clusters rest in a continuous filamentary cosmic web.",
         camera=(
             "Wide establishing shot, 24mm lens; dolly in: a slow steady forward "
             "glide toward the cosmic web, through the depth of its galaxy filaments."
         ),
         camera_move="dolly in",
         motion=(
-            "Faint cool light travels gently along the galaxy filaments in waves; "
-            "the galaxies hold their positions in the three-dimensional cosmic web."
+            "Faint cool light brightens and dims once in a gentle wave travelling "
+            "along the galaxy filaments, while the clusters remain in place."
         ),
         ending_frame=(
             "The connected cosmic web appears slightly closer and fills the centre "
@@ -154,6 +163,9 @@ def _repair20(old: dict, visual: str, bible: dict, shot_type: str) -> tuple[dict
     _validate(20, package, still, bible)
     if package.get("still_prompt") != old.get("still_prompt"):
         raise ValueError("Scena 20 ar schimba imaginea existenta, operatie interzisa.")
+    motion = str(package["motion_prompt"]).lower()
+    if motion.count("brightens and dims") > 1:
+        raise ValueError("Scena 20 repeta aceeasi schimbare de lumina.")
     return package, visual
 
 
