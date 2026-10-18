@@ -197,6 +197,16 @@ def fake_showrunner(monkeypatch, answer: str, seen: list[str] | None = None):
     from app.story import services
 
     def fake_run(_engine, _registry, agent_id, task_type, prompt, *args, **kwargs):
+        if task_type == "shot_prompts":
+            # The storyboard stage invokes Kael after Marcus' serial episode.
+            # The showrunner's answer is not a final vendor prompt pack.
+            from e2e_shots import make_shot_plan
+
+            return {
+                "id": str(uuid4()),
+                "status": "SUCCEEDED",
+                "output_text": make_shot_plan(prompt),
+            }
         if seen is not None:
             seen.append(prompt)
         return {"id": str(uuid4()), "status": "SUCCEEDED", "output_text": answer}
