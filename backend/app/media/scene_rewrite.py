@@ -2609,7 +2609,7 @@ def _editor_rewrite(
             correlation_id,
             shot_schema(
                 index, layer, serial=serial,
-                editor_final=context["package"].get("prompt_format") == "editor_final_v1",
+                editor_final=(context.get("package") or {}).get("prompt_format") == "editor_final_v1",
             ),
             "",
             summary=(f"Rescriu scena {index} din «{context['title']}» după brief-ul Directoarei."),
