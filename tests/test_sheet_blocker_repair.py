@@ -402,11 +402,12 @@ def test_director_and_editor_use_real_agent_kernel_and_real_prompt_compiler(engi
     repair.submit_sheet_issues(engine, sheet(engine, film))
     queued = task(engine)
     result = repair.process_sheet_repair(engine, registry, queued.payload, correlation_id=queued.id)
-    assert calls == ["Director", "VideoEditor"]
+    # The editor now writes six shots in three two-scene batches, not one call.
+    assert calls == ["Director", "VideoEditor", "VideoEditor", "VideoEditor"]
     assert not any(i["kind"] == "PROMPT" for i in result["remaining"]), result
     with Session(engine) as session:
         runs = list(session.scalars(select(AgentRun)))
-        assert len(runs) == 3 and all(r.status == "SUCCEEDED" for r in runs)
+        assert len(runs) == 5 and all(r.status == "SUCCEEDED" for r in runs)
         assert all(
             s.prompt_json["source"] == "model"
             for s in session.scalars(
