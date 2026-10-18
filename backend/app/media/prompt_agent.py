@@ -4833,8 +4833,8 @@ def compile_prompts(
         # before dropping it. The Director's downstream audit remains the final
         # gate if even the essential facts cannot fit into the vendor cap.
         room_options = [environment, *_shorter_subject(environment)] if environment else [""]
-        for room in room_options:
-            for shorter in (subject, *_shorter_subject(subject)):
+        for shorter in (subject, *_shorter_subject(subject)):
+            for room in room_options:
                 retry = [
                     (
                         0 if order == 8 else rank,
