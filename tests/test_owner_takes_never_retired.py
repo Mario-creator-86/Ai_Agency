@@ -1055,8 +1055,9 @@ def test_a_mode_lowered_during_the_studios_redo_buys_no_reroll_and_gives_nothing
     assert len(images.asked) == 1, "a re-roll was bought after the mode was lowered"
     # A rejected frame also requires Sarah to approve replacement words before a reroll.
     assert "Directoarea le rescrie" in result["still"]["reason"]
-    (event,) = stopped_events(engine)
-    assert event["step"] == "scene_redo"
+    # The Director's prompt-rewrite gate stops earlier than the purchase guard:
+    # there was no second paid request on which a mode-stop event could be emitted.
+    assert stopped_events(engine) == []
     assert "given_back" not in result
     assert take(engine, old.id).status == "REJECTED"
     assert take(engine, shots[3]).status == "REJECTED"
