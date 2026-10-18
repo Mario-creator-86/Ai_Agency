@@ -3986,9 +3986,7 @@ def span_picture_qc(
             # A previously verified AI verdict may be reused for an unchanged shot.
             # It is evidence, unlike the removed geometric panel detector.
             today = (faces, panels) if earlier is not None else (faces, picture, panels)
-            if earlier is not None or any(
-                item.status in ("PASSED", "FAILED") for item in today
-            ):
+            if earlier is not None or any(item.status in ("PASSED", "FAILED") for item in today):
                 measured_any = True
             if problems:
                 entry.update(status="FAILED", passed=False, reason="; ".join(problems))
