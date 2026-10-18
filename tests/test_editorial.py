@@ -297,7 +297,7 @@ def test_the_director_watches_and_approves_and_the_verdict_is_a_record(engine, s
     assert result["verdict"] == "APPROVE" and result["model_used"] is True
     assert "AUDIENCE LANGUAGE: English" in seen["prompt"]
     assert "science.nasa.gov/webb" in seen["prompt"] and "golden mirror" in seen["prompt"]
-    assert model.calls[0]["extra"] == {"format": "json"}  # no frames: the file is not there
+    assert model.calls[0]["extra"] == {"format": "json", "think": False}  # no frames; structured answers disable thinking for this model
     with Session(engine) as session:
         review = latest_editorial(session, ids["asset"])
         assert review.verdict == "APPROVE" and review.story.startswith("A rocky world")
@@ -667,7 +667,7 @@ def test_frames_are_sent_only_to_a_model_the_provider_says_can_see(engine, staff
     blind = editorial_review(engine, registry, ids["asset"], language="en")
     assert blind["frames_seen"] == 0 and blind["verdict"] == "APPROVE"
     assert "You cannot see the film itself" in seen["prompt"]
-    assert model.calls[0]["extra"] == {"format": "json"}
+    assert model.calls[0]["extra"] == {"format": "json", "think": False}
 
     _give_vision(engine, director.id)
     with Session(engine) as session:
