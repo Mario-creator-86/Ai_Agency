@@ -83,7 +83,7 @@ def test_kael_sarah_rewrite_then_approve_without_any_video_purchase(
     assert len(fake.rewrites) == 1 and len(fake.reviews) == 1
     rewritten = scene(engine, board).prompt_json
     assert rewritten["still_prompt"] == original["still_prompt"]
-    assert rewritten["motion_prompt"] != original["motion_prompt"]
+    assert prompt_text(rewritten, "motion") != prompt_text(original, "motion")
     (event,) = events(engine, SCENE_PROMPTS_REWRITTEN_EVENT, board)
     assert event.payload["review"]["verdict"] == "TREATS"
     with Session(engine) as session:
