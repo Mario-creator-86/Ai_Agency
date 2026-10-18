@@ -17,8 +17,10 @@ test('the stylesheet, the scene and the drawers share one frame query', () => {
 });
 
 test('the frame\'s measures are tokens, declared once in the token block', () => {
+  const rootStart = STYLE.indexOf(':root {');
+  const tokens = STYLE.slice(rootStart, STYLE.indexOf('\n}', rootStart));
   for (const name of ['footer-h', 'frame-h', 'drawer-register', 'drawer-side', 'drawer-rail', 'drawer-glass', 'dur-drawer']) {
-    const found = [...STYLE.matchAll(new RegExp(`--${name}:`, 'g'))].length;
+    const found = [...tokens.matchAll(new RegExp(`--${name}:`, 'g'))].length;
     assert.equal(found, 1, `--${name} is declared exactly once`);
   }
   assert.ok(/--frame-h:\s*calc\(100vh - var\(--topbar-h\) - var\(--footer-h\)\)/.test(STYLE), 'the frame is the screen less the masthead and the footer strip');
@@ -41,11 +43,11 @@ test('every instrument on the glass stands inside the room the drawers leave', (
 
 test('the rooms, the drawers and their rails keep one id each', () => {
   const ids = ['open-research-btn', 'open-media-btn', 'open-publishing-btn', 'open-workforce-btn', 'open-story-btn', 'open-runbook-btn', 'open-autonomy-btn',
-    'register-panel', 'governance-panel', 'studio-readout', 'register-rail', 'side-rail', 'register-close', 'side-close', 'topbar-rooms',
+    'register-panel', 'governance-panel', 'studio-readout', 'register-rail', 'side-rail', 'register-close', 'dashboard-nav', 'dashboard-queue', 'topbar-rooms',
     'ledger-count', 'approvals-count', 'studio-about-btn', 'office-canvas', 'scene-viewport'];
   for (const id of ids) assert.equal((HTML.match(new RegExp(`id="${id}"`, 'g')) || []).length, 1, id);
   // the rails and the close keys say what they control and whether it is open
-  for (const id of ['register-rail', 'side-rail', 'register-close', 'side-close']) {
+  for (const id of ['register-rail', 'side-rail', 'register-close']) {
     assert.ok(new RegExp(`id="${id}"[^>]*aria-controls="[^"]+"[^>]*aria-expanded="(true|false)"`).test(HTML), `${id} names what it controls`);
   }
 });

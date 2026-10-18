@@ -23,6 +23,9 @@ import { acceptSnapshot } from './projection.js';
 import { OfficeEngine, PixelTitle, BUILDING, WORLD_W, WORLD_H } from './pixel_office.js';
 import { loadPortraitAtlas } from './pixel_portraits.js';
 import './pixel_studio.css';
+import './studio_dashboard.css';
+import './dialog_finish.css';
+import { StudioDashboard, dashboardEmpty } from './studio_dashboard.js';
 import { bindSceneMotion } from './pixel_motion.js';
 import { PRESENTATION, presentationLive } from './pixel_presentation.js';
 import { autonomyOverview } from './autonomy_overview.js';
@@ -106,6 +109,7 @@ const input = /** @type {HTMLInputElement} */ (element('owner-token'));
 const stopButton = /** @type {HTMLButtonElement} */ (element('stop-toggle'));
 const environmentButton = /** @type {HTMLButtonElement} */ (element('environment-toggle'));
 const inspector = /** @type {HTMLDialogElement} */ (element('agent-inspector'));
+const dashboard = new StudioDashboard({ api });
 
 let ownerToken = '';
 let state = null;
@@ -209,6 +213,8 @@ const eventsLink = new EventsLink({
     element('ledger-count').textContent = entryCountLabel(ledger.events.size);
     // DECISIONS_WINDOW: a decision, an approval, a letter or his policy moved: his window reads again
     decisions.onEvent(eventData);
+    dashboard.onEvent(eventData, live);
+    officeEngine?.audio.onEvent(eventData, live);
     // A milestone plays only when the socket delivered it as it happened (moments.js).
     const moment = moments.offer(eventData, live);
     if (moment && moment.kind === 'approval') loadApprovals(true).then(() => markArrived());
@@ -508,6 +514,7 @@ function refreshLastTasks() {
 }
 
 function pushWorldFacts() {
+  dashboard.update({ budget: worldFacts.budget });
   // The façade sign's next run, in the scheduler's own words, only while no run is under way
   // (hq_readouts.js nextRunSign): the same rule the side drawer's foot follows.
   worldFacts.stopped = state && state.policy ? Boolean(state.policy.autonomy_stopped) : null;
@@ -1056,6 +1063,7 @@ const settingsUI = initSettings(api, {
   onAutonomy: () => element('open-autonomy-btn').click(),
   modules: () => latestModules,
 });
+dashboard.mount();
 document.getElementById('studio-about-btn')?.addEventListener('click', () => { void settingsUI.open('about'); });
 
 /**
@@ -1781,6 +1789,8 @@ function applyInspectorExpanded() {
   btn.title = inspectorExpanded
     ? 'Strânge fereastra la mărimea obișnuită'
     : 'Extinde: toată discuția și istoricul, de sus până jos';
+  btn.setAttribute('aria-label', inspectorExpanded ? 'Strânge fereastra' : 'Extinde fereastra');
+  btn.setAttribute('aria-pressed', String(inspectorExpanded));
 }
 element('inspector-expand').addEventListener('click', () => {
   inspectorExpanded = !inspectorExpanded;
@@ -2726,7 +2736,17 @@ if (closeMediaBtn) {
 }
 
 if (tabStoryboardsBtn && tabCharactersBtn) {
+  const selectMediaTab = (/** @type {HTMLElement} */ selected) => {
+    for (const tab of [tabStoryboardsBtn, tabCharactersBtn]) {
+      tab.setAttribute('aria-selected', String(tab === selected));
+      tab.tabIndex = tab === selected ? 0 : -1;
+    }
+    // A tab opened after scrolling a long list starts at its own heading.
+    const body = mediaModal.querySelector('.dialog-body');
+    if (body) body.scrollTop = 0;
+  };
   tabStoryboardsBtn.addEventListener('click', () => {
+    selectMediaTab(tabStoryboardsBtn);
     tabStoryboardsBtn.classList.add('media-tab-active');
     tabCharactersBtn.classList.remove('media-tab-active');
     mediaStoryboardsSection.classList.remove('hidden');
@@ -2737,11 +2757,21 @@ if (tabStoryboardsBtn && tabCharactersBtn) {
   });
 
   tabCharactersBtn.addEventListener('click', () => {
+    selectMediaTab(tabCharactersBtn);
     tabCharactersBtn.classList.add('media-tab-active');
     tabStoryboardsBtn.classList.remove('media-tab-active');
     mediaCharactersSection.classList.remove('hidden');
     mediaStoryboardsSection.classList.add('hidden');
     loadCharacterBibles();
+  });
+  mediaModal.querySelector('.media-tabs-bar')?.addEventListener('keydown', (event) => {
+    const key = /** @type {KeyboardEvent} */ (event).key;
+    if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(key)) return;
+    event.preventDefault();
+    const selected = key === 'Home' ? tabStoryboardsBtn : key === 'End' ? tabCharactersBtn
+      : document.activeElement === tabStoryboardsBtn ? tabCharactersBtn : tabStoryboardsBtn;
+    selected.click();
+    selected.focus({ preventScroll: true });
   });
 }
 
@@ -3309,12 +3339,15 @@ function sheetStatus() {
 function paintSheet() {
   const body = sheetDialog().querySelector('[data-sheet-body]');
   if (!body) return;
+  const loading = !sheetDrawer.sheet && !sheetDrawer.noticeError;
+  sheetDialog().dataset.loading = String(loading);
+  body.setAttribute('aria-busy', String(loading));
   const focused = focusKey(document.activeElement, body);
   // the repaint removes every clip the body held: their object URLs go with them (PAGE-17)
   sheetClips.revokeAll();
   sheetStatus();
   if (!sheetDrawer.sheet) {
-    body.innerHTML = sheetDrawer.noticeError ? '' : '<p class="topics-loading">Se citește foaia de filmare (0 credite)…</p>';
+    body.innerHTML = sheetDrawer.noticeError ? '' : '<p class="sheet-loading" role="status"><span aria-hidden="true"></span>Loading...</p>';
     return;
   }
   body.innerHTML = sheetHtml(sheetDrawer.sheet, {
@@ -3668,7 +3701,7 @@ function storyboardSummaryHtml(sb) {
               <div class="storyboard-meta">
                 <span>Aspect: <strong>${escapeHtml(sb.aspect_ratio || '9:16')}</strong></span>
                 <span>${escapeHtml(countWords(sb.scene_count, 'scenă', 'scene'))}</span>
-                <span>Stare: <strong class="${storyboardTone(sb.status)}" data-status="${escapeHtml(sb.status)}" title="${escapeHtml(sb.status)}">${escapeHtml(storyboardStatus(sb.status))}</strong></span>
+                <span>Stare: <strong class="storyboard-state ${storyboardTone(sb.status)}" data-status="${escapeHtml(sb.status)}" title="${escapeHtml(sb.status)}">${escapeHtml(storyboardStatus(sb.status))}</strong></span>
                 ${qc}
                 ${published}
               </div>
@@ -4379,6 +4412,7 @@ element('publications-list').addEventListener('click', async (event) => {
 });
 
 function render(data) {
+  dashboard.update({ policy: data.policy, timeZone: data.studio.timezone });
   element('studio-name').textContent = data.studio.name;
   // The clock, the sun, the street and the labels follow the studio's own place (SELL-08):
   // the snapshot serves it from the settings; Bucharest is only the fallback.
@@ -4643,6 +4677,7 @@ element('logout').addEventListener('click', () => {
 
 /** Leaves the studio: the workspace closes and the title (with the form) is shown again. */
 function signOut() {
+  dashboard.stop();
   inspectorRequest++;
   inspector.close();
   currentSelectedAgent=null;
@@ -4881,7 +4916,7 @@ let approvalsShown = [];
 function renderApprovals() {
   replaceActivityHtml(approvalsList, approvalsShown.length
     ? `${newestFirst(approvalsShown).map((request) => approvalCard(request, Date.now())).join('')}<p class="approval-footnote">${escapeHtml(APPROVAL_FOOTNOTE)}</p>`
-    : '<div class="topics-loading">Nicio cerere nu așteaptă decizia Proprietarului.</div>');
+    : dashboardEmpty('seal', 'Nimic de aprobat', 'Cererile care au nevoie de decizia ta apar aici.'));
   // Who asked: the employee's identity-bound front portrait (roster.js).
   if (approvalsShown.length) drawPortraits(approvalsList);
 }
@@ -5294,7 +5329,7 @@ async function loadBudget() {
       : '';
     const spend = `<div class="budget-card"><span class="stat-label">Cheltuit</span><strong>azi ${escapeHtml(amount(today.spent_usd))} USD</strong><span>luna asta ${escapeHtml(amount(data.month.spent_usd))} USD · ${data.month.agent_runs} rulări de angajați, ${data.month.unpriced_agent_runs} fără preț</span>${held}${wasted}${unpriced}</div>`;
     const providers = data.month.by_provider.map((p) => `<div class="budget-card"><span class="stat-label budget-vendor">${escapeHtml(providerName(p.provider))}</span><strong>${escapeHtml(amount(((p.estimated_usd_micros + p.billed_usd_micros) / 1e6).toFixed(2)))} USD</strong><span>${countLabel(p.records, 'înregistrare', 'înregistrări')} · facturat ${escapeHtml(amount((p.billed_usd_micros / 1e6).toFixed(2)))}</span></div>`).join('');
-    cards.innerHTML = spend + (data.budgets.length ? data.budgets.map(budgetCard).join('') : '<div class="budget-card"><span class="stat-label">Buget</span><strong>nesetat</strong><span>Setează limita zilnică; pașii plătiți urmează politica și plafoanele tale.</span></div>') + providers;
+    cards.innerHTML = `<div class="budget-overview">${spend}${data.budgets.length ? data.budgets.map(budgetCard).join('') : '<div class="budget-card"><span class="stat-label">Buget</span><strong>nesetat</strong><span>Setează limita zilnică; pașii plătiți urmează politica și plafoanele tale.</span></div>'}</div>${providers ? `<div class="budget-providers">${providers}</div>` : ''}`;
   } catch (error) {
     cards.innerHTML = `<div class="text-error">${escapeHtml(error instanceof Error ? error.message : 'Bugetul nu a putut fi citit.')}</div>`;
   }
@@ -6138,11 +6173,19 @@ async function loadCompanyState() {
       .map((item) => `<div class="motion-reason">${escapeHtml(item.kind)}: ${escapeHtml(item.detail)}</div>`)
       .join('');
     box.innerHTML = `
+      <div class="company-overview">
       <div class="runbook-check ${state.autonomy_stopped ? 'rb-fail' : 'rb-ok'}">
         <strong>${state.autonomy_stopped ? 'Autonomia este oprită' : 'Autonomia este pornită'}</strong>
         <div>Mediu: ${escapeHtml(state.environment)} · ${escapeHtml(maturity)}</div>
       </div>
-      ${channels}
+      <div class="runbook-check">
+        <strong>Angajați</strong>
+        <div>${state.agents?.active || 0} activi · ${(state.agents?.idle || []).length} fără rulări ·
+          ${state.agents?.queue_backlog || 0} în coadă · ${state.agents?.dead_letter_tasks || 0} sarcini abandonate</div>
+      </div>
+      </div>
+      ${channels ? `<div class="company-channels">${channels}</div>` : ''}
+      <div class="company-analysis">
       <div class="runbook-check runbook-flux">
         <strong>Flux</strong>
         ${pipelineSvg(pipe.stages, { bottleneck: pipe.bottleneck })}
@@ -6152,13 +6195,11 @@ async function loadCompanyState() {
             : ''
         }</div>
       </div>
-      <div class="runbook-check">
-        <strong>Angajați</strong>
-        <div>${state.agents?.active || 0} activi · ${(state.agents?.idle || []).length} fără rulări ·
-          ${state.agents?.queue_backlog || 0} în coadă · ${state.agents?.dead_letter_tasks || 0} sarcini abandonate</div>
-      </div>
+      ${growth || anomalyList ? `<div class="company-observations">
       ${growth ? `<div class="runbook-check"><strong>Ce limitează creșterea</strong>${growth}</div>` : ''}
-      ${anomalyList ? `<div class="runbook-check"><strong>Anomalii</strong>${anomalyList}</div>` : ''}`;
+      ${anomalyList ? `<div class="runbook-check"><strong>Anomalii</strong>${anomalyList}</div>` : ''}
+      </div>` : ''}
+      </div>`;
 
     // The decision's matter names a channel by the first 8 of its id; the state names them all.
     const channelNames = new Map((state.channels || []).map((c) => [String(c.channel_id || '').slice(0, 8), String(c.channel_name || '')]));
@@ -6272,6 +6313,12 @@ element('runbook-checks').addEventListener('click', (event) => {
 element('autonomy-overview').addEventListener('click', async (event) => {
   const action = event.target instanceof HTMLElement ? event.target.closest('[data-autonomy-go]') : null;
   if (action instanceof HTMLElement) {
+    if (action.dataset.autonomyGo === 'policy') {
+      element('autonomy-mode-buttons').scrollIntoView({ block: 'center' });
+      const modeKey = /** @type {HTMLButtonElement|null} */ (element('autonomy-mode-buttons').querySelector('button:not(:disabled)'));
+      modeKey?.focus();
+      return;
+    }
     const closed = new Promise((resolve) => autonomyModal.addEventListener('close', resolve, { once: true }));
     autonomyModal.close();
     await closed;
@@ -6558,12 +6605,14 @@ function confirmDialog(q) {
     dialog = document.createElement('dialog');
     dialog.id = 'consequence-dialog';
     dialog.className = 'studio-dialog consequence-dialog';
+    dialog.setAttribute('aria-labelledby', 'consequence-question');
+    dialog.setAttribute('aria-describedby', 'consequence-words');
     document.body.append(dialog);
   }
   const box = dialog;
   box.innerHTML = '<div class="dialog-body consequence-body">'
-    + `<h2 class="dialog-title consequence-question">${escapeHtml(q.question)}</h2>`
-    + `<p class="consequence-words">${escapeHtml(q.words)}</p>`
+    + `<h2 id="consequence-question" class="dialog-title consequence-question">${escapeHtml(q.question)}</h2>`
+    + `<p id="consequence-words" class="consequence-words">${escapeHtml(q.words)}</p>`
     + '<div class="source-actions">'
     + `<button type="button" class="secondary" data-consequence="yes">${escapeHtml(q.yes)}</button>`
     + '<button type="button" class="quiet" data-consequence="no">Nu acum</button>'

@@ -63,6 +63,13 @@ Then: no run of real models for tests, evaluations or probes without his card.
 
 **5. Budget.** The daily budget for montage days becomes 30 USD. It is to be set through the economy budget command at the next start, never by a database write. The estimate: a short of about 40 rows plus an episode of about 37 rows cost about 19.3-19.9 USD with no re-roll.
 
+## ADR-OWNER-REFERENCE-DASHBOARD — 2026-10-16
+
+Owner replaces the overlay-drawer configuration with left navigation, adjacent real activity, top project/monthly-budget/completed/queued/channel cards, and right approvals → queue → compact governance. No employee strip below the scene. Preserve approved artwork and backend truth. Detailed controls stay in the existing autonomy dialog, without policy prose/budget/tier tiles on the compact card. This is presentation scope; no architecture document/hash, backend policy, money or permissions changed.
+
+Projects mean open unpublished film storyboards, not technical workflows (the real inventory exposed 665 retained workflows versus three film projects). Monthly budget is read from MONTHLY only; task cap ≥100 is explicit. Audience means each bound channel's YouTube channel totals, not summed video snapshots or subscriber gains. Reuse the existing verification endpoint at most every minute while visible, skip a fresh shared read, show measurement age and failures. Validation blocks its POST; real YouTube refresh acceptance is not inferred from fixture responses. Recovery uses saved source and dist entry/record; old compiled assets retained. Evidence in output/ui-dashboard-2026-10-16/.
+
+
 ## The format: 180 s, narrator, story first, no punch-in (2026-10-16)
 
 **The format (2026-10-16).** The Owner, after reading «Zero Scripts, Blocked Log» and watching the shorts: the viewer must understand what he is watching; the 4-5-word lines and the cut shots were our limits, not the generators'. Decided by card: shorts 60-180 s aiming at 160 (YouTube's Shorts limit stays the wall: «mergem atunci ca maxim 180»); serial episodes 90-180 s with 250-450 spoken words, a narrator opening (where, who, what is at stake) and closing, a story the showrunner invents with the studio's real day as backdrop, not as plot; no punch-in, every shot breathes 0.4 s after its words. The channels' `shorts_max_seconds` goes to 180 by migration 0058 (11_DATA_MODEL's 60/70 are superseded). The serial's writer and review rules change in the next increment.
@@ -4594,3 +4601,28 @@ by model id (`prompt_lint.ALLOWANCES`, the worker's workflows seeded with its MA
 vendor that allows more declares it there; a model nobody declared keeps the legacy figure.
 Rejected: threading a vendor attribute through the sheet, the stills step, the still redo and
 the motion state (five lint sites, a dozen signatures, for the same fact).
+
+
+## 2026-10-17 — Truthful daily dashboard without a restart
+Use existing economy DAILY totals unchanged; never sum total plus provider/LLM/reservation breakdowns. The scheduler queue's 100-item cap cannot supply an exact today count, so the UI explicitly counts successful agent task executions from the existing paginated completion-event ledger in Europe/Bucharest. One combined YouTube card preserves existing integration. UI sound assets are CC0, local and independent of generated exports; one persistent switch, gesture-aware playback and bounded/coalesced cues. No backend/API/schema change or policy mutation. Dialog fixes remain scoped to presentation/navigation.
+
+
+## 2026-10-17 — ADR-SERIAL-ONE-DAY-ONE-FILM
+
+Owner explicitly prioritised repairing the duplicate left by an interrupted editorial judgement. A daily log may have one approved serial episode; approval closes its other drafts, stale held PASS versions cannot resume, and final approval/storyboard writes serialize using the existing SQLite write lock. Every production lease rejects a later approval even before historical cleanup; durable approval-event order is decisive, rather than tied storyboard timestamps. Repair preserves the first approved episode and its assets, retires later approvals through the existing film-book closure and records a continuity correction. Canon is refolded only when its event history exactly reproduces stored state; otherwise the conservative fallback is explicitly recorded. No schema or policy relaxation. Rejected: deleting history, renaming the duplicate to hide it, or only filtering the UI. Rollback of code must not re-enable duplicate purchases; production backup is private local recovery evidence. Tests include concurrent transitions, stale reviews, historical recovery and unchanged original media; no live vendor operation was used.
+
+
+## 2026-10-17 — Prompt audit matches the actual compiler
+Still framing/lens words are legitimate photograph instructions; only movement belongs exclusively to a clip. Existing instrument markings exception is explicit audit context, with object-specific exclusions authoritative over automatic recognition. A camera field leading label takes precedence over later scene adjectives. Audit decisions require a nonempty scenes list, so the existing structured retry corrects malformed/nested replies. No forced approval, budget/policy change, schema migration or broad LLM parser refactor. Existing audit template version invalidates old contradictory defect holds for a fresh judgement; new valid refusals still hold. Local commits 4fa9b94/8852c5f, 150 tests.
+
+
+## 2026-10-17 — Shared compiler contract across editorial stages
+Live v6 audit accepted scene15 but scene34 review still used obsolete camera bans from provisional lessons. The same still-framing rule must inform audit, writer and reviewer, with source precedence over blanket historical bans. Rule only applies to still; substantive scene framing/subject/continuity defects still require real judgement. No forced treatment, deletion of learned history, new approval or policy limit. Local102c5d4; old audit holds re-evaluated under templatev7.
+
+
+## 2026-10-17 — Configured compiler text belongs to the compiler
+Strip a pasted copy of the current configured style/frame from factual fields before composing, including comma punctuation variants. Do not hardcode a film or rewrite production rows. Tempo removal must preserve a visible-state clause rather than leave a dangling conjunction. Real quality judgements remain required; no automatic approval.22eff0c;215 tests, read-only real package proof.
+
+
+## 2026-10-17 — Prompt dedup must preserve new information
+Lesson-word similarity must not decide whether a factual action clause is already said:70% overlap discarded a new visible predicate and reversed spatial relations. Use contiguous case/punctuation-normalized words for removal, allowing harmless remaining paraphrase rather than deleting new facts. Shared still judgement reads complete text; no manufactured approval or DB correction. Scopedbd30734, captured live-candidate replay and220 relevant tests.

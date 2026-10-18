@@ -294,11 +294,12 @@ test('lowering the mode, going back to TEST and switching the schedule off ask n
   assert.equal(gov.consequenceWords(facts, { mode: 'AUTONOMOUS_CEO' }), null, 'the mode it is already in');
 });
 
-test('the paid rule stands in Governance under the mode, with what the next run will do', async () => {
+test('detailed governance controls stay in the autonomy dialog, out of the compact dashboard', async () => {
   const fs = await import('node:fs');
   const html = fs.readFileSync(new URL('../index.html', import.meta.url), 'utf8');
-  const panel = html.slice(html.indexOf('id="governance-panel"'), html.indexOf('approvals-heading'));
-  assert.ok(panel.includes('id="paid-media-governance"'), 'the rule under «Mod de autonomie»');
+  const panel = html.slice(html.indexOf('id="dashboard-governance-controls"'), html.indexOf('id="autonomy-overview"'));
+  assert.ok(html.indexOf('id="autonomy-modal"') < html.indexOf('id="dashboard-governance-controls"'));
+  assert.ok(panel.includes('id="paid-media-governance"'), 'existing rule form remains in configuration');
   assert.ok(panel.includes('id="day-will"'), 'what the next run will do');
   const main = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
   assert.ok(main.includes('dayWillWords('));

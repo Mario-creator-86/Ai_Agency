@@ -147,6 +147,15 @@ export function initSettings(api, hooks = {}) {
   }
 
   function render() {
+    const keepTab = Boolean(document.activeElement?.closest('.settings-tabs'));
+    renderContents();
+    if (keepTab) {
+      /** @type {HTMLElement|null} */ (dialog.querySelector('.settings-tabs [aria-current="page"]'))?.focus({ preventScroll: true });
+    }
+    dialog.querySelector('.settings-tabs [aria-current="page"]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }
+
+  function renderContents() {
     dialog.replaceChildren();
 
     const header = node('div', '', 'dialog-header');
@@ -168,10 +177,15 @@ export function initSettings(api, hooks = {}) {
     for (const [key, label] of sections) {
       const button = node('button', label, key === active ? 'primary' : 'quiet');
       button.setAttribute('aria-current', key === active ? 'page' : 'false');
-      button.addEventListener('click', () => { active = key; render(); });
+      button.addEventListener('click', () => {
+        active = key;
+        render();
+        // render replaces the pressed key; keep keyboard navigation in the section menu.
+        /** @type {HTMLElement|null} */ (dialog.querySelector('.settings-tabs [aria-current="page"]'))?.focus({ preventScroll: true });
+      });
       nav.append(button);
     }
-    const autonomy = node('button', 'Autonomie · programare și buget', 'secondary');
+    const autonomy = node('button', 'Autonomie · programare și buget', 'secondary settings-autonomy-link');
     autonomy.addEventListener('click', () => { reset(); hooks.onAutonomy?.(); });
     dialog.append(autonomy, nav);
     const output = node('p', '', 'settings-message');
@@ -211,6 +225,7 @@ export function initSettings(api, hooks = {}) {
     // them shared three columns; kept in separate grids they left the last card of
     // the first one stranded across the full width. Same card, same grid, in order.
     const list = node('div', '', 'settings-connections');
+    list.classList.toggle('settings-media-connections', active === 'media');
     if (active === 'llm') renderLegacyProviders(list);
     for (const item of items) {
       const spec = data.catalog[item.kind];
@@ -585,7 +600,7 @@ export function initSettings(api, hooks = {}) {
         }, '');
       });
       const controls = node('div', '', 'settings-actions');
-      controls.append(select, save, test);
+      controls.append(save, test);
       card.append(controls);
       container.append(card);
     }

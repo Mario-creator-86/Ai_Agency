@@ -185,3 +185,17 @@ for near flowers/leaves/fence, with transparent road gaps and the same outdoor l
 Background/actor PNGs are unchanged; existing provenance and service terms still apply.
 No external image, game sprite or additional imagegen output was added. Report and live
 visual proof: docs/project/PIXEL_DEPTH_PHYSICS.md.
+
+
+## UI sound collection — 2026-10-17
+
+Local files in `frontend/public/sounds/ui/`; no paid audio service or runtime external download.
+
+| Source | Author | License | Selected files |
+| --- | --- | --- | --- |
+| [Interface Sounds](https://kenney.nl/assets/interface-sounds) | Kenney | CC0 1.0; original `LICENSE-Kenney.txt` included | select_001.ogg, confirmation_001.ogg, confirmation_004.ogg, question_001.ogg, error_004.ogg |
+| [Keyboard Soundpack #1](https://opengameart.org/content/keyboard-soundpack-1-typing-and-single-keystrokes) | unicaegames | CC0 1.0 on the creator's distribution page; original README included | keypress-001.wav, keypress-007.wav, keypress-019.wav |
+
+Licenses verified at the original distribution pages on 17 October 2026. `sources.json` records original URLs, authors, licenses and per-file SHA-256. Download archive hashes: Kenney `f2193d072726d6758a5f7871b2dcc54dcce0d5c35c6f0a62f92549b327c81232`; keyboard `935eae2fa5c3742eacdd38c4ea0e9047f3887faa0701996498492c256db1b351`.
+
+Office ventilation/air and rain remain original local Web Audio noise synthesis in `pixel_sound.js`; no third-party ambient recording or music. Samples remain original files; decoded playback buffers are peak-normalized to 0.7 and mixed through a low-volume master. Event mappings, priorities, cooldowns and gains are in `frontend/src/ui_audio.json`. Historical/replayed events never sound. A burst selects one highest-priority cue, not a backlog. Ambient loops are quiet; typing is authorized by actual agent presentation and globally spaced. UI mute changes playback only; produced files and exports are untouched.

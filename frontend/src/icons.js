@@ -14,6 +14,17 @@
 
 /** @type {Record<string, string>} */
 const PATHS = {
+  folder: '<path d="M4 7h6l2 2h8v10H4zM4 7V4.5h6l2 2.5h6"/>',
+  wallet: '<path d="M4.5 7.5v11h15v-11zM4.5 7.5V5h13v2.5M15 11h4.5v4H15z"/><path d="M17 13h.1"/>',
+  completed: '<circle cx="12" cy="12" r="8"/><path d="m8.3 12 2.4 2.6 5-5.2"/>',
+  queue: '<rect x="4" y="4.5" width="3" height="3" rx=".5"/><rect x="4" y="10.5" width="3" height="3" rx=".5"/><rect x="4" y="16.5" width="3" height="3" rx=".5"/><path d="M10 6h10M10 12h10M10 18h7"/>',
+  youtube: '<rect x="3.5" y="6" width="17" height="12" rx="3.5"/><path d="m10 9 5 3-5 3z"/>',
+  shield: '<path d="m12 3.5 7 3v5c0 4.2-3 7.1-7 9-4-1.9-7-4.8-7-9v-5z"/><path d="m9 12 2 2 4-4"/>',
+  activity: '<path d="M3.5 12h4l2.5-7 4 14 2.5-7h4"/>',
+  clock: '<circle cx="12" cy="12" r="8"/><path d="M12 7v5l3.5 2"/>',
+  arrow: '<path d="M4.5 12h15M14 6.5l5.5 5.5-5.5 5.5"/>',
+  refresh: '<path d="M19 10a7.5 7.5 0 1 0 .4 4M19 4.5V10h-5.5"/>',
+  settings: '<path d="m9 4-.5 2-2 1-2-.5-1.5 3 1.5 1.5v2L3 14.5l1.5 3 2-.5 2 1 .5 2h4l.5-2 2-1 2 .5 1.5-3-1.5-1.5v-2l1.5-1.5-1.5-3-2 .5-2-1-.5-2z"/><circle cx="11" cy="12" r="3"/>',
   close: '<path d="M6.4 6.4l11.2 11.2M17.6 6.4L6.4 17.6"/>',
   expand: '<path d="M4.6 9.4V4.6h4.8M14.6 4.6h4.8v4.8M19.4 14.6v4.8h-4.8M9.4 19.4H4.6v-4.8"/>',
   collapse: '<path d="M9.2 4.4v4.8H4.4M14.8 4.4v4.8h4.8M19.6 14.8h-4.8v4.8M4.4 14.8h4.8v4.8"/>',

@@ -55,13 +55,18 @@ export function attachRail(body) {
   );
   if (!links.length) return () => {};
 
+  // offsetTop belongs to the nearest positioned ancestor, which may be the dialog or
+  // a nested pane. Both navigation and the current marker need the body's coordinates.
+  const topInBody = (/** @type {Element} */ target) =>
+    target.getBoundingClientRect().top - body.getBoundingClientRect().top + body.scrollTop - body.clientTop;
+
   const targets = () =>
     links
       .map((link) => {
         const target = /** @type {HTMLElement | null} */ (
           body.querySelector(`#${CSS.escape(link.getAttribute('href').slice(1))}`)
         );
-        return target ? { id: target.id, top: target.offsetTop } : null;
+        return target ? { id: target.id, top: topInBody(target) } : null;
       })
       .filter(Boolean);
 
@@ -89,8 +94,11 @@ export function attachRail(body) {
     // read here too: someone who asked for no movement gets the jump, not the glide.
     const still =
       typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
-    body.scrollTo({
-      top: /** @type {HTMLElement} */ (target).offsetTop - 8,
+    // Native section navigation resolves skipped content-visibility layouts before
+    // scrolling; a destination computed from placeholder heights can land in a gap.
+    target.scrollIntoView({
+      block: 'start',
+      inline: 'nearest',
       behavior: still ? 'auto' : 'smooth',
     });
   };

@@ -18,7 +18,7 @@ import { preserveReading } from './activity_lists.js';
  * hand, which is the honest worst case.
  */
 
-import { describeEvent } from './ledger.js';
+import { describeEvent, runtimeLabel } from './ledger.js';
 
 /**
  * Whether an event belongs to this employee.
@@ -320,7 +320,21 @@ export class LiveWindows {
     if (typeof win.CSSStyleSheet === 'function' && 'adoptedStyleSheets' in doc) {
       try {
         const sheet = new win.CSSStyleSheet();
-        sheet.replaceSync(LIVE_STYLES);
+        let theme = '';
+        if (document.body.classList.contains('studio-dashboard')) {
+          const source = getComputedStyle(document.body);
+          const colors = {
+            '--bg': '--dashboard-ground', '--surface': '--dashboard-panel',
+            '--surface-quiet': '--dashboard-panel', '--forest-deep': '--dashboard-panel',
+            '--line': '--dashboard-line', '--line-strong': '--dashboard-line',
+            '--ink-2': '--dashboard-muted', '--ink-3': '--dashboard-muted',
+          };
+          theme = ':root {' + Object.entries(colors).map(([target, token]) => {
+            const value = source.getPropertyValue(token).trim();
+            return /^#[\da-f]{3,8}$/i.test(value) ? `${target}:${value};` : '';
+          }).join('') + '}';
+        }
+        sheet.replaceSync(LIVE_STYLES + theme);
         doc.adoptedStyleSheets = [sheet];
       } catch {
         // unstyled popup still works
@@ -331,7 +345,8 @@ export class LiveWindows {
 
   _setPill(pill, runtimeState) {
     const state = String(runtimeState || 'IDLE');
-    pill.textContent = state;
+    pill.textContent = runtimeLabel(state);
+    pill.title = state;
     pill.classList.toggle('is-busy', state === 'THINKING' || state === 'WORKING');
   }
 

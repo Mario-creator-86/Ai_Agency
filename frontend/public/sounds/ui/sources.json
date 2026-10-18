@@ -1,0 +1,61 @@
+{
+  "checked": "2026-10-17",
+  "files": [
+    {
+      "file": "select_001.ogg",
+      "sha256": "aec0c31ea934a35936ae0d2ab8fac8123c93aa5647f935853a58dbaf90278b7a",
+      "author": "Kenney",
+      "license": "CC0-1.0",
+      "source": "https://kenney.nl/assets/interface-sounds"
+    },
+    {
+      "file": "confirmation_001.ogg",
+      "sha256": "063564703b6094d70718a3e787a55cc9141611e4ecd6b6637f8828f79b4a8c3a",
+      "author": "Kenney",
+      "license": "CC0-1.0",
+      "source": "https://kenney.nl/assets/interface-sounds"
+    },
+    {
+      "file": "confirmation_004.ogg",
+      "sha256": "568967a3d9f8a8f6af54ea01729c4882284308f2a27d78c07ffd7ee0d6951661",
+      "author": "Kenney",
+      "license": "CC0-1.0",
+      "source": "https://kenney.nl/assets/interface-sounds"
+    },
+    {
+      "file": "question_001.ogg",
+      "sha256": "abb8f9e4eb2071491b0b15f84ee302386b1847609310c1b000ae174639a6cc5a",
+      "author": "Kenney",
+      "license": "CC0-1.0",
+      "source": "https://kenney.nl/assets/interface-sounds"
+    },
+    {
+      "file": "error_004.ogg",
+      "sha256": "0b574cea597d96507e782ae9764f88482ce49f46e931e57054bf7150047f2d69",
+      "author": "Kenney",
+      "license": "CC0-1.0",
+      "source": "https://kenney.nl/assets/interface-sounds"
+    },
+    {
+      "file": "keypress-001.wav",
+      "sha256": "7b873548c399b9aa0efbe63052fe1344c5317a9b23455b8be3523f47d434daf1",
+      "author": "unicaegames",
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/keyboard-soundpack-1-typing-and-single-keystrokes"
+    },
+    {
+      "file": "keypress-007.wav",
+      "sha256": "522834f471e6c2935fd1e6a28042c0864925556efbec32c36d7c7a98026d4bfc",
+      "author": "unicaegames",
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/keyboard-soundpack-1-typing-and-single-keystrokes"
+    },
+    {
+      "file": "keypress-019.wav",
+      "sha256": "9cdb32c0074eaa114f8740e80bdfc28b1b44b4c6789371e1ec872e185e92d49e",
+      "author": "unicaegames",
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/keyboard-soundpack-1-typing-and-single-keystrokes"
+    }
+  ]
+}

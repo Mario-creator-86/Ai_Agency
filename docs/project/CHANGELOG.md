@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-10-17 — Company report framing
+
+Grouped comparable Runbook company cards, paired channel heights, pipeline beside stacked observations; responsive single-column fallback and consistent readable spacing. All displayed facts/actions unchanged. 980 tests, types, dialog browser suite and actual read-only desktop/mobile/enlarged-text review passed. Verified static install; server process unchanged, no restart.
+
+## 2026-10-17 — Daily dashboard, sound and dialog finish
+
+Real daily spend/limit/available/progress; successful agent completions counted by Bucharest civil day from paginated completion records; compact named projects and one two-channel YouTube card. One persistent Sunet ON/OFF switch, eight CC0 samples, quiet ambient synthesis and bounded live-event cues; film playback moved into Media. Corrected dialog status/scroll/menu/focus/model-field defects and unified styling. 980 unit tests, types, 20 budget/reconciliation tests, 5 browser suites and actual GET-only desktop/mobile review passed. Verified static UI installed without a restart command. Sound sources/licenses in PIXEL_STUDIO_ASSETS.md; report UI_DAILY_DASHBOARD_2026-10-17.md.
+
+
 ## 2026-10-16 — The composer follows the plan; quiet YouTube checks
 
 - The serial composer's fixed sentences follow the scene's plan: gestures only for free speakers, room life only when the room may move, the plan's expression held, establishing stills built around the room. GUARD_VERSION 4.
@@ -37,6 +46,19 @@ Today's afternoon and evening work, on top of the morning's montage and serial v
   - [STORYCRAFT_RESEARCH_2026-10-16.md](STORYCRAFT_RESEARCH_2026-10-16.md) and [STUDIO_QUALITY_PLAN_2026-10-16.md](STUDIO_QUALITY_PLAN_2026-10-16.md);
   - the decision log entry for the five card decisions;
   - spec 08 step 10 rewritten for the voice's own pause.
+
+## 2026-10-16 — Dashboard visual finish
+
+Coordinated category/channel/panel SVG iconography, clearer figure hierarchy, fine card surfaces and footers, improved navigation, aligned header controls, truthful empty states and compact action buttons. Fixed inherited header/toolbar style conflicts. 967 tests, types, isolated browser and GET-only current-backend checks passed. Verified frontend installed without restarting the server.
+
+
+## 2026-10-16 — Reference dashboard UI
+
+- Added left navigation and top film/monthly-budget/task/queue/two-channel cards; reordered right column to approvals, queue, compact autonomy.
+- Removed bottom roster visually; kept scene/keyboard/workforce selection. Moved sound into the toolbar and navigation help behind ?; small activity portraits.
+- Reused existing data contracts, real channel identities and measurement timestamps; cached/failed/hidden numbers stay explicit, task caps marked ≥100.
+- 967 frontend tests, TypeScript, isolated dashboard/navigation browser checks and GET-only running-backend review passed. Verified frontend installed without restarting PID 16144. Report: UI_DASHBOARD_2026-10-16.md and CURRENT_STATUS.
+
 
 ## 2026-10-16 — The serial's v8 form
 
@@ -5355,3 +5377,33 @@ No behaviour, data flow, API call, gate or test contract changed, and `style.css
 in the same breath), TypeScript and the build are clean, and every view plus every dialog state
 was photographed at 1920×1080 and 1280×800 against the 254 captured answers with 0 missing
 fixtures and 0 console errors. See `CURRENT_STATUS.md`.
+
+## 2026-10-17 — all-tab UI framing
+
+Corrected research form/action alignment, full trend titles, section navigation through long lazy lists, Journal structural widths, budget/provider grouping, Character Bible tracks, workforce metrics and Settings media/checkbox/tab geometry. Existing calculations and controls retained. 980 frontend tests, TypeScript and dialog browser regression suite pass; five widths, enlarged text and 43 installed views inspected. Static frontend installed and verified without restart. See UI_ALL_TABS_FRAMING_2026-10-17.md.
+
+## 2026-10-17 — scene windows and original frames
+
+Five windows now reuse actual exterior views at the corresponding world height and share outdoor time/light/weather. Owner-reported frame damage corrected with complete glazing apertures and explicit original-frame protection; no old skyline fragments retained. No background image or backend changes. 982 frontend tests, TypeScript, native frame/glazing browser test and environment suite pass; current app inspected at three widths and enlarged detail. Static install verified without server restart. See UI_WINDOW_VIEWS_2026-10-17.md.
+
+## 2026-10-17 — compact shooting-sheet loading
+
+Replaced the large loading plate with a compact Loading... status/spinner and temporary small dialog. Restores full sheet layout when data arrives; keeps closing, errors and existing GPU actions. 982 frontend tests, TypeScript, dialog browser suite and build pass. Verified delayed GET loading-to-real-content transition at desktop/mobile; installed static files verified without restart. Evidence: output/ui-sheet-loading-2026-10-17/.
+
+## 2026-10-17 — one scene toolbar row
+
+Removed the scene ? helper. Controls now share one row; long GPU status uses remaining space and ellipsis. Desktop geometry/screenshots at 1366/1920/2542 show every control fits; narrow screens retain a scrollable single row. 982 frontend tests, TypeScript and build pass; served static files verified without restart. Evidence: output/ui-toolbar-row-2026-10-17/.
+
+
+## 2026-10-17 — Stop a rewritten serial draft becoming a second film
+
+Exclude superseded drafts from resumption, enforce one approved episode/film per daily log across approval/build/purchase boundaries, serialize final transitions, and reject delayed stale reviews. Add watchdog and stage repair of historical duplicate approvals with an auditable continuity correction. Recovered a7db1594 offline, canon 5 → 4, original 87c05891 and all paid media preserved. Twenty duplicate regressions pass; broader regression and recovery evidence in CURRENT_STATUS. Existing film-close test fake updated for current model-call keywords.
+
+
+2026-10-17: repaired Supernova pre-purchase prompt audit/compiler contradictions and empty structured audit acceptance (4fa9b94, 8852c5f). 150 relevant tests pass; controlled restart HEALTHY and autonomous scene rewrite resumed. Specific Supernova publication watch active; publication not yet confirmed. UI preserved.
+
+2026-10-17: shared still framing review contract102c5d4; corrected review refusing valid Medium shot replacement on obsolete lessons. Controlled restart HEALTHY, scheduler resumed. Supernova publication watch continues.
+
+2026-10-17: compiler-owned style/frame deduplication and still-light clause preservation22eff0c,215 relevant tests. Controlled stop/start HEALTHY; exact Supernova remote publication watch continues unconfirmed.
+
+2026-10-17: preserve new action predicates/order in prompt dedupbd30734;220 relevant tests, four unchanged motion baseline failures separately reproduced. Controlled restart HEALTHY; specific Supernova publication watch continues unconfirmed.

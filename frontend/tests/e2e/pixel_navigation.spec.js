@@ -18,6 +18,8 @@ test('production scene fits its frame and supports wheel/drag navigation without
       load: id => id === '\0scene-review' ? `import '${path.join(FRONTEND, 'src/style.css').replaceAll('\\', '/')}';
         import '${path.join(FRONTEND, 'src/office_scene.css').replaceAll('\\', '/')}';
         import '${path.join(FRONTEND, 'src/pixel_studio.css').replaceAll('\\', '/')}';
+        import '${path.join(FRONTEND, 'src/studio_dashboard.css').replaceAll('\\', '/')}';
+        export * from '${path.join(FRONTEND, 'src/drawers.js').replaceAll('\\', '/')}';
         export * from '${path.join(FRONTEND, 'src/pixel_office.js').replaceAll('\\', '/')}';` : null }],
     build: { write: false, minify: false, lib: { entry: 'scene-review', name: 'PixelScene', formats: ['iife'] } } });
   const output = (Array.isArray(result) ? result[0] : result).output;
@@ -49,6 +51,7 @@ test('production scene fits its frame and supports wheel/drag navigation without
       document.getElementById('login').hidden = true;
       document.getElementById('workspace').hidden = false;
       document.documentElement.dataset.register = 'closed'; document.documentElement.dataset.side = 'closed';
+      window.drawers = new PixelScene.Drawers(); window.drawers.start();
       window.engine = new PixelScene.OfficeEngine(document.getElementById('office-canvas'), { parked: true,
         infoElement: document.getElementById('scene-info'), dataLive: () => false, reducedMotion: () => true,
         onSelectAgent: agent => { window.selectedId = agent.id; } });
@@ -56,7 +59,7 @@ test('production scene fits its frame and supports wheel/drag navigation without
       window.engine.setAgents([{ id: 'pointer-fixture', display_name: 'Pointer fixture', role: 'Director', lifecycle: 'ACTIVE', runtime_state: 'IDLE' }]);
     });
     const bounds = await page.evaluate(() => {
-      const frame = document.querySelector('.workspace-grid').getBoundingClientRect(), c = window.engine.canvas.getBoundingClientRect();
+      const frame = document.querySelector('.scene-viewport').getBoundingClientRect(), c = window.engine.canvas.getBoundingClientRect();
       return { frame: { top: frame.top, bottom: frame.bottom, height: frame.height }, canvas: { top: c.top, bottom: c.bottom, height: c.height } };
     });
     await capture('before-or-after-night');
@@ -68,11 +71,11 @@ test('production scene fits its frame and supports wheel/drag navigation without
     });
     assert.equal(await worldFits(), true);
     // No icon/label overflow may steal a neighbouring menu's pointer target.
-    await page.evaluate(()=>document.querySelectorAll('.topbar-rooms button').forEach(button=>
+    await page.evaluate(()=>document.querySelectorAll('#dashboard-nav button[id]').forEach(button=>
       button.addEventListener('click',()=>{window.menuPressed=button.id;})));
     for(const width of [1051,1280,1366,1700,1720,1920,2560]){
       await page.setViewportSize({width,height:1100});
-      const menus=await page.evaluate(()=>[...document.querySelectorAll('.topbar-rooms button')].map(button=>{
+      const menus=await page.evaluate(()=>[...document.querySelectorAll('#dashboard-nav button[id]')].filter(button=>{const r=button.getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight;}).map(button=>{
         const r=button.getBoundingClientRect(),hit=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);
         return {id:button.id,hit:hit?.closest('button')?.id};
       }));
@@ -83,13 +86,16 @@ test('production scene fits its frame and supports wheel/drag navigation without
       }
     }
     await page.setViewportSize({width:1700,height:1100});
+    await page.evaluate(()=>{window.scrollTo(0,0);window.engine.resize();});
+    const sceneBox = await page.locator('#office-canvas').boundingBox();
+    const center = {x:sceneBox.x+sceneBox.width/2,y:sceneBox.y+sceneBox.height/2};
     await page.evaluate(() => window.engine.zoomTo(2));
     const before = await page.evaluate(() => window.engine.viewport.panY);
-    await page.mouse.move(850, 450); await page.mouse.wheel(0, 180);
+    await page.mouse.move(center.x, center.y); await page.mouse.wheel(0, 180);
     await page.waitForTimeout(60);
     assert.ok(await page.evaluate(() => window.engine.viewport.panY) < before, 'wheel moves zoomed scene');
     const wheelPan = await page.evaluate(() => window.engine.viewport.panX);
-    await page.mouse.move(850, 450); await page.mouse.down(); await page.mouse.move(940, 520, { steps: 5 }); await page.mouse.up();
+    await page.mouse.move(center.x, center.y); await page.mouse.down(); await page.mouse.move(center.x+90, center.y+70, { steps: 5 }); await page.mouse.up();
     assert.ok(await page.evaluate(() => window.engine.viewport.panX) > wheelPan, 'drag moves zoomed scene');
     const beforeZoom = await page.evaluate(() => window.engine.zoom);
     await page.keyboard.down('Control'); await page.mouse.wheel(0, -100); await page.keyboard.up('Control');

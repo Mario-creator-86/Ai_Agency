@@ -30,6 +30,21 @@
 - [ ] 11_DATA_MODEL still says 60/70 s for the Shorts maximum (decision logged; hash update owed).
 - [ ] 38 failures that predate 2026-10-16 (listed in CURRENT_STATUS of 2026-10-16).
 
+## 2026-10-16 — Dashboard visual finish
+
+- [x] Metric/channel/icon/typography refinements, navigation states, aligned panel headers and compact empty states.
+- [x] Desktop/mobile/enlarged-text checks and UI-only local install; server identity unchanged.
+- [ ] Owner visual review after Ctrl+F5.
+
+
+## 2026-10-16 — Owner reference dashboard
+
+- [x] Reference-based navigation/activity/scene/approvals/queue/compact autonomy layout, no bottom agent strip.
+- [x] Real project, monthly-budget and bounded task counters, audience cards for both bound channels with truthful timestamps and polling.
+- [x] Desktop/mobile/enlarged-text verification, frontend build and local UI-only installation without server restart.
+- [ ] Owner visual review after Ctrl+F5. Exact totals beyond the task API cap and production YouTube freshness are separate from isolated layout acceptance.
+
+
 ## 2026-10-15 — The studio publishes by itself (Claude)
 
 - [x] Cloud asked nothing about thinking; writers get a JSON second attempt; serial film unblocked
@@ -2219,3 +2234,36 @@ No provider was called, no run was queued, no credit was spent, and
   `MAX_STORY_SCENES` 30), revisit after the first film; (e) `test_readiness::
   test_a_daily_budget_below_one_film_says_the_first_film_is_refused` fails since the film
   ceiling follows the daily budget (not the format work).
+
+
+## 2026-10-17 — Owner UI requests completed
+
+- [x] Sequential dialog audit: media, research, publishing, workforce, journal, daily run, autonomy, settings, decisions, inspectors, mail/live/player; fixes retained in installed bundle.
+- [x] Real daily budget, canonical cost accounting, current Bucharest day completions with pagination/midnight/DST handling.
+- [x] Compact named projects and combined YouTube channels; explicit unknown/stale data.
+- [x] One persistent UI sound switch, local CC0 collection/provenance and separate browser audio verification.
+- [x] 980 frontend tests, TypeScript, 20 budget/reconciliation tests, five browser suites, desktop/mobile actual-backend inspection and static install verification. No start/restart command.
+
+- [x] 2026-10-17: correct Runbook → Compania acum framing; grouped/pair-aligned cards, no row holes, desktop/mobile/200% text inspected, verified static install without restart.
+
+- [x] 2026-10-17: inspect every main tab/section for framing defects; correct forms, checkboxes, structural grids, budget groups and lazy navigation; five widths/200% text and 43 final installed views checked without restart. See UI_ALL_TABS_FRAMING_2026-10-17.md.
+
+- [x] 2026-10-17: synchronize five windows with actual exterior day/night/weather; replace repeated sunset views, trace glazing and preserve original frame pixels after Owner feedback. Native-resolution frame regression and current-app enlarged detail verified, no restart. See UI_WINDOW_VIEWS_2026-10-17.md.
+
+- [x] 2026-10-17: compact Loading... for shooting sheet, normal loaded layout restored; delayed real GET transition and desktop/mobile visual verification; installed without restart.
+
+- [x] 2026-10-17: remove scene ? helper; controls on one row including long GPU status, stop, fullscreen and sound at 1366/1920/2542; narrow-screen scrolling fallback. Verified static install without restart.
+
+
+## 2026-10-17 — Duplicate serial film recovery
+
+- [x] Finish Claude duplicate-day repair, guard old held drafts/approvals/storyboard reuse/purchases and concurrent requests; correct the existing unpaid duplicate locally, preserve the original and canon, verify repeat recovery. Evidence and remaining separate Claude branches: CURRENT_STATUS, SERIAL_DUPLICATE_RECOVERY. No server start/restart.
+
+- [x] 2026-10-17 Supernova prompt gate repair: still framing/marking context, per-object exclusions, leading label parsing and required audit scenes; 150 relevant tests.
+- [ ] Confirm Supernova 1efc3319 autonomous YouTube publication; resumed specific heartbeat, no manual production.
+
+- [x] 2026-10-17: share still-framing contract across audit, rewrite and review; valid replacement no longer contradicted by obsolete lessons.102c5d4;15 dedicated tests, broad258 pass+1 reproduced baseline failure. Supernova remote publication remains pending.
+
+- [x] 2026-10-17: remove pasted compiler-owned configured style/frame and retain visible state when stripping tempo;215 tests,22eff0c.
+
+- [x] 2026-10-17: lossless action dedup retains new state and word order;bd30734,220 relevant tests. Target publication still pending.
