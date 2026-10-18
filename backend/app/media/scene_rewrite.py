@@ -2228,7 +2228,12 @@ def review_findings(context: dict[str, Any]) -> list[dict[str, Any]]:
     "qc_text", "source" (the refused take's kind, or "film"), "code"} and its "cause"."""
     failures = list(context.get("failures") or [])
     current = [item for item in failures if item.get("kind") == "film"]
-    if context.get("last_code") in QUALITY_CODES:
+    if context.get("last_code") in (*QUALITY_CODES, "QC.FILM"):
+        # A finished-film redo carries the film's scene findings AND the newest
+        # refused clip's QC evidence. Suppressing the clip whenever the caller
+        # set QC.FILM left Sarah reviewing two findings while the brief and
+        # reviewer fixture had three, so a valid rewrite could never be accepted.
+        # Only the newest take is included; older refusals remain history.
         newest = next((item for item in failures if item.get("kind") != "film"), None)
         if newest is not None:
             current.append(newest)
