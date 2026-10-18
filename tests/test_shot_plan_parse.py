@@ -349,7 +349,7 @@ def test_a_plan_still_short_after_the_re_ask_names_what_it_kept_and_what_it_lost
     assert payload["from_model"] == 4
     assert payload["missing_scenes"] == [5, 6]
     sources = [(scene.prompt_json or {}).get("source") for scene in _scenes(engine, board_id)]
-    assert sources == ["model"] * 4 + ["template"] * 2
+    assert sources == ["model"] * 4 + [None] * 2  # refused scenes get no model-owned vendor text
 
 
 # ------------------------------------------------------------------ 4: PRODUCTION stops it
