@@ -329,36 +329,75 @@ class DemoModel:
         )
 
     def _shots(self, prompt: str) -> str:
+        """Return complete model-owned still/video prompts for the fixed DEMO astronomy film.
+
+        The live editor no longer accepts a list of component hints as a shot plan: it
+        needs the exact vendor texts and a recognized camera move. The demo's local
+        still-image renderer never purchases those video prompts, but its real lint and
+        storyboard gates check them just as they would check a paid film.
+        """
         indices = sorted({int(n) for n in re.findall(r'"scene_index":\s*(\d+)', prompt)}) or [1]
-        # A different framing per scene: a plan that frames every scene alike is refused by
-        # the shot-plan lint, and rightly.
-        cameras = [
-            ("wide, low angle, static", "the dome low in frame", "slow rotation"),
-            ("close-up, eye level, slow push in", "the mirror filling the frame", "a slow push"),
-            ("medium, high angle, locked off", "the star centred in dust", "dust drifting apart"),
-            ("wide, eye level, slow pan", "a figure small against the sky", "a slow pan"),
-        ]
+        frames = (
+            (
+                "a wide, low angle, 24mm lens",
+                "the observatory dome on a cold hillside at night",
+                "the dome turns slowly, its shutter opening",
+            ),
+            (
+                "a medium shot, eye-level, 50mm lens",
+                "the segmented golden mirror of a telescope",
+                "a faint reflection drifts across the segments",
+            ),
+            (
+                "a detail shot, macro, 85mm lens",
+                "a cloud of red dust around a young star",
+                "the dust thins slowly and light shows through",
+            ),
+            (
+                "an aerial shot, high angle",
+                "an empty field under a clear starry sky",
+                "the stars wheel slowly overhead",
+            ),
+        )
+        moves = ("dolly in", "tracking left", "crane up", "slow pan right")
         shots = []
-        for position, index in enumerate(indices):
-            camera, composition, motion = cameras[position % len(cameras)]
+        for index in indices:
+            camera, subject, action = frames[(index - 1) % len(frames)]
+            move = moves[(index - 1) % len(moves)]
+            ending_frame = f"{subject}, centred"
+            still = (
+                f"Documentary photograph, {camera}. The first instant shows {subject} "
+                "at a remote observatory beneath a dark, clear sky. Cold moonlight "
+                "illuminates the foreground, with one warm lamp behind the subject. "
+                "A single continuous vertical 9:16 frame, carefully composed."
+            )
+            motion = (
+                f"A steady {move} at a measured pace while {action}. "
+                "The world and subject remain consistent in one uninterrupted shot. "
+                f"The shot ends on {ending_frame}."
+            )
             shots.append(
                 {
                     "scene_index": index,
                     "story_purpose": "EVIDENCE",
-                    "subject": "the night sky over an observatory",
-                    "action": "the scene holds still while the light changes",
-                    "environment": "a cold hillside under clear stars",
+                    "subject": subject,
+                    "action": action,
+                    "environment": "a remote observatory far from any city",
                     "camera": camera,
+                    "camera_move": move,
                     "lighting": "moonlight from the left, one warm lamp behind",
-                    "composition": f"vertical, {composition}",
-                    "motion": motion,
+                    "composition": "vertical, the subject in the lower third",
+                    "motion": action,
                     "emotion": "quiet anticipation",
                     "background": "stars, unmoving",
-                    "continuity": "the same sky as the previous shot",
-                    "ending_frame": "the sky, centred",
+                    "continuity": "the same night sky as the previous shot",
+                    "ending_frame": ending_frame,
                     "audio_intent": "wind, distant",
                     "transition": "cut",
                     "avoid": ["text of any kind"],
+                    "still_prompt": still,
+                    "motion_prompt": motion,
+                    "negative_prompt": "letters, logos",
                 }
             )
         return json.dumps({"shots": shots})
