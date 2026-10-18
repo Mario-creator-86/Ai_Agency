@@ -288,6 +288,55 @@ def approved_words(
     )
 
 
+def approved_for_purchase(
+    session: Session, storyboard_id: str, scene: int, layer: str, digest: str
+) -> bool:
+    """Only Sarah's explicit APPROVED may authorize a *new* media purchase.
+
+    APPROVED_UNDER_CAP remains readable through approved_words for historical
+    media already bought before the Owner prohibited buying on a cap alone.
+    """
+    return any(
+        a.get("verdict") == APPROVED and a.get("digest") == digest
+        for a in _audits(session, storyboard_id, scene, layer)
+    )
+
+
+def purchase_approval_gaps(
+    engine: Any, storyboard_id: str, step: str, scenes: list[int]
+) -> list[int]:
+    """Scenes with no Sarah approval for the *current vendor-bound words*.
+
+    The staircase audits proactively, but the shooting sheet is also callable
+    directly by the Owner/API. Recheck at the final purchase boundary, after
+    verifying the sheet hash and before reading balances, reserving budgets or
+    contacting a media provider. Missing/closed scenes fail closed.
+    """
+    from app.media.scene_rewrite import scene_context  # noqa: PLC0415 - cycle
+
+    layer = LAYER_OF_STEP.get(step)
+    if layer is None:
+        return sorted({int(scene) for scene in scenes})
+    missing: list[int] = []
+    with Session(engine) as session:
+        for scene in sorted({int(scene) for scene in scenes}):
+            context = scene_context(engine, storyboard_id, scene)
+            if context is None:
+                missing.append(scene)
+                continue
+            package = context["package"]
+            words = prompt_text(package, layer)
+            if not words.strip():
+                missing.append(scene)
+                continue
+            digest = prompt_digest(
+                words, exact=package.get("prompt_format") == "editor_final_v1"
+            )
+            if not approved_for_purchase(session, storyboard_id, scene, layer, digest):
+                missing.append(scene)
+    return missing
+
+
 def finding_of(item: AuditedScene) -> str:
     """Her finding in her brief's own words — the diagnosis and what to change — the reason
     when she gave no brief."""
@@ -695,7 +744,7 @@ def audit_before_purchase(
             text, exact=context["package"].get("prompt_format") == "editor_final_v1"
         )
         with Session(engine) as session:
-            if approved_words(session, storyboard_id, scene, layer, digest):
+            if approved_for_purchase(session, storyboard_id, scene, layer, digest):
                 result["approved"].append(scene)
                 continue
             defect = tool_defect_on(session, storyboard_id, scene, layer, digest)
