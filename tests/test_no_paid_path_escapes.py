@@ -1959,6 +1959,34 @@ _ROUTE_DECORATORS = frozenset(
 #: on that path, or which item owns closing it. Each one was read on 2026-10-02.
 AUTHORISATION_ALLOWLIST: dict[tuple[str, str, str], str] = {}
 
+# The suspended RunPod prepared-batch runner hides two existing protective
+# boundaries from this conservative interprocedural AST scan:
+#
+# * authorisation: the redo has an Owner/Policy permit, and every round in
+#   gpu_batch.run_rounds calls its stop_reason() BEFORE submit_batch;
+# * booking: run_rounds commits the quote to SpendMeter before submit_batch,
+#   and the outer purchase_flow resumes the owning step to settle that quote
+#   against its held budget. The static graph cannot follow the generator's
+#   send(summary) back to each stage's book_* function.
+#
+# Only these exact roots and this exact purchase site are exceptions; adding
+# another route still requires a review. In particular, nothing here
+# allowlists unrelated vendor purchases or removes the runtime money guard.
+_RUNPOD_ROUNDS_SITE = "app.media.gpu_batch.run_rounds"
+AUTHORISATION_ALLOWLIST[
+    ("app.media.router.create_media_router.post_scene_redo", _RUNPOD_ROUNDS_SITE, "gate")
+] = "The redo's StepPermit and the guard's stop_reason are verified before the next RunPod round."
+for _root in (
+    "app.media.router.create_media_router.post_scene_redo",
+    "app.workflows.worker.build_task_handlers.film_continue",
+    "app.runbook.stages.build_stage_runners",
+):
+    AUTHORISATION_ALLOWLIST[(_root, _RUNPOD_ROUNDS_SITE, "booking")] = (
+        "The prepared purchase resumes its outer step after run_rounds: "
+        "the SpendMeter quote is charged before the batch and settled by "
+        "that step's budget booking; the AST graph loses the generator return."
+    )
+
 #: No upload is allowlisted (2026-10-02, PUB-04): `execute_publication` asks
 #: `evaluate_publishing_gate` again before every upload, the Owner's press and the
 #: watchdog's retry alike, so the gate is a door on those paths now.
