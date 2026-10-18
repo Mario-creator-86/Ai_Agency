@@ -29,6 +29,7 @@ from app.decisions.services import (
     register_applier,
     register_condition,
 )
+from app.db import lock_for_write
 from app.services import utc_now
 
 logger = logging.getLogger("studio.decisions.gpu_hold")
@@ -48,6 +49,7 @@ def propose_gpu_hold_card(engine: Engine) -> str | None:
     the card id (the standing card's when one is open). Never raises into his button."""
     try:
         with Session(engine) as session, session.begin():
+            lock_for_write(session)
             card = propose_owner_decision(
                 session,
                 kind=KIND,
