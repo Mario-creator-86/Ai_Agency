@@ -2267,3 +2267,8 @@ No provider was called, no run was queued, no credit was spent, and
 - [x] 2026-10-17: remove pasted compiler-owned configured style/frame and retain visible state when stripping tempo;215 tests,22eff0c.
 
 - [x] 2026-10-17: lossless action dedup retains new state and word order;bd30734,220 relevant tests. Target publication still pending.
+
+
+## 2026-10-18 — legacy final-prompt rewrite contract
+- [x] On-demand LIVE legacy migration with complete Kael finals, current face policy/Owner plan authority, exact review/transport and current purchase approval; original media/history preserved. Local isolated regression verification complete.
+- [ ] After controlled integration/restart, accept scene 19 live: Kael finals → Sarah approval → actual provider frames → visual QC. No live row was changed in this task. See LEGACY_EDITOR_FINAL_AUDIT_2026-10-18.md.

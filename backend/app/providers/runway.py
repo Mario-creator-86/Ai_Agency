@@ -135,13 +135,17 @@ def _utf16_units(text: str) -> int:
     return len(text.encode("utf-16-le")) // 2
 
 
-def fit_prompt(text: str, limit: int) -> str:
+def fit_prompt(text: str, limit: int, *, exact: bool = False) -> str:
     """The prompt on one line, within `limit` UTF-16 units, cut at a sentence if it must be.
 
     A prompt sliced at a character count ends mid-word, and the model reads the fragment
     as an instruction. Cut at the last sentence end that fits; with none, at the last whole
     word; only a single word longer than the cap is cut inside itself.
     """
+    if exact:
+        if not text.strip() or _utf16_units(text) > limit:
+            raise MediaProviderError("Reviewed prompt exceeds the selected provider limit")
+        return text
     words = " ".join(str(text).split())
     if limit <= 0:
         return ""
@@ -846,6 +850,7 @@ class RunwayImageAdapter(_RunwayClient, ImageProvider):
         references: Sequence[bytes] = (),
         seed: int | None = None,
         on_submitted: Callable[[str], None] | None = None,
+        exact_prompt: bool = False,
     ) -> list[ImageResult]:
         """``count`` candidate stills of one prompt, at exactly ``ratio``, in one purchase.
 
@@ -889,7 +894,7 @@ class RunwayImageAdapter(_RunwayClient, ImageProvider):
                 f"Model {self.model} does not take ratio {ratio} for {task} according to "
                 "Runway's contract"
             )
-        described = fit_prompt(prompt, self._prompt_max(task))
+        described = fit_prompt(prompt, self._prompt_max(task), exact=exact_prompt)
         if not described:
             raise MediaProviderError("There is no prompt to generate an image from")
         body: dict[str, Any] = {"model": self.model, "promptText": described, "ratio": ratio}
@@ -1008,7 +1013,10 @@ class RunwayImageAdapter(_RunwayClient, ImageProvider):
                 f"{settings_place('media')}",
                 code="reference_images_required",
             )
-        described = fit_prompt(f"{prompt} {style or ''}", self._prompt_max(task))
+        exact = (extra or {}).get("prompt_format") == "editor_final_v1"
+        described = fit_prompt(
+            prompt if exact else f"{prompt} {style or ''}", self._prompt_max(task), exact=exact
+        )
         if not described:
             raise MediaProviderError("There is no prompt to generate an image from")
         body: dict[str, Any] = {
@@ -1134,9 +1142,10 @@ class RunwayVideoAdapter(_RunwayClient, VideoProvider):
         wanted = extra if isinstance(extra, dict) else {}
         fields = self._fields(task)
         cap = self._prompt_max(task)
+        exact = wanted.get("prompt_format") == "editor_final_v1"
         body: dict[str, Any] = {
             "model": self.model,
-            "promptText": fit_prompt(prompt, cap),
+            "promptText": fit_prompt(prompt, cap, exact=exact),
             "ratio": self._ratio_for(task, aspect_ratio, follows_image=bool(image_ref)),
             "duration": pick_duration(self._durations(task), duration_seconds),
         }
@@ -1152,7 +1161,7 @@ class RunwayVideoAdapter(_RunwayClient, VideoProvider):
             body["audio"] = wanted.get("audio") is True
         negative = wanted.get("negative_prompt")
         if fields is not None and "negativePrompt" in fields and isinstance(negative, str):
-            fitted = fit_prompt(negative, cap)
+            fitted = fit_prompt(negative, cap, exact=exact)
             if fitted:
                 body["negativePrompt"] = fitted
         return body

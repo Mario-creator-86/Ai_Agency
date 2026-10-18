@@ -1271,9 +1271,9 @@ def _sheet(
         motion_text = ""
         negative: str | None = None
         if kind == "LIVE":
-            still_text = " ".join(
-                str(package.get("still_prompt") or scene.get("visual_prompt") or "").split()
-            )
+            still_text = str(package.get("still_prompt") or scene.get("visual_prompt") or "")
+            if package.get("prompt_format") != "editor_final_v1":
+                still_text = " ".join(still_text.split())
             motion_text, negative = motion_prompt_for(package, model_id, None)
         from app.media.prompt_agent import composition_issues  # noqa: PLC0415
 
@@ -1294,7 +1294,7 @@ def _sheet(
                         layers=("motion",) if still is not None else ("still", "motion"),
                     )
                 )
-                if kind == "LIVE"
+                if kind == "LIVE" and package.get("prompt_format") != "editor_final_v1"
                 else (),
             )
         )

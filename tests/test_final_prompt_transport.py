@@ -1,7 +1,6 @@
 """Kael -> Sarah -> vendor exact-text contract, without media/API/DB writes."""
 
 import pytest
-
 from app.media.final_prompts import (
     EDITOR_FINAL,
     FinalPromptError,
@@ -9,18 +8,20 @@ from app.media.final_prompts import (
     validate_final,
 )
 from app.media.prompt_agent import (
-    ShotPrompt, _complete_editor_shot, _validated_package,
-    compile_prompts, motion_prompt_for,
+    ShotPrompt,
+    _complete_editor_shot,
+    _validated_package,
+    compile_prompts,
+    motion_prompt_for,
 )
 from app.media.prompt_audit import prompt_digest, prompt_text
 from app.media.scene_rewrite import (
-    STILL,
     MOTION,
+    STILL,
     _direct_rewritten_package,
     layer_terms,
     lock_texts,
 )
-
 
 STILL_TEXT = (
     "Documentary photograph, deep indigo vacuum. Three scientists face the camera "
@@ -72,7 +73,7 @@ def test_bad_or_overlong_final_text_fails_closed() -> None:
     # The overlength fixture must NOT also end with whitespace: the validator
     # correctly rejects that independent problem first.
     with pytest.raises(FinalPromptError, match="UTF-16"):
-        validate_final({**_raw(), "still_prompt": ("word " * 250).strip()})
+        validate_final({**_raw(), "still_prompt": ("word " * 250).strip()}, max_utf16=1000)
     with pytest.raises(FinalPromptError, match="spatii exterioare"):
         validate_final({**_raw(), "still_prompt": STILL_TEXT + " "})
     with pytest.raises(FinalPromptError, match="camera_move"):

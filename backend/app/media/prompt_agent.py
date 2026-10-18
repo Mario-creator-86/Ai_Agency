@@ -364,8 +364,8 @@ class ShotPrompt(BaseModel):
     second_framing: Any = None
     # New architecture: Kael writes the EXACT vendor payload, not component
     # phrases for a Python composer to rearrange. No legacy field is removed.
-    still_prompt: str = Field(default="", max_length=1700)
-    motion_prompt: str = Field(default="", max_length=1700)
+    still_prompt: str = Field(default="", max_length=lint.MAX_PROMPT)
+    motion_prompt: str = Field(default="", max_length=lint.MAX_PROMPT)
     negative_prompt: str = Field(default="", max_length=400)
 
 
@@ -1498,7 +1498,11 @@ def _preflight_repair_factual_shots(
     run_ids: list[str] = []
     remaining = PREFLIGHT_REWRITES_PER_FILM
     for index, shot_type, old_ending, old_move, kind in snapshot:
-        if (targets is not None and index not in targets) or index not in packs or kind != LIVE_KIND:
+        if (
+            (targets is not None and index not in targets)
+            or index not in packs
+            or kind != LIVE_KIND
+        ):
             previous_ending = old_ending
             if old_move:
                 previous_moves.append(old_move)
@@ -4621,6 +4625,8 @@ def incomplete_plan_fields(
     package: Mapping[str, Any], *, layers: tuple[str, ...] = ("still", "motion")
 ) -> list[str]:
     """Find broken saved clauses without deleting them or guessing their missing words."""
+    if package.get("prompt_format") == "editor_final_v1":
+        return []
     fields: set[str] = set()
     if "still" in layers:
         fields.update(
@@ -4802,6 +4808,7 @@ def compile_prompts(
             package,
             model_id=_contract_model(contract, "model_id", DEFAULT_MOTION_MODEL),
             cap=lint.prompt_cap(contract, "still"),
+            motion_cap=lint.prompt_cap(contract, "motion"),
         )
     motion_model = _contract_model(contract, "model_id", DEFAULT_MOTION_MODEL)
     family = _motion_family(motion_model)
@@ -5045,7 +5052,9 @@ def motion_prompt_for(
     """
     if isinstance(package, dict) and package.get("prompt_format") == "editor_final_v1":
         from app.media.final_prompts import editor_motion_for  # noqa: PLC0415
-        return editor_motion_for(package, model_cap=lint.prompt_cap(contract, "motion"))
+        return editor_motion_for(
+            package, model_cap=lint.prompt_cap(contract or {"model_id": model_id}, "motion")
+        )
     intent = motion_intent_of(package) if isinstance(package, dict) else None
     if intent is not None:
         return render_motion(intent, _motion_family(model_id), lint.prompt_cap(contract, "motion"))

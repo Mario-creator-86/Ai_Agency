@@ -50,6 +50,7 @@ from app.media.toolchain import find_ffmpeg
 from app.models import OwnerPolicy
 from app.providers.base import GenerateResult, HealthResult
 from app.providers.registry import ProviderRegistry
+from final_rewrite_actor import final_answer, final_review
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from test_clip_qc_wiring import ScriptedCheck, events, shots
@@ -164,14 +165,12 @@ class Agents:
             return GenerateResult(json.dumps(self.brief), 10, 40, None)
         if '"scene-rewrite"' in prompt:
             self.rewrites.append(prompt)
-            return GenerateResult(json.dumps(self.shot), 10, 40, None)
+            return GenerateResult(json.dumps(final_answer(prompt, self.shot)), 10, 40, None)
         if '"prompt-audit"' in prompt:
             # The staircase has an independent pre-purchase Director audit after
             # the rewrite review. The deterministic test actor must handle it
             # instead of returning "{}" (which is correctly held as unreviewed).
-            scene_ids = sorted(
-                {int(n) for n in re.findall(r'"scene_index":\s*(\d+)', prompt)}
-            )
+            scene_ids = sorted({int(n) for n in re.findall(r'"scene_index":\s*(\d+)', prompt)})
             return GenerateResult(
                 json.dumps(
                     {
@@ -192,7 +191,7 @@ class Agents:
         if '"rewrite-review"' in prompt:
             self.reviews.append(prompt)
             said = (
-                json.dumps(answer_each(prompt, self.review))
+                json.dumps(final_review(answer_each(prompt, self.review)))
                 if isinstance(self.review, dict)
                 else str(self.review)
             )
@@ -293,8 +292,8 @@ def test_her_brief_rewrites_the_motion_and_the_shot_is_bought_again_and_passes(
     assert after.prompt_json["subject"] == PLAN["subject"]
     # The movement is new.
     assert after.prompt_json["camera_move"] == "slow pan right"
-    assert after.prompt_json["motion_intent"] != before.prompt_json["motion_intent"]
-    assert "a frozen, almost still frame" in after.prompt_json["avoid"]
+    assert after.prompt_json["motion_intent"] is None
+    assert after.prompt_json["prompt_format"] == "editor_final_v1"
     # She reviewed his words against the finding before anything was stored: the refusal's
     # words, his new sentence and the difference were put before her.
     (review,) = agents.reviews

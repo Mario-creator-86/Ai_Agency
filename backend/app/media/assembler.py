@@ -1388,6 +1388,11 @@ def motion_request(
         model if isinstance(model, str) else None,
         metadata if isinstance(metadata, dict) else None,
     )
+    if package.get("prompt_format") == "editor_final_v1":
+        return motion, {
+            "prompt_format": "editor_final_v1",
+            **({"negative_prompt": negative} if negative else {}),
+        }
     if not motion:
         prompt = picture
     elif from_still:

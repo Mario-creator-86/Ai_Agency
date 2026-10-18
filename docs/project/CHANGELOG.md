@@ -5407,3 +5407,7 @@ Exclude superseded drafts from resumption, enforce one approved episode/film per
 2026-10-17: compiler-owned style/frame deduplication and still-light clause preservation22eff0c,215 relevant tests. Controlled stop/start HEALTHY; exact Supernova remote publication watch continues unconfirmed.
 
 2026-10-17: preserve new action predicates/order in prompt dedupbd30734;220 relevant tests, four unchanged motion baseline failures separately reproduced. Controlled restart HEALTHY; specific Supernova publication watch continues unconfirmed.
+
+
+## 2026-10-18 — controlled legacy final prompts
+On-demand Kael final-text migration for requested open LIVE rewrites; current face policy and existing Owner visual-plan authority shared with Sarah; exact positive/negative transport and approval identity; actionable final audit refusals and bounded repeated-refusal diagnosis. Existing paid media/history retained, no startup/live DB migration or restart. 244 relevant tests and final 112-test affected rerun passed, including 25 new regressions. See LEGACY_EDITOR_FINAL_AUDIT_2026-10-18.md; live scene-19 visual acceptance remains pending.

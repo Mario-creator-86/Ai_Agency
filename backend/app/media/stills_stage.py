@@ -280,6 +280,8 @@ def still_negative(
     when the plan names an object that carries its own markings, ``markings``), the faces
     when the bible forbids them, then the plan's own `avoid` items, each once, within
     `NEGATIVE_CHARS`."""
+    if (package or {}).get("prompt_format") == "editor_final_v1":
+        return str((package or {}).get("negative_prompt") or "")
     terms: list[str] = [
         term for term in STILL_NEGATIVE if not (markings and term in _MARKED_OBJECT_KEEPS)
     ]
@@ -389,6 +391,7 @@ class _Scene:
     look_block: str
     camera_move: str
     source: str | None
+    prompt_format: str = "legacy"
     reuse: SceneTake | None = None
     #: Bought and not settled: SUBMITTED takes (task open) and UNJUDGED candidates on disk.
     pending: list[SceneTake] = field(default_factory=list)
@@ -740,7 +743,10 @@ def _read_scenes(
             scene = _Scene(
                 index=int(row.scene_index),
                 kind=kind,
-                words=" ".join(words.split()),
+                words=words
+                if package.get("prompt_format") == "editor_final_v1"
+                else " ".join(words.split()),
+                prompt_format=str(package.get("prompt_format") or "legacy"),
                 identity=identity,
                 look_block=str(package.get("look_block") or ""),
                 camera_move=str(package.get("camera_move") or ""),
@@ -1074,6 +1080,8 @@ def _prompt(
 ) -> str:
     """The words sent for one request: the scene, what a re-roll asks for, and what each
     reference picture is for, in the order the pictures go (`_references`)."""
+    if scene.prompt_format == "editor_final_v1":
+        return scene.words
     parts = [scene.words]
     if instruction:
         parts.append(f"Show {instruction}.")
@@ -1183,6 +1191,9 @@ def _buy(
     references: list[bytes],
     count: int,
     on_submitted: Callable[[str], None] | None = None,
+    *,
+    exact_prompt: bool = False,
+    negative_prompt: str = "",
 ) -> tuple[list[Any], float | None]:
     """The candidates of one request and the vendor's price for it (None when unstated).
 
@@ -1191,6 +1202,8 @@ def _buy(
     generate = getattr(adapter, "generate_candidates", None)
     if callable(generate):
         heard: dict[str, Any] = {}
+        if exact_prompt and "exact_prompt" in inspect.signature(generate).parameters:
+            heard["exact_prompt"] = True
         if on_submitted is not None and _hears_submits(generate):
             heard["on_submitted"] = on_submitted
         results = asyncio.run(
@@ -1200,6 +1213,10 @@ def _buy(
         # An image vendor without candidates: the same request, once per candidate.
         width, height = (int(part) for part in STILL_RATIO.split(":"))
         extra: dict[str, Any] = {}
+        if exact_prompt:
+            extra["prompt_format"] = "editor_final_v1"
+            if negative_prompt:
+                extra["negative_prompt"] = negative_prompt
         if references:
             extra["reference_image"] = {"bytes": references[0], "mime_type": "image/png"}
         results = [
@@ -3188,7 +3205,13 @@ def run_stills_stage(
             try:
                 bind_scene(image_adapter, storyboard_id, scene.index, "image")
                 candidates, quoted = _buy(
-                    image_adapter, prompt, references, STILL_CANDIDATES, on_submitted=submitted
+                    image_adapter,
+                    prompt,
+                    references,
+                    STILL_CANDIDATES,
+                    on_submitted=submitted,
+                    exact_prompt=scene.prompt_format == "editor_final_v1",
+                    negative_prompt=scene.negative,
                 )
             except TaskStillOpen:
                 # Accepted (and charged) and not delivered: the takes stay SUBMITTED with

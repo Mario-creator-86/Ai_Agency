@@ -34,7 +34,7 @@ import logging
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -48,7 +48,7 @@ AUDIT_TASK = "director_prompt_audit"
 #: defect are those made under the same instructions (20:54Z, 7c26a7ce scene 2: the guard
 #: fired at once on seven refusals made under instructions that let her ask a picture for a
 #: static frame and read a duplication off the plan — the corrected audit never judged).
-AUDIT_TEMPLATE = "director_prompt_audit-v9"
+AUDIT_TEMPLATE = "director_prompt_audit-v10"
 AUDIT_EVENT = "media.prompt_audited"
 #: Her rounds on one scene's layer inside ONE walk before the scene waits for her next walk:
 #: a bound on the walk's LLM time, not on her rounds (the Owner, 2026-10-15 18:15Z: no cap
@@ -219,6 +219,10 @@ class AuditBrief(BaseModel):
     keep: list[str] = Field(default_factory=list)
     change: list[str] = Field(default_factory=list)
     summary_ro: str = Field(min_length=1)
+    editorial_visual_intent: str = ""
+    defect_words: str = ""
+    missing_requirement: str = ""
+    responsible: Literal["Kael", "plan", "editorial_policy", "code"] | None = None
 
 
 class AuditedScene(BaseModel):
@@ -232,6 +236,40 @@ class AuditedScene(BaseModel):
 class PromptAudit(BaseModel):
     model_config = ConfigDict(extra="ignore")
     scenes: list[AuditedScene] = Field(min_length=1)
+
+
+def final_audit_schema(
+    words: dict[int, str], negatives: dict[int, str] | None = None
+) -> type[PromptAudit]:
+    """A final-text refusal needs an actionable diagnosis grounded in the reviewed text."""
+
+    class FinalAudit(PromptAudit):
+        @model_validator(mode="after")
+        def evidence(self) -> FinalAudit:
+            for item in self.scenes:
+                if item.scene_index not in words or item.approved:
+                    continue
+                brief = item.brief
+                if (
+                    brief is None
+                    or not brief.change
+                    or not brief.keep
+                    or brief.responsible is None
+                    or not (brief.defect_words or brief.missing_requirement)
+                ):
+                    raise ValueError(
+                        "Final refusal needs defect_words or missing_requirement, "
+                        "responsible, change and keep in brief"
+                    )
+                if (
+                    brief.defect_words
+                    and brief.defect_words not in words[item.scene_index]
+                    and brief.defect_words not in (negatives or {}).get(item.scene_index, "")
+                ):
+                    raise ValueError("defect_words must quote the exact words_to_send")
+            return self
+
+    return FinalAudit
 
 
 def prompt_text(package: dict[str, Any], layer: str) -> str:
@@ -262,6 +300,23 @@ def prompt_digest(text: str, *, exact: bool = False) -> str:
     # must be bound to the byte-for-byte text that Sarah saw and the vendor gets.
     words = str(text) if exact else " ".join(str(text).split())
     return hashlib.sha256(words.encode("utf-8")).hexdigest()
+
+
+def approval_digest(
+    package: dict[str, Any], layer: str, bible: dict[str, Any] | None = None
+) -> str:
+    """Bind approval to all editor-owned vendor prose, including optional exclusions."""
+    words = prompt_text(package, layer)
+    if package.get("prompt_format") != "editor_final_v1":
+        return prompt_digest(words)
+    negative = package.get("negative_prompt") or None
+    if negative or bible or package.get("editorial_visual_intent"):
+        words = json.dumps(
+            [words, negative, bible or {}, package.get("editorial_visual_intent")],
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+    return prompt_digest(words, exact=True)
 
 
 def _audits(session: Session, storyboard_id: str, scene: int, layer: str) -> list[dict[str, Any]]:
@@ -329,9 +384,18 @@ def purchase_approval_gaps(
             if not words.strip():
                 missing.append(scene)
                 continue
-            digest = prompt_digest(
-                words, exact=package.get("prompt_format") == "editor_final_v1"
-            )
+            if package.get("prompt_format") == "editor_final_v1":
+                from app.media.final_prompts import (  # noqa: PLC0415
+                    FinalPromptError,
+                    validate_final,
+                )
+
+                try:
+                    validate_final(package)
+                except FinalPromptError:
+                    missing.append(scene)
+                    continue
+            digest = approval_digest(package, layer, context.get("bible"))
             if not approved_for_purchase(session, storyboard_id, scene, layer, digest):
                 missing.append(scene)
     return missing
@@ -407,7 +471,8 @@ def _note_tool_defect(
         text = (
             f"Scena {scene}, stratul {layer}: aceeași constatare refuzată de "
             f"{SAME_FINDING_ROUNDS} ori la rând, deși Editorul a rescris de fiecare dată — "
-            f"cuvintele refuzate nu sunt ale lui, ci ale compozitorului sau ale lint-ului. "
+            "Diagnosticul necesita verificarea textului final, a planului editorial, "
+            "a politicii curente si a validarilor; nu presupune o vina a compozitorului. "
             f"Constatarea: {reason}"
         )
         row = post_message(
@@ -512,16 +577,48 @@ def _ask(
     from app.agents.structured import structured_run  # noqa: PLC0415 - it imports services
     from app.factual.sanitizer import wrap_in_inert_boundary  # noqa: PLC0415
     from app.media.prompt_agent import STILL_FRAMING_RULE, lessons_rule  # noqa: PLC0415
+    from app.media.visual_policy import POLICY_NOTE, effective_policy  # noqa: PLC0415
+
+    contexts = {
+        index: {
+            **context,
+            "package": effective_policy(context["package"], context.get("bible") or {})[0],
+            "bible": effective_policy(context.get("bible") or {}, context.get("bible") or {})[0],
+        }
+        for index, context in contexts.items()
+    }
+    final_only = all(
+        c["package"].get("prompt_format") == "editor_final_v1" for c in contexts.values()
+    )
 
     data = {
         "layer": layer,
         "scenes": [
             {
                 "scene_index": index,
+                "prompt_contract": context["package"].get("prompt_format", "legacy"),
+                "visual_bible": context.get("bible") or {},
+                "editorial_visual_intent": context.get("editorial_visual_intent")
+                or context["package"].get("editorial_visual_intent"),
+                "editorial_authority": context.get("editorial_authority")
+                or context["package"].get("editorial_authority"),
                 # The beat without its people's bible props: a prop is not in the words
                 # unless the plan put it there, and she refused eight scenes for a nameplate
                 # and post-its that were in the bible only (2026-10-15 14:57Z).
-                "plan": _plan_without_props(context.get("scene") or {}),
+                "plan": _plan_without_props(
+                    {
+                        **(context.get("scene") or {}),
+                        **(
+                            {
+                                "writer_visual": context.get("editorial_visual_intent")
+                                or context["package"].get("editorial_visual_intent")
+                            }
+                            if context.get("editorial_visual_intent")
+                            or context["package"].get("editorial_visual_intent")
+                            else {}
+                        ),
+                    }
+                ),
                 "shot_plan": _plan_without_props(
                     {
                         key: context["package"].get(key)
@@ -530,6 +627,7 @@ def _ask(
                     }
                 ),
                 "words_to_send": prompt_text(context["package"], layer),
+                "negative_prompt": context["package"].get("negative_prompt"),
                 "other_layer": prompt_text(
                     context["package"], "motion" if layer == "still" else "still"
                 ),
@@ -551,7 +649,19 @@ def _ask(
     }
     prompt = (
         _INSTRUCTIONS.format(what=_WHAT[layer], layer=layer)
-        + (_MOTION_NOTE if layer == "motion" else _STILL_NOTE)
+        + (
+            "Judge only the complete motion words Kael wrote. The paid still stays fixed. "
+            "There are no Python composer sentences or required legacy fields.\n"
+            if layer == "motion" and final_only
+            else (_MOTION_NOTE if layer == "motion" else _STILL_NOTE)
+        )
+        + POLICY_NOTE
+        + " For editor_final_v1, ignore legacy compositor instructions; all sentences are "
+        "Kael's. For every refusal state the concrete defect, exact offending quote (or "
+        "explicitly missing requirement), change, keep, and responsible layer. Return "
+        "brief.defect_words as an exact quote or brief.missing_requirement for an omission, "
+        "brief.responsible as Kael, plan, editorial_policy or code, with nonempty change "
+        "and keep. A contradictory plan must be corrected before purchase.\n"
         + lessons_rule(lessons)
         + (STILL_FRAMING_RULE if layer == "still" else "")
         + wrap_in_inert_boundary(json.dumps(data, ensure_ascii=False, default=str), "prompt-audit")
@@ -564,7 +674,17 @@ def _ask(
         prompt,
         AUDIT_TEMPLATE,
         correlation_id,
-        PromptAudit,
+        final_audit_schema(
+            {
+                index: prompt_text(c["package"], layer)
+                for index, c in contexts.items()
+                if c["package"].get("prompt_format") == "editor_final_v1"
+            },
+            {
+                index: str(c["package"].get("negative_prompt") or "")
+                for index, c in contexts.items()
+            },
+        ),
         "",
         summary=f"Verific cuvintele scenelor {sorted(contexts)} înainte de cumpărare.",
         max_tokens=2400,
@@ -740,9 +860,7 @@ def audit_before_purchase(
         if not text:
             result["skipped"].append(scene)
             continue
-        digest = prompt_digest(
-            text, exact=context["package"].get("prompt_format") == "editor_final_v1"
-        )
+        digest = approval_digest(context["package"], layer, context.get("bible"))
         with Session(engine) as session:
             if approved_for_purchase(session, storyboard_id, scene, layer, digest):
                 result["approved"].append(scene)

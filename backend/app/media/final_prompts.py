@@ -8,7 +8,10 @@ the approved words after Sarah's audit.
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
+
+from runpod_worker.contract import MAX_PROMPT
 
 EDITOR_FINAL = "editor_final_v1"
 
@@ -17,7 +20,12 @@ class FinalPromptError(ValueError):
     """Reject invalid editor output before a vendor can be charged."""
 
 
-def validate_final(package: Mapping[str, Any], *, max_utf16: int = 1000) -> tuple[str, str]:
+def validate_final(
+    package: Mapping[str, Any],
+    *,
+    max_utf16: int = MAX_PROMPT,
+    motion_max_utf16: int | None = None,
+) -> tuple[str, str]:
     """Return the exact still and motion text only if both pass technical limits."""
     from app.media.prompt_lint import CAMERA_MOVES, utf16_units  # noqa: PLC0415
 
@@ -31,18 +39,27 @@ def validate_final(package: Mapping[str, Any], *, max_utf16: int = 1000) -> tupl
             raise FinalPromptError(f"{name} are spatii exterioare; cerem corectare Kael.")
         if "\x00" in value or "\r" in value:
             raise FinalPromptError(f"{name} contine caractere de control.")
-        if utf16_units(value) > max_utf16:
+        cap = (
+            motion_max_utf16
+            if name == "motion_prompt" and motion_max_utf16 is not None
+            else max_utf16
+        )
+        if utf16_units(value) > cap:
             raise FinalPromptError(
-                f"{name} depaseste {max_utf16} unitati UTF-16; "
-                "Kael trebuie sa il scurteze, nu Python."
+                f"{name} depaseste {cap} unitati UTF-16; Kael trebuie sa il scurteze, nu Python."
             )
     if not isinstance(move, str) or move not in CAMERA_MOVES:
         raise FinalPromptError("Kael trebuie sa indice un camera_move valid.")
     negative = package.get("negative_prompt")
     if negative is not None and (
-        not isinstance(negative, str) or utf16_units(negative) > 400
+        not isinstance(negative, str)
+        or utf16_units(negative) > 400
+        or negative != negative.strip()
+        or "\x00" in negative
+        or "\r" in negative
     ):
         raise FinalPromptError("negative_prompt nu respecta limita tehnica.")
+    assert isinstance(still, str) and isinstance(motion, str)
     return still, motion
 
 
@@ -50,14 +67,15 @@ def editor_compiled(
     package: Mapping[str, Any],
     *,
     model_id: str | None = None,
-    cap: int = 1000,
+    cap: int = MAX_PROMPT,
+    motion_cap: int | None = None,
 ) -> dict[str, Any]:
     """Package unchanged vendor prose in the shape the purchase pipeline knows."""
     from app.media import prompt_lint as lint  # noqa: PLC0415
 
     if package.get("prompt_format") != EDITOR_FINAL:
         raise FinalPromptError("Promptul nu este in formatul final al lui Kael.")
-    still, motion = validate_final(package, max_utf16=cap)
+    still, motion = validate_final(package, max_utf16=cap, motion_max_utf16=motion_cap)
     return {
         "scene_kind": "LIVE",
         "still_prompt": still,

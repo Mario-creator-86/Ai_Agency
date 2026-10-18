@@ -115,6 +115,7 @@ from app.factual.sanitizer import wrap_in_inert_boundary
 from app.media import prompt_lint as lint
 from app.media.markings import markings_kept, markings_note, planned_markings, still_exclusions
 from app.media.models import SceneTake, Storyboard, StoryboardScene
+from app.media.visual_policy import POLICY_NOTE
 from app.models import DomainEvent
 from app.services import append_event
 
@@ -130,12 +131,12 @@ REWRITE_REASON = "director_brief"
 #: Who decided a rewrite, as `scene_memory` reads it.
 DECIDED_BY = "director"
 BRIEF_TASK = "director_scene_brief"
-BRIEF_TEMPLATE = "director-scene-brief-v4"
+BRIEF_TEMPLATE = "director-scene-brief-v5"
 REWRITE_TASK = "scene_prompt_rewrite"
-REWRITE_TEMPLATE = "scene-prompt-rewrite-v6"
+REWRITE_TEMPLATE = "scene-prompt-rewrite-v7"
 #: Her review of his rewrite against the findings, before anything is bought on it.
 REVIEW_TASK = "director_rewrite_review"
-REVIEW_TEMPLATE = "director-rewrite-review-v6"
+REVIEW_TEMPLATE = "director-rewrite-review-v7"
 TREATS, MISSES = "TREATS", "MISSES"
 #: Her review when every one of quality control's findings is minor (2026-10-12 evening review
 #: of a50407e: a rewrite that treated nothing was stored and bought because each finding was
@@ -299,6 +300,7 @@ class SceneBrief(BaseModel):
     keep: list[str] = Field(default_factory=list)
     change: list[str] = Field(min_length=1)
     summary_ro: str = Field(min_length=1, max_length=500)
+    editorial_visual_intent: str = ""
 
     @field_validator("layer", "action", mode="before")
     @classmethod
@@ -655,7 +657,12 @@ def review_schema(
 
 
 def shot_schema(
-    index: int, layer: str, *, serial: bool = False, editor_final: bool = False
+    index: int,
+    layer: str,
+    *,
+    serial: bool = False,
+    editor_final: bool = False,
+    migrating: bool = False,
 ) -> type[BaseModel]:
     """The editor's one shot, fitted to the shot schema (`prompt_agent._coerce`), and holding
     what the layer rewrites: a motion for the motion layer, the picture and its motion for the
@@ -687,13 +694,11 @@ def shot_schema(
             needed: tuple[str, ...]
             if editor_final:
                 needed = (
-                    ("still_prompt", "motion_prompt") if layer == STILL
+                    ("still_prompt", "motion_prompt")
+                    if layer == STILL or migrating
                     else ("motion_prompt",)
                 )
-                empty = [
-                    name for name in needed
-                    if not str(getattr(self, name) or "").strip()
-                ]
+                empty = [name for name in needed if not str(getattr(self, name) or "").strip()]
                 if empty:
                     raise ValueError(f"Kael must rewrite the exact {', '.join(empty)}")
                 return self
@@ -1331,6 +1336,30 @@ def scene_context(engine: Engine, storyboard_id: str, scene_index: int) -> dict[
             "layers": open_layers(session, storyboard_id, scene_index, last_code=last_code),
             "local_move": _local_move(session, storyboard_id, scene_index),
         }
+        # An Owner-approved plan correction outranks older bible orientation. Read its
+        # immutable receipt; do not copy a historical provider prompt into the new contract.
+        for event in session.scalars(
+            select(DomainEvent)
+            .where(
+                DomainEvent.aggregate_id == storyboard_id,
+                DomainEvent.event_type == "media.owner_physical_prompt_repair",
+            )
+            .order_by(DomainEvent.sequence.desc())
+        ):
+            payload = event.payload if isinstance(event.payload, dict) else {}
+            if payload.get("scene_index") != scene_index:
+                continue
+            intent = (payload.get("package") or {}).get("writer_visual")
+            if isinstance(intent, str) and intent.strip():
+                context["editorial_visual_intent"] = (
+                    package.get("editorial_visual_intent") or intent
+                )
+                context["editorial_authority"] = {
+                    "event_id": event.event_id,
+                    "type": event.event_type,
+                    "reason": payload.get("reason"),
+                }
+            break
         if last_code in DELIVERY_CODES:
             failed = next(
                 (
@@ -1664,7 +1693,7 @@ def lock_texts(
     rule were read as words the layer keeps, so a lock on them turned the scene to a paid
     still although another choice of the field says other words."""
     active = package or context["package"]
-    if active.get("prompt_format") == "editor_final_v1":
+    if active.get("prompt_format") == "editor_final_v1" or context.get("final_rewrite"):
         still = str(visual or active.get("still_prompt") or context.get("visual_prompt") or "")
         motion = str(active.get("motion_prompt") or "")
         # No fixed Python sentences exist in editor-final text. Only the still
@@ -1722,13 +1751,14 @@ def layer_terms(
     on a motion rewrite "still_kept_whole" (`STILL_KEPT_WHOLE`; the still is in the prompts
     beside it)."""
     active = package or context["package"]
-    if active.get("prompt_format") == "editor_final_v1":
+    if active.get("prompt_format") == "editor_final_v1" or context.get("final_rewrite"):
         still = str(active.get("still_prompt") or context["visual_prompt"])
-        motion = str(active.get("motion_prompt") or "")
         editable = (
-            {"still_prompt": "Write the exact final still text; no composer.",
-             "motion_prompt": "Write the matching exact final clip text.",
-             "camera_move": "Single enumerated camera move"}
+            {
+                "still_prompt": "Write the exact final still text; no composer.",
+                "motion_prompt": "Write the matching exact final clip text.",
+                "camera_move": "Single enumerated camera move",
+            }
             if layer == STILL
             else {
                 "motion_prompt": "Write the exact final clip movement text.",
@@ -1768,7 +1798,10 @@ def camera_move_sentences() -> dict[str, str]:
 def _data(context: dict[str, Any], **more: Any) -> dict[str, Any]:
     """The context as the agents read it, before the studio's lessons and the fitting
     (`_fitted`)."""
-    package = context["package"]
+    from app.media.visual_policy import effective_policy  # noqa: PLC0415
+
+    bible, _ = effective_policy(context["bible"], context["bible"])
+    package, retired = effective_policy(context["package"], bible)
     scene_keys: tuple[str, ...] = (
         "scene_index",
         "story_purpose",
@@ -1779,19 +1812,33 @@ def _data(context: dict[str, Any], **more: Any) -> dict[str, Any]:
     if context.get("serial"):
         # The beat's part, room, lines and background people: who speaks and where they stand.
         scene_keys += ("part", "location", "lines", "background")
+    scene_view = {key: context["scene"].get(key) for key in scene_keys}
+    intent = context.get("editorial_visual_intent") or package.get("editorial_visual_intent")
+    if intent:
+        scene_view["writer_visual"] = intent
     data = {
         "film": {"title": context["title"], "story": context["story"]},
-        "scene": {key: context["scene"].get(key) for key in scene_keys},
+        "scene": scene_view,
         "shot_as_stored": _shot_of(package),
         "prompts_sent": {
             "still": package.get("still_prompt") or context["visual_prompt"],
             "motion": package.get("motion_prompt") or "",
+            "negative_prompt": package.get("negative_prompt"),
         },
         "visual_bible": {
-            key: context["bible"].get(key)
-            for key in ("style", "world", "lighting", "continuity_rules", "avoid")
-            if context["bible"].get(key)
+            key: bible.get(key)
+            for key in ("style", "world", "lighting", "continuity_rules", "avoid", "face_policy")
+            if bible.get(key)
         },
+        "current_policy": POLICY_NOTE,
+        "editorial_visual_intent": context.get("editorial_visual_intent")
+        or package.get("editorial_visual_intent"),
+        "editorial_authority": context.get("editorial_authority")
+        or package.get("editorial_authority"),
+        "retired_restrictions": retired,
+        "prompt_contract": "editor_final_v1"
+        if context.get("final_rewrite")
+        else package.get("prompt_format", "legacy"),
         "refusals": list(context["failures"]),
         "earlier_briefs": list(context["briefs"]),
         **more,
@@ -1904,15 +1951,13 @@ def director_brief(
         return {"brief": None, "run_id": None, "agent_id": None, "reason": "Niciun Director activ."}
     with Session(engine) as session:
         lessons = prompt_lessons(session, scope=lesson_scope(context))
+    context = {**context, "final_rewrite": True}
     layers = tuple(context["layers"])
     failures = context["failures"]
     more: dict[str, Any] = {
         "open_layers": list(layers),
         "layers_he_may_change": {layer: layer_terms(context, layer) for layer in layers},
-        "camera_move_sentences": (
-            {} if context["package"].get("prompt_format") == "editor_final_v1"
-            else camera_move_sentences()
-        ),
+        "camera_move_sentences": ({} if context.get("final_rewrite") else camera_move_sentences()),
     }
     findings = review_findings(context)
     if findings:
@@ -1927,6 +1972,7 @@ def director_brief(
             action="retry_delivery" if delivery else "rewrite",
         )
         + (_SERIAL_BRIEF_NOTE if context.get("serial") else "")
+        + POLICY_NOTE
         + _markings_note(context)
         + lessons_rule(lessons)
         + wrap_in_inert_boundary(_fitted(_data(context, **more), lessons), "scene-brief")
@@ -1991,10 +2037,40 @@ def _direct_rewritten_package(
     context: dict[str, Any], new: dict[str, Any], layer: str
 ) -> dict[str, Any]:
     """No compositor: preserve the untouched layer and Kael's exact corrected prose."""
-    from app.media.final_prompts import editor_compiled  # noqa: PLC0415
+    from app.media.final_prompts import FinalPromptError, editor_compiled  # noqa: PLC0415
+    from app.media.visual_policy import effective_policy, orientation_conflict  # noqa: PLC0415
 
     stored = context["package"]
-    package = dict(stored)
+    package, retired = effective_policy(stored, context.get("bible") or {})
+    _, retired_bible = effective_policy(context.get("bible") or {}, context.get("bible") or {})
+    intent = context.get("editorial_visual_intent") or stored.get("editorial_visual_intent")
+    if orientation_conflict(stored, context.get("bible") or {}) and not intent:
+        raise FinalPromptError(
+            "PLAN_CONFLICT: medalii pe piept din spate; Sarah trebuie sa aprobe "
+            "editorial_visual_intent coerent inainte de rescriere."
+        )
+    if intent:
+        package["editorial_visual_intent"] = intent
+        package["writer_visual"] = intent
+        if context.get("editorial_authority"):
+            package["editorial_authority"] = context["editorial_authority"]
+    migrating = stored.get("prompt_format") != "editor_final_v1"
+    if migrating:
+        if not new.get("still_prompt") or not new.get("motion_prompt"):
+            raise FinalPromptError(
+                "Migrarea cere still_prompt si motion_prompt complete de la Kael."
+            )
+        historical_still = stored.get("still_prompt") or context.get("visual_prompt")
+        if layer == MOTION and new["still_prompt"] != historical_still:
+            raise FinalPromptError("Migrarea motion trebuie sa pastreze still_prompt exact.")
+        if layer == MOTION:
+            package["still_prompt"] = historical_still
+        package["legacy_migration"] = {
+            "from_format": "legacy",
+            "retired_restrictions": retired
+            + [{**item, "field": "bible." + item["field"]} for item in retired_bible],
+            "preserved_still": layer == MOTION,
+        }
     if layer == STILL:
         package["still_prompt"] = new["still_prompt"]
         package["motion_prompt"] = new["motion_prompt"]
@@ -2009,9 +2085,10 @@ def _direct_rewritten_package(
             package["camera_move"] = new["camera_move"]
         if new.get("ending_frame"):
             package["ending_frame"] = new["ending_frame"]
-    if new.get("negative_prompt"):
-        package["negative_prompt"] = new["negative_prompt"]
+    # An omitted/empty negative clears a previous exclusion; never resurrect old bans.
+    package["negative_prompt"] = new.get("negative_prompt") or None
     package["prompt_format"] = "editor_final_v1"
+    package["source"] = "model"
     package.update(editor_compiled(package))
     return package
 
@@ -2019,131 +2096,15 @@ def _direct_rewritten_package(
 def rewritten_package(
     context: dict[str, Any], shot: BaseModel, layer: str, brief: dict[str, Any]
 ) -> dict[str, Any]:
-    """The scene's package rewritten from the editor's shot on ``layer``, compiled as
-    `write_shot_prompts` compiles it. The motion layer keeps every field the still is
-    compiled from, and the still's words as stored."""
-    from app.agents.identity import complete_schema  # noqa: PLC0415
-    from app.media.prompt_agent import (  # noqa: PLC0415 - it imports us
-        LIVE_KIND,
-        ShotPrompt,
-        _coerce,
-        _validated_package,
-        compile_prompts,
-    )
-    from app.media.series_look import load_factual_look  # noqa: PLC0415
-
-    stored = context["package"]
-    new = shot.model_dump()
-    if stored.get("prompt_format") == "editor_final_v1":
-        return _direct_rewritten_package(context, new, layer)
-    merged = _shot_of(stored)
-    taken = MOTION_FIELDS if layer == MOTION else tuple(f for f in SHOT_FIELDS if f != "avoid")
-    for name in taken:
-        value = new.get(name)
-        if value not in (None, "", [], {}):
-            merged[name] = value
-    avoid: list[str] = []
-    for item in [
-        *(brief.get("avoid") or []),
-        *(new.get("avoid") or []),
-        *(stored.get("avoid") or []),
-    ]:
-        text = " ".join(str(item).split())
-        if text and text.lower() not in {a.lower() for a in avoid}:
-            avoid.append(text)
-    merged["avoid"] = avoid
-    fitted = _coerce(merged, ShotPrompt)
-    fitted["scene_index"] = context["scene_index"]
-    package, _notes = _validated_package(
-        complete_schema(ShotPrompt).model_validate(fitted),
-        context["scene"],
-        context["bible"],
-        context["allowed"],
-        context["previous_ending"],
-    )
-    package["scene_kind"] = LIVE_KIND
-    package["shot_type"] = context["shot_type"]
-    compiled = compile_prompts(
-        package,
-        context["bible"],
-        previous_moves=context["previous_moves"],
-        look=load_factual_look(),
-    )
-    package.update(compiled)
-    if layer == MOTION:
-        # The picture stays the picture he or the gate approved: its words are not compiled
-        # again, whatever the compiler would write today.
-        for name in ("subject", "action", "environment", "camera", "lighting", "composition"):
-            if name in stored:
-                package[name] = stored[name]
-        for name in ("still_prompt", "look_block", "shot_size"):
-            if name in stored:
-                package[name] = stored[name]
-    return package
+    """A requested LIVE rewrite always returns validated Kael-owned final text."""
+    return _direct_rewritten_package(context, shot.model_dump(), layer)
 
 
 def serial_rewritten_package(
     context: dict[str, Any], shot: BaseModel, layer: str, brief: dict[str, Any]
 ) -> dict[str, Any]:
-    """A serial scene's package rewritten from the editor's shot on ``layer`` and said again by
-    the serial composer, as `write_shot_prompts` says it: the still from the first moment of
-    the action, the people in frame and the shot's size; the motion from the camera move, the
-    whole action, the ending frame and the feeling.
-
-    Only the fields the composer reads are taken (`SERIAL_STILL_FIELDS`, `SERIAL_MOTION_FIELDS`);
-    who is in frame, the room, the shot's size, the look's version and the plan's provenance
-    stay as stored. The motion layer keeps the picture: its feeling goes to ``motion_emotion``
-    (the still is composed from ``emotion`` too) and the still's words stay as stored, so
-    `serial_recomposition` finds nothing to say again afterwards. 2026-10-12, f06808c9 scene
-    4: the action named both women's first moments and the still showed them face to face
-    where the plan asked a single on Nadia; the rewrite names only Nadia's moment and puts
-    Sarah at the frame's edge."""
-    from app.media.prompt_agent import (  # noqa: PLC0415 - it imports us
-        _serial_camera_move,
-        compose_serial_motion,
-        compose_serial_prompt,
-        strip_on_screen_text,
-        strip_style_overrides,
-    )
-
-    del brief  # the look's exclusions are the serial's; hers are the record's (`_record_brief`)
-    stored = context["package"]
-    look = context.get("look") or {}
-    new = shot.model_dump()
-    if stored.get("prompt_format") == "editor_final_v1":
-        return _direct_rewritten_package(context, new, layer)
-    merged = dict(stored)
-
-    def clean(text: Any) -> str:
-        said = strip_on_screen_text(" ".join(str(text or "").split()))
-        # While the series has a look, a rewrite may describe the shot but never restyle it.
-        return strip_style_overrides(said) if look.get("in_use") else said
-
-    for name in SERIAL_STILL_FIELDS if layer == STILL else SERIAL_MOTION_FIELDS:
-        value = new.get(name)
-        if name == "camera_move":
-            move = str(value or "").strip().lower()
-            if move in lint.CAMERA_MOVES:
-                merged["camera_move"] = move
-            continue
-        said = clean(value)
-        if said:
-            merged[name] = said
-    if layer == MOTION and clean(new.get("emotion")):
-        merged["motion_emotion"] = clean(new.get("emotion"))
-    still = compose_serial_prompt(merged, look)
-    move = _serial_camera_move(merged, list(context["previous_moves"]))
-    merged["camera_move"] = move
-    merged["motion_prompt"] = compose_serial_motion(merged, look)
-    merged["still_prompt"] = (
-        str(stored.get("still_prompt") or context["visual_prompt"]) if layer == MOTION else still
-    )
-    from app.media.prompt_agent import composition_issues  # noqa: PLC0415
-
-    merged["composition_issues"] = composition_issues(
-        merged, merged["still_prompt"], merged["motion_prompt"]
-    )
-    return merged
+    """Serial rewrites use the same exact-text contract, preserving the series look."""
+    return _direct_rewritten_package(context, shot.model_dump(), layer)
 
 
 def _motion_changed(old: dict[str, Any], new: dict[str, Any]) -> bool:
@@ -2333,16 +2294,30 @@ def review_rewrite(
     old_still = str(stored.get("still_prompt") or context["visual_prompt"])
     old_motion = str(stored.get("motion_prompt") or "")
     new_motion = str(package.get("motion_prompt") or "")
+    from app.media.visual_policy import effective_policy  # noqa: PLC0415
+
     terms = layer_terms(context, layer, package=package, visual=visual)
     data: dict[str, Any] = {
         "quality_control_findings": qc,
         "director_brief": {
-            key: brief.get(key) for key in ("layer", "diagnosis", "avoid", "change")
+            key: brief.get(key)
+            for key in ("layer", "diagnosis", "avoid", "change", "keep", "editorial_visual_intent")
         },
         "this_layer": terms,
-        "camera_move_sentences": camera_move_sentences(),
+        "camera_move_sentences": {}
+        if package.get("prompt_format") == "editor_final_v1"
+        else camera_move_sentences(),
+        "visual_bible": effective_policy(context["bible"], context["bible"])[0],
+        "current_policy": POLICY_NOTE,
+        "prompt_contract": package.get("prompt_format", "legacy"),
+        "editorial_visual_intent": context.get("editorial_visual_intent")
+        or package.get("editorial_visual_intent"),
+        "editorial_authority": context.get("editorial_authority")
+        or package.get("editorial_authority"),
         "prompts_before": {"still": old_still, "motion": old_motion},
         "prompts_after": {"still": visual, "motion": new_motion},
+        "negative_prompt_before": stored.get("negative_prompt"),
+        "negative_prompt_after": package.get("negative_prompt"),
         "difference": {
             "still": sentence_diff(old_still, visual),
             "motion": sentence_diff(old_motion, new_motion),
@@ -2368,6 +2343,16 @@ def review_rewrite(
             lesson_chars=LESSON_CHARS_ASKED,
         )
         + (_SECOND_REVIEW_NOTE if earlier else "")
+        + POLICY_NOTE
+        + (
+            " EDITOR_FINAL: every candidate sentence is Kael's final text. No fixed "
+            "compositor sentence exists; only the paid still stays locked on motion. "
+            "Evaluate the approved editorial_visual_intent over the old plan's orientation. "
+            "For refusal name the exact defect, quote, change, keep and whether its source "
+            "is Kael, plan, editorial policy or code.\n"
+            if package.get("prompt_format") == "editor_final_v1"
+            else ""
+        )
         + _markings_note(context)
         + lessons_rule(lessons)
         + (_REVIEW_LESSONS_NOTE if lessons else "")
@@ -2545,7 +2530,7 @@ def _lint_blocks(
                     }
                 }
                 if context.get("serial") and context.get("look")
-                else None,
+                else context.get("contract"),
             ),
             bible=context["bible"],
         )
@@ -2559,14 +2544,15 @@ def _lint_blocks(
     after = blocks(visual, str(package.get("motion_prompt") or ""))
     from app.media.prompt_agent import composition_issues  # noqa: PLC0415
 
-    after.update(
-        composition_issues(
-            package,
-            visual,
-            str(package.get("motion_prompt") or ""),
-            layers=(MOTION,) if layer == MOTION else (STILL, MOTION),
+    if package.get("prompt_format") != "editor_final_v1":
+        after.update(
+            composition_issues(
+                package,
+                visual,
+                str(package.get("motion_prompt") or ""),
+                layers=(MOTION,) if layer == MOTION else (STILL, MOTION),
+            )
         )
-    )
     return sorted(after - before)
 
 
@@ -2608,8 +2594,11 @@ def _editor_rewrite(
             REWRITE_TEMPLATE,
             correlation_id,
             shot_schema(
-                index, layer, serial=serial,
-                editor_final=(context.get("package") or {}).get("prompt_format") == "editor_final_v1",
+                index,
+                layer,
+                serial=serial,
+                editor_final=True,
+                migrating=context["package"].get("prompt_format") != "editor_final_v1",
             ),
             "",
             summary=(f"Rescriu scena {index} din «{context['title']}» după brief-ul Directoarei."),
@@ -2964,8 +2953,13 @@ def rewrite_scene(
 
     index = int(context["scene_index"])
     layer = str(brief["layer"])
-    serial = bool(context.get("serial"))
     outcome: dict[str, Any] = {"rewritten": False, "layer": layer, "reason": "", "run_id": None}
+    context = {**context, "final_rewrite": True}
+    if brief.get("editorial_visual_intent"):
+        if layer != STILL:
+            outcome["reason"] = "PLAN_CONFLICT: schimbarea orientarii necesita rescriere still."
+            return outcome
+        context["editorial_visual_intent"] = brief["editorial_visual_intent"]
     with Session(engine) as session:
         editor = agent_for_role(session, PROMPT_ROLE)
         editor_id = editor.id if editor is not None else None
@@ -2980,24 +2974,32 @@ def rewrite_scene(
         _REWRITE_INSTRUCTIONS.format(
             scene=index,
             title=context["title"],
-            layer=(_SERIAL_LAYER_RULE if serial else _LAYER_RULE)[layer],
+            layer=(
+                "Write complete still_prompt and matching motion_prompt."
+                if layer == STILL
+                else "Write complete motion_prompt; keep the paid still exactly."
+            ),
             # The whole vocabulary («Mișcare v2», 2026-10-12): the old ten slow moves alone sent
             # every redo back to a slow move.
             moves=", ".join(lint.CAMERA_MOVES),
         )
         + lessons_rule(lessons)
-        + (STILL_FRAMING_RULE if layer == STILL and context["package"].get("prompt_format") != "editor_final_v1" else "")
+        + POLICY_NOTE
+        + (STILL_FRAMING_RULE if layer == STILL else "")
         + (
             "\nEDITOR_FINAL_v1: You directly edit the exact still_prompt or motion_prompt "
             "sent to the vendor. No Python composer rewrites your sentences. "
             "For a still-layer repair, send both complete still_prompt and motion_prompt; "
-            "for a motion-layer repair, send the complete motion_prompt only, "
+            "for a legacy migration, send BOTH complete prompts even on motion; "
+            "echo the existing still byte-for-byte on motion. For an already final "
+            "motion-layer repair, send the complete motion_prompt only, "
             "preserving the purchased still exactly. Return the short JSON shot object "
             "with scene_index, camera_move, these fields and optional negative_prompt. "
-            "Keep each prompt under 1000 UTF-16 units and the series look consistent. "
+            "Respect provider_limits below and keep the series look consistent. "
             "Sarah judges precisely this final text, so remove the concrete words "
             "she identified as wrong, not merely the draft planning notes.\n"
-            if context["package"].get("prompt_format") == "editor_final_v1" else ""
+            if context.get("final_rewrite")
+            else ""
         )
     )
     data = _data(
@@ -3005,7 +3007,11 @@ def rewrite_scene(
         director_brief=brief,
         quality_control_findings=qc,
         this_layer=layer_terms(context, layer),
-        camera_move_sentences=camera_move_sentences(),
+        camera_move_sentences={},
+        provider_limits={
+            "still_utf16": lint.prompt_cap(context.get("contract"), "still"),
+            "motion_utf16": lint.prompt_cap(context.get("contract"), "motion"),
+        },
     )
 
     def asked(note: str) -> str:
@@ -3354,7 +3360,8 @@ def _repeated_review_refusals(
         if newer_take_than is not None and _after(newer_take_than, timestamp):
             return False
         failed = (
-            payload.get("not_treating") or payload.get("same_prompt")
+            payload.get("not_treating")
+            or payload.get("same_prompt")
             or payload.get("review_unavailable")
             or payload.get("review_verdict") == MISSES
         )
