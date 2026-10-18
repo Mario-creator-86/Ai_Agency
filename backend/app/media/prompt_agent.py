@@ -362,6 +362,11 @@ class ShotPrompt(BaseModel):
     # (assembler.plan_second_framings): {"subject", "centre_x", "centre_y"}. Any shape is
     # accepted here and read by _second_framing, so a rough answer never costs the shot.
     second_framing: Any = None
+    # New architecture: Kael writes the EXACT vendor payload, not component
+    # phrases for a Python composer to rearrange. No legacy field is removed.
+    still_prompt: str = Field(default="", max_length=1700)
+    motion_prompt: str = Field(default="", max_length=1700)
+    negative_prompt: str = Field(default="", max_length=400)
 
 
 class ShotPack(BaseModel):
@@ -527,6 +532,28 @@ _SERIAL_SHOTS_INSTRUCTIONS = (
     '"continuity": "...", "ending_frame": "...", '
     '"audio_intent": "...", "transition": "..."}]}.\n'
 )
+
+_EDITOR_FINAL_INSTRUCTIONS = (
+    "\nNEW REQUIRED VENDOR-PROMPT CONTRACT: For every LIVE shot, return in its JSON "
+    "object still_prompt, motion_prompt and negative_prompt in addition to scene_index, "
+    "camera_move and the concise planning fields. YOU (Kael), not Python, own every word "
+    "of still_prompt and motion_prompt. Still is ONE camera photograph at the FIRST moment: "
+    "subject, exact staging, light source, framing, film look, physical geometry, consistent "
+    "faces when applicable, and one continuous 9:16 picture. Motion describes only how that "
+    "approved photograph moves over time: ONE camera move and the actors/world with a "
+    "coherent ending; no unrelated terrestrial motion in space. Don't paste generic people "
+    "sentences into scenes with no humans. Keep the exact selected film/series look, and "
+    "follow the bible's real face policy. Every word matters. Each still_prompt and "
+    "motion_prompt must be at most 1000 UTF-16 units, including spaces. Use short complete "
+    "sentences; if too long, YOU shorten without losing the subject, setting or light. "
+    "Don't embed a 9:16 ratio after a camera colon where it could become a broken fragment. "
+    "The model adapter will not edit, shorten, inject, recompose, or translate these prompts. "
+    "Sarah checks this exact text before any purchase. If she refuses it, revise ONLY "
+    "the identified scene or layer and return a new exact final text. "
+    "For negative_prompt, use a brief comma-separated optional list only where the "
+    "selected vendor supports a negative channel; do not rely on it for the visible facts.\n"
+)
+
 
 _GENERATION_QC_INSTRUCTIONS = (
     "Before writing, check each shot against the same requirements used to judge its output: "
@@ -1361,6 +1388,22 @@ PREFLIGHT_REWRITES_PER_SCENE = 2
 PREFLIGHT_REWRITES_PER_FILM = 8
 
 
+def _complete_editor_shot(shot: ShotPrompt) -> bool:
+    """A usable new model response has both final vendor texts and one valid move."""
+    from app.media.final_prompts import FinalPromptError, validate_final  # noqa: PLC0415
+
+    try:
+        validate_final({
+            "still_prompt": shot.still_prompt,
+            "motion_prompt": shot.motion_prompt,
+            "camera_move": shot.camera_move,
+            "negative_prompt": shot.negative_prompt,
+        })
+        return True
+    except FinalPromptError:
+        return False
+
+
 def _preflight_findings(
     shot: ShotPrompt,
     facts: dict[str, Any],
@@ -1661,12 +1704,16 @@ def write_shot_prompts(
                 "negative_channel": "depends on selected video model; do not rely on avoid alone",
             }
         for fitted in shot_payload_batches(
-            data, lessons, MAX_SHOTS_PAYLOAD_CHARS, max_scenes=profile.max_scenes
+            data, lessons, MAX_SHOTS_PAYLOAD_CHARS,
+            # Final still+motion text is larger than the old field-only plan;
+            # request a few fully finished shots rather than losing half a batch.
+            max_scenes=min(profile.max_scenes or 2, 2),
         ):
             batch_facts = fitted["episode" if serial else "film"]
             indices = [int(s["scene_index"]) for s in batch_facts["scenes"]]
             prompt = (
                 instructions
+                + _EDITOR_FINAL_INSTRUCTIONS
                 + _GENERATION_QC_INSTRUCTIONS
                 + lessons_rule(lessons)
                 + wrap_in_inert_boundary(_dumps(fitted), "approved-film")
@@ -1693,7 +1740,10 @@ def write_shot_prompts(
             run_id = result["id"]
             run_ids.append(str(run_id))
             parsed = parse_shot_plan(result.get("output_text") or "")
-            packs.update({index: shot for index, shot in parsed.shots.items() if index in indices})
+            packs.update({
+                index: shot for index, shot in parsed.shots.items()
+                if index in indices and _complete_editor_shot(shot)
+            })
             missing = [index for index in indices if index not in packs]
             # ONE re-ask, carrying the decoder's own words, for a factual film. The serial's
             # shots are composed from its fixed look when the model's are missing (S8).
@@ -1720,14 +1770,14 @@ def write_shot_prompts(
                     run_ids.append(str(run_id))
                     second = parse_shot_plan(again.get("output_text") or "")
                     for index, answer in second.shots.items():
-                        if index in indices:
+                        if index in indices and _complete_editor_shot(answer):
                             packs.setdefault(index, answer)
                     parsed = ShotPlanParse(packs, second.method, second.error)
 
     preflight_failed: dict[int, list[str]] = {}
     preflight_repaired: list[dict[str, Any]] = []
     preflight_protected: set[int] = set()
-    if not serial and editor_id is not None and registry is not None and packs:
+    if editor_id is not None and registry is not None and packs:
         profile = shot_generation_profile(engine, editor_id)
         preflight_failed, preflight_repaired, preflight_run_ids, preflight_protected = (
             _preflight_repair_factual_shots(
@@ -1775,7 +1825,7 @@ def write_shot_prompts(
         facts_by_index = {int(s["scene_index"]): s for s in facts["scenes"]}
         selected = [s for s in scenes if targets is None or s.scene_index in targets]
         lost = bool(preflight_failed) or (
-            answered and not serial and any(s.scene_index not in packs for s in selected)
+            answered and any(s.scene_index not in packs for s in selected)
         )
         for scene in scenes:
             if scene.scene_index in preflight_protected or scene.scene_index in preflight_failed:
@@ -1794,6 +1844,13 @@ def write_shot_prompts(
             scene_facts = facts_by_index.get(scene.scene_index, {})
             shot = packs.get(scene.scene_index)
             earlier = dict(scene.prompt_json or {})
+            if shot is None and answered:
+                # New shots never fall back to Python-composed prompts on a
+                # malformed or missing model answer. Leave this scene untouched.
+                previous_ending = str(earlier.get("ending_frame") or "")
+                if earlier.get("camera_move"):
+                    moves.append(str(earlier["camera_move"]))
+                continue
             if (lost or not answered) and shot is None and earlier.get("source") == SOURCE_MODEL:
                 # A plan a model wrote before is never overwritten by a template because
                 # this answer could not be read, nor because no model answered at all this
@@ -1807,7 +1864,11 @@ def write_shot_prompts(
                 package = _serial_package(package, shot, scene_facts, look)
                 scene.shot_type = SHOT_TYPES[package["shot_size"]]
                 package["source"] = SOURCE_MODEL if shot is not None else SOURCE_SERIES_LOOK
-                composed = compose_serial_prompt(package, look)
+                composed = (
+                    package["still_prompt"]
+                    if package.get("prompt_format") == "editor_final_v1"
+                    else compose_serial_prompt(package, look)
+                )
                 # The shot's own movement, so the motion step has words of its own and the
                 # film's camera varies: the plan's move, else one that suits the shot's size
                 # and is not the scene before's, as the factual compile chooses. A serial
@@ -1816,16 +1877,25 @@ def write_shot_prompts(
                 move = _serial_camera_move(package, moves)
                 moves.append(move)
                 package["camera_move"] = move
-                package["motion_prompt"], dropped = serial_motion(package, look)
+                if package.get("prompt_format") == "editor_final_v1":
+                    # Preserve Kael's exact final words, including scene style;
+                    # don't reconstruct a clip sentence from the action or look.
+                    package["motion_intent"] = None
+                    package["motion_family"] = "editor_final"
+                    package["composition_issues"] = []
+                    dropped = False
+                else:
+                    package["motion_prompt"], dropped = serial_motion(package, look)
                 if dropped:
                     # Where the clip must arrive could not be said beside the action, even
                     # cut to its first moment (review of 68fa0b4): recorded, so the scene's
                     # rewrite asks the editor to shorten the action before a clip is bought.
                     ending_dropped.append(scene.scene_index)
                 package["still_prompt"] = composed
-                package["composition_issues"] = composition_issues(
-                    package, composed, package["motion_prompt"]
-                )
+                if package.get("prompt_format") != "editor_final_v1":
+                    package["composition_issues"] = composition_issues(
+                        package, composed, package["motion_prompt"]
+                    )
             else:
                 # Two prompts per filmed scene (compile_prompts); a scene composed locally
                 # carries none, and its visual_prompt stays the writer's line.
@@ -2075,6 +2145,14 @@ def _validated_package(
         # The montage's tag, kept on every package written for the scene (`montage.beat_tag`).
         "beat": dict(scene["beat"]) if isinstance(scene.get("beat"), dict) else None,
     }
+    if shot is not None and _complete_editor_shot(shot):
+        package.update({
+            "prompt_format": "editor_final_v1",
+            "still_prompt": shot.still_prompt,
+            "motion_prompt": shot.motion_prompt,
+            "negative_prompt": shot.negative_prompt or None,
+            "motion_intent": None,
+        })
     # Only when the editor gave a usable one: a package without it is the package it was,
     # and the sheet's hashes of every film planned before stay what they were.
     framing = _second_framing(shot.second_framing if shot else None)
@@ -4701,6 +4779,13 @@ def compile_prompts(
     """
     kind = str(package.get("scene_kind") or LIVE_KIND).upper()
     bible = bible if isinstance(bible, dict) else {}
+    if kind == LIVE_KIND and package.get("prompt_format") == "editor_final_v1":
+        from app.media.final_prompts import editor_compiled  # noqa: PLC0415
+        return editor_compiled(
+            package,
+            model_id=_contract_model(contract, "model_id", DEFAULT_MOTION_MODEL),
+            cap=lint.prompt_cap(contract, "still"),
+        )
     motion_model = _contract_model(contract, "model_id", DEFAULT_MOTION_MODEL)
     family = _motion_family(motion_model)
     if kind != LIVE_KIND:
@@ -4941,6 +5026,9 @@ def motion_prompt_for(
     the dialect of whichever model the scene is bought on. A package from before the
     compiler has none: its stored motion prompt is used as it is (empty when it has none).
     """
+    if isinstance(package, dict) and package.get("prompt_format") == "editor_final_v1":
+        from app.media.final_prompts import editor_motion_for  # noqa: PLC0415
+        return editor_motion_for(package, model_cap=lint.prompt_cap(contract, "motion"))
     intent = motion_intent_of(package) if isinstance(package, dict) else None
     if intent is not None:
         return render_motion(intent, _motion_family(model_id), lint.prompt_cap(contract, "motion"))
