@@ -396,6 +396,8 @@ def test_a_reading_now_is_what_the_live_books_say(books):
     live_treasury = treasury_snapshot(books)
     live_budget = budget_status(books)
     assert as_of["treasury"]["spendable"]["amount"] == live_treasury["spendable"]["amount"]
+    assert as_of["budget"]["today"]["agent_usd"] == "0.01"
+    assert as_of["budget"]["today"]["spent_usd"] == "0.5"
     assert as_of["budget"]["today"]["spent_usd"] == live_budget["today"]["spent_usd"]
     assert as_of["budget"]["today"]["prompt_tokens"] == live_budget["today"]["prompt_tokens"]
     assert as_of["budget"]["budgets"][0]["spent_usd"] == live_budget["budgets"][0]["spent_usd"]
