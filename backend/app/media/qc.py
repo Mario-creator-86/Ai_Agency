@@ -356,10 +356,9 @@ def still_is_degenerate(ffmpeg: str | None, path: Path) -> str | None:
     columns, rows = scores["columns"], scores["rows"]
     if columns >= DEGENERATE_SSIM and rows >= DEGENERATE_SSIM:
         return f"blank or uniform picture, no scene (structure {columns:.2f}/{rows:.2f})"
-    if columns >= DEGENERATE_SSIM:
-        return f"vertical stripes, no scene (structure {columns:.2f})"
-    if rows >= DEGENERATE_SSIM:
-        return f"horizontal bands, no scene (structure {rows:.2f})"
+    # Single-axis similarity cannot establish a split image or a defective
+    # picture. Skies, desk fronts and horizons caused false paid rerolls.
+    # Stripes, panels and visual scene fidelity belong to the vision model.
     return None
 
 
@@ -2188,58 +2187,20 @@ def _panels_check(
     *,
     measured: dict[str, Any],
 ) -> ClipCheck:
-    """The flat band (`flat_band`) on the first, middle and last frames: a frame split by a
-    band of at least PANEL_BAND_SHARE of its height beside at least FRAME_PICTURE_FLOOR of
-    picture (`FlatBand.splits_the_picture`) is panels pasted together, or a blank strip, not
-    one picture; a soft-edged band at the top or the bottom is the scene's sky. Free, and
-    measured whether or not anybody looks."""
-    if not frames:
-        return ClipCheck("panels", "NOT_RUN", True, None, "cadrele nu au putut fi tăiate")
-    read: list[dict[str, Any]] = []
-    split: list[tuple[str, FlatBand]] = []
-    soft: list[tuple[str, FlatBand]] = []
-    unread = False
-    for at, moment, path in frames:
-        band = flat_band(ffmpeg, path)
-        if band is None:
-            unread = True
-            read.append({"at": at, "time": moment, "status": "NOT_RUN"})
-            continue
-        read.append({"at": at, "time": moment, "status": "MEASURED", **band.as_dict()})
-        if band.splits_the_picture:
-            split.append((at, band))
-        elif band.wide and band.soft_edge:
-            soft.append((at, band))
-    measured["panels"] = {
-        "frames": read,
-        "band_share_threshold": PANEL_BAND_SHARE,
-        "picture_share_floor": FRAME_PICTURE_FLOOR,
-    }
-    if split:
-        return ClipCheck(
-            "panels",
-            "FAILED",
-            True,
-            round(max(band.share for _at, band in split), 3),
-            "nu e o singură fotografie: "
-            + "; ".join(f"cadrul {at} are {band.detail_ro()}" for at, band in split),
-        )
-    if unread:
-        return ClipCheck(
-            "panels", "NOT_RUN", True, None, "benzile cadrelor nu au putut fi măsurate"
-        )
-    widest = max(float(entry["band_share"]) for entry in read)
-    detail = (
-        f"o singură imagine în fiecare cadru (cea mai lată bandă plată: {widest:.0%}, prag "
-        f"{PANEL_BAND_SHARE:.0%})"
+    """No pixel-band veto: AI vision is the sole judge of panels and split screens.
+
+    Keep a non-blocking entry for report compatibility. Do not scan pixels or
+    turn an undecodable frame into "panels"; the real video/vision gates handle
+    technical or unmeasured footage independently.
+    """
+    measured["panels"] = {"method": "vision_only", "frames": []}
+    return ClipCheck(
+        "panels",
+        "NOT_APPLICABLE",
+        False,
+        None,
+        "Verificarea benzilor și colajelor aparține exclusiv modelului AI (one_picture)",
     )
-    if soft:
-        named = ("în cadrul " if len(soft) == 1 else "în cadrele ") + ", ".join(
-            at for at, _band in soft
-        )
-        widest_soft = max((band for _at, band in soft), key=lambda band: band.rows)
-        detail += f"; {named}, {widest_soft.soft_edge_ro()}"
-    return ClipCheck("panels", "PASSED", False, widest, detail)
 
 
 def _still_must_change(
@@ -2255,9 +2216,6 @@ def _still_must_change(
 
     2026-10-12 (the review of 5fc7468, finding 5): a persisting item silenced the look's own
     ``back_to_still``, and seed + 1 was bought from a still that had to change."""
-    frames = (measured.get("panels") or {}).get("frames") or []
-    if any(entry.get("at") == "first" and entry.get("splits_the_picture") for entry in frames):
-        return True
     verdict = getattr(judgement, "verdict", None)
     if getattr(judgement, "status", None) != "MEASURED" or verdict is None:
         return False
@@ -4035,7 +3993,7 @@ def span_picture_qc(
                 record["failures"] += [f"Scena {index}: {problem}" for problem in problems]
             elif (
                 picture.status == "PASSED"
-                and panels.status == "PASSED"
+                and panels.status in ("NOT_APPLICABLE", "PASSED")
                 and faces.status in ("PASSED", "NOT_APPLICABLE")
             ):
                 entry.update(status="PASSED", passed=True, reason=picture.detail_ro)
@@ -4061,21 +4019,15 @@ def span_picture_qc(
     carried_words = (
         f"; {len(kept)} {'trecută' if len(kept) == 1 else 'trecute'} la un control anterior cu "
         f"aceleași preluări (sau acceptate de Directoare), "
-        f"{'neprivită' if len(kept) == 1 else 'neprivite'} din nou de model, dar citite de "
-        "YuNet și de banda plată"
+        f"{'neprivită' if len(kept) == 1 else 'neprivite'} din nou de model; "
+        "verdictul vizual anterior este păstrat"
         if kept
         else ""
     )
     if judge is None:
-        read = sum(
-            1
-            for entry in filmed
-            if (entry.get("panels") or {}).get("status") in ("PASSED", "FAILED")
-        )
         record["detail"] = (
-            "nimeni nu se uită la cadre (niciun model care vede nu este înregistrat); banda "
-            f"plată a fost citită pe {read} din {len(filmed)} scene filmate, pe primul, "
-            "mijlocul și ultimul cadru"
+            "nu este disponibil un model AI cu vedere; benzile și colajele nu au fost "
+            "evaluate vizual și nu primesc un verdict automat"
             + (", iar fețele au fost numărate de YuNet" if faces_forbidden else "")
             + carried_words
         )
