@@ -1541,6 +1541,7 @@ def _preflight_repair_factual_shots(
             }
             prompt = (
                 _SHOTS_INSTRUCTIONS
+                + _EDITOR_FINAL_INSTRUCTIONS
                 + _GENERATION_QC_INSTRUCTIONS
                 + "\nRepair ONLY this shot's fields that caused the BLOCK findings. "
                 "Keep the story, approved narration, characters and location. "
@@ -1565,7 +1566,11 @@ def _preflight_repair_factual_shots(
                 break
             run_ids.append(str(reply["id"]))
             next_shot = parse_shot_plan(reply.get("output_text") or "").shots.get(index)
-            if next_shot is None or next_shot.model_dump() == candidate.model_dump():
+            if (
+                next_shot is None
+                or not _complete_editor_shot(next_shot)
+                or next_shot.model_dump() == candidate.model_dump()
+            ):
                 failed[index] = [item.message_ro for item in blockers]
                 break
             candidate = next_shot
@@ -1825,7 +1830,7 @@ def write_shot_prompts(
         facts_by_index = {int(s["scene_index"]): s for s in facts["scenes"]}
         selected = [s for s in scenes if targets is None or s.scene_index in targets]
         lost = bool(preflight_failed) or (
-            answered and any(s.scene_index not in packs for s in selected)
+            registry is not None and any(s.scene_index not in packs for s in selected)
         )
         for scene in scenes:
             if scene.scene_index in preflight_protected or scene.scene_index in preflight_failed:
@@ -1844,7 +1849,7 @@ def write_shot_prompts(
             scene_facts = facts_by_index.get(scene.scene_index, {})
             shot = packs.get(scene.scene_index)
             earlier = dict(scene.prompt_json or {})
-            if shot is None and answered:
+            if shot is None and registry is not None:
                 # New shots never fall back to Python-composed prompts on a
                 # malformed or missing model answer. Leave this scene untouched.
                 previous_ending = str(earlier.get("ending_frame") or "")
