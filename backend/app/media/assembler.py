@@ -13179,6 +13179,7 @@ class _ShotRounds:
         request = self._request(state, seed=seed, prompt=prompt)
         identity = identity_of_request(request)
         with Session(self.engine) as session, session.begin():
+            lock_for_write(session)
             refusal = refused_before(session, identity)
             if refusal is not None:
                 record_refusal(session, identity, refusal, correlation_id=self.correlation_id)
