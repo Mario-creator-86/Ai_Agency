@@ -300,17 +300,24 @@ def test_the_demo_process_connects_to_nothing_beyond_this_machine():
 
 
 @requires_ffmpeg
-def test_the_shipped_demo_script_ends_with_a_film(tmp_path, capsys):
-    """scripts/demo_daily_run.py ended PARTIAL 10/13 with nothing on disk; now it films."""
+def test_the_shipped_demo_script_ends_with_a_film(tmp_path, capsys, monkeypatch):
+    """The standalone CLI must film with real production defaults, not pytest's 30 s pin."""
     import sys
 
     from app.config import ROOT
 
+    # The suite's fixture masks the production defaults that caused 20 rejected
+    # scripts in the real CLI (160 seconds and multi-shot montage enabled).
+    monkeypatch.setenv("STUDIO_TARGET_VIDEO_SECONDS", "160")
+    monkeypatch.setenv("STUDIO_MONTAGE_ENABLED", "1")
     sys.path.insert(0, str(ROOT / "scripts"))
     try:
         import demo_daily_run
     finally:
         sys.path.remove(str(ROOT / "scripts"))
+    demo_profile = demo_daily_run.demo_folder_settings(tmp_path / "profile")
+    assert demo_profile.target_video_seconds == 30
+    assert demo_profile.montage_enabled is False
     result = demo_daily_run.run(tmp_path / "day")
     assert result["films"], capsys.readouterr().out[-2000:]
     film = Path(result["films"][0])
