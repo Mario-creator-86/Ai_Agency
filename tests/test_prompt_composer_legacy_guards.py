@@ -24,7 +24,8 @@ def test_ratio_in_camera_does_not_leak_as_broken_16_frame_fragment() -> None:
         assert size == "wide"
         assert "16 frame" not in frame, (camera, frame)
         assert "9:16" not in frame, (camera, frame)
-        assert "24mm lens" in frame if "24mm" in camera else True
+        if "24mm" in camera:
+            assert "24mm lens" in frame
     assert "one candle on a table" in shot_frame(cases[0])[1].lower()
     assert "one candle on a table" in shot_frame(cases[1])[1].lower()
 
