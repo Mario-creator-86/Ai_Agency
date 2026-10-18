@@ -179,7 +179,7 @@ from app.media.fix_check import (
 )
 from app.media.markings import markings_ro, named
 from app.media.picture_qc import StillJudgement, judge_still
-from app.media.qc import PANEL_BAND_SHARE, flat_band, still_is_degenerate
+from app.media.qc import still_is_degenerate
 from app.media.renders_cap import max_rerolls
 from app.media.toolchain import find_ffmpeg
 from app.wording import count as count_ro
