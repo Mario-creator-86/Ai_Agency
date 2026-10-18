@@ -4819,6 +4819,30 @@ def compile_prompts(
             if all(text in candidate for text in needed):
                 still, subject = candidate, shorter
                 break
+    # A long scene description can push out the one fact that makes the
+    # lighting physically coherent ("the flame is the only light source").
+    # Retry with that short, indispensable lighting clause, NOT the entire
+    # verbose lighting paragraph. Keep action and room if they can all fit.
+    # Never truncate a source-of-light statement in the vendor prompt.
+    light_first = _sentence(light.split(",", 1)[0]) if light else ""
+    if (
+        light_first
+        and re.search(r"\b(?:only|sole|single)\s+light\s+source\b", light_first, re.I)
+        and light_first not in still
+    ):
+        for shorter in (subject, *_shorter_subject(subject)):
+            retry = [
+                (
+                    0 if order == 8 else rank,
+                    order,
+                    light_first if order == 8 else shorter if order == 2 else text,
+                )
+                for rank, order, text in items
+            ]
+            candidate = _fit_sentences(retry, lint.prompt_cap(contract, "still"), STILL_MAX_WORDS)
+            if light_first in candidate and all(text in candidate for text in needed):
+                still = candidate
+                break
     # People kept faceless are shown from behind: an orbit around them turns their faces to
     # the camera, so it is never the compiler's choice for such a scene (a plan may ask).
     move = choose_camera_move(
