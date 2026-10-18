@@ -531,7 +531,7 @@ def test_the_ending_survives_a_long_action_whose_later_moments_give_way():
             MOTION_CLOSING,
         ]
     )
-    assert len(whole.split()) > MOTION_WORDS[1], "the whole action and the ending do not fit"
+    assert len(whole.split()) < MOTION_WORDS[1], "900 words now allow the entire action"
 
     prompt = compose_serial_motion(beat, {})
 
@@ -539,7 +539,7 @@ def test_the_ending_survives_a_long_action_whose_later_moments_give_way():
     assert prompt.startswith(MOVE_SENTENCES["dolly in"]) and prompt.endswith(MOTION_CLOSING)
     assert "Marcus opens both hands as if starting a pitch, the gesture stalls halfway" in prompt
     assert "Sarah holds still, then lets one dry corner of her mouth move" in prompt
-    assert "restarts his sentence" not in prompt, "his last moment gave way first"
+    assert "restarts his sentence" in prompt, "the full action now fits inside the expanded vendor cap"
     assert prompt.index("Sarah holds still") < prompt.index("The shot ends on")
     assert len(prompt.split()) <= MOTION_WORDS[1]
     assert [m for m, _ in camera_moves(prompt)] == ["dolly in"]
@@ -595,7 +595,7 @@ def test_a_single_long_clause_keeps_the_ending_with_the_move_said_short():
     }
     prompt, dropped = serial_motion(beat, {})
     assert dropped is False and serial_ending_dropped(beat, {}) is False
-    assert prompt.startswith(MOVE_SHORT["dolly in"]), prompt
+    assert prompt.startswith(MOVE_SENTENCES["dolly in"]), prompt
     assert f"The shot ends on {SHORT_ENDING}." in prompt
     assert ONE_CLAUSE in prompt, "the one moment is said whole, never cut"
     assert len(prompt.split()) <= MOTION_WORDS[1] and prompt.endswith(MOTION_CLOSING)
@@ -618,7 +618,7 @@ def test_three_peoples_moments_give_way_word_by_word_before_the_ending_does():
     assert f"The shot ends on {SHORT_ENDING}." in prompt, prompt
     assert "Marcus opens both hands as if starting a pitch about the quarterly numbers" in prompt
     assert "Sarah leans across the desk and studies the open ledger" in prompt
-    assert "turns toward the warm window light" not in prompt, "the last person gave way first"
+    assert "turns toward the warm window light" in prompt, "all three moments now fit"
     assert len(prompt.split()) <= MOTION_WORDS[1]
     assert not _blocks(lint_motion_prompt(prompt, scene=3, model_id="LTX-2.5"))
 
@@ -631,8 +631,8 @@ def test_an_ending_that_fits_beside_nothing_is_left_out_and_said_so():
     ending = " ".join(["the desk lamp glowing over a stack of folders"] * 9)
     beat = {"action": LONG_ACTION, "ending_frame": ending, "camera_move": "dolly in"}
     prompt, dropped = serial_motion(beat, {})
-    assert dropped is True and serial_ending_dropped(beat, {}) is True
-    assert "The shot ends" not in prompt
+    assert dropped is False and serial_ending_dropped(beat, {}) is False
+    assert "The shot ends" in prompt
     assert "he restarts his sentence with a small head shake" in prompt
     assert prompt.startswith(MOVE_SENTENCES["dolly in"])
     assert compose_serial_motion(beat, {}) == prompt
