@@ -96,6 +96,7 @@ the serial composer saying the rewritten fields again (`serial_rewritten_package
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -145,6 +146,9 @@ ACCEPTED_MINOR = "ACCEPTED_MINOR"
 #: finding (2026-10-12, f06808c9 scenes 3, 4, 7: a refused rewrite ended the rung, and the next
 #: rung asked the same brief again).
 REWRITES_PER_RUNG = 2
+# Two refused rungs on unchanged source words without a newer failed take are not
+# progress. Stop repeated Sarah/Kael tokens; wait for a real change or second look.
+MAX_UNCHANGED_REFUSED_RUNGS = 2
 #: How serious a finding her review leaves untreated is (Owner, 2026-10-12: «DIRECTOAREA
 #: ACCEPTĂ DEFECTELE MICI!»): only a serious one refuses the rewrite.
 MINOR: Literal["minor"] = "minor"
@@ -3209,6 +3213,52 @@ def _composer_sentences() -> tuple[str, ...]:
     )
 
 
+def _source_words_fingerprint(context: dict[str, Any]) -> str:
+    """Stable identity of the exact scene package Sarah asked Kael to repair."""
+    source = {
+        "prompt_json": context.get("package") or {},
+        "visual_prompt": context.get("visual_prompt") or "",
+        "scene_index": context.get("scene_index"),
+    }
+    data = json.dumps(source, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(data.encode("utf-8")).hexdigest()
+
+
+def _repeated_review_refusals(
+    briefs: Sequence[dict[str, Any]],
+    source_fingerprint: str,
+    *,
+    newer_take_than: Any = None,
+) -> bool:
+    """True only after two consecutive failed rungs on exactly unchanged prompts.
+
+    A passed/stored rewrite, a missing fingerprint (older events), a new take or
+    a different prompt resets the count. Never blocks the first correction.
+    """
+    count = 0
+    for payload in briefs:
+        if payload.get("source_words_fingerprint") != source_fingerprint:
+            return False
+        if payload.get("rewritten") or payload.get("resumed") or payload.get("accepted_minor"):
+            return False
+        timestamp = payload.get("_event_timestamp")
+        if timestamp is None:
+            return False
+        if newer_take_than is not None and _after(newer_take_than, timestamp):
+            return False
+        failed = (
+            payload.get("not_treating") or payload.get("same_prompt")
+            or payload.get("review_unavailable")
+            or payload.get("review_verdict") == MISSES
+        )
+        if not failed:
+            return False
+        count += 1
+        if count >= MAX_UNCHANGED_REFUSED_RUNGS:
+            return True
+    return False
+
+
 def scene_waits(engine: Engine, context: dict[str, Any]) -> str | None:
     """Why the ladder must not ask the Director the same brief again for this scene, in words;
     None when it may ask. 2026-10-12 evening review of a50407e: a scene her rung left where no
@@ -3227,6 +3277,7 @@ def scene_waits(engine: Engine, context: dict[str, Any]) -> str | None:
     with Session(engine) as session:
         newest = None
         rewritten_since = False
+        same_source_briefs: list[dict[str, Any]] = []
         for event in session.scalars(
             select(DomainEvent)
             .where(
@@ -3252,6 +3303,34 @@ def scene_waits(engine: Engine, context: dict[str, Any]) -> str | None:
         ):
             return None
         his = _owner_still(session, storyboard_id, index)
+        # The most recent brief and older rounds on unchanged words, at most
+        # the two needed to recognise a futile repeated dialogue.
+        for event in session.scalars(
+            select(DomainEvent)
+            .where(DomainEvent.aggregate_id == storyboard_id, DomainEvent.event_type == BRIEF_EVENT)
+            .order_by(DomainEvent.sequence.desc())
+            .limit(50)
+        ):
+            item = _payload(event)
+            if item.get("scene_index") != index:
+                continue
+            same_source_briefs.append({**item, "_event_timestamp": event.timestamp})
+            if len(same_source_briefs) >= MAX_UNCHANGED_REFUSED_RUNGS:
+                break
+        latest_take_time = next(
+            (row.created_at for row in scene_takes(session, storyboard_id, index)), None
+        )
+    if _repeated_review_refusals(
+        same_source_briefs,
+        _source_words_fingerprint(context),
+        newer_take_than=latest_take_time,
+    ):
+        return (
+            f"Scena {index} așteaptă: Sarah a refuzat de două ori rescrieri pe "
+            "același prompt, fără un take nou sau o corecție salvată între ele. "
+            "Nu o mai trimit pe Kael în aceeași buclă; următorul pas este "
+            "o schimbare verificabilă a scenei ori privirea a doua a Directoarei."
+        )
     if payload.get("composer_locked"):
         kept = (
             *lock_texts(context, str(payload.get("layer") or MOTION))["constants"],
@@ -3437,6 +3516,7 @@ def _record_brief(
             1,
             {
                 "scene_index": context["scene_index"],
+                "source_words_fingerprint": _source_words_fingerprint(context),
                 "layer": done.get("layer") or brief.get("layer"),
                 "asked_layer": brief.get("layer"),
                 "rewritten": bool(done.get("rewritten")),
@@ -3452,6 +3532,7 @@ def _record_brief(
                 "review_reason_ro": done.get("review_reason_ro") or "",
                 "review_run_id": done.get("review_run_id"),
                 "not_treating": bool(done.get("not_treating")),
+                "review_unavailable": bool(done.get("review_unavailable")),
                 # The motion layer could not treat the findings: counted as a motion attempt by
                 # `open_layers`, so the picture's turn comes (2026-10-12, f06808c9 3, 4, 7).
                 "layer_exhausted": bool(done.get("layer_exhausted")),
