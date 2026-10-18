@@ -47,7 +47,7 @@ def test_clip_panel_heuristic_does_not_measure_frames_or_block():
     [
         (0.98, 0.10, False),  # vertical stripes: content is for AI
         (0.10, 0.98, False),  # horizontal bands: content is for AI
-        (0.98, 0.98, True),   # essentially uniform still: objective technical failure
+        (0.98, 0.98, True),  # essentially uniform still: objective technical failure
     ],
 )
 def test_ssim_single_axis_never_refuses_as_band(tmp_path, monkeypatch, columns, rows, blank):
