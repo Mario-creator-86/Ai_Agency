@@ -207,17 +207,19 @@ def test_preparing_the_demo_twice_changes_nothing_and_marks_no_provider_working(
 @requires_ffmpeg
 def test_a_demo_day_makes_a_local_film_and_publishes_nothing(tmp_path):
     from app.agents.models import ProviderRecord
-    from app.demo import demo_registry, demo_vendors, run_demo_day
+    from app.demo import demo_registry, demo_vendors, no_outbound_network, run_demo_day
     from app.integrations.models import Integration
     from app.integrations.vault import CredentialVault
-    from app.media.models import MediaAsset
+    from app.media.models import MediaAsset, QualityControlReport, VideoRenderJob
     from app.publishing.models import PublicationRecord
 
     settings = _demo_settings(tmp_path, ffmpeg_path=shutil.which("ffmpeg"))
     engine = _demo_studio(settings)
     vault = CredentialVault(Path(str(engine.url.database)).with_suffix(".credentials.key"))
     try:
-        with demo_vendors():
+        # A full local film should not be able to contact RunPod, YouTube or any
+        # external vendor, even if a future refactor misses a demo vendor seam.
+        with no_outbound_network(), demo_vendors():
             result = run_demo_day(engine, settings, vault, demo_registry(engine))
         stages = {stage["stage"]: stage for stage in result["stages"]}
         assert stages["media"]["status"] == "COMPLETED", stages["media"]["reason"]
@@ -235,6 +237,39 @@ def test_a_demo_day_makes_a_local_film_and_publishes_nothing(tmp_path):
             assert film.is_file() and film.stat().st_size > 10_000
             # Inside the demo's own media folder, never the studio's.
             assert film.resolve().is_relative_to((tmp_path / "demo" / "media").resolve())
+
+            # This is an actual FFmpeg montage of locally generated PNGs and WAV
+            # narration, not an MP4-shaped placeholder or a billed RunPod clip.
+            jobs = list(session.scalars(select(VideoRenderJob)))
+            finished = [
+                job for job in jobs
+                if job.status == "COMPLETED" and job.output_asset_id == films[0].id
+            ]
+            assert finished, [(job.status, job.output_asset_id) for job in jobs]
+            made = finished[0].production_json
+            assert made["image"]["provider"] == "DEMO_LOCAL_PICTURES"
+            assert made["voice"]["provider"] == "DEMO_LOCAL_VOICE"
+            assert made.get("scenes") and made.get("timeline")
+            assert made.get("audio") and made["audio"].get("loudness")
+            assert films[0].width == 1080 and films[0].height == 1920
+            assert (films[0].duration_seconds or 0) > 0
+
+            # Read the actual final-film QC verdict, not an assumed success.
+            # A failed QC must be recorded as FAILED rather than forged PASSED
+            # because the synthetic DEMO art is not a real image model's output.
+            reports = [
+                report for report in session.scalars(select(QualityControlReport))
+                if report.media_asset_id == films[0].id
+            ]
+            assert stages["edit_and_qc"]["status"] == "COMPLETED", stages["edit_and_qc"]["reason"]
+            assert reports and all(
+                report.status in ("PASSED", "FAILED", "FLAGGED_FOR_REVIEW")
+                and report.checks_json
+                for report in reports
+            ), [(report.status, report.checks_json) for report in reports]
+
+            # This run exercises the refusal to post; publishing via a private,
+            # simulated uploader is checked independently by the autonomy E2E test.
             published = [
                 p.status
                 for p in session.scalars(select(PublicationRecord))
