@@ -62,6 +62,10 @@ def test_medal_repair_removes_back_only_rule_without_banning_faces() -> None:
     assert new["still_prompt"] == visual
     assert "front" in new["subject"].lower()
     assert "from behind" not in visual.lower()
+    assert "slow rise" not in visual.lower()
+    assert "crane up" not in visual.lower()
+    assert "shadows drift" not in new["motion_prompt"].lower()
+    assert "lighting remains fixed" in new["continuity"].lower()
     assert new["camera_move"] == "crane up"
     assert not [
         issue
@@ -80,6 +84,8 @@ def test_cosmic_repair_preserves_paid_still_and_rewrites_motion_only() -> None:
     assert new["subject"] == OLD_COSMOS["subject"]
     assert new.get("writer_visual") == OLD_COSMOS.get("writer_visual")
     assert new["camera_move"] == "dolly in"
+    assert new["action"] == "Galaxy clusters rest in a continuous filamentary cosmic web."
+    assert new["motion_prompt"].lower().count("brightens and dims") <= 1
     assert "ground sliding beneath" not in new["motion_prompt"].lower()
     assert "horizon opening ahead" not in new["motion_prompt"].lower()
     assert not [
