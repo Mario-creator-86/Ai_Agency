@@ -13,7 +13,7 @@ and every place a vendor could be reached from is replaced by a spy that fails w
   - the film is then assembled from those takes with zero vendor calls; scenes 5 and 6 are
     composed cards, the chart carrying the claim numbers 100 and 83;
   - a still with faces (the bible forbids them) is not approved: the sheet lists its scene as
-    'necesită o imagine nouă (18 credite)' and nothing is bought;
+    'necesită o imagine nouă (9 credite)' and nothing is bought;
   - only a copy is written: the original folder and data/studio.db are never touched;
   - POST /api/v1/media/storyboards/{id}/adopt-existing-files is the Owner's and costs 0.
 
@@ -60,7 +60,7 @@ CARD = SCRIPT["writer_answer"]["scenes"][4]["card"]
 #: Short scenes, so a test film renders in seconds; the shape is the Nepal film's.
 PLANNED_SECONDS = 2.0
 VOICE_SECONDS = 1.6
-STILL_REDO = "necesită o imagine nouă (18 credite)"
+STILL_REDO = "necesită o imagine nouă (9 credite)"
 
 requires_ffmpeg = pytest.mark.skipif(
     find_ffmpeg() is None or find_ffprobe() is None, reason="ffmpeg/ffprobe not installed"
