@@ -143,54 +143,45 @@ def test_the_stills_step_starts_on_its_first_round_not_on_its_cap(engine, tmp_pa
     assert result["low_balance"] is None
 
 
-def test_a_reroll_the_balance_cannot_cover_stops_that_scene_cleanly(engine, tmp_path):
+def test_rejected_still_requires_editorial_rewrite_before_any_reroll(engine, tmp_path):
     storyboard_id = a_film(engine, tmp_path)
 
     def pictures(prompt, call):
         # Scene 4's words always come back with a face: it would be re-rolled.
         return [FACE, FACE] if SUBJECTS[4] in prompt else list(NO_FACE)
 
-    # 83 credits pay the first round (4 x 18 = 72); 11 are left for a re-roll of 18 x 1.15.
+    # The first round costs 72 of 83 credits. A face failure requires Sarah's
+    # rewrite before another purchase; it must not be treated as a paid reroll.
     adapter = SpyStills(pictures=pictures, balance=83)
 
     result = approved_run(engine, storyboard_id, tmp_path, adapter, SpyJudge())
 
-    assert len(adapter.asked) == 4, "a re-roll was bought on 11 credits"
+    assert len(adapter.asked) == 4, "a rejected prompt was rerolled without review"
     scenes = by_scene(result)
     assert all(scenes[n]["status"] == "APPROVED" for n in (1, 2, 3))
     four = scenes[4]
-    assert four["status"] == "NEEDS_OWNER" and four["failure_kind"] == "LOW_BALANCE"
-    # The re-roll was decided by the gate and not bought: four requests, no fifth.
-    assert four["rerolls"] == 1
-    for words in ("Scena 4", "11 credite", "18 credite", "21 de credite", "cel puțin 10 credite"):
-        assert words in four["reason"], (words, four["reason"])
-    # What was bought is kept: scene 4's candidates (the same face twice is one picture),
-    # judged and rejected, on the books.
+    assert four["status"] == "NEEDS_OWNER" and four.get("failure_kind") != "LOW_BALANCE"
+    assert four["rerolls"] == 0
+    assert "Directoarea le rescrie" in four["reason"]
     kept = [t for t in takes(engine, storyboard_id) if t.scene_number == 4]
     assert kept and all(t.status == "REJECTED" for t in kept)
     assert result["spent_credits_quoted"] == 72
-    assert result["low_balance"] == {
-        "scene_index": 4,
-        "credits": 11.0,
-        "price_credits": 18,
-        "needed_credits": 21,
-        "missing_credits": 10,
-        "reason_ro": four["reason"],
-    }
-    # A scene the account could not pay for is not held against the Owner: a top-up lets it go.
+    assert result["low_balance"] is None, "no second purchase was attempted"
     (hold,) = [
         e for e in events(engine, "media.still_needs_owner") if e.payload["scene_number"] == 4
     ]
-    assert hold.payload["holds"] is False and hold.payload["failure_kind"] == "LOW_BALANCE"
+    assert hold.payload["failure_kind"] != "LOW_BALANCE"
+    assert hold.payload.get("rewrite") is True
 
 
-def test_a_first_round_purchase_the_balance_cannot_cover_stops_the_rest(engine, tmp_path):
+def test_editorial_rewrite_does_not_spend_the_next_scenes_balance(engine, tmp_path):
     storyboard_id = a_film(engine, tmp_path)
 
     def pictures(prompt, call):
         return [FACE, FACE] if SUBJECTS[2] in prompt else list(NO_FACE)
 
-    # Scene 2 fails and is re-rolled twice: 83 - 18 x 4 = 11 are left for scene 3.
+    # Scene 2's face failure is NOT rerolled blindly: the remaining money
+    # must still be available to finish the other scenes' first attempts.
     adapter = SpyStills(pictures=pictures, balance=83)
 
     result = approved_run(engine, storyboard_id, tmp_path, adapter, SpyJudge())
@@ -199,11 +190,11 @@ def test_a_first_round_purchase_the_balance_cannot_cover_stops_the_rest(engine, 
     scenes = by_scene(result)
     assert scenes[1]["status"] == "APPROVED"
     assert scenes[2]["status"] == "NEEDS_OWNER" and scenes[2].get("failure_kind") is None
-    assert scenes[3]["status"] == "NEEDS_OWNER" and scenes[3]["failure_kind"] == "LOW_BALANCE"
-    assert scenes[4]["status"] == "NOT_BOUGHT"
-    assert "11 credite" in scenes[4]["reason"]
-    assert result["low_balance"]["scene_index"] == 3
-    assert not [t for t in takes(engine, storyboard_id) if t.scene_number in (3, 4)]
+    assert scenes[2]["rerolls"] == 0
+    assert scenes[3]["status"] == "APPROVED"
+    assert scenes[4]["status"] == "APPROVED"
+    assert result["low_balance"] is None
+    assert [t for t in takes(engine, storyboard_id) if t.scene_number in (3, 4)]
 
 
 def test_a_balance_that_cannot_be_read_still_stops_the_step(engine, tmp_path):
@@ -273,7 +264,7 @@ def test_a_shot_the_balance_cannot_cover_stops_that_scene_and_keeps_what_was_bou
 
 
 @requires_ffmpeg
-def test_a_clip_qc_retry_the_balance_cannot_cover_stops_the_scene(engine, tmp_path):
+def test_a_failed_clip_requires_rewrite_before_an_unaffordable_qc_retry(engine, tmp_path):
     from test_clip_qc_wiring import ScriptedCheck
     from test_film_costing import Account, Models, SpyVideo, approved
     from test_film_costing import a_film as film_with_stills
@@ -294,9 +285,10 @@ def test_a_clip_qc_retry_the_balance_cannot_cover_stops_the_scene(engine, tmp_pa
 
     assert models.posts() == 1, "a clip-QC retry was bought on 51 credits"
     (entry,) = summary["scenes"]
-    assert entry["status"] == "NEEDS_OWNER" and entry["failure_kind"] == "LOW_BALANCE"
-    assert "51 de credite" in entry["reason"] and "391 de credite" in entry["reason"]
-    assert summary["low_balance"]["credits"] == 51.0
+    assert entry["status"] == "NEEDS_OWNER"
+    # No blind retry: the Director must first verify replacement motion words.
+    assert entry.get("failure_kind") != "LOW_BALANCE"
+    assert summary["low_balance"] is None
     (shot,) = [t for t in takes(engine, storyboard_id) if t.kind == "test_shot"]
     assert shot.status == "REJECTED", "the shot bought is kept with its clip report"
 
@@ -385,7 +377,7 @@ def test_a_step_that_starts_withdraws_the_films_low_balance_card(engine, tmp_pat
     assert cards(engine)[0].status == "WITHDRAWN"
 
 
-def test_a_scene_stopped_on_the_balance_mid_step_puts_the_card_too(engine, tmp_path, monkeypatch):
+def test_editorial_hold_does_not_raise_a_spurious_low_balance_card(engine, tmp_path, monkeypatch):
     from functools import partial
 
     from app.media import shooting_sheet, stills_stage
@@ -415,11 +407,11 @@ def test_a_scene_stopped_on_the_balance_mid_step_puts_the_card_too(engine, tmp_p
 
     result = sheet_stills(engine, storyboard_id, images, tmp_path)
 
-    assert result["low_balance"]["scene_index"] == 4
-    (card,) = cards(engine)
-    assert card.clears_when == {"type": "balance_covers", "credits": 21}
-    assert "10 credite" in card.options[0]["label_ro"]
-    assert "Scena 4" in card.why_ro
+    assert result["low_balance"] is None
+    assert len(images.asked) == 4
+    assert by_scene(result)[4]["status"] == "NEEDS_OWNER"
+    assert by_scene(result)[4]["rerolls"] == 0
+    assert cards(engine) == [], "a review-needed scene is not a low-balance refusal"
 
 
 # ----------------------------------------------------------------- the sheet repair
