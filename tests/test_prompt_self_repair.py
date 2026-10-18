@@ -172,7 +172,13 @@ def test_preflight_repairs_only_the_failed_factual_scene_without_paid_calls(monk
     )
     assert not failed
     assert not protected
-    assert packets[19] == corrected
+    # parse_shot_plan returns the validated ShotPromptCompiled subtype. Compare
+    # the actual repair rather than Pydantic's exact model class identity.
+    assert packets[19].scene_index == corrected.scene_index
+    assert packets[19].subject == corrected.subject
+    assert packets[19].action == corrected.action
+    assert packets[19].camera_move == corrected.camera_move
+    assert packets[19].environment == corrected.environment
     assert repaired == [{"scene_index": 19, "rounds": 1}]
     assert run_ids == ["test-run"]
     assert len(requests) == 1
