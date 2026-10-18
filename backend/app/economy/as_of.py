@@ -248,7 +248,9 @@ def economy_as_of(engine: Engine, moments: Sequence[str]) -> dict[str, Any]:
             for held, released, usd in hold_rows
             if _within(held, since, at) and _still(released, at)
         )
-        total = costs_micros + agent_micros
+        # Match budget.spend_since: subscription agent tokens are reported separately,
+        # never added to the cash budget reserved for images and motion.
+        total = costs_micros
         return {
             "since": since.isoformat(),
             "spent_usd_micros": total,
