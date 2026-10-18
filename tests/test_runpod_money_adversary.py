@@ -163,17 +163,27 @@ def test_the_mode_lowered_mid_batch_cancels_keeps_what_finished_and_buys_nothing
     made = adapter(engine, tmp_path, cloud)
 
     class Stopping(Guard):
+        def __init__(self):
+            super().__init__(lowered_after=999)
+            self.finished_one = False
+
         def stop_reason(self, scene):
-            if self.reads == 1:
-                cloud.finish("job-1", 0)  # one item is done when the mode is lowered
-            return super().stop_reason(scene)
+            super().stop_reason(scene)
+            # The prepared GPU batch now checks policy several times before
+            # dispatch. This fixture lowers the mode only AFTER /run actually
+            # accepted the job, so its cancellation and meter can be tested.
+            if cloud.jobs and not self.finished_one:
+                cloud.finish("job-1", 0)
+                self.finished_one = True
+                return self.reason
+            return None
 
     summary, meter, seen = go(
         engine,
         made,
         [request("1", 0), request("1", 1), request("2", 0)],
         next_round=lambda outcomes: [request("3", 0)],
-        guard=Stopping(lowered_after=1),
+        guard=Stopping(),
     )
     assert any("/cancel/job-1" in c[2] for c in cloud.calls)
     assert len(cloud.posts()) == 1  # no next round
@@ -246,12 +256,14 @@ def test_a_passing_network_error_while_polling_does_not_abort_the_paid_batch(
         MediaProviderError("bad gateway", http_status=502),
         {"id": "job-1", "status": "IN_PROGRESS"},
     ]
-    polls = {"n": 0}
+    polls = {"n": 0, "finished": False}
 
     def stopped():
         polls["n"] += 1
-        if polls["n"] == 3:
+        # Poll counting must not complete a job which has not been submitted.
+        if cloud.jobs and not polls["finished"]:
             cloud.finish("job-1", 0)
+            polls["finished"] = True
         return None
 
     _summary, _meter, seen = go(engine, made, [request("1", 0)], stopped=stopped)
@@ -458,7 +470,7 @@ def test_a_crash_mid_batch_leaves_takes_the_next_step_collects_free(engine, tmp_
 
     def crash():
         reads.append(1)
-        if len(reads) > 1:  # after the round was sent, while it runs
+        if cloud.jobs:  # crash only after the remote job exists
             raise RuntimeError("the studio stopped")
         return None
 
