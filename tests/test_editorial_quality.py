@@ -734,19 +734,21 @@ def test_13_and_14_light_and_camera_are_decided_not_left_to_the_model(engine, st
         return json.dumps(bare)
 
     registry, _ = registry_with(studio, answer)
-    result = write_shot_prompts(engine, registry, board["id"], str(uuid4()))
-    # Nothing is left to the model: what the shot did not say, the film's own bible does.
-    assert result["bible"]["lighting"]
+    # Kael must now supply final vendor texts and a real camera_move. A model
+    # that returns only an empty plan must be refused rather than silently
+    # inheriting synthetic imagery and spending credits on the fake result.
+    from app.media.prompt_agent import ShotPlanUnusable
+
+    with pytest.raises(ShotPlanUnusable):
+        write_shot_prompts(engine, registry, board["id"], str(uuid4()))
     with Session(engine) as session:
-        for scene in session.scalars(
-            select(StoryboardScene).where(StoryboardScene.storyboard_id == board["id"])
-        ):
-            package = dict(scene.prompt_json or {})
-            assert package["lighting"].strip(), "a shot with no light has its light invented"
-            assert package["camera"].strip(), "the frame is a decision, not a default"
-            assert package["composition"].strip()
-            assert "vertical" in package["composition"] or "9:16" in package["composition"]
-            assert package["lighting"] == BIBLE_ANSWER["lighting"], "inherited from the bible"
+        assert session.get(Storyboard, board["id"]).status == "NEEDS_SHOT_PLAN"
+        assert all(
+            (scene.prompt_json or {}).get("source") != "model"
+            for scene in session.scalars(
+                select(StoryboardScene).where(StoryboardScene.storyboard_id == board["id"])
+            )
+        )
 
 
 def test_15_the_picture_serves_the_narration_it_is_under(engine, studio):
