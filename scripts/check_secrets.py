@@ -82,7 +82,7 @@ _LOCK_PIN = re.compile(r'\s*"(?:sha256": "[0-9a-f]{64}|revision": "[0-9a-f]{40})
 #: Public UI sound sources record SHA-256 digests of the shipped .ogg/.wav assets, never
 #: credentials. Match only the entire sha256 line in that exact attribution manifest;
 #: a token or another field in the same JSON file remains subject to the secret scan.
-_UI_SOUND_SHA256 = re.compile(r'\\s*"sha256": "[0-9a-f]{64}",?\\s*')
+_UI_SOUND_SHA256 = re.compile(r'\s*"sha256": "[0-9a-f]{64}",?\s*')
 _PINNED = {
     _INDEX: _INDEX_HASH,
     "backend/runpod_worker/models.lock.json": _LOCK_PIN,
