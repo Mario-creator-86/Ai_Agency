@@ -228,13 +228,13 @@ def test_ui_sound_source_sha256_lines_pass_but_keys_and_other_files_still_fail(
     manifest = root / "frontend" / "public" / "sounds" / "ui" / "sources.json"
     manifest.parent.mkdir(parents=True)
     digest = secrets.token_hex(32)
-    clean = '{\n  "files": [\n    {"sha256": "' + digest + '"}\n  ]\n}\n'
+    clean = '{\n  "files": [\n    {\n      "sha256": "' + digest + '"\n    }\n  ]\n}\n'
     manifest.write_text(clean, encoding="utf-8")
     assert run_gate(root, empty_baseline(tmp_path), capsys)[0] == 0
 
     key = fake_key()
     manifest.write_text(
-        clean.replace('"sha256":', '"token": "' + key + '", "sha256":'),
+        clean.replace('"sha256":', '"token": "' + key + '",\n      "sha256":'),
         encoding="utf-8",
     )
     code, output = run_gate(root, empty_baseline(tmp_path), capsys)
