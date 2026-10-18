@@ -169,7 +169,7 @@ class Agents:
             # The staircase has an independent pre-purchase Director audit after
             # the rewrite review. The deterministic test actor must handle it
             # instead of returning "{}" (which is correctly held as unreviewed).
-            scene_ids = sorted({int(n) for n in re.findall(r'"scene_index":\\s*(\\d+)', prompt)})
+            scene_ids = sorted({int(n) for n in re.findall(r'"scene_index":\s*(\d+)', prompt)})
             return GenerateResult(
                 json.dumps({"scenes": [
                     {"scene_index": index, "approved": True,
