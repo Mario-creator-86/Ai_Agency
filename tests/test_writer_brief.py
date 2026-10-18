@@ -308,6 +308,39 @@ def test_marcus_gets_audience_even_when_topic_has_no_thesis(
     assert "MISIUNEA LUI MARCUS" in seen[0]
 
 
+def test_marcus_mission_reaches_sarah_and_kael_on_the_same_story(engine, studio):
+    from app.factual.story_review import _INSTRUCTIONS, _script_facts
+    from app.media.models import Storyboard
+    from app.media.prompt_agent import _SHOTS_INSTRUCTIONS, _film_facts
+    from app.media.services import generate_storyboard_from_script
+    from test_editorial_quality import a_passed_review
+
+    topic_id = a_topic(engine)
+    with Session(engine) as session, session.begin():
+        topic = session.get(TopicIdea, topic_id)
+        topic.target_audience = "science_enthusiasts"
+
+    script_id = a_script(engine, topic_id)
+    a_passed_review(engine, script_id)
+    with Session(engine) as session:
+        draft = session.get(ScriptDraft, script_id)
+        director_brief = _script_facts(session, draft)
+        assert director_brief["target_audience"] == "science_enthusiasts"
+        assert director_brief["story"]
+    assert "target_audience" in _INSTRUCTIONS
+
+    board = generate_storyboard_from_script(
+        engine, script_id, "MOTION_GRAPHIC", "9:16", str(uuid4())
+    )
+    with Session(engine) as session:
+        editor_brief = _film_facts(session, session.get(Storyboard, board["id"]))
+        assert editor_brief["target_audience"] == director_brief["target_audience"]
+        assert editor_brief["story"] == director_brief["story"]
+        assert all(scene["story_purpose"] for scene in editor_brief["scenes"])
+    assert "core_message" in _SHOTS_INSTRUCTIONS
+    assert "writer_visual" in _SHOTS_INSTRUCTIONS
+
+
 # ---------------------------------------------------------------------------
 # Her letter reaches the writer, and is settled when a later draft passes
 # ---------------------------------------------------------------------------
