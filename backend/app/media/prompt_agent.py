@@ -52,7 +52,7 @@ from sqlalchemy.orm import Session
 from app.agents.memory import LESSON_MARKER, agent_for_role, remember
 from app.db import lock_for_write
 from app.factual.editorial import SCENE_PURPOSES
-from app.factual.models import FactualClaim, ScriptDraft
+from app.factual.models import FactualClaim, ScriptDraft, TopicIdea
 from app.factual.sanitizer import wrap_in_inert_boundary
 from app.media import prompt_lint as lint
 from app.media.markings import markings_kept, planned_markings, still_exclusions
@@ -423,6 +423,11 @@ _SHOTS_INSTRUCTIONS = (
     "what is seen then — a pose, a state, a place — never a camera move, a speed or a span of "
     "the clip's seconds: those belong only in the camera's move, in motion and in "
     "ending_frame.\n\n"
+    "The film's target_audience, core_message and takeaway (in the film's data) are Marcus's "
+    "mission, already approved by Sarah. For each scene preserve its story_purpose and "
+    "writer_visual: make the exact causal beat readable in the first still and its motion. "
+    "Do not change the promised payoff, imply facts Marcus never said, or fill a missing "
+    "audience detail with your own demographic assumptions.\n\n"
     "Show the information rather than narrating it twice: if the narration says a storm grew "
     "stronger, the picture shows cloud, wind, water and a reaction, not a caption. Never ask "
     "for writing in the picture — no text overlay, title, label, caption or written number: a "
@@ -641,6 +646,10 @@ def _serial_scene_facts(session: Session, entry: dict[str, Any]) -> dict[str, An
 def _film_facts(session: Session, board: Storyboard) -> dict[str, Any]:
     """The story, its scenes and its characters, as the prompt agent reads them."""
     script = session.get(ScriptDraft, board.script_draft_id)
+    topic = (
+        session.get(TopicIdea, script.topic_id)
+        if script is not None and script.topic_id else None
+    )
     scenes = list(
         session.scalars(
             select(StoryboardScene)
@@ -682,6 +691,9 @@ def _film_facts(session: Session, board: Storyboard) -> dict[str, Any]:
         "title": board.title,
         "aspect_ratio": board.aspect_ratio,
         "visual_style": board.visual_style,
+        # The same selected audience Marcus wrote for and Sarah evaluated.
+        # No new inference about this audience is delegated to the video model.
+        "target_audience": str(topic.target_audience or "") if topic else "",
         "story": dict(script.story_json or {}) if script else {},
         "target_seconds": board.target_duration_seconds,
         "scenes": [
