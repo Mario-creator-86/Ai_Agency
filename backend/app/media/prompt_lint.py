@@ -604,33 +604,39 @@ BIBLE_NO_FACES = re.compile(
 # These narrow checks prevent paying for physically impossible compositions; unrelated
 # back views and visible faces remain fully allowed.
 _BACK_TO_CAMERA = re.compile(
-    r"\\b(?:seen|shown|viewed|filmed)\\s+(?:only\\s+)?from\\s+behind\\b"
-    r"|\\b(?:their|his|her|the)\\s+backs?\\s+to\\s+(?:the\\s+)?camera\\b",
+    r"\b(?:seen|shown|viewed|filmed)\s+(?:only\s+)?from\s+behind\b"
+    r"|\b(?:their|his|her|the)\s+backs?\s+to\s+(?:the\s+)?camera\b",
     re.IGNORECASE,
 )
 _MEDAL_AT_FRONT = re.compile(
-    r"\\bmedals?\\b[^.!?;]{0,100}\\b(?:at|on|over|across)\\s+"
-    r"(?:their|his|her|the)\\s+(?:chests?|fronts?|lapels?)\\b",
+    r"\bmedals?\b[^.!?;]{0,100}\b(?:at|on|over|across)\s+"
+    r"(?:their|his|her|the)\s+(?:chests?|fronts?|lapels?)\b",
     re.IGNORECASE,
 )
-_REFLECTED_FRONT = re.compile(r"\\b(?:mirror|reflection|reflected)\\b", re.IGNORECASE)
+_REFLECTED_FRONT = re.compile(r"\b(?:mirror|reflection|reflected)\b", re.IGNORECASE)
 _VACUUM_SPACE = re.compile(
-    r"\\b(?:pure\\s+vacuum|deep\\s+space|intergalactic\\s+(?:space|void)"
-    r"|void\\s+black|unbroken\\s+darkness)\\b",
+    r"\b(?:pure\s+vacuum|deep\s+space|intergalactic\s+(?:space|void)"
+    r"|void\s+black|unbroken\s+darkness)\b",
     re.IGNORECASE,
 )
 _TERRESTRIAL_CAMERA = re.compile(
-    r"\\b(?:ground|road)\\s+(?:sliding|moving|rolling|passing)\\s+beneath\\b"
-    r"|\\bhorizon\\s+(?:opening|rising|extending)\\s+ahead\\b",
+    r"\b(?:ground|road)\s+(?:sliding|moving|rolling|passing)\s+beneath\b"
+    r"|\bhorizon\s+(?:opening|rising|extending)\s+ahead\b",
     re.IGNORECASE,
 )
 _REAL_SURFACE = re.compile(
-    r"\\b(?:earth(?:'s)?|planet(?:ary)?|moon|landscape|terrain|surface)\\b",
+    r"\b(?:earth(?:'s)?|planet(?:ary)?|moon|landscape|terrain|surface)\b",
+    re.IGNORECASE,
+)
+_NO_SURFACE = re.compile(
+    r"\b(?:no|without|lacking)\s+(?:an?\s+|the\s+|visible\s+)?"
+    r"(?:ground|planet|moon|surface|terrain)"
+    r"(?:\s+(?:or|and)\s+(?:ground|planet|moon|surface|terrain))*\b",
     re.IGNORECASE,
 )
 _TEMPORAL_STILL = re.compile(
-    r"\\b(?:brightens?\\s+and\\s+dims?|dims?\\s+and\\s+brightens?"
-    r"|pulses?\\s+and\\s+fades?)\\b",
+    r"\b(?:brightens?\s+and\s+dims?|dims?\s+and\s+brightens?"
+    r"|pulses?\s+and\s+fades?)\b",
     re.IGNORECASE,
 )
 
@@ -1221,7 +1227,7 @@ def lint_motion_prompt(
     if (
         ground
         and _VACUUM_SPACE.search(still_prompt)
-        and not _REAL_SURFACE.search(still_prompt)
+        and not _REAL_SURFACE.search(_NO_SURFACE.sub("", still_prompt))
     ):
         findings.append(
             _finding(
