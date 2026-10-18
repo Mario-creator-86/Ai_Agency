@@ -121,6 +121,15 @@ def test_preflight_repairs_only_the_failed_factual_scene_without_paid_calls(monk
     corrected = original.model_copy(update={
         "subject": "Three people face the camera with medals at their chests.",
         "action": "The medal recipients hold the medals in front of their jackets.",
+        "still_prompt": (
+            "Documentary photograph of three people facing the camera on a stage, "
+            "each showing a gold medal at the front of the chest. Warm overhead "
+            "spotlights, a single ceremony hall, 9:16 composition."
+        ),
+        "motion_prompt": (
+            "Steady crane up from the medal recipients toward the upper hall, "
+            "gold highlights glint softly; one continuous take."
+        ),
     })
     packets = {19: original}
     reads = []
