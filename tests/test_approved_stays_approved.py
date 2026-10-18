@@ -16,7 +16,8 @@ check refused, is judged as before.
 The review of that change (the same evening) is asserted too: the carry key is the takes AND the
 check's version, the bible and look, and the scene's span and speed (`picture_qc.carry_keys`), so
 a verdict of another version or another cut is not carried; only the model's look is carried,
-while YuNet and the flat band still read a carried scene's frames; what the Director judged FALSE
+while YuNet still counts faces in a carried scene's frames; the vision model owns the
+panel verdict (`one_picture`), not the removed pixel-band detector; what the Director judged FALSE
 or accepted as minor on the same takes is not looked at again (`earlier_acceptances`); and a look
 that numbered its frames by position is read back to the scenes it was shown, or fails. Every
 model is faked.
@@ -603,10 +604,10 @@ def test_a_shown_scene_the_look_left_out_is_asked_again_and_judged(engine, frame
 
 
 @requires_ffmpeg
-def test_the_span_look_keeps_its_verdict_and_still_reads_faces_and_the_band(engine, tmp_path):
-    """No judge is asked for a scene whose picture passed before; its three frames are still
-    cut, YuNet still counts their faces and the band still reads them (the review of 2026-10-12:
-    both free detectors were skipped on a carried scene)."""
+def test_the_span_look_keeps_its_verdict_and_still_reads_faces(engine, tmp_path):
+    """A previously approved scene keeps its vision verdict without another model call.
+    Its three frames are still cut and checked by YuNet; the removed geometric panel
+    detector is NOT_APPLICABLE, because the prior vision `one_picture` check is carried."""
     from app.media.qc import span_picture_qc
 
     staff(engine)
@@ -629,7 +630,8 @@ def test_the_span_look_keeps_its_verdict_and_still_reads_faces_and_the_band(engi
         assert scenes[index]["status"] == "PASSED" and scenes[index]["passed"] is True
         assert scenes[index]["carried_from"]["report_id"] == earlier["report"]
         assert scenes[index]["picture"]["status"] == CARRIED_STATUS
-        assert scenes[index]["panels"]["status"] == "PASSED"
+        assert scenes[index]["panels"]["status"] == "NOT_APPLICABLE"
+        assert scenes[index]["panels"]["method"] == "vision_only"
         assert scenes[index]["faces"]["status"] == "PASSED"
         assert scenes[index]["carry_key"]["clip"] == f"clip-{index}"
     assert scenes[3]["status"] == "NOT_APPLICABLE"
