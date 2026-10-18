@@ -1629,6 +1629,7 @@ def test_with_nobody_to_look_and_faces_allowed_the_band_still_fails_a_panel_scen
 ):
     """Without vision, never infer that a geometric band is a failed scene."""
     from app.media.qc import span_picture_qc
+
     ids = _spanned_film(engine, tmp_path, film=_panel_film(tmp_path))
     record = span_picture_qc(engine, None, ids["asset"], str(uuid4()))
     assert record["faces_forbidden"] is False
@@ -1645,6 +1646,7 @@ def test_with_nobody_to_look_a_film_without_panels_is_read_and_certifies_nothing
     engine, staffed, tmp_path
 ):
     from app.media.qc import span_picture_qc
+
     ids = _spanned_film(engine, tmp_path)
     record = span_picture_qc(engine, None, ids["asset"], str(uuid4()))
     assert record["passed"] is None and record["failures"] == []
@@ -1804,11 +1806,10 @@ def _scene_redos(report) -> dict[int, set[str]]:
 
 
 @requires_ffmpeg
-def test_a_scene_made_of_panels_fails_the_span_check_on_the_band_alone(
-    engine, staffed, tmp_path
-):
+def test_a_scene_made_of_panels_fails_the_span_check_on_the_band_alone(engine, staffed, tmp_path):
     """An AI approval is not overridden by a guessed horizontal separator."""
     from app.media.qc import span_picture_qc
+
     ids = _spanned_film(engine, tmp_path, film=_panel_film(tmp_path))
     record = span_picture_qc(engine, None, ids["asset"], str(uuid4()), judge=_Judge())
     assert record["status"] == "MEASURED" and record["passed"] is True
