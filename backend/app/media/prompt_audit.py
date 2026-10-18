@@ -288,6 +288,20 @@ def approved_words(
     )
 
 
+def approved_for_purchase(
+    session: Session, storyboard_id: str, scene: int, layer: str, digest: str
+) -> bool:
+    """Only Sarah's explicit APPROVED may authorize a *new* media purchase.
+
+    APPROVED_UNDER_CAP remains readable through approved_words for historical
+    media already bought before the Owner prohibited buying on a cap alone.
+    """
+    return any(
+        a.get("verdict") == APPROVED and a.get("digest") == digest
+        for a in _audits(session, storyboard_id, scene, layer)
+    )
+
+
 def purchase_approval_gaps(
     engine: Any, storyboard_id: str, step: str, scenes: list[int]
 ) -> list[int]:
@@ -318,7 +332,7 @@ def purchase_approval_gaps(
             digest = prompt_digest(
                 words, exact=package.get("prompt_format") == "editor_final_v1"
             )
-            if not approved_words(session, storyboard_id, scene, layer, digest):
+            if not approved_for_purchase(session, storyboard_id, scene, layer, digest):
                 missing.append(scene)
     return missing
 
@@ -730,7 +744,7 @@ def audit_before_purchase(
             text, exact=context["package"].get("prompt_format") == "editor_final_v1"
         )
         with Session(engine) as session:
-            if approved_words(session, storyboard_id, scene, layer, digest):
+            if approved_for_purchase(session, storyboard_id, scene, layer, digest):
                 result["approved"].append(scene)
                 continue
             defect = tool_defect_on(session, storyboard_id, scene, layer, digest)
