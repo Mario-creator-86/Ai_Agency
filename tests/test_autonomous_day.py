@@ -493,10 +493,11 @@ def test_under_every_paid_step_each_yes_continues_the_film_the_same_day_to_a_pri
 def _stage_world(engine, settings, monkeypatch, tmp_path, *, rule="MODE", balance=10_000.0):
     """One film at the bottom of its staircase and the media stage alone, run three times."""
     from app.runbook import stages
-    from test_daily_run_stages import _bottom_of_the_staircase
+    from test_daily_run_stages import _bottom_of_the_staircase, _fixture_sarah_approves
     from test_daily_run_stages import _production as stage_production
 
     stage_production(engine)
+    _fixture_sarah_approves(monkeypatch)
     world = _runway(monkeypatch, tmp_path, balance=balance)
     monkeypatch.setattr(stages, "story_gate", lambda session, script_id: (True, ""))
     _judges_pass(monkeypatch)
