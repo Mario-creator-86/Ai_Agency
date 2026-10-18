@@ -381,6 +381,10 @@ _BIBLE_INSTRUCTIONS = (
     "must never appear. Respect the physical setting: for an airless scene describe vacuum "
     "and direct sunlight, not terrestrial weather, haze or wind. Vertical 9:16, watched on "
     "a phone: the subject has to stay readable. "
+    "AI-generated adult faces are allowed. Do not add a blanket no-faces or faceless "
+    "rule to the visual bible. Describe people's appearance, expression and consistency "
+    "when the story calls for people; only hide a face when a particular scene's story "
+    "or rights requirements explicitly need it. "
     "Be specific and brief — a rule that could describe any film is not a rule. Write every "
     "value in plain English words, the way a photographer would say it: the place by its "
     "name and what it looks like, the season, the weather, the light, and colours named in "
@@ -1281,6 +1285,19 @@ def build_visual_bible(
             bible = _parse_bible(result.get("output_text") or "")
 
     record = (bible or VisualBible()).model_dump()
+    # A model-generated visual bible must not turn the mere presence of an AI
+    # person's face into a paid-media failure. Keep deliberate HIDE policies from
+    # existing films intact; this default applies only when building a NEW bible.
+    # Clean the contradictory prose as well: the vision reviewer also reads it.
+    record["face_policy"] = "ALLOW"
+    record["continuity_rules"] = [
+        rule for rule in record.get("continuity_rules", [])
+        if not lint.BIBLE_NO_FACES.search(str(rule))
+    ]
+    record["avoid"] = [
+        rule for rule in record.get("avoid", [])
+        if not (lint.BIBLE_AVOID_FACES.match(str(rule)) or lint.BIBLE_NO_FACES.search(str(rule)))
+    ]
     record["avoid"] = _avoid_list(record.get("avoid"))
     record.setdefault("aspect_ratio", facts["aspect_ratio"])
     record["aspect_ratio"] = facts["aspect_ratio"]
