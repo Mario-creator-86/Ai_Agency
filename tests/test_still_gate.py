@@ -69,15 +69,11 @@ from app.media import faces, still_gate
 from app.media.faces import FaceCount, count_faces
 from app.media.picture_qc import StillJudgement, StillVerdict
 from app.media.qc import (
-    FRAME_PICTURE_FLOOR,
-    PANEL_BAND_SHARE,
     SOFT_BAND_MAX_SHARE,
-    SOFT_EDGE_STEP,
     ClipCheck,
     FlatBand,
     _panels_check,
     flat_band,
-    still_is_degenerate,
 )
 from app.media.renders_cap import max_rerolls
 from app.media.still_gate import (
