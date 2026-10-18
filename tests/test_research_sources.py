@@ -631,8 +631,10 @@ def test_the_researcher_does_not_guess_when_pages_were_found(engine, settings, s
     result = gather_sources(engine, registry, settings, a_topic(engine), str(uuid4()))
     assert [f["url"] for f in result["fetched"]] == [found]
     assert result["failed"] == [{"url": guess, "why": result["failed"][0]["why"]}]
-    assert "ghicit" in result["failed"][0]["why"]
-    assert guess not in stub.asked, "a guess is not fetched when real pages exist"
+    # With fewer relevant pages than the Owner's limit, the Researcher may
+    # verify another proposed URL, but the failed URL must never be ingested.
+    assert "HTTP 404" in result["failed"][0]["why"]
+    assert guess in stub.asked, "a proposed URL must be tested before it can become a source"
     assert "prefer them" in model.calls[0] and "not fetched" in model.calls[0]
     with Session(engine) as session:
         assert session.scalar(select(AgentMessage).where(AgentMessage.intent == "ESCALATE")) is None
