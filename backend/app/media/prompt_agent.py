@@ -4015,6 +4015,18 @@ def shot_frame(camera: Any, shot_type: Any = "") -> tuple[str, str]:
     return size, _sentence(", ".join(parts))
 
 
+# Some editors write "Wide shot, 24mm lens: 9:16 frame: subject" or just
+# "Wide shot, 9:16 frame". Splitting on the first ":" used to make "16 frame"
+# look like an object placement and send "24mm lens: 16 frame:" to the image
+# model. The image ratio is already supplied by COMPOSITION_SENTENCE; only
+# real subject placement belongs after the camera label.
+_RATIO_CAMERA_PREFIX = re.compile(
+    r"^\s*(?:(?:9\s*:\s*16|16\s*:\s*9|16)\s+frame)"
+    r"\s*(?:[:,;\-]\s*|$)",
+    re.IGNORECASE,
+)
+
+
 def _frame_placement(camera: Any) -> str:
     """The plan's own words for the frame after its label — what is centred, how large, how
     far («Wide establishing shot, straight-on, 24mm wide: the glass display case centred in
@@ -4027,6 +4039,11 @@ def _frame_placement(camera: Any) -> str:
     if ":" not in raw:
         return ""
     after = raw.split(":", 1)[1]
+    after = _RATIO_CAMERA_PREFIX.sub("", after)
+    # A ratio-only fragment is NOT a placement instruction. Discard it rather
+    # than asking the picture model to draw the meaningless "16 frame".
+    if not after.strip(" ,;:-"):
+        return ""
     kept: list[str] = []
     for sentence in re.split(r"\s*[;.]\s*", after):
         parts: list[str] = []
