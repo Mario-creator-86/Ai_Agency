@@ -600,6 +600,40 @@ BIBLE_NO_FACES = re.compile(
     r"|shown|seen))\b|\bwithout\s+(?:human\s+)?faces\b",
     re.IGNORECASE,
 )
+# Explicitly contradictory first-frame geometry, not an AI aesthetic judgement.
+# These narrow checks prevent paying for physically impossible compositions; unrelated
+# back views and visible faces remain fully allowed.
+_BACK_TO_CAMERA = re.compile(
+    r"\\b(?:seen|shown|viewed|filmed)\\s+(?:only\\s+)?from\\s+behind\\b"
+    r"|\\b(?:their|his|her|the)\\s+backs?\\s+to\\s+(?:the\\s+)?camera\\b",
+    re.IGNORECASE,
+)
+_MEDAL_AT_FRONT = re.compile(
+    r"\\bmedals?\\b[^.!?;]{0,100}\\b(?:at|on|over|across)\\s+"
+    r"(?:their|his|her|the)\\s+(?:chests?|fronts?|lapels?)\\b",
+    re.IGNORECASE,
+)
+_REFLECTED_FRONT = re.compile(r"\\b(?:mirror|reflection|reflected)\\b", re.IGNORECASE)
+_VACUUM_SPACE = re.compile(
+    r"\\b(?:pure\\s+vacuum|deep\\s+space|intergalactic\\s+(?:space|void)"
+    r"|void\\s+black|unbroken\\s+darkness)\\b",
+    re.IGNORECASE,
+)
+_TERRESTRIAL_CAMERA = re.compile(
+    r"\\b(?:ground|road)\\s+(?:sliding|moving|rolling|passing)\\s+beneath\\b"
+    r"|\\bhorizon\\s+(?:opening|rising|extending)\\s+ahead\\b",
+    re.IGNORECASE,
+)
+_REAL_SURFACE = re.compile(
+    r"\\b(?:earth(?:'s)?|planet(?:ary)?|moon|landscape|terrain|surface)\\b",
+    re.IGNORECASE,
+)
+_TEMPORAL_STILL = re.compile(
+    r"\\b(?:brightens?\\s+and\\s+dims?|dims?\\s+and\\s+brightens?"
+    r"|pulses?\\s+and\\s+fades?)\\b",
+    re.IGNORECASE,
+)
+
 BIBLE_AVOID_FACES = re.compile(
     r"^\s*(?:visible\s+|human\s+|recogni[sz]able\s+|any\s+)*faces?(?:\s+visible)?\s*$",
     re.IGNORECASE,
@@ -1076,6 +1110,35 @@ def lint_still_prompt(
             )
         )
 
+    # A front-of-chest medal cannot be visible on someone explicitly shown only
+    # from behind, unless a reflection is deliberately part of the shot.
+    back = _BACK_TO_CAMERA.search(text)
+    medal = _MEDAL_AT_FRONT.search(text)
+    if back and medal and not _REFLECTED_FRONT.search(text):
+        findings.append(
+            _finding(
+                "PHYSICAL_MEDAL_ORIENTATION",
+                BLOCK,
+                scene,
+                medal.group(0),
+                "Promptul imaginii cere oameni văzuți din spate, dar medalii vizibile "
+                "la piept/în față. Poziționați camera în față sau la trei sferturi "
+                "ori descrieți o compoziție fizic coerentă înainte de generare.",
+            )
+        )
+    temporal = _TEMPORAL_STILL.search(text)
+    if temporal:
+        findings.append(
+            _finding(
+                "STILL_TEMPORAL_CHANGE",
+                WARN,
+                scene,
+                temporal.group(0),
+                "Promptul imaginii descrie o schimbare în timp. Păstrați în imagine "
+                "o singură stare a luminii și descrieți variația în promptul video.",
+            )
+        )
+
     rule = bible_face_rule(bible)
     if rule:
         persons = _person_mentions(text)
@@ -1151,6 +1214,26 @@ def lint_motion_prompt(
     """Findings for the promptText sent with the approved still to the video model."""
     cap, characters = _prompt_limit(contract, "motion")
     findings = _hygiene(text, scene, "motion", cap, characters=characters)
+    # Catch a concrete terrestrial camera move pasted into a vacuum scene.
+    # Do not infer an Earth horizon from astronomy words alone; an explicit
+    # planet, moon or landscape in the planned still makes the move legitimate.
+    ground = _TERRESTRIAL_CAMERA.search(text)
+    if (
+        ground
+        and _VACUUM_SPACE.search(still_prompt)
+        and not _REAL_SURFACE.search(still_prompt)
+    ):
+        findings.append(
+            _finding(
+                "PHYSICAL_COSMIC_GROUND",
+                BLOCK,
+                scene,
+                ground.group(0),
+                "Mișcarea cere sol/orizont terestru sub cameră, dar imaginea "
+                "descrie vid cosmic fără suprafață. Descrieți deplasarea camerei "
+                "printre filamente/galaxii, fără elemente de pe Pământ.",
+            )
+        )
     family = model_family(model_id)
     model_name = model_id or "modelul video"
 
