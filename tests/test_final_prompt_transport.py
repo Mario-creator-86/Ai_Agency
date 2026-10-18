@@ -8,13 +8,17 @@ from app.media.final_prompts import (
     editor_motion_for,
     validate_final,
 )
-from app.media.prompt_agent import ShotPrompt, _validated_package, compile_prompts, motion_prompt_for
-from app.media.prompt_audit import prompt_text
+from app.media.prompt_agent import (
+    ShotPrompt, _complete_editor_shot, _validated_package,
+    compile_prompts, motion_prompt_for,
+)
+from app.media.prompt_audit import prompt_digest, prompt_text
 from app.media.scene_rewrite import (
     STILL,
     MOTION,
     _direct_rewritten_package,
     layer_terms,
+    lock_texts,
 )
 
 
@@ -135,3 +139,31 @@ def test_direct_layer_terms_no_longer_claim_composer_fixed_phrases() -> None:
     assert "motion_prompt" in b["fields_he_may_change"]
     assert b["kept_word_for_word"]["still_prompt"] == STILL_TEXT
     assert b["fixed_sentences"] == {"still": [], "motion": []}
+
+
+def test_new_shot_without_complete_final_text_cannot_reach_purchase() -> None:
+    assert not _complete_editor_shot(ShotPrompt(scene_index=1, camera_move="static"))
+    assert not _complete_editor_shot(
+        ShotPrompt(scene_index=1, camera_move="static", still_prompt=STILL_TEXT)
+    )
+    assert _complete_editor_shot(
+        ShotPrompt(
+            scene_index=1, camera_move="crane up",
+            still_prompt=STILL_TEXT, motion_prompt=MOTION_TEXT,
+        )
+    )
+
+
+def test_approval_digest_for_editor_final_is_exact_and_legacy_stays_compatible() -> None:
+    assert prompt_digest("A   B", exact=True) != prompt_digest("A B", exact=True)
+    assert prompt_digest("A   B") == prompt_digest("A B")
+
+
+def test_editor_final_has_no_composer_locked_phrases_in_sarah_review() -> None:
+    context = {"package": _raw(), "visual_prompt": STILL_TEXT}
+    still_locks = lock_texts(context, "still")
+    motion_locks = lock_texts(context, "motion")
+    assert still_locks["constants"] == ()
+    assert still_locks["picture"] == ()
+    assert motion_locks["constants"] == ()
+    assert motion_locks["picture"] == (STILL_TEXT,)
