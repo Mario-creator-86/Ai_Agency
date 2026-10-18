@@ -285,7 +285,9 @@ def test_repeated_sarah_refusals_hold_the_film_and_never_reach_a_vendor(
         }
 
     monkeypatch.setattr(prompt_audit, "_ask", reject)
-    monkeypatch.setattr(prompt_audit, "rewrite_scene", unchanged)
+    # audit_before_purchase imports rewrite_scene locally from scene_rewrite.
+    # Patch the defining module so that the no-progress scenario stays offline.
+    monkeypatch.setattr("app.media.scene_rewrite.rewrite_scene", unchanged)
 
     def never_buy(*args, **kwargs):
         pytest.fail("Repeated rejected words reached a media purchase")
