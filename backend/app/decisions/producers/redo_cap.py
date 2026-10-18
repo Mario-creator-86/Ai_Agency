@@ -128,6 +128,9 @@ def propose_redo_cap_card(
     spent = dict(rounds or {})
     try:
         with Session(engine) as session, session.begin():
+            from app.db import lock_for_write  # noqa: PLC0415
+
+            lock_for_write(session)
             title = _title_of(session, storyboard_id)
             summary = _director_summary(session, report_id)
             scene_words = ("scena " if len(scenes) == 1 else "scenele ") + ", ".join(
