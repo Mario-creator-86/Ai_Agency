@@ -545,6 +545,7 @@ def _topic_back_to_research(engine: Engine, topic_id: str, blocker: Any) -> None
     from app.agents.messages import post_message  # noqa: PLC0415
 
     with Session(engine) as session, session.begin():
+        lock_for_write(session)
         topic = session.get(TopicIdea, topic_id)
         if topic is None:
             return
@@ -4887,6 +4888,7 @@ def _yield_next_round(engine: Engine, asset_id: str, new_report: str) -> str | N
         return None
     try:
         with Session(engine) as session, session.begin():
+            lock_for_write(session)
             others = [
                 task
                 for task in session.scalars(
