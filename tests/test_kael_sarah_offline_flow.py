@@ -28,6 +28,43 @@ from test_director_rewrites_failed_scene import (
 )
 
 
+class DirectorAndEditor(Agents):
+    def __init__(self):
+        super().__init__()
+        self.audits = []
+
+    async def generate(self, model, prompt, **kwargs):
+        if '"prompt-audit"' in prompt:
+            self.audits.append(prompt)
+            first = len(self.audits) == 1
+            return GenerateResult(
+                json.dumps({
+                    "scenes": [{
+                        "scene_index": 1,
+                        "approved": not first,
+                        "reason": (
+                            "The motion is too vague to guarantee a visible moving cloud."
+                            if first else "The revised movement is visible and consistent."
+                        ),
+                        **({
+                            "brief": {
+                                "action": "rewrite",
+                                "diagnosis": "The cloud motion needs a clear direction.",
+                                "layer": "motion",
+                                "avoid": ["a frozen, almost still frame"],
+                                "keep": ["the village on the terraced slope"],
+                                "change": ["cloud rolls across the ridges from left to right"],
+                                "summary_ro": "Clarifică mișcarea norilor înainte de cumpărare.",
+                            },
+                        } if first else {}),
+                    }],
+                }),
+                10, 40, None,
+            )
+        return await super().generate(model, prompt, **kwargs)
+
+
+
 @pytest.mark.skipif(find_ffmpeg() is None, reason="local video fixtures need FFmpeg")
 def test_kael_sarah_rewrite_then_approve_without_any_video_purchase(
     engine, tmp_path, studio
@@ -35,41 +72,6 @@ def test_kael_sarah_rewrite_then_approve_without_any_video_purchase(
     """Sarah refuses old words; Kael fixes one scene; Sarah verifies and approves exact new words."""
     board = a_planned_film(engine, tmp_path)
     original = dict(scene(engine, board).prompt_json)
-
-    class DirectorAndEditor(Agents):
-        def __init__(self):
-            super().__init__()
-            self.audits = []
-
-        async def generate(self, model, prompt, **kwargs):
-            if '"prompt-audit"' in prompt:
-                self.audits.append(prompt)
-                first = len(self.audits) == 1
-                return GenerateResult(
-                    json.dumps({
-                        "scenes": [{
-                            "scene_index": 1,
-                            "approved": not first,
-                            "reason": (
-                                "The motion is too vague to guarantee a visible moving cloud."
-                                if first else "The revised movement is visible and consistent."
-                            ),
-                            **({
-                                "brief": {
-                                    "action": "rewrite",
-                                    "diagnosis": "The cloud motion needs a clear direction.",
-                                    "layer": "motion",
-                                    "avoid": ["a frozen, almost still frame"],
-                                    "keep": ["the village on the terraced slope"],
-                                    "change": ["cloud rolls across the ridges from left to right"],
-                                    "summary_ro": "Clarifică mișcarea norilor înainte de cumpărare.",
-                                },
-                            } if first else {}),
-                        }],
-                    }),
-                    10, 40, None,
-                )
-            return await super().generate(model, prompt, **kwargs)
 
     fake = DirectorAndEditor()
     registry = agents_say(studio, fake)
@@ -173,3 +175,136 @@ def test_production_refuses_a_paid_step_without_every_scene_approved(monkeypatch
     assert result["bought"] == []
     assert result["scenes"] == ([2] if missing == "partial" else [1, 2])
     assert len(audits) == (0 if missing == "registry" else 1)
+
+
+def _offline_purchase_staircase(monkeypatch, purchase_hook):
+    """Only the purchase boundary is replaced; real audit, rewrite and events still run."""
+    from app.media import factory, fix_check, shooting_sheet
+
+    monkeypatch.setattr(
+        factory, "reference_image_adapter",
+        lambda *args, **kwargs: SimpleNamespace(model="offline-still"),
+    )
+    monkeypatch.setattr(
+        fix_check, "restore_sent_back_scenes", lambda *args, **kwargs: []
+    )
+    monkeypatch.setattr(
+        shooting_sheet, "recover_paid_takes", lambda *args, **kwargs: {}
+    )
+    monkeypatch.setattr(
+        shooting_sheet, "build_sheet",
+        lambda *args, **kwargs: {
+            "sheet_hash": "offline-no-vendor",
+            "steps": {
+                "stills": {"to_buy": [], "held": [], "needs_reference": []},
+                "test_shot": {"to_buy": [1], "held": []},
+                "motion": {"to_buy": [], "held": []},
+                "assemble": {"blocked": []},
+            },
+        },
+    )
+    monkeypatch.setattr(shooting_sheet, "run_sheet_step", purchase_hook)
+
+
+@pytest.mark.skipif(find_ffmpeg() is None, reason="local video fixtures need FFmpeg")
+def test_the_test_mode_staircase_rewrites_reaudits_and_stops_at_the_purchase_boundary(
+    engine, tmp_path, studio, monkeypatch
+):
+    """Real Kael/Sarah DB workflow, but the payment boundary is a strict local veto."""
+    from app.media.shooting_sheet import SheetStepRefused
+
+    board = a_planned_film(engine, tmp_path)
+    before = dict(scene(engine, board).prompt_json)
+    model = DirectorAndEditor()
+    registry = agents_say(studio, model)
+    intercepted = []
+
+    def veto(*args, **kwargs):
+        # The orchestration has arrived at the purchase boundary only after
+        # Sarah approved precisely the corrected words. No vendor can be reached.
+        current = scene(engine, board).prompt_json
+        text = prompt_text(current, "motion")
+        digest = prompt_digest(
+            text, exact=current.get("prompt_format") == "editor_final_v1"
+        )
+        with Session(engine) as session:
+            assert approved_words(session, board, 1, "motion", digest)
+            assert not approved_words(
+                session, board, 1, "motion",
+                prompt_digest(prompt_text(before, "motion")),
+            )
+        intercepted.append((args, kwargs))
+        raise SheetStepRefused("NEEDS_APPROVAL", "OFFLINE TEST: paid request intercepted")
+
+    _offline_purchase_staircase(monkeypatch, veto)
+    result = stages._walk_staircase(
+        engine,
+        SimpleNamespace(ffmpeg_path=None, motion_resolution="1080p"),
+        registry, board, {"image_adapter": None}, "TEST", str(uuid4()),
+    )
+
+    assert result["status"] == "ASKED", result
+    assert result["step"] == "test_shot"
+    assert result["refusal"] == "NEEDS_APPROVAL"
+    assert result["bought"] == []
+    assert len(intercepted) == 1
+    assert len(model.audits) == 2  # first rejects; after rewrite, new words pass
+    assert len(model.rewrites) == len(model.reviews) == 1
+    (rewrite_event,) = events(engine, SCENE_PROMPTS_REWRITTEN_EVENT, board)
+    assert rewrite_event.payload["review"]["verdict"] == "TREATS"
+    assert scene(engine, board).prompt_json["still_prompt"] == before["still_prompt"]
+
+
+@pytest.mark.skipif(find_ffmpeg() is None, reason="local video fixtures need FFmpeg")
+def test_repeated_sarah_refusals_hold_the_film_and_never_reach_a_vendor(
+    engine, tmp_path, studio, monkeypatch
+):
+    """No rewrite progress: repeated review is bounded and the refusal is recorded."""
+    from app.media.prompt_audit import AuditedScene, PromptAudit
+
+    board = a_planned_film(engine, tmp_path)
+    original = dict(scene(engine, board).prompt_json)
+    requests = []
+    rewrites = []
+
+    def reject(*args, **kwargs):
+        requests.append(kwargs)
+        return (
+            PromptAudit(scenes=[AuditedScene(
+                scene_index=1, approved=False,
+                reason="A static-looking cloud is not the requested moving cloud.",
+            )]),
+            {"id": str(uuid4()), "status": "SUCCEEDED"},
+        )
+
+    def unchanged(*args, **kwargs):
+        rewrites.append((args, kwargs))
+        return {
+            "rewritten": False,
+            "reason": "Kael's answer repeated the same prompt without fixing the cloud.",
+        }
+
+    monkeypatch.setattr(prompt_audit, "_ask", reject)
+    monkeypatch.setattr(prompt_audit, "rewrite_scene", unchanged)
+
+    def never_buy(*args, **kwargs):
+        pytest.fail("Repeated rejected words reached a media purchase")
+
+    _offline_purchase_staircase(monkeypatch, never_buy)
+    result = stages._walk_staircase(
+        engine,
+        SimpleNamespace(ffmpeg_path=None, motion_resolution="1080p"),
+        object(), board, {"image_adapter": None}, "TEST", str(uuid4()),
+    )
+    assert result["status"] == "WAITING", result
+    assert result["refusal"] == prompt_audit.NEEDS_PROMPT_APPROVAL
+    assert result["bought"] == []
+    assert result["audit"]["held"]
+    assert len(requests) <= prompt_audit.ROUNDS_PER_WALK
+    assert 1 <= len(rewrites) <= prompt_audit.ROUNDS_PER_WALK
+    assert scene(engine, board).prompt_json == original
+    with Session(engine) as session:
+        assert not approved_words(
+            session, board, 1, "motion",
+            prompt_digest(prompt_text(original, "motion")),
+        )
