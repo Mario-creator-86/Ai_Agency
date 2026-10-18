@@ -63,6 +63,26 @@ def test_the_demo_seams_are_exactly_the_days_vendor_boundaries():
     assert set(DEMO_VENDOR_SEAMS) == set(VENDOR_FAKES)
 
 
+def test_demo_model_returns_complete_vendor_prompts_for_the_editor():
+    """The demonstration must meet Kael's current shot-plan schema without paid vendors."""
+    import json
+
+    from app.demo import DemoModel
+    from app.media.prompt_agent import _complete_editor_shot, parse_shot_plan
+
+    brief = '"shots": [' + ", ".join(
+        f'{{"scene_index": {index}}}' for index in range(1, 5)
+    ) + "]"
+    payload = json.loads(DemoModel()._shots(brief))
+    parsed = parse_shot_plan(json.dumps(payload))
+    assert sorted(parsed.shots) == [1, 2, 3, 4]
+    assert all(_complete_editor_shot(shot) for shot in parsed.shots.values())
+    assert len({shot.camera_move for shot in parsed.shots.values()}) == 4
+    for shot in parsed.shots.values():
+        assert shot.ending_frame in shot.motion_prompt
+        assert shot.still_prompt and shot.motion_prompt and shot.negative_prompt
+
+
 def test_director_demo_review_keeps_its_schema_when_a_report_mentions_pronunciation(tmp_path):
     from app.agents.director import director_review
     from app.agents.messages import post_message
