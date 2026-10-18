@@ -80,7 +80,9 @@ def test_sarah_approval_is_bound_to_current_exact_vendor_words(
         package = dict(row.prompt_json or {})
         package["prompt_format"] = "editor_final_v1"
         package["still_prompt"] = str(package.get("still_prompt") or "Vertical still, a hillside.")
-        package["motion_prompt"] = str(package.get("motion_prompt") or "A tracked cloud crossing the valley.")
+        package["motion_prompt"] = str(
+            package.get("motion_prompt") or "A tracked cloud crossing the valley."
+        )
         row.prompt_json = package
 
     assert prompt_audit.purchase_approval_gaps(engine, board, step, [1]) == [1]
