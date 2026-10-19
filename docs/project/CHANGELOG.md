@@ -5419,3 +5419,7 @@ On-demand Kael final-text migration for requested open LIVE rewrites; current fa
 -249 relevant cases and15 final gate rechecks pass; activation evidence in CURRENT_STATUS and BLOCKED_FILMS_REPAIR_2026-10-19.md.
 
 - Live acceptance06:34 Europe-Bucharest: scene1 final rewrite accepted, paid still preserved, sheet RESOLVED and autonomous continuation claimed (events41083/41097).
+
+
+## 2026-10-19 — Kael final rewrite response contract
+Replaced conflicting legacy shot JSON example with the final vendor fields needed by the current repair layer/migration. Final response validation preserves exact strings and rejects structured values instead of coercing them into prompts.131 offline checks pass; real acceptance pending activation. See KAEL_REWRITE_FINAL_FIELDS_2026-10-19.md.

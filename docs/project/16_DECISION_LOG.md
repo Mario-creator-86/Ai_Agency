@@ -4634,3 +4634,7 @@ Owner requests that legacy LIVE scenes upgrade only when rewriting, with Kael as
 
 ## ADR-PAID-SHEET-REWRITE-DEADLINE — 2026-10-19
 Owner requests resolving blocked production. Initial shot generation must continue protecting paid media. Sheet repair of an indexed paid plan instead uses the existing one-scene rewrite/review transaction; motion-only linter findings keep the paid still exact. No generic deletion of the paid guard or live row patch. A live cloud stream also needs a whole-request time bound distinct from socket inactivity: configurable1200s default, shorter than the worker lease; no token/output truncation or automatic replay of a potentially charged generation. Existing socket guard follows transferred HTTPResponse ownership. No architecture spec, money policy or approval gate changed. Rollback: revert this scoped source increment before restarting.
+
+
+## Kael final response contract is explicit — 2026-10-19
+Correct the incomplete legacy-to-editor-final update: instructions and schema must request exactly the final vendor fields, with both prompts only for still repairs or legacy migration. Preserve exact strings through parsing; never synthesize final text from legacy motion notes or bypass Sarah. No architecture/policy change; real activation and text acceptance are separate from offline tests. Report KAEL_REWRITE_FINAL_FIELDS_2026-10-19.md.

@@ -148,9 +148,7 @@ def test_a_still_that_stands_still_is_not_flagged(prompt):
 
 def test_the_writers_are_told_the_still_is_one_frozen_moment():
     assert "one frozen moment" in _REWRITE_INSTRUCTIONS
-    assert "everything that moves goes to motion, camera_move and ending_frame" in (
-        _REWRITE_INSTRUCTIONS
-    )
+    assert "everything that moves goes to motion_prompt" in (_REWRITE_INSTRUCTIONS)
     assert "never a camera move, a speed or a span of the clip's seconds" in _SHOTS_INSTRUCTIONS
 
 

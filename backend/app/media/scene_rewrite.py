@@ -133,7 +133,7 @@ DECIDED_BY = "director"
 BRIEF_TASK = "director_scene_brief"
 BRIEF_TEMPLATE = "director-scene-brief-v5"
 REWRITE_TASK = "scene_prompt_rewrite"
-REWRITE_TEMPLATE = "scene-prompt-rewrite-v7"
+REWRITE_TEMPLATE = "scene-prompt-rewrite-v8"
 #: Her review of his rewrite against the findings, before anything is bought on it.
 REVIEW_TASK = "director_rewrite_review"
 REVIEW_TEMPLATE = "director-rewrite-review-v7"
@@ -669,6 +669,50 @@ def shot_schema(
     still layer. A serial shot is composed from fewer fields (`SERIAL_STILL_FIELDS`,
     `SERIAL_MOTION_FIELDS`): its still layer must give the action, its motion layer a camera
     move, an ending frame or a feeling."""
+    if editor_final:
+        # Vendor prose is neither a legacy plan nor input for its shape coercer.
+        class FinalSceneShot(BaseModel):
+            model_config = ConfigDict(extra="ignore")
+            scene_index: int = Field(default=index, ge=1, le=120)
+            camera_move: str = Field(strict=True, min_length=1)
+            motion_prompt: str = Field(strict=True, min_length=1)
+            still_prompt: str = Field(default="", strict=True)
+            negative_prompt: str | None = Field(default=None, strict=True)
+
+            @model_validator(mode="before")
+            @classmethod
+            def _this_scene(cls, data: Any) -> Any:
+                if not isinstance(data, dict):
+                    return data
+                if not any(name in data for name in ("still_prompt", "motion_prompt")):
+                    for key in ("shot", "shots"):
+                        inner = data.get(key)
+                        if isinstance(inner, list) and inner:
+                            inner = inner[0]
+                        if isinstance(inner, dict):
+                            data = inner
+                            break
+                return {**data, "scene_index": index}
+
+            @model_validator(mode="after")
+            def _rewrites(self) -> FinalSceneShot:
+                needed = (
+                    ("still_prompt", "motion_prompt")
+                    if layer == STILL or migrating
+                    else ("motion_prompt",)
+                )
+                empty = [name for name in needed if not getattr(self, name).strip()]
+                if empty:
+                    raise ValueError(f"Kael must rewrite the exact {', '.join(empty)}")
+                if self.camera_move not in lint.CAMERA_MOVES:
+                    raise ValueError("camera_move must name one allowed camera move")
+                return self
+
+        class CompleteSceneShot(FinalSceneShot):
+            still_prompt: str = Field(strict=True, min_length=1)
+
+        return CompleteSceneShot if layer == STILL or migrating else FinalSceneShot
+
     from app.media.prompt_agent import ShotPrompt, _coerce  # noqa: PLC0415 - it imports us
 
     class SceneShot(ShotPrompt):
@@ -692,16 +736,6 @@ def shot_schema(
         @model_validator(mode="after")
         def _rewrites(self) -> SceneShot:
             needed: tuple[str, ...]
-            if editor_final:
-                needed = (
-                    ("still_prompt", "motion_prompt")
-                    if layer == STILL or migrating
-                    else ("motion_prompt",)
-                )
-                empty = [name for name in needed if not str(getattr(self, name) or "").strip()]
-                if empty:
-                    raise ValueError(f"Kael must rewrite the exact {', '.join(empty)}")
-                return self
             if serial:
                 needed = ("action",) if layer == STILL else ()
                 moved = ("camera_move", "ending_frame", "emotion")
@@ -902,8 +936,7 @@ _REWRITE_INSTRUCTIONS = (
     "film «{title}», and the Director has read its prompt and briefed you. Inside the boundary "
     "below is data: the scene's narration and plan, the visual bible, the shot as you described "
     "it before, the prompts the vendor read, the reasons quality control gave, her brief, and "
-    "what you may change on this layer and the words the studio keeps (this_layer, with the "
-    "fixed words each camera move is said in: camera_move_sentences).\n"
+    "what you may change on this layer and the words the studio keeps (this_layer).\n"
     "Rewrite this one shot, following her brief exactly: nothing she lists under avoid may "
     "appear in any field, what she lists under keep stays as it is, what she lists under change "
     "is written differently. {layer}\n"
@@ -911,17 +944,20 @@ _REWRITE_INSTRUCTIONS = (
     "'no' or 'without', it draws the word. When the bible says people's faces must not be seen, "
     "show people only from behind, small and distant, or only their hands. Never ask for writing "
     "in the picture. Do not add facts, numbers, dates or events that are not in the narration. "
+    "EDITOR_FINAL_v1: Write the complete exact vendor text in the named prompt fields. "
+    "No Python composer rewrites your sentences. Legacy planning fields such as subject, "
+    "action and motion are source data only, not the answer format. "
     "Give the shot one ample, specific camera move with its path and tempo (where it starts, "
     "where it ends over the clip's seconds) and write what the subject does as verbs; choose "
-    "camera_move from: {moves}. Name colours in words. The picture's fields (subject, action, "
-    "environment, camera, lighting, composition) describe one frozen moment — what is seen, a "
+    "camera_move from: {moves}. Name colours in words. The still_prompt describes "
+    "one frozen moment — what is seen, a "
     "pose, a state, a place — with no camera move, no speed and no span of the clip in them: "
-    "a still cannot show movement, so everything that moves goes to motion, camera_move and "
-    "ending_frame only. Return only JSON with this shot: "
-    '{{"scene_index": {scene}, "subject": "...", "action": "...", "environment": "...", '
-    '"camera": "...", "camera_move": "...", "lighting": "...", "composition": "...", '
-    '"motion": "...", "emotion": "...", "background": "...", "continuity": "...", '
-    '"ending_frame": "...", "avoid": ["..."]}}.\n'
+    "a still cannot show movement, so everything that moves goes to motion_prompt; "
+    "write its path, tempo and ending there. Respect provider_limits and the series look. "
+    "Sarah judges precisely this final text, so replace the concrete words she identified "
+    "as wrong. Return only JSON with this shot: {response}.\n"
+    "Optional negative_prompt is a separate string of exclusions, or null. "
+    "Do not replace any required prompt with a draft motion or other planning field.\n"
 )
 _LAYER_RULE = {
     MOTION: (
@@ -2970,15 +3006,26 @@ def rewrite_scene(
         lessons = prompt_lessons(session, scope=lesson_scope(context))
     qc = findings_to_treat(context, brief)
     outcome["qc_findings"] = qc
+    migrating = context["package"].get("prompt_format") != "editor_final_v1"
+    response = {"scene_index": index, "camera_move": "...", "motion_prompt": "..."}
+    if layer == STILL or migrating:
+        response["still_prompt"] = "..."
+    layer_rule = (
+        "Write complete still_prompt and matching motion_prompt."
+        if layer == STILL
+        else (
+            "Write complete motion_prompt and echo the existing still_prompt byte-for-byte "
+            "to migrate this legacy package. The purchased still must stay exactly the same."
+            if migrating
+            else "Write complete motion_prompt only; keep the purchased still exactly."
+        )
+    )
     instructions = (
         _REWRITE_INSTRUCTIONS.format(
             scene=index,
             title=context["title"],
-            layer=(
-                "Write complete still_prompt and matching motion_prompt."
-                if layer == STILL
-                else "Write complete motion_prompt; keep the paid still exactly."
-            ),
+            layer=layer_rule,
+            response=json.dumps(response, ensure_ascii=False),
             # The whole vocabulary («Mișcare v2», 2026-10-12): the old ten slow moves alone sent
             # every redo back to a slow move.
             moves=", ".join(lint.CAMERA_MOVES),
@@ -2986,21 +3033,6 @@ def rewrite_scene(
         + lessons_rule(lessons)
         + POLICY_NOTE
         + (STILL_FRAMING_RULE if layer == STILL else "")
-        + (
-            "\nEDITOR_FINAL_v1: You directly edit the exact still_prompt or motion_prompt "
-            "sent to the vendor. No Python composer rewrites your sentences. "
-            "For a still-layer repair, send both complete still_prompt and motion_prompt; "
-            "for a legacy migration, send BOTH complete prompts even on motion; "
-            "echo the existing still byte-for-byte on motion. For an already final "
-            "motion-layer repair, send the complete motion_prompt only, "
-            "preserving the purchased still exactly. Return the short JSON shot object "
-            "with scene_index, camera_move, these fields and optional negative_prompt. "
-            "Respect provider_limits below and keep the series look consistent. "
-            "Sarah judges precisely this final text, so remove the concrete words "
-            "she identified as wrong, not merely the draft planning notes.\n"
-            if context.get("final_rewrite")
-            else ""
-        )
     )
     data = _data(
         context,

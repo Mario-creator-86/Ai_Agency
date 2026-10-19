@@ -2278,3 +2278,9 @@ No provider was called, no run was queued, no credit was spent, and
 - [x] Route paid-scene lint repairs through reviewed final rewrite; bound configured LLM generation lifetime without truncating native output. Isolated regression verification complete.
 - [x] Actual scene1 motion rewritten and Sarah TREATS at06:34 Europe-Bucharest; sheet RESOLVED with no remaining blockers and automatic FILM_CONTINUE claimed.
 - [ ] Complete subsequent real media/QC/publication through existing production gates.
+
+
+## 2026-10-19 — Kael final rewrite response contract
+- [x] Diagnose scene15/23 stored answers and contradictory legacy example.
+- [x] Compact final response schema/instructions, exact-text preservation and131 offline checks.
+- [ ] Activate at controlled restart and verify actual scene15/23 saved rewrites with Sarah acceptance.
