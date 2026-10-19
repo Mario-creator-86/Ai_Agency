@@ -112,7 +112,7 @@ NARRATION_CLOSING_SENTENCES = 1
 #: closes; 250-390 spoken words, 90-156 seconds of speech (430 and 175 until the length
 #: review of the same day: the shots' breaths); the montage cuts a beat into shots, so a beat
 #: no longer fits one clip; a quiet day is still told.
-EPISODE_TEMPLATE_VERSION = "episode-v8"
+EPISODE_TEMPLATE_VERSION = "episode-v9-serialized-drama"
 #: The structure a writers' room asks of a short: in this order, the hook first and the
 #: button last; situation, turn and payoff may take more than one beat each.
 EPISODE_PARTS = ("hook", "situation", "turn", "payoff", "button")
@@ -157,6 +157,10 @@ CLOSE_WINDOW_DAYS = 7
 PREFERRED_SHOWRUNNER_ROLE = "ScriptWriter"
 #: How many previous summaries the showrunner is handed, and the state keeps.
 CONTINUITY_SUMMARIES = 3
+# Structured romantic/character canon is serialized into existing continuity storage.
+# No database migration, no cross-talk with the operational event stream.
+CHARACTER_ARC_PREFIX = "CHARACTER_ARC|"
+MAX_CHARACTER_ARCS = 18
 #: The serial's series key on its storyboards and in the channel's series rules.
 SERIES_KEY = "office_serial"
 #: A plan for the next episode nobody has judged yet (S6, 2026-09-24). The approval of the
@@ -365,6 +369,14 @@ class _NextEpisode(BaseModel):
     _threads = field_validator("threads_to_pay_off", mode="before")(_names)
 
 
+class _CharacterUpdate(BaseModel):
+    """One new state for an existing named character, relationship or secret."""
+
+    model_config = ConfigDict(extra="ignore")
+    key: str = Field(min_length=3, max_length=90)
+    state: str = Field(min_length=5, max_length=300)
+
+
 class _Episode(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -386,6 +398,7 @@ class _Episode(BaseModel):
     threads_closed: list[str] = Field(default_factory=list, max_length=12)
     threads_opened: list[str] = Field(default_factory=list, max_length=6)
     recurring: list[str] = Field(default_factory=list, max_length=8)
+    character_updates: list[_CharacterUpdate] = Field(default_factory=list, max_length=8)
     _lists = field_validator(
         "threads_continued", "threads_closed", "threads_opened", "recurring", mode="before"
     )(_names)
@@ -703,6 +716,21 @@ def _canon_step(
                 {"id": _next_thread_id(threads), "text": text[:300], "opened_in": number}
             )
     recurring = list(recurring or [])
+    # A romance or rivalry must outlive the last three episode summaries.
+    # The same stable key overwrites an old state, rather than duplicating facts.
+    for change in continuity.get("character_updates") or []:
+        if not isinstance(change, dict):
+            continue
+        key = str(change.get("key") or "").strip().replace("|", "/")[:90]
+        state = str(change.get("state") or "").strip().replace("|", "/")[:300]
+        if not key or not state:
+            continue
+        recurring = [
+            item for item in recurring
+            if not (isinstance(item, str) and item.startswith(CHARACTER_ARC_PREFIX)
+                    and item[len(CHARACTER_ARC_PREFIX):].split("|", 1)[0].casefold() == key.casefold())
+        ]
+        recurring.append(f"{CHARACTER_ARC_PREFIX}{key}|{state}")
     for item in continuity.get("recurring") or []:
         item = str(item).strip()[:120]
         if item and item not in recurring:
@@ -724,7 +752,9 @@ def _canon_caps(
     threads: list[dict], recurring: list[str], summaries: list[dict]
 ) -> tuple[list[dict], list[str], list[dict]]:
     """What the continuity row keeps of each list."""
-    return threads[:12], recurring[-12:], summaries[-CONTINUITY_SUMMARIES:]
+    arcs = [item for item in recurring if isinstance(item, str) and item.startswith(CHARACTER_ARC_PREFIX)]
+    motifs = [item for item in recurring if not (isinstance(item, str) and item.startswith(CHARACTER_ARC_PREFIX))]
+    return threads[:12], motifs[-12:] + arcs[-MAX_CHARACTER_ARCS:], summaries[-CONTINUITY_SUMMARIES:]
 
 
 def advance_continuity(session: Session, episode: StoryEpisode, correlation_id: str) -> dict:
@@ -1470,7 +1500,16 @@ def _previously(state: ContinuityState | None, episode_number: int) -> str:
     else:
         lines.append("OPEN THREADS: none.")
     if state.recurring_json:
-        lines.append("RECURRING: " + "; ".join(str(r) for r in state.recurring_json))
+        arcs = [
+            str(r)[len(CHARACTER_ARC_PREFIX):].replace("|", ": ", 1)
+            for r in state.recurring_json if str(r).startswith(CHARACTER_ARC_PREFIX)
+        ]
+        motifs = [str(r) for r in state.recurring_json if not str(r).startswith(CHARACTER_ARC_PREFIX)]
+        if arcs:
+            lines.append("PERMANENT CHARACTER CANON (CURRENT states; NEVER reset or contradict):")
+            lines.extend("- " + arc for arc in arcs)
+        if motifs:
+            lines.append("RUNNING GAGS: " + "; ".join(motifs))
     return _inert("\n".join(lines), f"previously-before-episode-{episode_number}")
 
 
@@ -1814,10 +1853,15 @@ def _episode_from_answer(
         )
 
     threads_opened, recurring = _given(draft.threads_opened), _given(draft.recurring)
+    character_updates = [
+        {"key": item.key.strip().replace("|", "/"),
+         "state": item.state.strip().replace("|", "/")}
+        for item in draft.character_updates
+    ]
     left_as_format = [
         text for text in [draft.title, *threads_opened, *recurring] if _placeholder(text)
     ]
-    for text in (draft.summary, draft.logline):
+    for text in (draft.summary, draft.logline, *(item["state"] for item in character_updates)):
         if text and _placeholder(text):
             left_as_format.append(text)
     if left_as_format:
@@ -1842,6 +1886,7 @@ def _episode_from_answer(
         "threads_closed": threads_closed,
         "threads_opened": threads_opened,
         "recurring": recurring,
+        "character_updates": character_updates,
         "next_episode": _next_episode_plan(draft.next_episode, open_ids, threads_closed, raw),
         "plan_kept": draft.plan_kept,
         "plan_note": draft.plan_note.strip(),
@@ -2088,6 +2133,7 @@ def write_episode(
             "threads_closed": draft["threads_closed"],
             "threads_opened": draft["threads_opened"],
             "recurring": draft["recurring"],
+            "character_updates": draft["character_updates"],
             # Where this episode leaves the story for the next writer (S6).
             "next_episode": {
                 **draft["next_episode"],
