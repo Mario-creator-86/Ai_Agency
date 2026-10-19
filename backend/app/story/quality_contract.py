@@ -3,32 +3,37 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
-VERSION = "story-quality-v2-satire"
+VERSION = "story-quality-v3-serialized-romcom"
 AUDIENCE_PROFILE = (
-    "English-speaking short-form viewers who do not know the studio, its agents, its "
-    "tools or previous episodes. Give them accessible stakes, vivid personality, "
-    "fast emotional changes, visual comedy and a payoff; avoid operational jargon."
+    "English-speaking viewers who may join the serial on any episode. They care about "
+    "romance, jealousy, embarrassing mistakes, betrayals, rivalries, laughter and "
+    "consequences, not about internal studio operations."
 )
 SATIRE_POLICY = (
-    "Inside The Nexus is explicitly fictional workplace satire inspired by a real "
-    "autonomous studio. The event log supplies optional seeds, not a transcript or a "
-    "limit on imagined plot. Fictional AI characters may argue, compete, sulk, laugh, "
-    "cry, fall in love, panic, reconcile, experience absurd setbacks or take part in "
-    "non-graphic slapstick scuffles. Invent consequential scenes, fictional dialogue, "
-    "motives, mistaken beliefs and comic outcomes. Variety matters: not every story "
-    "needs a fight or a joke. Never imply these invented scenes really occurred. "
-    "Keep actual metrics, money, private information, real vendor incidents, "
-    "publication results and decisions by the human Owner or other real people out "
-    "of invented factual claims. Operational logs remain unchanged."
+    "Inside The Nexus is a fictional serialized OFFICE TELENOVELA / romantic dramedy "
+    "with workplace satire, occasional slapstick, and emotionally believable adult AI "
+    "characters. The office is a setting, not a production-status topic. Invent love, "
+    "unrequited affection, awkward flirting, secrets, gossip, jealousy, heartbreak, "
+    "revenge, manipulation, reconciliations and escalating social mistakes. "
+    "Use small, recognizable human embarrassments alongside intense drama and humor. "
+    "Every episode must CHANGE an existing relationship, secret or rivalry, and carry "
+    "its consequences forward: no emotional reset between episodes. Respect established "
+    "canon and the next-episode hook; do not suddenly marry, divorce or reconcile without "
+    "earned steps. Solve a tangible local problem and leave a larger emotional question "
+    "open. Daily operational events are optional background references, never plot "
+    "requirements. Characters' fictional intrigues are NOT real agent actions: never "
+    "claim invented romances, owner messages, business decisions, publication status, "
+    "payments, vendor events or audience metrics actually happened. No confidential "
+    "material may enter fiction or its permanent memory. Preserve the actual ledger."
 )
 QUESTIONS = (
     ("Q1_HOOK", "Does the opening give a new viewer a concrete reason to keep watching?"),
     ("Q2_CHARACTER_GOAL", "Does a character want something specific and face an obstacle or consequential choice?"),
-    ("Q3_CAUSAL_PROGRESS", "Does every major scene change the situation, not just report another update?"),
-    ("Q4_MEMORABLE_MOMENT", "Is there a vivid, earned comic, emotional, surprising or satirical moment rather than only a status update?"),
+    ("Q3_CAUSAL_PROGRESS", "Does every scene causally escalate an emotional conflict or change a relationship rather than list updates?"),
+    ("Q4_MEMORABLE_MOMENT", "Is there an earned embarrassing, funny, romantic or painful moment a viewer can recognize?"),
     ("Q5_CHARACTER_VOICES", "Do characters react as distinct people rather than read operational reports?"),
-    ("Q6_CENTRAL_PROMISE", "Does the story develop its opening promise instead of abandoning its most interesting idea?"),
-    ("Q7_SATISFYING_ENDING", "Does the ending earn a payoff or consequence instead of restating the opening problem?"),
+    ("Q6_CENTRAL_PROMISE", "Does the emotional plot develop its hook AND honor the relationships, secrets and promises established in canon?"),
+    ("Q7_SATISFYING_ENDING", "Does the episode resolve a local beat while opening an earned serialized consequence or cliffhanger?"),
     ("Q8_FRESH_AND_CLEAR", "Can a new viewer understand it, and is its conflict and ending distinct from recent episodes?"),
 )
 KEYS = tuple(key for key, _ in QUESTIONS)
@@ -49,7 +54,7 @@ def questions_text() -> str:
 def writer_instructions() -> str:
     return (
         "\nSTORY SELF-REVIEW IN THE SAME write_episode CALL (no extra model call). "
-        "Write an entertaining fictional satire, not an operational status report. "
+        "Write a serialized romantic dramedy / office telenovela, not an operational status report. "
         f"AUDIENCE: {AUDIENCE_PROFILE}\n"
         f"FICTION RULES: {SATIRE_POLICY}\n"
         "Before replying, mentally test and improve the script against these eight questions:\n"
@@ -58,7 +63,7 @@ def writer_instructions() -> str:
         '"question_id", "passed" (boolean), "evidence" (specific scene or line) and "reason". '
         "A YES without evidence is invalid. Repair weaknesses before returning the script. "
         "A label like 'turn' does not prove a turn; repeated failures are not dramatic progress. "
-        "Invent full fictional situations, disagreements and dramatic consequences, not merely framing. "
+        "Invent emotionally specific scenes and realistic awkward jokes, not just scene labels. "
         "Do not present inventions as verified operational facts or fabricate actual documents. "
         "Respect the character bibles and the distinction between satire and real records. "
         "Never insert the review into speech or scenes.\n"
@@ -78,7 +83,7 @@ def director_instructions() -> str:
         + '\nAdd "quality" to your existing JSON verdict: exactly eight objects with '
         '"question_id", "passed" (boolean), "evidence" (specific beat/line), "reason". '
         "If a major question is NO, return FAIL and a precise minimal rewrite note, "
-        "even when technical checks pass. Do not reject invented events merely because they "
+        "even when technical checks pass. Reject forgotten secrets, sudden unearned romances and emotional resets. Do not reject invented events merely because they "
         "are missing from the operational log; reject confusing fiction with real-world "
         "claims, privacy leaks and dull storytelling.\n"
     )
