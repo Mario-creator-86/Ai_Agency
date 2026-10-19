@@ -674,6 +674,12 @@ def _public_continuity(row: ContinuityState) -> dict:
         "canon_episode_number": row.canon_episode_number,
         "threads": list(row.threads_json or []),
         "recurring": list(row.recurring_json or []),
+        "character_arcs": [
+            {"key": str(item)[len(CHARACTER_ARC_PREFIX):].split("|", 1)[0],
+             "state": str(item)[len(CHARACTER_ARC_PREFIX):].split("|", 1)[-1]}
+            for item in (row.recurring_json or [])
+            if str(item).startswith(CHARACTER_ARC_PREFIX)
+        ],
         "summaries": list(row.summaries_json or []),
         "updated_at": row.updated_at,
     }
@@ -689,6 +695,7 @@ def get_continuity(engine: Engine) -> dict:
                 "canon_episode_number": 0,
                 "threads": [],
                 "recurring": [],
+                "character_arcs": [],
                 "summaries": [],
                 "updated_at": None,
             }
@@ -1006,7 +1013,14 @@ def acting_cast(projection: list[dict], names: NameBook) -> list[str]:
     return acting
 
 
-def speakers_to_offer(projection: list[dict], names: NameBook, roster: list[dict]) -> list[str]:
+def speakers_to_offer(
+    projection: list[dict],
+    names: NameBook,
+    roster: list[dict],
+    *,
+    state: ContinuityState | None = None,
+    episode_number: int | None = None,
+) -> list[str]:
     """Who the day's episode may give lines to (brief v7): the `OFFERED_SPEAKERS` with the
     strongest part in the day's events, by the story weight of the events they act in, the
     first to act first on a tie. Everyone else may be seen or mentioned and says nothing.
@@ -1014,6 +1028,29 @@ def speakers_to_offer(projection: list[dict], names: NameBook, roster: list[dict
     A day where fewer than two people act is filled from the active roster, in its order:
     the review then lets anyone on the day's roster speak beside those the events name.
     """
+    # The fiction-first writer must cast from continuing relationships, not whichever
+    # model had a real-world error that day. The legacy helper (no episode_number)
+    # retains its old behavior for older callers and past episodes.
+    if episode_number is not None:
+        active = [
+            member for row in roster
+            if row.get("lifecycle") == "ACTIVE"
+            if (member := names.canonical(row.get("display_name")))
+        ]
+        if active:
+            context = ""
+            if state is not None:
+                context = " ".join([
+                    *(str(item) for item in (state.recurring_json or [])
+                      if str(item).startswith(CHARACTER_ARC_PREFIX)),
+                    *(str(t.get("text") or "") for t in (state.threads_json or [])),
+                    *(str(t.get("summary") or "") for t in (state.summaries_json or [])[-1:]),
+                ]).casefold()
+            rotated = active[(episode_number - 1) % len(active):] + active[:(episode_number - 1) % len(active)]
+            def relevance(name: str) -> int:
+                label = name.split(" (", 1)[0].strip().casefold()
+                return len(re.findall(r"(?<!\\w)" + re.escape(label) + r"(?!\\w)", context)) if label else 0
+            return sorted(rotated, key=lambda member: -relevance(member))[:OFFERED_SPEAKERS]
     weights: dict[str, int] = {}
     for item in projection:
         weight = 1 if item.get("routine") else story_weight(item["event_type"], item.get("verdict"))
@@ -2036,7 +2073,9 @@ def write_episode(
         # writer cast from anyone, so everyone is described in full.
         acting = acting_cast(projection, names)
         in_full = len(acting) < SPEAKING_CAST[0]
-        offered = speakers_to_offer(projection, names, roster)
+        offered = speakers_to_offer(
+            projection, names, roster, state=state, episode_number=episode_number
+        )
         cast_lines = []
         for member in roster:
             name = member["display_name"]
@@ -2044,7 +2083,7 @@ def write_episode(
             member_name = names.canonical(name) or name
             who = (
                 _who_they_are(name, bibles.get(name))
-                if in_full or member_name in acting
+                if in_full or member_name in offered
                 else _in_one_line(bibles.get(name))
             )
             cast_lines.append(
@@ -2062,13 +2101,14 @@ def write_episode(
             if closed is not None and closed.date().isoformat() == date_iso
             else ""
         )
-        events = _events_block(
-            projection,
-            names.names,
-            log.timezone,
-            date_iso,
-            left_out(dict(log.event_counts_json or {}), projection),
-            recorded_until,
+        # The actual studio's daily log is intentionally NOT passed to the
+        # fictional showrunner. The closed log still anchors scheduling and
+        # retains its privacy, accounting and audit guarantees elsewhere.
+        events = _inert(
+            "No workplace report is needed. Invent a chapter from the fictional "
+            "characters' established relationships, secrets and emotional stakes. "
+            "Office tasks may be background only; cite no actual events.",
+            f"fictional-backdrop-{date_iso}",
         )
         picture_lessons = _picture_lessons(session)
 
