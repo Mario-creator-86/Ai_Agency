@@ -427,7 +427,8 @@ def test_the_director_is_asked_the_five_criteria_and_her_scores_are_read(engine,
         assert f"- {key} — {title}. 0: {zero}. 10: {ten}." in prompt
     assert f"{PASS_TOTAL}/50" in prompt
     assert "Sarah: Right, where are we?" in prompt
-    assert "an episode of the studio's own workplace serial" in prompt
+    assert "This is explicitly fictional workplace satire" in prompt
+    assert "first-time English-speaking viewer" in prompt
     with Session(engine) as session:
         runs = session.scalars(select(AgentRun).where(AgentRun.task_type == JUDGEMENT_TASK)).all()
     assert len(runs) == 1
@@ -556,21 +557,18 @@ def test_the_serial_episode_below_the_bar_is_rewritten_on_her_brief_and_the_rewr
     assert _owner_letters(engine) == []
 
 
-def test_three_versions_none_passing_ship_the_best_and_write_the_owner_one_letter(
+def test_two_version_cap_none_passing_ships_the_best_and_writes_one_owner_letter(
     engine, studio, settings
 ):
+    # Even a larger editorial-rounds setting cannot buy a third serial rewrite.
     settings.editorial_rounds = 3
     log, ids = a_day(engine, YESTERDAY_NOON())
     names = roster_names(engine, log["id"])
-    titles = {1: "Version one", 2: "Version two", 3: "Version three"}
-    totals = {"Version one": 25, "Version two": 30, "Version three": 27}
+    totals = {"Version one": 25, "Version two": 30}
 
     def showrunner(prompt: str) -> str:
-        number = next(
-            (n for n in (2, 1) if f"version {n} of at most 3" in prompt),
-            0,
-        )
-        return episode_answer(beats_for(ids, names), title=titles[number + 1])
+        title = "Version two" if "version 1 of at most 2" in prompt else "Version one"
+        return episode_answer(beats_for(ids, names), title=title)
 
     def director(prompt: str) -> dict[str, Any]:
         title = next(t for t in totals if t in prompt)
@@ -581,7 +579,8 @@ def test_three_versions_none_passing_ship_the_best_and_write_the_owner_one_lette
 
     assert outcome["status"] == "COMPLETED", outcome
     editorial = outcome["artefacts"]["editorial"]
-    assert [item["total"] for item in editorial["rounds"]] == [25, 30, 27]
+    assert [item["total"] for item in editorial["rounds"]] == [25, 30]
+    assert editorial["rounds_allowed"] == 2
     assert editorial["stopped"] == STOP_ROUNDS_SPENT and not editorial["passed"]
     assert editorial["shipped"]["round"] == 2
 
@@ -589,32 +588,28 @@ def test_three_versions_none_passing_ship_the_best_and_write_the_owner_one_lette
     assert {title: row.status for title, row in episodes.items()} == {
         "Version one": "REJECTED",
         "Version two": "APPROVED",
-        "Version three": "REJECTED",
     }
     assert episodes["Version two"].storyboard_id == outcome["artefacts"]["storyboard_id"]
-    assert "30/50" in episodes["Version three"].notes
-    assert len(model.judgement_prompts()) == 3
+    assert "25/50" in episodes["Version one"].notes
+    assert len(model.judgement_prompts()) == 2
 
     (letter,) = _owner_letters(engine)
     assert letter.intent == "STATUS"
     assert "Version two" in letter.subject and "30/50" in letter.subject
-    assert "3 versiuni" in letter.subject
-    assert letter.body_json["total"] == 30 and letter.body_json["rounds"] == 3
+    assert "2 versiuni" in letter.subject
+    assert letter.body_json["total"] == 30 and letter.body_json["rounds"] == 2
     assert letter.body_json["stopped"] == STOP_ROUNDS_SPENT
     assert "cârligul" in letter.body_text and "publicăm" in letter.body_text
 
 
 def test_a_rewrite_the_review_fails_is_scored_and_never_ships(engine, studio, settings):
-    settings.editorial_rounds = 3
+    settings.editorial_rounds = 3  # serial safety cap: initial version + one rewrite
     log, ids = a_day(engine, YESTERDAY_NOON())
     names = roster_names(engine, log["id"])
 
     def showrunner(prompt: str) -> str:
-        if "version 2 of at most 3" in prompt:
-            return episode_answer(beats_for(ids, names), title="The third, watchable")
-        if "version 1 of at most 3" in prompt:
-            # Two beats: 40 spoken words, 16 seconds, under the serial's 45 — the review
-            # FAILs it however it scores.
+        if "version 1 of at most 2" in prompt:
+            # Two beats: the review FAILs structure even if editorial scores are high.
             return episode_answer(beats_for(ids, names, count=2), title="Two beats, brilliant")
         return episode_answer(beats_for(ids, names), title=STATUS_MEETING)
 
@@ -623,8 +618,6 @@ def test_a_rewrite_the_review_fails_is_scored_and_never_ships(engine, studio, se
     def director(prompt: str) -> dict[str, Any]:
         if "Two beats, brilliant" in prompt:
             return her_answer(brilliant)
-        if "The third, watchable" in prompt:
-            return her_answer(with_total(38))
         return her_answer(WEAK)
 
     model = StandIn(director, on_episode=showrunner)
@@ -635,24 +628,21 @@ def test_a_rewrite_the_review_fails_is_scored_and_never_ships(engine, studio, se
     assert [(item["total"], item["eligible"]) for item in editorial["rounds"]] == [
         (25, True),
         (45, False),
-        (38, True),
     ]
-    assert editorial["shipped"]["round"] == 3 and editorial["passed"]
+    assert editorial["rounds_allowed"] == 2
+    assert editorial["shipped"]["round"] == 1 and not editorial["passed"]
+    assert editorial["stopped"] == STOP_ROUNDS_SPENT
 
     episodes = _episodes(engine)
     short = episodes["Two beats, brilliant"]
     assert short.status == "REJECTED"
     assert short.review_json["verdict"] == "FAIL"
-    # The review's own reason, not the judgement's: two beats miss the structure (the
-    # length floor is a recommendation since 2026-10-16).
     assert "lipsesc părțile" in short.notes
-    assert short.review_json["editorial"]["superseded_by"] == episodes["The third, watchable"].id
-    assert episodes["The third, watchable"].status == "APPROVED"
-    assert episodes[STATUS_MEETING].status == "REJECTED"
-    # The brief after the refused version named the review's reasons first.
-    third_brief = next(p for p in model.episode_prompts() if "version 2 of at most 3" in p)
-    assert "The studio's own checks also refused this version" in third_brief
-    assert _owner_letters(engine) == []
+    assert short.review_json["editorial"]["superseded_by"] == episodes[STATUS_MEETING].id
+    assert episodes[STATUS_MEETING].status == "APPROVED"
+    assert len(model.judgement_prompts()) == 2
+    (letter,) = _owner_letters(engine)
+    assert letter.body_json["rounds"] == 2 and letter.body_json["total"] == 25
 
 
 def test_a_pass_the_policy_does_not_let_her_approve_waits_for_the_owner_after_the_judgement(
