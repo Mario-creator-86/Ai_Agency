@@ -25,7 +25,7 @@ from app.agents.memory import agent_for_role  # noqa: E402
 from app.agents.models import AgentRun, ModelRecord  # noqa: E402
 from app.story.models import StoryEpisode  # noqa: E402
 from app.story.review import episode_as_text, judged_review  # noqa: E402
-from app.story.services import write_episode  # noqa: E402
+from app.story.services import DraftRefused, write_episode  # noqa: E402
 from sqlalchemy import select  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 
@@ -111,6 +111,11 @@ def render(data):
             json.dumps(episode["writer_quality"], indent=2, ensure_ascii=False), "",
             "### Controlul Sarah (verdict, 8 criterii, motive)", "",
             json.dumps(episode["review"], indent=2, ensure_ascii=False, default=str), "",
+        ]
+    if data.get("refused_draft"):
+        lines += [
+            "", "## Raspunsul brut Marcus (respins la validare; Sarah nu l-a evaluat)",
+            "", "```json", data["refused_draft"], "```", "",
         ]
     lines += ["", "## Apeluri AI si consum", "",
               json.dumps(data["runs"], indent=2, ensure_ascii=False), ""]
@@ -211,6 +216,8 @@ def main(argv=None):
                 data["outcome"] = str(result["verdict"]) + " / " + str(result["status"])
                 exit_code = 0
         except Exception as exc:
+            if isinstance(exc, DraftRefused) and exc.answer:
+                data["refused_draft"] = exc.answer
             data["error"] = type(exc).__name__ + ": " + str(exc)
             data["traceback"] = traceback.format_exc(limit=8)
             data["outcome"] = "ERROR"
