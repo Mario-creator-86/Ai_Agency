@@ -5423,3 +5423,5 @@ On-demand Kael final-text migration for requested open LIVE rewrites; current fa
 
 ## 2026-10-19 — Kael final rewrite response contract
 Replaced conflicting legacy shot JSON example with the final vendor fields needed by the current repair layer/migration. Final response validation preserves exact strings and rejects structured values instead of coercing them into prompts.131 offline checks pass; real acceptance pending activation. See KAEL_REWRITE_FINAL_FIELDS_2026-10-19.md.
+
+KAEL final-field fix live acceptance: real scene15/23 corrected and Sarah-accepted09:25/09:29, paid stills unchanged, automatic normal server restoration09:29.11:12 HEALTHY/BUSY. Separate Supernova scene8 fresh audit/continuation and video production remain; no publication claim.

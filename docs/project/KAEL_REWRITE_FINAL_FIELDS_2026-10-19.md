@@ -22,3 +22,23 @@ Baseline: 35 relevant tests passed. New reproductions: 9 failed and3 passed befo
 Evidence: output/kael-rewrite-contract-2026-10-19/tests.xml.
 
 Activation and actual scenes15/23 acceptance remain pending. Do not infer visual QC or publication from text acceptance. Scheduled monitoring remains paused.
+
+
+## Activation and interrupted session
+
+Scoped source commit44fe99e. Added36 structured/audit and33 sheet-repair checks after the seven-suite run:200 relevant tests passed total. Online backup studio-20261019T053043Z.db (244137984 bytes, SHA2566b1245fdb0e3338aad1a5abb627246d59b1a81e57a175ddf17be0fb0afc44402). First controlled stop finished08:34:10 Europe/Bucharest; normal hidden launcher32224 started08:34:26 with the fix. Worker resumed serialb74270c6 scene20 before Supernova. A second controlled stop requested while GPU verified off/no submitted takes drained that model call, then ended08:57:14. No force/CTRL_BREAK fallback. The voice turn was interrupted before the planned repair/start, so the server stayed stopped until the next Owner status request at09:23. This was an unfinished maintenance sequence, not evidence of production running.
+
+At09:24 the Owner-requested real corrections were started under the exclusive worker lock and film lease, using the unchanged normal Director→Kael→Sarah→transaction services, scoped to motion scenes15/23. No evaluation or model probe, manual final text, direct SQL mutation, policy/budget change or paid media/publication action. The maintenance wrapper always starts the normal hidden launcher in finally, including a failed repair, so conversation interruption does not leave the stop without its paired restart. At09:25 the actual v8 scene15 rewrite is RUNNING; acceptance is pending. No scheduled monitoring was re-enabled.
+
+Operational artifacts: output/kael-rewrite-contract-2026-10-19/{pre-activation.json,start.json,live-progress.json,repair_requested_scenes.py,repair_and_restart.py,requested-repairs.json,restored-server.json}. Some receipts appear only when the corresponding stage completes. Preserve current execution rather than re-running either driver.
+
+
+## Completed — real acceptance, 19 October 2026
+
+Both Owner-requested motion corrections completed through normal production services, not test actors:
+- Scene15: saved09:25:48 Europe/Bucharest, event41602; rewrite2ef418c8-57be-40e2-9284-121cbd238ea9, Sarah38776107-5098-482d-9a5b-8090019c8d34, verdictTREATS.
+- Scene23: saved09:29:30, event41617; rewrite183f231f-3615-49b3-beaf-3efadcb764c9, Sarah36e857a8-aa33-4d64-bbfd-f5aee228d722, verdictTREATS.
+
+Both actual rewrite runs use scene-prompt-rewrite-v8, both saved packages are editor_final_v1, each motion changed, both paid stills match their pre-activation SHA256 byte-for-byte. No manual prompt/approval/data patch. Maintenance wrapper exited0 and started normal hidden launcher20084 automatically at09:29:30 (06:29:30UTC). At11:12 fresh /health/live200 and /health/ready200 HEALTHY/BUSY, no problems. No background monitor was enabled.
+
+The exact two-scene defect is complete, claim released. Production publication remains unconfirmed: Supernova has40 approved still scenes and no newer motion takes; last continuation at10:08:50 recorded WAITING/"ladder did not finish". Scene8's audit requested a camera contradiction correction, and its newest saved prompt now explicitly uses static camera; a fresh purchase audit/continuation has not yet accepted that current corrected prompt. Do not report the older rejected tracking text as still current. The worker is currently auditing the other serialb74270c6 motion prompts. No reliable publication ETA follows from the two repaired prompts. Evidence accepted-scenes.json and restored-server.json.

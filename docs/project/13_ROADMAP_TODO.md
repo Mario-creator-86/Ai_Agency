@@ -2283,4 +2283,4 @@ No provider was called, no run was queued, no credit was spent, and
 ## 2026-10-19 — Kael final rewrite response contract
 - [x] Diagnose scene15/23 stored answers and contradictory legacy example.
 - [x] Compact final response schema/instructions, exact-text preservation and131 offline checks.
-- [ ] Activate at controlled restart and verify actual scene15/23 saved rewrites with Sarah acceptance.
+- [x] Activate at controlled restart and verify actual scene15/23 saved rewrites with Sarah acceptance (events41602/41617; normal launcher restored09:29:30).
