@@ -24,17 +24,19 @@ returned to a caller; only its length is, as `thinking_chars`. A caller that mus
 import asyncio
 import http.client
 import json
+import time
 from typing import Any
 from urllib.parse import urlsplit
 
 from app.economy.prices import PriceLookup, llm_cost_vr
 from app.providers.base import GenerateResult, HealthResult, LLMProvider, ModelInfo
+from app.providers.media_http import _DeadlineGuard
 from app.providers.retry import SAFE_TO_RESEND_STATUSES, call_with_retries, parse_retry_after
 
 BASE_URLS = {"openai": "https://api.openai.com/v1", "anthropic": "https://api.anthropic.com/v1"}
 
-#: How long one generation may take. The daily run's worker lease is an hour; an answer that
-#: needs ten minutes is slow, not broken.
+#: Socket idle timeout. The configurable whole-generation deadline also bounds a stream
+#: that remains active without completing an answer.
 REQUEST_TIMEOUT_SECONDS = 600
 
 
@@ -96,12 +98,16 @@ def refusal_reason(data: Any) -> str | None:
     return None
 
 
-def _read_ollama_stream(response: Any) -> dict[str, Any]:
-    """Read progress as it arrives; a quiet socket, not total generation time, times out."""
+def _read_ollama_stream(response: Any, *, deadline: float | None = None) -> dict[str, Any]:
+    """Read complete progress within both socket and whole-generation deadlines."""
     chunks: list[str] = []
     thinking_chars = 0
     while True:
+        if deadline is not None and time.monotonic() >= deadline:
+            raise ProviderUnreachable("Provider generation deadline exceeded", unanswered=True)
         line = response.readline(4_000_001)
+        if deadline is not None and time.monotonic() >= deadline:
+            raise ProviderUnreachable("Provider generation deadline exceeded", unanswered=True)
         if not line:
             raise ProviderUnreachable("Provider stream ended before completion", unanswered=True)
         if len(line) > 4_000_000:
@@ -158,6 +164,19 @@ class ConfiguredLLM(LLMProvider):
         #: the tokens. With a price for the model, the run carries what it cost; without
         #: one it still says None, never zero.
         self.price_lookup = price_lookup
+        from app.config import Settings  # noqa: PLC0415
+
+        settings = Settings()  # type: ignore[call-arg]
+        self.generation_deadline_seconds = float(
+            config.get(
+                "generation_deadline_seconds",
+                settings.llm_generation_deadline_seconds,
+            )
+        )
+        if not 0 < self.generation_deadline_seconds <= 3300:
+            raise ValueError(
+                "Generation deadline must be positive and shorter than the worker lease"
+            )
 
     def request(self, method: str, path: str, body: dict | None = None) -> dict:
         """One call to the provider, asked again a bounded number of times on 429, 502, 503,
@@ -190,6 +209,9 @@ class ConfiguredLLM(LLMProvider):
             headers.update({"x-api-key": self.key, "anthropic-version": "2023-06-01"})
         elif self.key:
             headers["Authorization"] = f"Bearer {self.key}"
+        generation = method.upper() == "POST" and not path.endswith(("/api/show", "/api/me"))
+        deadline = time.monotonic() + self.generation_deadline_seconds if generation else None
+        guard = _DeadlineGuard(connection, deadline) if deadline is not None else None
         try:
             # Two failure phases, told apart for the retry policy: before the request left
             # (nothing happened at the vendor) and after (it may be answering). Neither
@@ -202,9 +224,15 @@ class ConfiguredLLM(LLMProvider):
                     headers,
                 )
             except (OSError, http.client.HTTPException) as exc:
+                if guard is not None and guard.fired:
+                    raise ProviderUnreachable(
+                        "Provider generation deadline exceeded", unanswered=True
+                    ) from exc
                 raise ProviderUnreachable("Provider could not be reached", unsent=True) from exc
             try:
                 response = connection.getresponse()
+                if guard is not None:
+                    guard.watch_response(response)
                 if response.status != 200:
                     try:
                         refused = json.loads(response.read(16_384))
@@ -221,14 +249,18 @@ class ConfiguredLLM(LLMProvider):
                     and body
                     and body.get("stream")
                 ):
-                    return _read_ollama_stream(response)
+                    return _read_ollama_stream(response, deadline=deadline)
                 data = response.read(4_000_001)
             except (OSError, http.client.HTTPException) as exc:
                 raise ProviderUnreachable("Provider did not answer", unanswered=True) from exc
+            if deadline is not None and time.monotonic() >= deadline:
+                raise ProviderUnreachable("Provider generation deadline exceeded", unanswered=True)
             if len(data) > 4_000_000:
                 raise ValueError("Provider response exceeds limit")
             return json.loads(data)
         finally:
+            if guard is not None:
+                guard.cancel()
             connection.close()
 
     async def health_check(self) -> HealthResult:

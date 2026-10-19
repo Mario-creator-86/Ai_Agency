@@ -484,3 +484,148 @@ def test_the_daily_prompt_refusal_is_sent_to_the_director_not_the_owner(engine, 
     with Session(engine) as session:
         message = session.get(AgentMessage, report)
         assert message.to_agent_id and not message.body_json.get("owner_attention")
+
+
+@pytest.mark.parametrize("take_status", ["APPROVED", "REJECTED"])
+@pytest.mark.parametrize("accepted", [True, False])
+def test_paid_scene_lint_repair_uses_reviewed_motion_rewrite(
+    engine, film, monkeypatch, take_status, accepted
+):
+    from copy import deepcopy
+
+    from app.media import scene_rewrite
+    from app.media.models import SceneTake
+    from app.models import DomainEvent
+    from app.services import utc_now
+
+    still = "One faint spiral galaxy in void black deep space, pure vacuum."
+    old_motion = (
+        "Steady aerial drift forward, the ground sliding beneath, the horizon opening ahead."
+    )
+    with Session(engine) as session, session.begin():
+        row = session.scalar(
+            select(StoryboardScene).where(
+                StoryboardScene.storyboard_id == film, StoryboardScene.scene_index == 1
+            )
+        )
+        row.prompt_json = {
+            **row.prompt_json,
+            "subject": "A faint spiral galaxy",
+            "source": "model",
+            "still_prompt": still,
+            "motion_prompt": old_motion,
+        }
+        row.visual_prompt = still
+        session.add(
+            SceneTake(
+                id="kept-paid-still",
+                storyboard_id=film,
+                scene_number=1,
+                kind="still",
+                prompt_hash="original-paid-hash",
+                model_id="image-model",
+                resolution="1080:1920",
+                status=take_status,
+                created_at=utc_now(),
+                updated_at=utc_now(),
+            )
+        )
+        before = {
+            s.scene_index: deepcopy(s.prompt_json)
+            for s in session.scalars(
+                select(StoryboardScene).where(StoryboardScene.storyboard_id == film)
+            )
+        }
+    issue = {
+        "kind": "PROMPT",
+        "code": "PHYSICAL_COSMIC_GROUND",
+        "scene_index": 1,
+        "detail": "Motion asks for terrestrial ground in pure vacuum.",
+    }
+    reading = sheet(engine, film)
+    monkeypatch.setattr(
+        repair,
+        "sheet_issues",
+        lambda s: [issue] if "ground sliding" in s["scenes"][0]["motion_prompt"] else [],
+    )
+    monkeypatch.setattr(
+        repair, "director_assignment", lambda *a, **kw: {"note": "Repair only scene 1 motion."}
+    )
+    monkeypatch.setattr(
+        repair,
+        "write_shot_prompts",
+        lambda *a, **kw: pytest.fail("paid scenes need the reviewed rewrite path"),
+    )
+    seen = []
+    real_rewrite = scene_rewrite.rewrite_scene
+
+    def actor(*args, **kwargs):
+        return (
+            args[7].model_validate(
+                {
+                    "scene_index": 1,
+                    "still_prompt": still,
+                    "motion_prompt": "Dolly in through the void toward the galaxy.",
+                    "camera_move": "dolly in",
+                }
+            ),
+            {},
+            None,
+        )
+
+    monkeypatch.setattr("app.agents.structured.structured_run", actor)
+    monkeypatch.setattr(
+        scene_rewrite,
+        "_reviewed",
+        lambda *a, **kw: {
+            "verdict": "TREATS" if accepted else "MISSES",
+            "findings": [],
+            "reason_ro": "Sarah review",
+            "cause": "Terrestrial camera sentence",
+            "lesson": "",
+        },
+    )
+
+    def brief(*args):
+        context = args[2]
+        assert context["layers"] == ("motion",)
+        assert context["failures"][0]["reasons"] == [issue["detail"]]
+        return {"brief": {"layer": "motion", "diagnosis": issue["detail"], "action": "rewrite"}}
+
+    def rewrite(*args):
+        context, assigned = args[2:4]
+        seen.append(context["scene_index"])
+        assert assigned["source"] == scene_rewrite.AUDIT_BRIEF
+        return real_rewrite(*args)
+
+    monkeypatch.setattr(scene_rewrite, "director_brief", brief)
+    monkeypatch.setattr(scene_rewrite, "rewrite_scene", rewrite)
+    repair.submit_sheet_issues(engine, reading)
+    result = repair.process_sheet_repair(engine, object(), task(engine).payload)
+    assert seen == [1]
+    assert result["status"] == ("RESOLVED" if accepted else "UNRESOLVED"), result["reason"]
+    with Session(engine) as session:
+        kept = session.get(SceneTake, "kept-paid-still")
+        assert (kept.status, kept.prompt_hash) == (take_status, "original-paid-hash")
+        changes = list(
+            session.scalars(
+                select(DomainEvent).where(
+                    DomainEvent.aggregate_id == film,
+                    DomainEvent.event_type == "media.prompts_rewritten",
+                )
+            )
+        )
+        assert len(changes) == int(accepted)
+        if accepted:
+            assert changes[0].payload["old_package"] == before[1]
+        for row in session.scalars(
+            select(StoryboardScene).where(StoryboardScene.storyboard_id == film)
+        ):
+            if row.scene_index == 1:
+                assert row.prompt_json["still_prompt"] == still and row.visual_prompt == still
+                if accepted:
+                    assert row.prompt_json["prompt_format"] == "editor_final_v1"
+                if not accepted:
+                    assert row.prompt_json == before[1]
+            else:
+                assert row.prompt_json == before[row.scene_index]

@@ -649,6 +649,109 @@ class Assignment(BaseModel):
     assign_to_role: str = PROMPT_ROLE
 
 
+def _repair_prompt_issues(
+    engine: Engine,
+    registry: Any,
+    identifier: str,
+    issues: list[dict[str, Any]],
+    instructions: str,
+    correlation: str,
+    exchange: int,
+) -> None:
+    """Existing paid plans require a reviewed rewrite, not initial shot generation."""
+    from app.media import prompt_lint, scene_rewrite  # noqa: PLC0415
+    from app.media.models import SceneTake  # noqa: PLC0415
+
+    with Session(engine) as session:
+        protected = set(
+            session.scalars(
+                select(SceneTake.scene_number).where(
+                    SceneTake.storyboard_id == identifier,
+                    SceneTake.status.in_(("SUBMITTED", "PAID", "APPROVED", "REJECTED", "LOST")),
+                )
+            )
+        )
+        in_flight = set(
+            session.scalars(
+                select(SceneTake.scene_number).where(
+                    SceneTake.storyboard_id == identifier,
+                    SceneTake.status == "SUBMITTED",
+                )
+            )
+        )
+    indexed = all(
+        isinstance(i.get("scene_index"), int) and not isinstance(i["scene_index"], bool)
+        for i in issues
+    )
+    paid = (
+        {i["scene_index"] for i in issues if i.get("scene_index") in protected}
+        if indexed
+        else set()
+    )
+    for index in sorted(paid):
+        if index in in_flight:
+            raise PromptError(f"Scena {index}: livrarea este încă în curs; promptul nu se schimbă.")
+        context = scene_rewrite.scene_context(engine, identifier, index)
+        if context is None:
+            raise PromptError(f"Scena {index}: planul existent nu poate fi rescris în siguranță.")
+        findings = [i for i in issues if i["scene_index"] == index]
+        package = context["package"]
+        still = str(package.get("still_prompt") or context.get("visual_prompt") or "")
+        motion = str(package.get("motion_prompt") or "")
+        motion_codes = {
+            f.code for f in prompt_lint.lint_motion_prompt(motion, scene=index, still_prompt=still)
+        }
+        still_codes = {
+            f.code
+            for f in prompt_lint.lint_still_prompt(
+                still, scene=index, bible=context.get("bible") or {}
+            )
+        }
+        codes = {i["code"] for i in findings}
+        if codes <= motion_codes and not codes.intersection(still_codes):
+            layers = (scene_rewrite.MOTION,)
+        else:
+            layers = tuple(context["layers"])
+        context = {
+            **context,
+            "layers": layers,
+            "last_code": "SHEET_LINT",
+            "failures": [
+                {
+                    "kind": "prompt",
+                    "code": "SHEET_LINT",
+                    "reasons": [str(i["detail"]) for i in findings],
+                }
+            ],
+            "sheet_repair_instructions": instructions,
+        }
+        context.pop("delivery_failure", None)
+        assigned = scene_rewrite.director_brief(engine, registry, context, correlation)
+        if assigned.get("brief") is None:
+            raise PromptError(
+                assigned.get("reason") or "Directorul nu a putut repartiza rescrierea."
+            )
+        brief = {**assigned["brief"], "source": scene_rewrite.AUDIT_BRIEF}
+        done = scene_rewrite.rewrite_scene(engine, registry, context, brief, correlation)
+        if not done.get("rewritten"):
+            raise PromptError(
+                str(done.get("reason") or "Rescrierea nu a trecut verificarea Directoarei.")
+            )
+    unbought = [i for i in issues if not indexed or i["scene_index"] not in paid]
+    if unbought:
+        write_shot_prompts(
+            engine,
+            registry,
+            identifier,
+            correlation,
+            repair_context={
+                "instructions": instructions,
+                "issues": unbought,
+                "exchange": exchange,
+            },
+        )
+
+
 def director_assignment(
     engine: Engine,
     registry: Any,
@@ -664,8 +767,10 @@ def director_assignment(
     instructions = (
         "The shooting sheet below is authoritative data. Assign its prompt and "
         "missing-shot-plan blockers "
-        f"to {PROMPT_ROLE}, who owns write_shot_prompts. Ask for concrete natural language, "
-        "camera and continuity, with every scene corrected. Never ask for paid media, "
+        f"to {PROMPT_ROLE}. New plans use shot generation; existing paid plans use a "
+        "one-scene rewrite reviewed by the Director, keeping a paid still exact on motion "
+        "repairs. Ask for concrete natural language, camera and continuity, correcting only "
+        "the scenes named by the findings. Never ask for paid media, "
         "funding, credentials or policy changes. For financial/configuration blockers the "
         "backend will escalate to the Owner. Return only JSON "
         '{"note":"specific repair instructions", "repair_prompts":true|false, '
@@ -681,7 +786,7 @@ def director_assignment(
             json.dumps({"title": sheet.get("title"), "issues": issues}, ensure_ascii=False),
             "sheet-issues",
         ),
-        "sheet-repair-v1",
+        "sheet-repair-v2",
         correlation,
         Assignment,
         "",
@@ -985,16 +1090,14 @@ def process_sheet_repair(
                         },
                         correlation,
                     )
-                write_shot_prompts(
+                _repair_prompt_issues(
                     engine,
                     registry,
                     identifier,
+                    prompt_issues,
+                    decision["note"],
                     correlation,
-                    repair_context={
-                        "instructions": decision["note"],
-                        "issues": prompt_issues,
-                        "exchange": int(payload.get("attempt") or 1),
-                    },
+                    int(payload.get("attempt") or 1),
                 )
                 after = read(live=context.get("account") is not None)
                 remaining = sheet_issues(after)

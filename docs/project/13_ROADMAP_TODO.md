@@ -2272,3 +2272,8 @@ No provider was called, no run was queued, no credit was spent, and
 ## 2026-10-18 — legacy final-prompt rewrite contract
 - [x] On-demand LIVE legacy migration with complete Kael finals, current face policy/Owner plan authority, exact review/transport and current purchase approval; original media/history preserved. Local isolated regression verification complete.
 - [ ] After controlled integration/restart, accept scene 19 live: Kael finals → Sarah approval → actual provider frames → visual QC. No live row was changed in this task. See LEGACY_EDITOR_FINAL_AUDIT_2026-10-18.md.
+
+
+## 2026-10-19 — unblock paid prompt repair
+- [x] Route paid-scene lint repairs through reviewed final rewrite; bound configured LLM generation lifetime without truncating native output. Isolated regression verification complete.
+- [ ] Verify actual scene1 repair after controlled activation; then actual media/QC/publication remains subject to existing gates.

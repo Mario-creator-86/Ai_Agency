@@ -161,3 +161,52 @@ def test_socket_timeout_after_send_is_not_retried(monkeypatch):
     assert raised.value.unanswered is True
     assert len(calls) == 1
     assert "SECRET" not in _failure_detail(raised.value)
+
+
+def test_continuously_active_stream_still_has_a_total_deadline(monkeypatch):
+    import time
+
+    class Slow(Response):
+        def readline(self, size=-1):
+            time.sleep(0.025)
+            return super().readline(size)
+
+    calls = wire(
+        monkeypatch,
+        Slow([{"thinking": "private", "done": False}] * 8 + [{"response": "late", "done": True}]),
+    )
+    adapter = ConfiguredLLM(
+        "ollama", {"base_url": "https://ollama.com", "generation_deadline_seconds": 0.04}, {}
+    )
+    with pytest.raises(ProviderUnreachable) as raised:
+        asyncio.run(adapter.generate("vendor-model", "complete prompt"))
+    assert raised.value.unanswered is True
+    assert len(calls) == 1 and calls[0]["closed"] is True
+
+
+def test_total_deadline_interrupts_a_read_blocked_inside_a_line(monkeypatch):
+    import threading
+    from types import SimpleNamespace
+
+    released = threading.Event()
+
+    class Blocked(Response):
+        def readline(self, size=-1):
+            if not released.wait(1):
+                pytest.fail("deadline failed to interrupt the response socket")
+            raise OSError("socket shut down")
+
+    # HTTPConnection gives ownership of a Connection:close socket to HTTPResponse.
+    # Its own sock is already None while the body is still streaming.
+    response = Blocked([])
+    response.fp = SimpleNamespace(
+        raw=SimpleNamespace(_sock=SimpleNamespace(shutdown=lambda how: released.set()))
+    )
+    calls = wire(monkeypatch, response)
+    adapter = ConfiguredLLM(
+        "ollama", {"base_url": "https://ollama.com", "generation_deadline_seconds": 0.04}, {}
+    )
+    with pytest.raises(ProviderUnreachable) as raised:
+        asyncio.run(adapter.generate("vendor-model", "complete prompt"))
+    assert raised.value.unanswered and released.is_set()
+    assert len(calls) == 1 and calls[0]["closed"]

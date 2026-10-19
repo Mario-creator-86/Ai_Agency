@@ -446,6 +446,10 @@ class Settings(BaseSettings):
     #: ceiling. The figure is the Owner's; none is chosen for him here.
     agent_daily_token_budget: int = Field(default=0, ge=0)
 
+    #: Whole generation lifetime, including an active thinking stream. A socket idle timeout
+    #: cannot end a model that keeps sending progress without completing its answer.
+    llm_generation_deadline_seconds: float = Field(default=1200, ge=1, le=3300)
+
     #: Scale each explicitly bounded Director generation, including both structured-output
     #: attempts (STUDIO_DIRECTOR_TOKEN_MULTIPLIER). Owner, 2026-10-11: double her allowance
     #: after the cyclotron QC retry exhausted 6,000 tokens without a visible answer. Other

@@ -5411,3 +5411,9 @@ Exclude superseded drafts from resumption, enforce one approved episode/film per
 
 ## 2026-10-18 — controlled legacy final prompts
 On-demand Kael final-text migration for requested open LIVE rewrites; current face policy and existing Owner visual-plan authority shared with Sarah; exact positive/negative transport and approval identity; actionable final audit refusals and bounded repeated-refusal diagnosis. Existing paid media/history retained, no startup/live DB migration or restart. 244 relevant tests and final 112-test affected rerun passed, including 25 new regressions. See LEGACY_EDITOR_FINAL_AUDIT_2026-10-18.md; live scene-19 visual acceptance remains pending.
+
+
+## 2026-10-19 — paid prompt repair and cloud completion bounds
+- Existing paid scenes use reviewed, scoped final-prompt rewrite for shooting-sheet lint blockers, with byte-exact paid still on motion repair.
+- Configurable whole-generation deadline stops never-completing active cloud streams; no partial success or automatic duplicate request.
+-249 relevant cases and15 final gate rechecks pass; activation evidence in CURRENT_STATUS and BLOCKED_FILMS_REPAIR_2026-10-19.md.
