@@ -2240,6 +2240,8 @@ def _walk_staircase(
     }
     bought: list[dict[str, Any]] = []
     sheet: dict[str, Any] = {}
+    rewritten_sheets: set[tuple[str, str]] = set()
+    step: str | None = None
 
     def stop(status: str, step: str | None, reason: str, **more: Any) -> dict[str, Any]:
         return {
@@ -2290,6 +2292,8 @@ def _walk_staircase(
     except Exception:  # noqa: BLE001 - her look never stops the walk
         logger.exception("restore_by_look_failed", extra={"storyboard_id": storyboard_id})
     for _stair in range(len(SHEET_STEPS) + 1):
+        if stop_requested(engine):
+            return stop("WAITING", step, stop_reason_words(engine), refusal="STOPPED")
         try:
             sheet = build_sheet(
                 engine,
@@ -2387,6 +2391,18 @@ def _walk_staircase(
                 scenes=scenes,
             )
         if registry is not None and step in LAYER_OF_STEP:
+            prompt_state = (step, str(sheet["sheet_hash"]))
+            if prompt_state in rewritten_sheets:
+                # A reported rewrite must change the plan before another model call.
+                # Requeuing unchanged words would just move an infinite loop to the queue.
+                return stop(
+                    "WAITING",
+                    step,
+                    "Rescrierea nu a schimbat foaia de filmare; verificarea nu se repetă "
+                    "pe aceleași cuvinte. Este necesară verificarea uneltei de rescriere.",
+                    refusal=NEEDS_PROMPT_APPROVAL,
+                    no_prompt_progress=True,
+                )
             try:
                 audit = audit_before_purchase(
                     engine,
@@ -2408,6 +2424,7 @@ def _walk_staircase(
                     audit=audit,
                 )
             if audit["rewritten"]:
+                rewritten_sheets.add(prompt_state)
                 logger.info(
                     "prompt_audit_rewrote",
                     extra={"storyboard_id": storyboard_id, "scenes": audit["rewritten"]},
@@ -2499,7 +2516,28 @@ def _walk_staircase(
             return stop("WAITING", step, reason, refusal=str(budget["status"]))
         if result.get("stopped"):
             return stop("WAITING", step, str(result["stopped"]), refusal="STOPPED")
-    return stop("WAITING", None, "Scara filmului nu s-a încheiat în această rulare.")
+    if stop_requested(engine):
+        return stop("WAITING", step, stop_reason_words(engine), refusal="STOPPED")
+    # Rewrites consumed this walk's time, not an Owner decision. Keep the walk bounded,
+    # but hand the changed words to a durable next walk for a fresh purchase audit.
+    continuation = (
+        _ladder_continues(engine, storyboard_id, correlation)
+        if environment == "PRODUCTION"
+        else None
+    )
+    return stop(
+        "WAITING",
+        step,
+        (
+            "Prompturile au fost corectate; filmul continuă automat într-o nouă trecere "
+            "pentru verificarea Directoarei înainte de generare."
+            if continuation
+            else "Prompturile au fost corectate; verificarea Directoarei mai are nevoie "
+            "de o trecere înainte de generare."
+        ),
+        refusal=NEEDS_PROMPT_APPROVAL,
+        continues=continuation,
+    )
 
 
 def _held_stair(

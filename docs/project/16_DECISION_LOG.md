@@ -4638,3 +4638,7 @@ Owner requests resolving blocked production. Initial shot generation must contin
 
 ## Kael final response contract is explicit — 2026-10-19
 Correct the incomplete legacy-to-editor-final update: instructions and schema must request exactly the final vendor fields, with both prompts only for still repairs or legacy migration. Preserve exact strings through parsing; never synthesize final text from legacy motion notes or bypass Sarah. No architecture/policy change; real activation and text acceptance are separate from offline tests. Report KAEL_REWRITE_FINAL_FIELDS_2026-10-19.md.
+
+
+## A prompt-audit walk yields durable work — 2026-10-19
+Owner requests removing the terminal stop caused by the step limit. Retain the per-walk bound for fairness; reaching it after accepted prompt rewrites schedules the normal durable continuation and is classified as the Director’s pending approval, with no Owner decision. Do not make the loop unbounded or bypass fresh purchase approval. Repeated unchanged sheet identities stop before additional model calls; STOP and nonproduction runs schedule nothing. No architecture/policy/budget change. See STAIRCASE_AUDIT_CONTINUATION_2026-10-19.md.

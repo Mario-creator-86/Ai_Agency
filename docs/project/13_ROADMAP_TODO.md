@@ -2284,3 +2284,9 @@ No provider was called, no run was queued, no credit was spent, and
 - [x] Diagnose scene15/23 stored answers and contradictory legacy example.
 - [x] Compact final response schema/instructions, exact-text preservation and131 offline checks.
 - [x] Activate at controlled restart and verify actual scene15/23 saved rewrites with Sarah acceptance (events41602/41617; normal launcher restored09:29:30).
+
+
+## 2026-10-19 — Continue prompt audits after bounded walks
+- [x] Reproduce last-iteration valid rewrite stranded in generic Owner WAITING.
+- [x] Durable Director-owned continuation, no-progress/STOP guards,91 targeted tests.
+- [ ] Activate after current paid GPU work; verify Supernova queued/claimed and fresh server health.
