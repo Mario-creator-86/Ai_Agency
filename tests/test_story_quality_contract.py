@@ -59,9 +59,10 @@ def test_satire_policy_reaches_both_agents_without_extra_calls():
         assert AUDIENCE_PROFILE in prompt
         assert SATIRE_POLICY in prompt
         assert "fictional" in prompt.lower()
-    assert "slapstick" in SHOW_TONE
-    assert "imaginary crises" in WRITER_BRIEF
-    assert "Do NOT fail a scene" in DIRECTOR_BRIEF
+    assert "Romance is OPTIONAL" in SHOW_TONE
+    assert "Romance is OPTIONAL" in WRITER_BRIEF
+    assert "not a compulsory romance" in DIRECTOR_BRIEF
+    assert "BUT or THEREFORE" in DIRECTOR_BRIEF
     assert "fictional workplace satire" in _KIND_NOTES[SERIAL_EPISODE]
     assert "SAME write_episode CALL" in writer_instructions()
     assert "SAME episode_review CALL" in director_instructions()
