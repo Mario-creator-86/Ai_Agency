@@ -320,5 +320,7 @@ def test_the_brief_asks_for_a_three_second_hook_and_a_button_that_calls_back(
     assert "ONE closing sentence of the NARRATOR" in brief
     assert "calls back" in brief
     assert "every beat changes something" in brief.casefold()
-    assert "only by its subject" in brief
+    # Real letters cannot acquire fabricated quotations, but fiction may parody them.
+    assert "A real letter whose text is not provided" in brief
     assert "never invent what it said" in brief
+    assert "fictional" in brief and "parody letter" in brief
