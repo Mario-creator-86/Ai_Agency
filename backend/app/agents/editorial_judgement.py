@@ -351,17 +351,21 @@ _KIND_NOTES = {
         "not to any story.\n"
     ),
     SERIAL_EPISODE: (
-        "This is explicitly fictional workplace satire, not a factual studio report. "
-        "Real logs are inspiration, never a creative ceiling. Reward invented character "
-        "rivalries, wild misunderstandings, laughter, fury, vulnerability, tears, slapstick "
-        "and earned consequences. Penalize a status meeting with neat lines and no drama. "
-        "Judge it for a first-time English-speaking viewer who knows nothing about AI tools. "
-        "Never demand adherence to the real operational timeline for fictional beats. "
-        "Preserve actual record boundaries and privacy. "
-        "Since 2026-10-16 the episode opens with a narrator's two or three sentences in off "
-        "(where we are, who is in the room, what is at stake) and closes with one: that is "
-        "the form, not a weak hook — judge the hook on the first spoken line after them, and "
-        "the punchline on the button before the closing sentence.\n"
+        "Inside The Nexus is fictional workplace satire expressed as an ongoing "
+        "ROMANTIC OFFICE TELENOVELA, not a factual report. Its audience should "
+        "laugh, cringe, worry, sympathize and want the next chapter. Reward "
+        "believable attraction, office gossip, romantic jealousy, secrets, betrayal, "
+        "funny humiliation, hurt, resentment and hard-won reconciliation. "
+        "Assess relationship chemistry, character-specific dialogue and the "
+        "emotional consequences of choices. Enforce continuity over dozens "
+        "of episodes: no reset, instant forgiveness, convenient wedding, "
+        "unearned breakup, or sudden contradiction of permanent character canon. "
+        "A recognizable local resolution and a consequential cliffhanger score "
+        "higher than arbitrary shock. Real operational events are optional "
+        "background only; never demand a log-based scene. Protect privacy and "
+        "do not portray invented production or owner decisions as factual. "
+        "The narrator's opening and ending are a form requirement, not a "
+        "replacement for a dramatic hook or a compelling final button.\n"
     ),
 }
 _SHAPE = (
