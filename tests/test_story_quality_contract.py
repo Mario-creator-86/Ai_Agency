@@ -47,3 +47,21 @@ def test_incomplete_answer_and_unsubstantiated_yes():
 
 def test_legacy_verdict_without_quality_remains_readable():
     assert _held_to_her_rubric(EpisodeVerdict(verdict="PASS", scores=RUBRIC), "Sarah").verdict == "PASS"
+
+
+def test_satire_policy_reaches_both_agents_without_extra_calls():
+    from app.story.quality_contract import AUDIENCE_PROFILE, SATIRE_POLICY
+    from app.story.services import SHOW_TONE, _INSTRUCTIONS as WRITER_BRIEF
+    from app.story.review import _INSTRUCTIONS as DIRECTOR_BRIEF
+    from app.agents.editorial_judgement import _KIND_NOTES, SERIAL_EPISODE
+
+    for prompt in (writer_instructions(), director_instructions()):
+        assert AUDIENCE_PROFILE in prompt
+        assert SATIRE_POLICY in prompt
+        assert "fictional" in prompt.lower()
+    assert "slapstick" in SHOW_TONE
+    assert "imaginary crises" in WRITER_BRIEF
+    assert "Do NOT fail a scene" in DIRECTOR_BRIEF
+    assert "fictional workplace satire" in _KIND_NOTES[SERIAL_EPISODE]
+    assert "SAME write_episode CALL" in writer_instructions()
+    assert "SAME episode_review CALL" in director_instructions()

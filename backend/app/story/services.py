@@ -1084,23 +1084,25 @@ def get_episode(engine: Engine, episode_id: str) -> dict | None:
 #: reactions, playful rivalry, mild drama and comic framing allowed and nothing invented;
 #: each episode understandable to a new viewer. Until v4 the brief never said any of it.
 SHOW_TONE = (
-    "Inside The Nexus is a deadpan workplace comedy about AI employees who take their jobs "
-    "completely seriously, told around their own real day. Each episode is a small story: "
-    "someone wants something, something stands in the way, something turns, and it costs or "
-    "earns them something — told in whole sentences a stranger follows, never a log read "
-    "aloud. The laugh is in the gap between how much the work matters to them and how small "
-    "the moment is, in dry reactions, pauses and playful rivalry, and in each of them being "
-    "exactly themselves; mild drama is welcome, but the joke is never on the work, never "
-    "cruel and never a fact about the studio the day did not hold. A stranger who has seen "
-    "no other episode must be able to follow this one from its first sentence."
+    "Inside The Nexus is a fictional, character-driven workplace SATIRE about AI employees "
+    "who take ridiculous situations terribly seriously. Real studio events are seeds, "
+    "not a minute-by-minute account or a creative ceiling. Invent hilarious misunderstandings, "
+    "jealousies, alliances, betrayals, tears, wild arguments, absurd crises, surprising "
+    "victories, heartfelt reconciliations and occasional non-graphic slapstick fights. "
+    "Let fictional characters make mistakes and clash; let consequences change the room. "
+    "Build an earned escalation and payoff instead of reading an operations log aloud. "
+    "Vary the emotion and conflict from episode to episode; never force the same gag. "
+    "The target is a first-time English-speaking viewer who knows nothing of AI tooling. "
+    "The show is openly fictional and never rewrites the real studio ledger."
 )
 
 _INSTRUCTIONS = """You are the showrunner of "Inside The Nexus", a vertical workplace serial \
 about the people of AMN-AI, an autonomous film studio. This is EPISODE {episode_number}, set \
 on {date}. The story is yours to invent — who wants what today, what stands in the way, what \
-turns, what it costs or earns them — and the real day is its backdrop: the EVENTS below are \
-what actually happened in the studio on {date}, the texture and the details you may draw on; \
-when the day was quiet the story still happens, in these rooms, with these people.
+turns, what it costs or earns them — and the real day is its inspiration: the EVENTS below are \
+real studio notes you can use as a tiny seed, not scenes you must reconstruct or \
+a limit on what your fictional characters can experience. When the day is quiet, \
+invent a strong story anyway, in these rooms, with these people.
 
 THE SHOW
 {tone}
@@ -1151,14 +1153,20 @@ text in the scene: no signs, captions, labels, readable screens or documents, be
 picture cannot carry legible words.
 7. Voices. Each person talks as CAST describes them, in their own register and cadence; use \
 one of their own phrases at most once in the episode.
-8. Truth. The STORY is yours: wants, obstacles, jokes, pauses, reactions, turns, what it \
-costs them, playful rivalry, comic framing. The FACTS about the studio are not: you may not \
-invent hires or departures, successes or failures of the studio's work, audience numbers or \
-money, vendor outages, a decision given to someone other than who made it, or an ending for \
-anything the events leave open. Never name a vendor, a model, a price or an address. An \
-event that gives a letter or a note only by its subject tells you who \
-wrote it, to whom and about what, never what it said: play the writing, the waiting and \
-the reaction, and never invent what it said.
+8. Satirical fiction. This is an openly fictional comedy, not documentary evidence. \
+Invent the plot: rivalries, lies between fictional characters, absurd surprises, \
+anger, tears, celebrations, reconciliations, harmless slapstick scuffles and \
+imaginary crises, including comic fictional studio mishaps and resolutions. An \
+episode can be inspired by a single real failed Supernova image and then become \
+a completely invented argument over who ruined an imaginary award ceremony. \
+Make clear through the series framing that these adventures are satire; do not \
+claim imagined events occurred in the actual studio. Real operational status, \
+money, audience figures, production and publication results, vendor incidents, \
+private data and decisions of the human Owner or other real people are not \
+free to misreport as facts. Keep the character bibles, privacy and continuity. \
+A real letter whose text is not provided is not a quotation source: never invent \
+what it said and attribute that invented text to the actual letter. A fictional \
+parody letter, identified as fictional within the story, is allowed.
 9. Grounding. Each beat's "event_ids" are the ids of the events it draws on, copied \
 exactly from EVENTS, or an empty list when the beat is the story's own. One id that is not \
 there refuses the whole episode, not only the beat. Use the day: a beat that can stand on a \
@@ -1374,8 +1382,8 @@ def _events_block(
         # and its people the backdrop; nothing about the studio's work is invented.
         rows.append(
             f"(A quiet day: no public event was recorded on {date_iso}. The story is yours — "
-            "these rooms, these people, a want and a turn of their own; invent nothing about "
-            "the studio's work, its money or its audience.)"
+            "these rooms, these people, an original fictional conflict and a payoff; "
+            "do not treat invented scenes as verified studio operations.)"
         )
     if not_shown:
         rows.append(

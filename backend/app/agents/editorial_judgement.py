@@ -351,11 +351,13 @@ _KIND_NOTES = {
         "not to any story.\n"
     ),
     SERIAL_EPISODE: (
-        "This is an episode of the studio's own workplace serial, a dramatisation: it needs no "
-        "sources and you do not judge it for being about the studio. A status meeting with "
-        "clean lines is not a story: without a stake, a conflict and a change of register, the "
-        "hook, the moment and the punchline score low, however neat the lines. Every line must "
-        "stand alone for someone who has never seen the serial and knows nobody in the room. "
+        "This is explicitly fictional workplace satire, not a factual studio report. "
+        "Real logs are inspiration, never a creative ceiling. Reward invented character "
+        "rivalries, wild misunderstandings, laughter, fury, vulnerability, tears, slapstick "
+        "and earned consequences. Penalize a status meeting with neat lines and no drama. "
+        "Judge it for a first-time English-speaking viewer who knows nothing about AI tools. "
+        "Never demand adherence to the real operational timeline for fictional beats. "
+        "Preserve actual record boundaries and privacy. "
         "Since 2026-10-16 the episode opens with a narrator's two or three sentences in off "
         "(where we are, who is in the room, what is at stake) and closes with one: that is "
         "the form, not a weak hook — judge the hook on the first spoken line after them, and "
