@@ -427,8 +427,11 @@ def test_the_director_is_asked_the_five_criteria_and_her_scores_are_read(engine,
         assert f"- {key} — {title}. 0: {zero}. 10: {ten}." in prompt
     assert f"{PASS_TOTAL}/50" in prompt
     assert "Sarah: Right, where are we?" in prompt
-    assert "This is explicitly fictional workplace satire" in prompt
-    assert "first-time English-speaking viewer" in prompt
+    assert "Inside The Nexus is fictional workplace satire" in prompt
+    assert "ROMANTIC OFFICE TELENOVELA" in prompt
+    assert "laugh, cringe, worry" in prompt
+    assert "Enforce continuity over dozens" in prompt
+    assert "Real operational events are optional" in prompt
     with Session(engine) as session:
         runs = session.scalars(select(AgentRun).where(AgentRun.task_type == JUDGEMENT_TASK)).all()
     assert len(runs) == 1
