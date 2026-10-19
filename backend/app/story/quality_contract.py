@@ -68,8 +68,8 @@ def writer_instructions() -> str:
 def director_instructions() -> str:
     return (
         "\nINDEPENDENT STORY REVIEW IN THIS SAME episode_review CALL (no extra model call). "
-        f"AUDIENCE: {{AUDIENCE_PROFILE}}\n"
-        f"FICTION RULES: {{SATIRE_POLICY}}\n"
+        f"AUDIENCE: {AUDIENCE_PROFILE}\n"
+        f"FICTION RULES: {SATIRE_POLICY}\n"
         "Judge scenes and dialogue rather than their structural labels. "
         "A technical update is not a plot turn and a callback is not necessarily a satisfying ending. "
         "Do not trust the writer's self-review; it is not included in the evidence. "
