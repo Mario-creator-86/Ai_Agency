@@ -446,8 +446,9 @@ _SHOTS_INSTRUCTIONS = (
     "where it ends over the clip's seconds (a steady dolly in from the whole room to her "
     "hands on the ledger; a crane up from the bench that reveals the hall). Keep static for "
     "a shot the story holds its breath on, and rack focus only beside a clear action of the "
-    "subject. Vary the size and the move across the film; never the same one three scenes "
-    "in a row. Optionally give second_framing: a closer framing of the same picture the "
+     "subject. Vary shot size and movement only when a dramatic change makes them useful. "
+    "A static or repeated framing is right when a gesture or reaction needs time; never "
+    "move just to fulfill a novelty quota. Optionally give second_framing as a closer crop "
     "editor can cut to halfway through a long scene, at no extra cost — what it shows and "
     "where its centre is, as fractions of the frame's width and height (0 left or top, 1 "
     "right or bottom). In motion, say what the subject does across the clip's seconds, as "
@@ -464,8 +465,8 @@ _SHOTS_INSTRUCTIONS = (
     "size the beat asks — wide: the place; medium: the subject; detail: hands, objects, "
     "texture — with the same subject, light, weather and positions in every shot of the "
     "beat, each shot starting where the one before ends (its continuity is the previous "
-    "shot's ending_frame), nothing new entering between them. Give each shot its own "
-    "camera_move, never the one before. Return only JSON: "
+    "shot's ending_frame), nothing new entering between them. Choose a camera move only if it tells this part of the story better; a repeated "
+    "static move is valid when it preserves a character's reaction. Return only JSON: "
     '{"shots": [{"scene_index": 1, "story_purpose": "HOOK", "subject": "...", '
     '"action": "...", "environment": "...", "camera": "...", "camera_move": "dolly in", '
     '"lighting": "...", "composition": "...", "motion": "...", "emotion": "...", '
@@ -481,6 +482,10 @@ _SHOTS_INSTRUCTIONS = (
 #: rooms. What a shot of the serial needs from the editor is the people: who is in frame,
 #: what they do and feel, and where the camera stands.
 _SERIAL_SHOTS_INSTRUCTIONS = (
+    "Before choosing the camera, identify what must change emotionally or causally in each "
+    "shot: a choice, a discovery, an embarrassing mistake, a betrayal, relief or a joke. "
+    "Frame whose action or REACTION makes that change legible. Never invent a plot beat, "
+    "cast member or prop just to fill the frame.\n\n"
     "You are the studio's video editor, and this is an approved episode of the studio's own "
     "office serial, Inside The Nexus. The beats are as they will be filmed and must not "
     "change. The series has one look, given below as series_look: it is fixed, it opens every "
@@ -507,12 +512,14 @@ _SERIAL_SHOTS_INSTRUCTIONS = (
     "the still is drawn from the first moment, the clip plays the chain.\n"
     "- emotion: the feeling and how it shows — the eyes, the mouth, the shoulders, the pace of "
     "the hands; a laugh held back, a breath held, a flinch, a slow smile.\n"
-    "- camera and camera_move: a storytelling choice, varied across the episode and never the "
-    "same move twice in a row — an establishing wide for the opening, a two-shot while people "
-    "clash, a single or a close-up on a turn or a reaction, a slow push-in on the turn, a "
-    "pull-back on the payoff to show the room, a pan from one speaker to the other, tracking "
-    "when someone walks; static only for a breath the story holds, never a timid zoom on a "
-    "face.\n"
+    "- camera and camera_move: choose what the spectator needs to understand or feel. "
+    "A wide establishes the conflict, a two-shot shows an evolving relationship and a "
+    "reaction close-up reveals what somebody does not say. Cut to the listener when their "
+    "reaction is more important than the speech. Use a push-in only for earned pressure, "
+    "tracking for real movement, and STATIC framing for awkwardness, grief, revelation, "
+    "a held laugh or a decisive beat. Repeating static or a similar shot size is allowed "
+    "when it improves the performance or continuity. No decorative pan, orbit, zoom or "
+    "constant cutting merely to vary shots.\n"
     "- background: the room's own life that does not compete with the speakers (a lamp's "
     "glow, a plant, a colleague passing far behind).\n"
     "- continuity: what must match the previous shot; ending_frame: the last gesture of the "
@@ -530,8 +537,8 @@ _SERIAL_SHOTS_INSTRUCTIONS = (
     "position stay exactly as in the shot before, and each shot's continuity is the "
     "ending_frame of the one before it. A shot whose size is reaction is on the person named "
     "in on, listening with lips closed, eyes on the speaker beside the frame, while the words "
-    "go on in off; nobody's lips move. Give each shot its own camera_move, never the one "
-    "before. Return only JSON: "
+    "go on in off; nobody's lips move. Choose a move for the beat's meaning, even if it repeats the prior static shot. "
+    "Preserve each speaker's reaction and spatial continuity. Return only JSON: "
     '{"shots": [{"scene_index": 1, "subject": "...", "action": "...", "emotion": "...", '
     '"camera": "...", "camera_move": "static", "background": "...", '
     '"continuity": "...", "ending_frame": "...", '
@@ -539,6 +546,11 @@ _SERIAL_SHOTS_INSTRUCTIONS = (
 )
 
 _EDITOR_FINAL_INSTRUCTIONS = (
+    "Before writing vendor-facing text, identify the approved action and specific feeling "
+    "the viewer must SEE. Prioritize the acting, consequential reaction and clear staging "
+    "over camera decoration. Still camera is appropriate when motion would spoil a quiet "
+    "or awkward moment. Do not add props, people, gestures, surprises or spectacle that "
+    "the approved scene never established. Respect the same story through every cut.\n"
     "\nNEW REQUIRED VENDOR-PROMPT CONTRACT: For every LIVE shot, return in its JSON "
     "object still_prompt, motion_prompt and negative_prompt in addition to scene_index, "
     "camera_move and the concise planning fields. YOU (Kael), not Python, own every word "
