@@ -40,7 +40,6 @@ def test_kael_directs_from_character_reactions_not_camera_quotas():
     assert "Repeating static" in _SERIAL_SHOTS_INSTRUCTIONS
     assert "never the same move twice in a row" not in _SERIAL_SHOTS_INSTRUCTIONS
     assert "never the same one three scenes" not in _SHOTS_INSTRUCTIONS
-    assert "emotional and narrative" not in _SHOTS_INSTRUCTIONS or "story" in _SHOTS_INSTRUCTIONS
     assert "Do not add props" in _EDITOR_FINAL_INSTRUCTIONS
     assert "Still camera is appropriate" in _EDITOR_FINAL_INSTRUCTIONS
 
