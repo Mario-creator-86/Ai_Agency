@@ -239,7 +239,14 @@ _INSTRUCTIONS = (
     "decision by the human Owner, or an invented verbatim quote from an actual letter. "
     "An obviously fictional parody of such an event is allowed when framed as fiction. "
     "Name the offending claim and why it is mistaken for an actual event.\n"
-    "2. The viewer. Does the episode open with the Narrator — two or three sentences in off "
+    "2. The serialized emotional story. Are love, embarrassment, jealousy, gossip, "
+    "secrets or rivalry rendered as actions and dialogue, not administrative reports? "
+    "Does at least one funny/cringe or painfully relatable incident alter someone's "
+    "feelings? Do established relationships, knowledge of secrets, unresolved grudges "
+    "and plans from PREVIOUSLY stay consistent? FAIL when the story forgets a prior "
+    "betrayal, resets an emotion or rushes a romance without causal development. "
+    "An episode earns a local payoff AND a consequential hook for the next chapter.\n"
+    "3. The viewer. Does the episode open with the Narrator — two or three sentences in off "
     "that tell a stranger where we are, who is in the room and what is at stake — and close "
     "with one Narrator sentence after the button (FAIL when either is missing, or when the "
     "opening does not say where we are and what is at stake); does the hook's first spoken "
@@ -247,15 +254,15 @@ _INSTRUCTIONS = (
     "payoff, each beat changing something; are the lines whole sentences a stranger follows, "
     "not telegraphic fragments; is the humour in the situation rather than in explaining "
     "the studio.\n"
-    "3. Voices. Does each speaker sound like their bible (register, cadence, habits, their "
+    "4. Voices. Does each speaker sound like their bible (register, cadence, habits, their "
     "own phrases) and like a person, not a status report.\n"
-    "4. Continuity. Does it continue or close the open threads it claims to.\n"
-    f"5. Recommendations. A beat outside the {WORDS_PER_BEAT[0]}-{WORDS_PER_BEAT[1]} "
+    "5. Continuity. Check new character_updates against actual on-screen actions and existing character_arcs, not just declared thread ids.\n"
+    f"6. Recommendations. A beat outside the {WORDS_PER_BEAT[0]}-{WORDS_PER_BEAT[1]} "
     "spoken-word band, or an episode under the recommended length, is flagged, not refused: "
     "the montage cuts a long beat into shots. Keep it when it reads well at 2.5 words a "
     "second; FAIL only when a beat is too fast to follow or the episode is too thin to be a "
     "story, naming the beat and its words in the notes.\n"
-    "This satirical serial is not a factual film. Judge its fictional scenes for emotion, "
+    "This serialized romantic office telenovela is not a factual film. Judge its fictional scenes for emotion, "
     "comic escalation, original conflict, accessibility and payoff, not adherence to "
     "operational chronology. The studio record and privacy gates remain real.\n"
     "Score each part 1-5: 1 missing, 3 works, 5 could not be better. A PASS carries all six "
@@ -759,6 +766,9 @@ def episode_checks(
     carried = [str(continuity.get("summary") or "")]
     carried += [str(t) for t in (continuity.get("threads_opened") or [])]
     carried += [str(r) for r in (continuity.get("recurring") or [])]
+    for update in continuity.get("character_updates") or []:
+        if isinstance(update, dict):
+            carried.extend([str(update.get("key") or ""), str(update.get("state") or "")])
     # The plan for the next episode (S6) reaches the next writer's brief the same way.
     plan = continuity.get("next_episode")
     if isinstance(plan, dict):
@@ -996,6 +1006,7 @@ def review_facts(
                 "threads_closed",
                 "threads_opened",
                 "recurring",
+                "character_updates",
             )
         },
         "previously": {
@@ -1011,6 +1022,11 @@ def review_facts(
                 for thread in (state.threads_json if state else None) or []
             ],
             "recurring": list((state.recurring_json if state else None) or []),
+            "character_arcs": [
+                str(value)[len("CHARACTER_ARC|"):].replace("|", ": ", 1)
+                for value in (state.recurring_json if state else None) or []
+                if str(value).startswith("CHARACTER_ARC|")
+            ],
         },
         "measured": {
             name: {k: v for k, v in check.items() if k != "reason"}
