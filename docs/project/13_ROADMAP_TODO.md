@@ -2276,4 +2276,5 @@ No provider was called, no run was queued, no credit was spent, and
 
 ## 2026-10-19 — unblock paid prompt repair
 - [x] Route paid-scene lint repairs through reviewed final rewrite; bound configured LLM generation lifetime without truncating native output. Isolated regression verification complete.
-- [ ] Verify actual scene1 repair after controlled activation; then actual media/QC/publication remains subject to existing gates.
+- [x] Actual scene1 motion rewritten and Sarah TREATS at06:34 Europe-Bucharest; sheet RESOLVED with no remaining blockers and automatic FILM_CONTINUE claimed.
+- [ ] Complete subsequent real media/QC/publication through existing production gates.

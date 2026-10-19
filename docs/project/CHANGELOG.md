@@ -5417,3 +5417,5 @@ On-demand Kael final-text migration for requested open LIVE rewrites; current fa
 - Existing paid scenes use reviewed, scoped final-prompt rewrite for shooting-sheet lint blockers, with byte-exact paid still on motion repair.
 - Configurable whole-generation deadline stops never-completing active cloud streams; no partial success or automatic duplicate request.
 -249 relevant cases and15 final gate rechecks pass; activation evidence in CURRENT_STATUS and BLOCKED_FILMS_REPAIR_2026-10-19.md.
+
+- Live acceptance06:34 Europe-Bucharest: scene1 final rewrite accepted, paid still preserved, sheet RESOLVED and autonomous continuation claimed (events41083/41097).
