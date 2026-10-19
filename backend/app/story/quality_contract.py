@@ -1,38 +1,53 @@
-"""Shared eight-question narrative contract. No model calls are made in this module."""
+"""Shared eight-question narrative contract. No model calls are made in this module.
+
+Storycraft references (guidance, not imported external text):
+https://johnaugust.com/2007/write-scene (necessary scene change, surprise, cut filler)
+https://pixarpost.com/2012/07/former-pixarian-emma-coats-to-speak-at.html (stakes, causality, character choices)
+https://perell.com/note/but-therefore-rule/ (cause/effect versus event lists)
+https://support.google.com/youtube/answer/9314415 (intro engagement, moments and dips)
+"""
 from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
-VERSION = "story-quality-v3-serialized-romcom"
+VERSION = "story-quality-v4-ensemble-dramedy"
 AUDIENCE_PROFILE = (
-    "English-speaking viewers who may join the serial on any episode. They care about "
-    "romance, jealousy, embarrassing mistakes, betrayals, rivalries, laughter and "
-    "consequences, not about internal studio operations."
+    "English-speaking viewers who may join on any episode. They value sharp "
+    "characters, curiosity, recognizable mistakes, humor, dilemmas, suspense, "
+    "friendship, occasional romance and consequences, not studio status reports."
 )
 SATIRE_POLICY = (
-    "Inside The Nexus is a fictional serialized OFFICE TELENOVELA / romantic dramedy "
-    "with workplace satire, occasional slapstick, and emotionally believable adult AI "
-    "characters. The office is a setting, not a production-status topic. Invent love, "
-    "unrequited affection, awkward flirting, secrets, gossip, jealousy, heartbreak, "
-    "revenge, manipulation, reconciliations and escalating social mistakes. "
-    "Use small, recognizable human embarrassments alongside intense drama and humor. "
-    "Every episode must CHANGE an existing relationship, secret or rivalry, and carry "
-    "its consequences forward: no emotional reset between episodes. Respect established "
-    "canon and the next-episode hook; do not suddenly marry, divorce or reconcile without "
-    "earned steps. Solve a tangible local problem and leave a larger emotional question "
-    "open. Daily operational events are optional background references, never plot "
-    "requirements. Characters' fictional intrigues are NOT real agent actions: never "
-    "claim invented romances, owner messages, business decisions, publication status, "
-    "payments, vendor events or audience metrics actually happened. No confidential "
-    "material may enter fiction or its permanent memory. Preserve the actual ledger."
+    "Inside The Nexus is a FICTIONAL serialized ensemble dramedy. The office "
+    "is the setting, not an operational report. Episodes can be comedies, "
+    "rivalries, social mishaps, mysteries, friendships, betrayals, reconciliations "
+    "or romances as the established characters and consequences naturally warrant. "
+    "Romance is OPTIONAL; NEVER require flirting, love or jealousy in every episode. "
+    "Do not make any single emotion or genre a quota. Every chapter must move "
+    "a meaningful personal predicament, alliance, promise, secret or relationship "
+    "forward with choices whose consequences persist. Not every long-running "
+    "thread must be foregrounded in every chapter. No abrupt reset, instant "
+    "forgiveness, unexplained reversal or convenient miracle. Each scene needs "
+    "a reason to exist, a want or dramatic purpose, resistance or friction, "
+    "and a clear before/after change; remove repetitive explanations. Connect "
+    "scenes by cause and effect (BUT/THEREFORE) rather than AND THEN. Give an "
+    "early concrete reason to watch, an earned turn, and a satisfying local "
+    "payoff. Leave a naturally consequential future question, not a forced "
+    "cliffhanger. Comedy should arise from character choices; avoid obligatory "
+    "jokes and generic speeches. Keep established character voices recognizable "
+    "without forcing their professional jargon into every sentence. Daily "
+    "operational events are optional background references, not plot requirements. "
+    "Fictional intrigues are NOT real agent actions: never claim invented "
+    "owner messages, business decisions, publications, payments, vendor events "
+    "or audience metrics actually happened. No confidential material may enter "
+    "fiction or permanent memory. Preserve the actual ledger."
 )
 QUESTIONS = (
     ("Q1_HOOK", "Does the opening give a new viewer a concrete reason to keep watching?"),
     ("Q2_CHARACTER_GOAL", "Does a character want something specific and face an obstacle or consequential choice?"),
-    ("Q3_CAUSAL_PROGRESS", "Does every scene causally escalate an emotional conflict or change a relationship rather than list updates?"),
-    ("Q4_MEMORABLE_MOMENT", "Is there an earned embarrassing, funny, romantic or painful moment a viewer can recognize?"),
+    ("Q3_CAUSAL_PROGRESS", "Does every scene cause a meaningful change, choice, obstacle or revelation instead of merely listing updates?"),
+    ("Q4_MEMORABLE_MOMENT", "Is there a specific, earned, memorable moment (funny, painful, tense, surprising or moving) rather than a generic statement?"),
     ("Q5_CHARACTER_VOICES", "Do characters react as distinct people rather than read operational reports?"),
-    ("Q6_CENTRAL_PROMISE", "Does the emotional plot develop its hook AND honor the relationships, secrets and promises established in canon?"),
+    ("Q6_CENTRAL_PROMISE", "Does this episode pay off its own premise AND respect all relevant established secrets, promises and character states?"),
     ("Q7_SATISFYING_ENDING", "Does the episode resolve a local beat while opening an earned serialized consequence or cliffhanger?"),
     ("Q8_FRESH_AND_CLEAR", "Can a new viewer understand it, and is its conflict and ending distinct from recent episodes?"),
 )
@@ -54,7 +69,7 @@ def questions_text() -> str:
 def writer_instructions() -> str:
     return (
         "\nSTORY SELF-REVIEW IN THE SAME write_episode CALL (no extra model call). "
-        "Write a serialized romantic dramedy / office telenovela, not an operational status report. "
+        "Write a varied fictional ensemble serial, not an operational status report or mandatory romance. "
         f"AUDIENCE: {AUDIENCE_PROFILE}\n"
         f"FICTION RULES: {SATIRE_POLICY}\n"
         "Before replying, mentally test and improve the script against these eight questions:\n"
@@ -63,7 +78,7 @@ def writer_instructions() -> str:
         '"question_id", "passed" (boolean), "evidence" (specific scene or line) and "reason". '
         "A YES without evidence is invalid. Repair weaknesses before returning the script. "
         "A label like 'turn' does not prove a turn; repeated failures are not dramatic progress. "
-        "Invent emotionally specific scenes and realistic awkward jokes, not just scene labels. "
+        "Choose concrete scenes with cause-and-effect turns; humor is welcome when earned, not obligatory. "
         "Do not present inventions as verified operational facts or fabricate actual documents. "
         "Respect the character bibles and the distinction between satire and real records. "
         "Never insert the review into speech or scenes.\n"
@@ -83,7 +98,7 @@ def director_instructions() -> str:
         + '\nAdd "quality" to your existing JSON verdict: exactly eight objects with '
         '"question_id", "passed" (boolean), "evidence" (specific beat/line), "reason". '
         "If a major question is NO, return FAIL and a precise minimal rewrite note, "
-        "even when technical checks pass. Reject forgotten secrets, sudden unearned romances and emotional resets. Do not reject invented events merely because they "
+        "even when technical checks pass. Reject broken continuity, unjustified turns, repetitive filler and unsupported character updates. Do NOT reject an episode for lacking romance, jokes or arbitrary melodrama. Do not reject invented events merely because they "
         "are missing from the operational log; reject confusing fiction with real-world "
         "claims, privacy leaks and dull storytelling.\n"
     )
