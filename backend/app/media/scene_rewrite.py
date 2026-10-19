@@ -773,6 +773,10 @@ _BRIEF_INSTRUCTIONS = (
     "for the whole shot, never a figure that could turn its head; when the clip showed the wrong "
     "object or action, name the right one plainly and leave nothing that resembles the wrong "
     "one. The story does not change: the narration, the facts and the scene's purpose stay. "
+    "For a serial scene, name the approved emotional beat the image must actually convey, "
+    "including the action or reaction that reveals it; do not diagnose a new defect "
+    "just because you would prefer a more spectacular camera move. Rewrite only what "
+    "the observed finding requires, keeping effective gestures and framing. "
     "Do not repeat a brief that already failed.\n"
     # 2026-10-12, 16:45, f06808c9 scenes 3, 4, 7: her reviews refused the rewrites again and
     # again, and the next brief asked the same thing — nothing read the refusal.
@@ -831,6 +835,12 @@ _REVIEW_INSTRUCTIONS = (
     "camera move is said in), the prompts the vendor read before, the prompts as rewritten, and "
     "the sentence-level difference between them for the still and for the motion (sentences "
     "removed, sentences added).\n"
+    "Before any new purchase, check that the new text still shows the approved scene's "
+    "specific character decision, reaction and emotional or comic meaning. A technically "
+    "clean prompt that removes the important action is not a faithful repair. Do not "
+    "treat camera novelty as a quality fix, or require romantic cues or extra spectacle. "
+    "Do not create new blocking findings: apply serious/minor decisions ONLY to the "
+    "quality-control findings supplied; put independent artistic notes in observations.\n"
     # 2026-10-12, f06808c9 scene 7 (runs e31aa5e7, 8035e541): the review listed two diagnoses of
     # its own as findings and refused a rewrite that treated quality control's one finding.
     "Answer every finding of quality control by its id, and only those: what you notice beyond "
@@ -947,9 +957,11 @@ _REWRITE_INSTRUCTIONS = (
     "EDITOR_FINAL_v1: Write the complete exact vendor text in the named prompt fields. "
     "No Python composer rewrites your sentences. Legacy planning fields such as subject, "
     "action and motion are source data only, not the answer format. "
-    "Give the shot one ample, specific camera move with its path and tempo (where it starts, "
-    "where it ends over the clip's seconds) and write what the subject does as verbs; choose "
-    "camera_move from: {moves}. Name colours in words. The still_prompt describes "
+    "Choose exactly one camera_move from: {moves}. Choose it for the approved scene's "
+    "emotional and narrative purpose, not for arbitrary variety. Static is valid when a "
+    "reaction or awkward silence should hold; for a moving camera, describe a clear path "
+    "and tempo from start to end, along with the actor's verbs. Name colours in words. "
+    "The still_prompt describes "
     "one frozen moment — what is seen, a "
     "pose, a state, a place — with no camera move, no speed and no span of the clip in them: "
     "a still cannot show movement, so everything that moves goes to motion_prompt; "
