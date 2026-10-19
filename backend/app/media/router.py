@@ -832,6 +832,7 @@ def create_media_router() -> APIRouter:
     def get_shooting_sheet(
         request: Request,
         storyboard_id: Annotated[str, FPath(min_length=36, max_length=36)],
+        include_redos: bool = True,
     ) -> dict:
         """Foaia de filmare: everything a film will buy, before a credit is spent.
 
@@ -851,6 +852,8 @@ def create_media_router() -> APIRouter:
                 resolution=wiring["resolution"],
                 stills_model=getattr(wiring["image_adapter"], "model", None),
                 face_counter=count_faces,
+                include_redos=include_redos,
+                settings=request.app.state.settings,
             )
             from app.media.blocker_repair import repair_status  # noqa: PLC0415
 

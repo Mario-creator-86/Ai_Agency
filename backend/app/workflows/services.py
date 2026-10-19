@@ -8,7 +8,7 @@ from typing import Any
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import Engine, or_, select
+from sqlalchemy import Engine, case, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.db import lock_for_write
@@ -379,7 +379,33 @@ def claim_task(
         & (TaskQueueItem.lease_expires_at < now_str)
         & (TaskQueueItem.attempts < TaskQueueItem.max_attempts),
     )
-    order = (TaskQueueItem.priority.desc(), TaskQueueItem.next_attempt_at.asc())
+    from app.media.models import Storyboard  # noqa: PLC0415
+    from app.services import FILM_CONTINUE_TASK  # noqa: PLC0415
+
+    film_created = (
+        select(Storyboard.created_at)
+        .where(Storyboard.id == TaskQueueItem.payload["storyboard_id"].as_string())
+        .correlate(TaskQueueItem)
+        .scalar_subquery()
+    )
+    film_work = TaskQueueItem.task_type.in_((FILM_CONTINUE_TASK, "FILM_SHEET_REPAIR"))
+    known_film_work = film_work & film_created.is_not(None)
+    # A newer sheet repair (priority 6) must not leapfrog an older film's continuation
+    # (priority 4). Both share the recovery lane; within one film, repair still goes first.
+    recovery_priority = case((known_film_work, 6), else_=TaskQueueItem.priority)
+    work_age = case(
+        (
+            known_film_work,
+            func.coalesce(film_created, TaskQueueItem.next_attempt_at),
+        ),
+        else_=TaskQueueItem.next_attempt_at,
+    )
+    order = (
+        recovery_priority.desc(),
+        work_age.asc(),
+        TaskQueueItem.priority.desc(),
+        TaskQueueItem.next_attempt_at.asc(),
+    )
 
     # A plain read first: the worker asks every few seconds, and an empty queue must not take
     # the studio's write lock each time.

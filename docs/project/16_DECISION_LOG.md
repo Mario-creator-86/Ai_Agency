@@ -4642,3 +4642,25 @@ Correct the incomplete legacy-to-editor-final update: instructions and schema mu
 
 ## A prompt-audit walk yields durable work — 2026-10-19
 Owner requests removing the terminal stop caused by the step limit. Retain the per-walk bound for fairness; reaching it after accepted prompt rewrites schedules the normal durable continuation and is classified as the Director’s pending approval, with no Owner decision. Do not make the loop unbounded or bypass fresh purchase approval. Repeated unchanged sheet identities stop before additional model calls; STOP and nonproduction runs schedule nothing. No architecture/policy/budget change. See STAIRCASE_AUDIT_CONTINUATION_2026-10-19.md.
+
+
+## RUNPOD-MOTION-STARTUP-RECOVERY — operational action, 2026-10-19
+
+Explicit Owner request authorizes a bounded recycle of the stalled motion endpoint worker. Read health/status first; change only workers.max1→0→1; verify config by GET after each PATCH and preserve original batch ids. No queue purge/cancel/resubmission, new GPU pool, cache/image/env change, budget change or relaxed QA. Successful real production pickup confirmed09:25UTC. Exact original provider-internal cache cause remains unproven. No architecture invariant changed.
+
+
+## OLLAMA-OFFLINE-AUDIT-STOP — 2026-10-19
+
+Owner explicitly orders server STOP and forbids new paid model requests during the model comparison. Use public documentation, read-only existing outputs and fully network-blocked offline tests only. Do not restart automatically, manually resume either film, change model/role allocation or alter Cloud native limits as a side effect. A recommendation based on older prompt versions is provisional; unobserved models cannot be ranked as tested. Keep visual evaluators vision-capable and preserve two total paid renders per layer/scene. No architecture change.
+
+## SHOOTING-SHEET-LAZY-REDO-QUOTES — 2026-10-19
+
+Eagerly preparing every potential redo made a 40-scene sheet recalculate the whole film for each motion option. Initial UI reads now defer only those quotations. Each option fetches its authoritative price, conditions and hash before opening confirmation. Existing approval and budget/cap checks and the full API default remain intact. No frontend price guesses or stale-price cache introduced. Earlier Owner stop request prevents an unsolicited server restart; activation waits for the next authorized startup.
+
+## LLM-RELIABILITY-READONLY-COMPARISON — 2026-10-19
+
+Owner requested diagnosing Ollama response/quality/cost problems and considering OpenAI. Preserve earlier no-inference constraint: only existing history and public official documentation. Do not equate SUCCEEDED with Sarah approval or a correct video; keep version-specific denominators. Recommend candidate evaluation rather than declaring an untested provider superior. No migration, model reassignment, budget change or paid comparison authorized/performed by this report.
+
+## BACKLOG-FIRST-PUBLICATION-20261019 — Owner override
+
+Owner explicitly requires existing films to be repaired and published before new scripts/films. This takes precedence over the earlier daily/serial_next practice of drafting tomorrow while today is blocked. Gate new stages while unfinished approved production remains; repair, QA and publication stay allowed under unchanged Owner limits. Recovery is automatic, using existing idempotent passes before task claim; continuation and sheet repair share recovery priority 6 and use storyboard age before their per-task priority. This avoids a newer repair (6) overtaking an older continuation (4), while same-film repair and urgent non-film work retain precedence. Prompt lint must use the selected real provider contract, never a legacy fallback when the route is known. A brief maintenance pause/restart and restoration of the previously active autonomy are authorized by the requested repair; no model probes or manual approvals/queue mutations.

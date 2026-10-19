@@ -216,8 +216,8 @@ def test_a_same_day_rerun_queues_the_continuation_once(engine, staffed, settings
 
     again = run_serial_next(engine, registry(), settings)
 
-    assert again["artefacts"]["written"] == 0 and "deja scris" in again["reason"], again
-    assert again["artefacts"]["storyboard_id"] is None
+    assert again["status"] == "SKIPPED", again
+    assert first["artefacts"]["storyboard_id"] in again["artefacts"]["unfinished_storyboards"]
     assert storyboard_count(engine) == 1 and len(written_) == 1
     (task,) = continuations(engine)
     assert task.id == first["artefacts"]["film_continue_task_id"]
@@ -258,9 +258,8 @@ def test_the_morning_after_writes_nothing_and_the_film_is_that_days(
 
     morning = run_serial_stage(engine, registry(), settings)
 
-    assert morning["status"] == "COMPLETED", morning
-    assert morning["artefacts"]["resumed"] is None and morning["artefacts"]["written"] == 0
-    assert "Ultima zi povestită" in morning["reason"]
+    assert morning["status"] == "SKIPPED", morning
+    assert first["artefacts"]["storyboard_id"] in morning["artefacts"]["unfinished_storyboards"]
     assert storyboard_count(engine) == 1 and len(written_) == 1 and len(reviewed) == 1
     assert films_due(engine, tomorrow) == [first["artefacts"]["storyboard_id"]]
 

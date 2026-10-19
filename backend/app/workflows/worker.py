@@ -489,7 +489,25 @@ def build_task_handlers(
         ):
             return {"reported": []}
         last_sheet_scan = now
-        return scan_sheet_issues(engine, read_live=True, settings=settings, **repair_wiring())
+        if getattr(settings, "finish_existing_films_first", True):
+            from uuid import uuid4  # noqa: PLC0415
+
+            from app.workflows.passes import WatchdogContext  # noqa: PLC0415
+            from app.workflows.passes.owner_choice_continuation import (  # noqa: PLC0415
+                queue_missed_continuations,
+            )
+            from app.workflows.passes.serial_unfilmed import (  # noqa: PLC0415
+                finish_approved_episodes,
+            )
+
+            context = WatchdogContext(engine, settings, str(uuid4()))
+            # Recover the old films before a newer queued film wins the first claim.
+            # These are the normal idempotent recovery passes; they purchase nothing.
+            queue_missed_continuations(context)
+            finish_approved_episodes(context)
+        return scan_sheet_issues(
+            engine, read_live=True, include_redos=False, settings=settings, **repair_wiring()
+        )
 
     def _environment() -> str:
         from app.models import OwnerPolicy  # noqa: PLC0415

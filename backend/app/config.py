@@ -55,6 +55,7 @@ class Settings(BaseSettings):
     host: str = "127.0.0.1"
     port: int = Field(default=8000, ge=1024, le=65535)
     sheet_blocker_scan_seconds: int = Field(default=300, ge=30, le=86400)
+    sheet_probe_workers: int = Field(default=4, ge=1, le=8)
     allowed_hosts: list[str] = ["localhost", "127.0.0.1"]
     #: LOCAL_AUTO_LOGIN (2026-10-08). The Owner: «Te rog sa elimini pagina de logare, nu trebuie
     #: momentan». On, the page opened on this machine at the studio's own loopback address is
@@ -494,6 +495,7 @@ class Settings(BaseSettings):
     # scheduled jobs and executes the tasks they enqueue. Off in tests, where a loop that starts
     # the day on its own would make every other test's timing a coincidence.
     worker_enabled: bool = True
+    finish_existing_films_first: bool = True
     worker_interval_seconds: int = Field(default=30, ge=5, le=3600)
     #: Director backlog checks, also while waiting for GPU, without another paid task.
     director_check_interval_seconds: int = Field(default=300, ge=30, le=3600)

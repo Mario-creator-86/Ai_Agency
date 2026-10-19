@@ -5429,3 +5429,29 @@ KAEL final-field fix live acceptance: real scene15/23 corrected and Sarah-accept
 
 ## 2026-10-19 — Bounded prompt-audit walks continue durably
 A successful rewrite at the walk limit now queues a fresh audit/production continuation instead of leaving an Owner-wait message. Unchanged sheets stop without an endless requeue; STOP and TEST/DEMO isolation remain.91 targeted tests pass. Activation pending current GPU generation.
+
+
+## 2026-10-19 — Operational recovery of stalled Runpod motion worker
+
+Owner-requested workers.max1→0→1 recycle cleared a startup stall exceeding one hour. All9 queued production batches preserved and configuration read-back unchanged; real batch IN_PROGRESS at09:25UTC on a replacement worker. Current REST API log route restored diagnosis without credential changes. No application source, budgets, approvals or test generations changed. Evidence in output/runpod-startup-recovery-2026-10-19/.
+
+
+## 2026-10-19 — Offline Ollama model and cost review
+
+Owner requested server stop and comparison without paid inference. Controlled stop-only issued; shutdown waits for the existing call, with no restart authorized. Official pricing/catalog recorded in OLLAMA_OFFLINE_MODEL_AUDIT_2026-10-19.md; read-only history and21 current-schema output replays;51 isolated network-blocked tests pass. Mistral Large4 is a provisional efficiency candidate for Kael, not a quality winner measured on v8. Gemma4/GPT-OSS alternatives are unbenchmarked for this rewrite task. No production code, live data/queue, model assignment or provider limits changed.
+
+## 2026-10-19 — Faster shooting-sheet initial read
+
+Initial UI read defers per-scene redo quotations to the existing read-only endpoint. Supernova profiled build_sheet 94.300 → 10.619 s; identical core hash/steps/balance tested. 992 frontend tests passed; backend 60 passed, one baseline failure reproduced without the patch. Sources and UI bundle ready; running backend not restarted, activation pending. No provider calls.
+
+## 2026-10-19 — Read-only LLM reliability comparison
+
+Added LLM_RELIABILITY_AND_OPENAI_OPTIONS_2026-10-19.md with fresh technical error rates, conditional semantic reviews, context/consumption diagnosis and current official OpenAI/Ollama cost scenarios. No production code/configuration changes, restart, queue operation or model request in this analysis.
+
+## 2026-10-19 — Repair and publication before new production
+
+Corrected missing provider contract in scene rewrites, eliminating false Runway1000 blocks on RunPod routes. Added configurable backlog-first stage admission, preclaim use of existing automatic recovery and age ordering for film continuations. 108 tests passed. Activated after a clean stop; temporary Owner STOP restored to prior state after version check. No manual scene edit, queue insertion, model switch or approval override.
+
+### Backlog ordering follow-up, 2026-10-19
+
+A newer FILM_SHEET_REPAIR at priority 6 previously overtook an older FILM_CONTINUE at priority 4. Both now share recovery priority, then storyboard age, with original task priority deciding within one film. 110 focused tests passed, including observed-red regression and urgent non-film ordering. Second clean activation returned HEALTHY and restored prior autonomy at policy version 49. No manual queue writes, paid probes, cap reset or forced publication.

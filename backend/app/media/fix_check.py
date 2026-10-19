@@ -72,7 +72,7 @@ from typing import Any
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.media.models import SceneTake
@@ -374,7 +374,39 @@ def accepted_by_her(entry: Mapping[str, Any]) -> bool:
     return not treated and _severity(entry.get("severity")) == MINOR_SEVERITY
 
 
-def _rewrite_items(session: Session, storyboard_id: str, scene: int) -> list[dict[str, Any]]:
+FindingEvents = Mapping[str, Sequence[DomainEvent]]
+
+
+def read_finding_events(session: Session, storyboard_id: str) -> FindingEvents:
+    """One film's history for a single read, never retained across requests or mutations."""
+    from app.media.assembler import SCENE_PROMPTS_REWRITTEN_EVENT  # noqa: PLC0415
+    from app.media.scene_rewrite import BRIEF_EVENT  # noqa: PLC0415
+
+    kinds = (SCENE_PROMPTS_REWRITTEN_EVENT, BRIEF_EVENT, DIRECTOR_QC_EVENT, FILM_READ_EVENT)
+    history: dict[str, list[DomainEvent]] = {kind: [] for kind in kinds}
+    for event in session.scalars(
+        select(DomainEvent)
+        .where(
+            DomainEvent.event_type.in_(kinds),
+            or_(
+                DomainEvent.aggregate_id == storyboard_id,
+                DomainEvent.payload["storyboard_id"].as_string() == storyboard_id,
+            ),
+        )
+        .order_by(DomainEvent.sequence.desc())
+    ):
+        history[event.event_type].append(event)
+    history["rewrites"] = sorted(
+        history[SCENE_PROMPTS_REWRITTEN_EVENT] + history[BRIEF_EVENT],
+        key=lambda event: event.sequence,
+        reverse=True,
+    )
+    return history
+
+
+def _rewrite_items(
+    session: Session, storyboard_id: str, scene: int, events: FindingEvents | None = None
+) -> list[dict[str, Any]]:
     """Her review's findings on the newest rewrites by her brief: the newest that changed the
     picture for the still layer, the newest of any layer for the motion layer; the brief's
     film words only where the review kept no findings."""
@@ -384,14 +416,19 @@ def _rewrite_items(session: Session, storyboard_id: str, scene: int) -> list[dic
     picture: DomainEvent | None = None
     newest: DomainEvent | None = None
     briefs: list[DomainEvent] = []  # newest first
-    for event in session.scalars(
-        select(DomainEvent)
-        .where(
-            DomainEvent.aggregate_id == storyboard_id,
-            DomainEvent.event_type.in_((SCENE_PROMPTS_REWRITTEN_EVENT, BRIEF_EVENT)),
+    history = (
+        events["rewrites"]
+        if events is not None
+        else session.scalars(
+            select(DomainEvent)
+            .where(
+                DomainEvent.aggregate_id == storyboard_id,
+                DomainEvent.event_type.in_((SCENE_PROMPTS_REWRITTEN_EVENT, BRIEF_EVENT)),
+            )
+            .order_by(DomainEvent.sequence.desc())
         )
-        .order_by(DomainEvent.sequence.desc())
-    ):
+    )
+    for event in history:
         payload = event.payload if isinstance(event.payload, dict) else {}
         if _scene_of(payload) != int(scene):
             continue
@@ -447,7 +484,7 @@ def _rewrite_items(session: Session, storyboard_id: str, scene: int) -> list[dic
         # A film reason names no layer: the picture's rewrite checks it on the still and on
         # the clip after it, the movement's on the clip.
         on = BOTH_LAYERS if layer == STILL_LAYER else MOTION_LAYER
-        for seen in _film_seen(session, storyboard_id, brief):
+        for seen in _film_seen(session, storyboard_id, brief, events):
             items.append(_item(seen, "", on, FROM_FILM, at=rewrite.timestamp))
     return items
 
@@ -476,43 +513,64 @@ def _film_reasons(brief: DomainEvent | None) -> list[str]:
     ]
 
 
-def _film_read(session: Session, storyboard_id: str, brief_event_id: str) -> list[str] | None:
+def _film_read(
+    session: Session, storyboard_id: str, brief_event_id: str, events: FindingEvents | None = None
+) -> list[str] | None:
     """Her reading of one brief's film words (`read_film_reasons`), or None when she has not
     read it."""
-    for event in session.scalars(
-        select(DomainEvent)
-        .where(DomainEvent.event_type == FILM_READ_EVENT, DomainEvent.aggregate_id == storyboard_id)
-        .order_by(DomainEvent.sequence.desc())
-    ):
+    history = (
+        events[FILM_READ_EVENT]
+        if events is not None
+        else session.scalars(
+            select(DomainEvent)
+            .where(
+                DomainEvent.event_type == FILM_READ_EVENT, DomainEvent.aggregate_id == storyboard_id
+            )
+            .order_by(DomainEvent.sequence.desc())
+        )
+    )
+    for event in history:
         payload = event.payload if isinstance(event.payload, dict) else {}
         if payload.get("brief_event_id") == brief_event_id:
             return [_said(text) for text in payload.get("seen") or [] if _said(text)]
     return None
 
 
-def _film_seen(session: Session, storyboard_id: str, brief: DomainEvent | None) -> list[str]:
+def _film_seen(
+    session: Session,
+    storyboard_id: str,
+    brief: DomainEvent | None,
+    events: FindingEvents | None = None,
+) -> list[str]:
     """What quality control saw, from a pre-contract brief: her reading when she made one (the
     review of 5fc7468, finding 11 — a semantic question, hers to answer, free), else the
     sentences `observed` keeps."""
     reasons = _film_reasons(brief)
     if not reasons or brief is None:
         return []
-    read = _film_read(session, storyboard_id, str(brief.event_id))
+    read = _film_read(session, storyboard_id, str(brief.event_id), events)
     if read is not None:
         return read
     return [seen for seen in (observed(reason) for reason in reasons) if seen]
 
 
-def _director_qc_items(session: Session, storyboard_id: str, scene: int) -> list[dict[str, Any]]:
+def _director_qc_items(
+    session: Session, storyboard_id: str, scene: int, events: FindingEvents | None = None
+) -> list[dict[str, Any]]:
     """The newest Director QC decision that judged this scene: its REAL verdicts on it (quality
     control's text, her cause), on their own layer when the verdict names one, else on both."""
     # Her decisions are recorded on the QC report (their aggregate), the film named in the
     # payload: read newest first, as `director_qc.decisions_of_film` reads them.
-    for event in session.scalars(
-        select(DomainEvent)
-        .where(DomainEvent.event_type == DIRECTOR_QC_EVENT)
-        .order_by(DomainEvent.sequence.desc())
-    ):
+    history = (
+        events[DIRECTOR_QC_EVENT]
+        if events is not None
+        else session.scalars(
+            select(DomainEvent)
+            .where(DomainEvent.event_type == DIRECTOR_QC_EVENT)
+            .order_by(DomainEvent.sequence.desc())
+        )
+    )
+    for event in history:
         payload = event.payload if isinstance(event.payload, dict) else {}
         if str(payload.get("storyboard_id") or "") != storyboard_id:
             continue
@@ -560,7 +618,9 @@ def _ranked(items: list[dict[str, Any]], layer: str) -> list[dict[str, Any]]:
     return [item for _position, item in sorted(enumerate(items), key=key)]
 
 
-def open_items(session: Session, storyboard_id: str, scene_index: int) -> list[dict[str, Any]]:
+def open_items(
+    session: Session, storyboard_id: str, scene_index: int, *, events: FindingEvents | None = None
+) -> list[dict[str, Any]]:
     """Every open item of the scene, both layers, without paraphrases said twice: each
     {"finding", "expected", "layer", "source", "source_id", "cause", "severity", "treated",
     "at"} (``layer``: still, motion or both; ``expected`` the sentence her review said treats
@@ -568,8 +628,8 @@ def open_items(session: Session, storyboard_id: str, scene_index: int) -> list[d
     or withdraws; ``severity`` minor or serious — a minor one that persists is a warning,
     `still_gate.fix_answers`). A finding her review left untreated as minor is no item
     (`accepted_by_her`)."""
-    found = _rewrite_items(session, storyboard_id, scene_index) + _director_qc_items(
-        session, storyboard_id, scene_index
+    found = _rewrite_items(session, storyboard_id, scene_index, events) + _director_qc_items(
+        session, storyboard_id, scene_index, events
     )
     items: list[dict[str, Any]] = []
     for item in found:
@@ -599,7 +659,12 @@ def open_items(session: Session, storyboard_id: str, scene_index: int) -> list[d
 
 
 def open_findings(
-    session: Session, storyboard_id: str, scene_index: int, layer: str = STILL_LAYER
+    session: Session,
+    storyboard_id: str,
+    scene_index: int,
+    layer: str = STILL_LAYER,
+    *,
+    events: FindingEvents | None = None,
 ) -> list[dict[str, Any]]:
     """What the scene's next picture (``layer`` still) or clip (``layer`` motion) must show
     corrected: every `open_items` entry of that layer, ranked (`_ranked`). Empty when
@@ -607,7 +672,7 @@ def open_findings(
     it already answered."""
     items = [
         {key: value for key, value in item.items() if key != "at"}
-        for item in open_items(session, storyboard_id, scene_index)
+        for item in open_items(session, storyboard_id, scene_index, events=events)
         if _on(item, layer)
     ]
     return _ranked(items, layer)

@@ -165,7 +165,7 @@ from app.media.cost_plan import (
 )
 from app.media.disk import LOW_DISK, disk_refusal
 from app.media.faces import FaceCounter
-from app.media.fix_check import STILL_LAYER, open_findings
+from app.media.fix_check import STILL_LAYER, open_findings, read_finding_events
 from app.media.markings import planned_markings
 from app.media.mode_guard import PurchaseGuard, unasked_refusal
 from app.media.models import SceneTake, Storyboard, StoryboardScene
@@ -719,6 +719,7 @@ def _read_scenes(
         if not rows:
             raise ValueError(f"Storyboard {storyboard_id} has no scenes")
         scenes: list[_Scene] = []
+        finding_events = read_finding_events(session, storyboard_id) if not choose else None
         for row in rows:
             package = dict(row.prompt_json or {})
             kind = scene_kind_of({"scene_kind": row.scene_kind})
@@ -766,7 +767,13 @@ def _read_scenes(
                 # The picture's open items only: a finding treated in the motion's words is
                 # the clip's to check (`assembler._clip_plan`), never answered by a still.
                 scene.must_fix = tuple(
-                    open_findings(session, storyboard_id, scene.index, layer=STILL_LAYER)
+                    open_findings(
+                        session,
+                        storyboard_id,
+                        scene.index,
+                        layer=STILL_LAYER,
+                        events=finding_events,
+                    )
                 )
             if kind == LIVE_KIND and missing is None:
                 found = usable_take(

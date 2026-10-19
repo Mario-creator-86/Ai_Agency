@@ -1340,6 +1340,18 @@ def scene_context(engine: Engine, storyboard_id: str, scene_index: int) -> dict[
         )
         last_code = last_failure_code(session, storyboard_id, scene_index)
         briefs = earlier_briefs(session, storyboard_id, scene_index)
+        from app.media.production_policy import resolve_storyboard_plan  # noqa: PLC0415
+
+        route = resolve_storyboard_plan(session, board)
+        image_route = (route.get("purposes") or {}).get("image") or {}
+        video_route = next(
+            (
+                s.get("video") or {}
+                for s in route.get("scenes") or []
+                if s["scene_index"] == scene_index
+            ),
+            {},
+        )
         context = {
             "storyboard_id": storyboard_id,
             "scene_index": scene_index,
@@ -1351,6 +1363,10 @@ def scene_context(engine: Engine, storyboard_id: str, scene_index: int) -> dict[
             "scene": scene_facts,
             "allowed": _allowed_text(facts),
             "package": package,
+            "contract": {
+                "still_model_id": image_route.get("model_id"),
+                "model_id": video_route.get("model_id"),
+            },
             "visual_prompt": str(target.visual_prompt or ""),
             "shot_type": target.shot_type,
             "previous_moves": moves,
@@ -2565,7 +2581,7 @@ def _lint_blocks(
                         "image_to_video": lint.DEFAULT_PROMPT_MAX_UTF16,
                     }
                 }
-                if context.get("serial") and context.get("look")
+                if context.get("serial") and context.get("look") and not context.get("contract")
                 else context.get("contract"),
             ),
             bible=context["bible"],

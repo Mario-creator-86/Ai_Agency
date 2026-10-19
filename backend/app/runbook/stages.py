@@ -9419,6 +9419,20 @@ def build_stage_runners(
 
     def keep(name: str, runner: Callable[[], dict[str, Any]]) -> Callable[[], dict[str, Any]]:
         def run() -> dict[str, Any]:
+            if name in {
+                "idea_generation",
+                "research_and_verification",
+                "selection",
+                "script_and_storyboard",
+                "serial_queue",
+                "serial_next",
+            }:
+                from app.media.backlog import new_production_wait  # noqa: PLC0415
+
+                waiting = new_production_wait(engine, settings)
+                if waiting is not None:
+                    outcomes[name] = waiting
+                    return waiting
             # What the stage is, in the risk terms the Owner's mode understands (see
             # STAGE_ACTIONS). A stage above what the mode allows could not run, which is
             # SKIPPED and not BLOCKED: BLOCKED ends the day, and a mode is not an incident —

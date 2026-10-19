@@ -2290,3 +2290,43 @@ No provider was called, no run was queued, no credit was spent, and
 - [x] Reproduce last-iteration valid rewrite stranded in generic Owner WAITING.
 - [x] Durable Director-owned continuation, no-progress/STOP guards,91 targeted tests.
 - [ ] Activate after current paid GPU work; verify Supernova queued/claimed and fresh server health.
+
+
+## 2026-10-19 — Runpod motion startup recovery
+
+- [x] Diagnose prolonged INITIALIZING from actual health/workers/logs and mirror metadata.
+- [x] Recycle only the stuck motion worker, verify original endpoint configuration and all9 queued production batches survive.
+- [x] Verify a real existing production batch enters IN_PROGRESS on a replacement worker;8 remain queued.
+- [ ] Paired local deployment35e660b still awaits the existing GPU round; full clip/QC/publication acceptance remains separate.
+
+
+## 2026-10-19 — Ollama offline model/cost audit and Owner stop
+
+- [x] Send controlled stop-only; do not restart without a new Owner request.
+- [x] Read official public Cloud catalog/prices and relevant model capability pages.
+- [x] Analyze historical production records with version/semantic-acceptance caveats.
+- [x] Replay21 actual v8 outputs and pass51 network-blocked local contract/cost/safety tests.
+- [x] Publish provisional task-specific recommendation; no model assignments or token/budget/render caps changed.
+- [ ] Confirm shutdown completion after the existing14:55local call returns or reaches its20-minute deadline.
+
+## 2026-10-19 — shooting sheet loading
+
+- [x] Profile Supernova read-only: 81 eager redo quotes dominate.
+- [x] Defer individual redo prices/hash until their read-only option is opened.
+- [x] Test unchanged sheet hash/steps/balance, quote retrieval and frontend; build/install assets.
+- [ ] Activate backend at the next Owner-authorized restart and measure actual browser loading. No automatic restart authorized by this task.
+
+## 2026-10-19 — LLM reliability and OpenAI option
+
+- [x] Separate empty output/timeouts, model-access HTTP410, schema and Sarah semantic verdicts using historical data.
+- [x] Verify current official Luna/Sol prices and document cost scenarios and integration gap, without inference.
+- [ ] Future authorized migration only: strict schema and reasoning/usage handling, focused prompt context, bounded spending, then a separately authorized small comparison. No paid test or model reassignment performed.
+
+## 2026-10-19 — Existing films before new production
+
+- [x] Reproduce false 1000 allowance on Supernova6/8 and use the selected route contract (RunPod20000).
+- [x] Hold new film/script stages; keep repair/QA/publish admitted.
+- [x] Recover existing continuations automatically before claim, prioritize older films across continuation and sheet repair.
+- [x] 110 tests, lint/format, scoped typing; clean activation and restoration of prior autonomy.
+- [x] Confirm normal worker claims Supernova before the newer episode (14:51:07 UTC).
+- [ ] Confirm final Sarah/media/assembly/QC outcomes and remote publication IDs; no scheduled monitoring.

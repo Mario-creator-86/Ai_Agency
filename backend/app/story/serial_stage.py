@@ -631,6 +631,11 @@ def run_serial_stage(
     canon told again without it, and a draft left beside a day's approved episode is closed
     (`duplicates.repair_duplicate_days`, 2026-10-17); the reason starts with what was done.
     """
+    from app.media.backlog import new_production_wait  # noqa: PLC0415
+
+    backlog_wait = new_production_wait(engine, settings)
+    if backlog_wait is not None:
+        return backlog_wait
     repaired = _repair_duplicates(engine, str(uuid4()))
     outcome = _run_serial_stage(engine, registry, settings, vault)
     if repaired is None:
@@ -841,6 +846,11 @@ def run_serial_next_stage(
     a script written beside a waiting episode would claim its number and continue a story it
     never read).
     """
+    from app.media.backlog import new_production_wait  # noqa: PLC0415
+
+    backlog_wait = new_production_wait(engine, settings)
+    if backlog_wait is not None:
+        return backlog_wait
     counts = _new_counts()
     language = getattr(settings, "content_language", "en")
     rounds = getattr(settings, "editorial_rounds", None)

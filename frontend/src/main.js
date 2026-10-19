@@ -3375,7 +3375,7 @@ function paintSheet() {
 async function loadSheet() {
   if (!sheetDrawer.id) return;
   try {
-    sheetDrawer.sheet = await api(sheetPath(sheetDrawer.id), { timeoutMs: 60000 });
+    sheetDrawer.sheet = await api(`${sheetPath(sheetDrawer.id)}?include_redos=false`, { timeoutMs: 60000 });
   } catch (error) {
     sheetDrawer.sheet = null;
     sheetNotice(`Foaia de filmare nu a putut fi citită: ${error.message}`, true);
@@ -3569,6 +3569,34 @@ async function onSheetClick(event) {
   if (action === 'step') { sheetDrawer.confirm = node.dataset.step || null; sheetNotice(''); paintSheet(); return; }
   // «Închide filmul», the first press: it only opens «Confirmă închiderea filmului».
   if (action === 'close-film') { sheetDrawer.confirm = CLOSE_FILM; sheetNotice(''); paintSheet(); return; }
+  if (action === 'load-redo') {
+    const id = sheetDrawer.id;
+    const sheet = sheetDrawer.sheet;
+    const kind = node.dataset.kind || '';
+    const scene = node.dataset.scene || '';
+    sheetBusy.set(id, 'Se citesc prețul și condițiile refacerii…');
+    sheetNotice('Se citesc prețul și condițiile refacerii…');
+    paintSheet();
+    try {
+      const query = new URLSearchParams({ kind });
+      if (scene) query.set('scene', scene);
+      const plan = await api(`/media/storyboards/${id}/redo-plan?${query}`, { timeoutMs: 60000 });
+      if (sheetDrawer.id !== id || sheetDrawer.sheet !== sheet) return;
+      if (kind === 'audio') sheet.footer.audio_redo = plan;
+      else {
+        const found = sheet.scenes.find((/** @type {any} */ s) => String(s.scene_index) === scene);
+        if (found) found.redo[kind] = plan;
+      }
+      sheetDrawer.confirm = redoKey(kind, scene || null);
+      sheetNotice('');
+    } catch (error) {
+      if (sheetDrawer.id === id && sheetDrawer.sheet === sheet) sheetNotice(error.message, true);
+    } finally {
+      sheetBusy.delete(id);
+      paintSheet();
+    }
+    return;
+  }
   if (action === 'redo') { sheetDrawer.confirm = redoKey(node.dataset.kind || '', node.dataset.scene || null); sheetNotice(''); paintSheet(); return; }
   if (action === 'cancel-step') { sheetDrawer.confirm = null; paintSheet(); return; }
   if (action === 'to-steps') {

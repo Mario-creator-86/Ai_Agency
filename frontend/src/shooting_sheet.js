@@ -329,24 +329,26 @@ export function clipQcWords(record) {
 /**
  * @typedef {{kind: string, scene: number|null, label: string, price_ro: string, cap_ro: string,
  *   free: boolean, plan_hash: string|null, disabled: boolean, reason_ro: string, cap_usd: number,
- *   replaces: string[], invalidates: string[], round_credits: number}} RedoButton
+ *   replaces: string[], invalidates: string[], round_credits: number, deferred: boolean}} RedoButton
  */
 
 /** @param {string} kind @param {any} plan @param {number|null} scene @returns {RedoButton} */
 function redoButton(kind, plan, scene) {
   const p = plan && typeof plan === 'object' ? plan : { available: false, reason_ro: 'Planul refacerii nu a fost citit.' };
   const free = p.free === true;
+  const deferred = p.deferred === true;
   const hash = typeof p.plan_hash === 'string' && /^[0-9a-f]{64}$/.test(p.plan_hash) ? p.plan_hash : null;
   const disabled = p.available === false || (!free && (!hash || p.buyable === false));
   return {
     kind,
     scene,
     label: REDO_LABELS[/** @type {keyof typeof REDO_LABELS} */ (kind)],
-    price_ro: free ? '0 credite' : `${creditWords(p.credits ?? 0)} (${usdText(micros(p.cost_usd ?? 0))})`,
-    cap_ro: free ? '' : `plafon ${creditWords(p.cap_credits ?? 0)} (${usdText(micros(p.cap_usd ?? 0))})`,
+    price_ro: deferred ? 'Preț și condiții la cerere' : free ? '0 credite' : `${creditWords(p.credits ?? 0)} (${usdText(micros(p.cost_usd ?? 0))})`,
+    cap_ro: deferred || free ? '' : `plafon ${creditWords(p.cap_credits ?? 0)} (${usdText(micros(p.cap_usd ?? 0))})`,
     free,
     plan_hash: hash,
     disabled,
+    deferred,
     reason_ro: String(p.reason_ro || ''),
     cap_usd: Number(p.cap_usd) || 0,
     round_credits: Number(p.credits) || 0,
@@ -948,7 +950,7 @@ function choiceNoteHtml(e, scene, choice) {
 export function redoConfirmHtml(sheet, key, o) {
   const e = o.escape;
   const b = redoFor(sheet, key);
-  if (!b || b.disabled || redoWaitsForLease(sheet, b) || closedReason(sheet)) return '';
+  if (!b || b.deferred || b.disabled || redoWaitsForLease(sheet, b) || closedReason(sheet)) return '';
   const paid = PAID_REDOS.includes(b.kind);
   const lines = [];
   if (b.replaces.length) {
@@ -986,6 +988,11 @@ function redoBlockHtml(sheet, buttons, title, o) {
   // every «Refă» is disabled and the reason is said once for the block.
   const closed = closedReason(sheet);
   const rows = buttons.map((b) => {
+    if (b.deferred) {
+      return '<div class="sheet-redo-box">'
+        + `<button type="button" class="quiet sheet-redo-btn" data-sheet-action="load-redo" data-kind="${e(b.kind)}" data-scene="${e(b.scene ?? '')}"${closed ? ' disabled' : ''}>Vezi opțiunea: ${e(b.label)}</button>`
+        + `<span class="sheet-redo-price">${e(b.price_ro)} · consultare gratuită</span></div>`;
+    }
     if (closed) {
       return '<div class="sheet-redo-box">'
         + `<button type="button" class="quiet sheet-redo-btn" data-sheet-action="redo" data-kind="${e(b.kind)}" data-scene="${e(b.scene ?? '')}" title="${e(closed)}" disabled>${e(b.label)}</button>`

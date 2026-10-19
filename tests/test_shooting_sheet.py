@@ -1110,3 +1110,47 @@ def test_a_step_that_failed_after_paying_answers_409_with_his_words_not_500(
     assert detail["status"] == "SPENT_AND_STOPPED"
     assert "nu se reia automat" in detail["message"]
     assert detail["booked"] is True
+
+
+def test_fast_sheet_defers_redo_calculations_but_keeps_prices_hash_and_live_balance(
+    engine, tmp_path, monkeypatch
+):
+    from app.media import shooting_sheet
+
+    board = nepal_film(engine, tmp_path)
+    full = build_sheet(engine, board, capabilities=[SEEDANCE], account=Account(900))
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Opening the fast sheet must not calculate every redo")
+
+    monkeypatch.setattr(shooting_sheet, "_redo_plans", forbidden)
+    fast = build_sheet(
+        engine, board, capabilities=[SEEDANCE], account=Account(900), include_redos=False
+    )
+    assert fast["sheet_hash"] == full["sheet_hash"]
+    assert fast["steps"] == full["steps"]
+    assert fast["footer"]["balance"] == full["footer"]["balance"]
+    assert fast["scenes"][0]["redo"] == {"still": {"deferred": True}, "motion": {"deferred": True}}
+    assert fast["scenes"][4]["redo"] == {"card": {"deferred": True}}
+    assert fast["footer"]["audio_redo"] == {"deferred": True}
+
+
+def test_fast_sheet_route_accepts_deferred_redos(client, engine, headers, tmp_path, monkeypatch):
+    from app.media import shooting_sheet
+
+    board = nepal_film(engine, tmp_path)
+    wire(client, tmp_path, runway_account=Account(900))
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Fast route must not calculate redos")
+
+    monkeypatch.setattr(shooting_sheet, "_redo_plans", forbidden)
+    response = client.get(sheet_url(board) + "?include_redos=false", headers=headers)
+    assert response.status_code == 200, response.text
+    assert response.json()["scenes"][0]["redo"]["motion"] == {"deferred": True}
+    quote = client.get(
+        f"/api/v1/media/storyboards/{board}/redo-plan?kind=still&scene=1", headers=headers
+    )
+    assert quote.status_code == 200, quote.text
+    assert len(quote.json()["plan_hash"]) == 64
+    assert quote.json()["credits"] > 0

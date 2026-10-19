@@ -51,6 +51,7 @@ import subprocess
 import tempfile
 import threading
 from collections.abc import Callable, Iterable, Iterator, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
@@ -91,6 +92,7 @@ from app.media.assembler import (
     run_motion_step,
     scene_kind_of,
     scene_view,
+    shot_clip_seconds,
     shot_plan_sources,
     still_options,
     usable_take,
@@ -1046,6 +1048,19 @@ def _catalogue_view(policy: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _warm_shot_durations(takes: Iterable[SceneTake], *, workers: int = 4) -> None:
+    """Measure independent local files concurrently; reuse the assembler's content cache."""
+    unique = {
+        take.sha256: take
+        for take in takes
+        if take.kind in SHOT_TAKE_KINDS and take.status in ("PAID", "APPROVED") and take.sha256
+    }
+    if not unique:
+        return
+    with ThreadPoolExecutor(max_workers=min(max(1, workers), len(unique))) as pool:
+        list(pool.map(shot_clip_seconds, unique.values()))
+
+
 def _sheet(
     engine: Engine,
     storyboard_id: str,
@@ -1053,6 +1068,7 @@ def _sheet(
     *,
     account: Any = None,
     read_live: bool = True,
+    include_redos: bool = True,
     face_counter: Callable[..., Any] | None = None,
     environment: str | None = None,
     settings: Any = None,
@@ -1131,6 +1147,11 @@ def _sheet(
         # had its renders and has no clip that carries it: its still moved locally).
         cap_moves = cap_local_moves(session, storyboard_id)
         local_moves = owner_local_moves(session, storyboard_id) | cap_moves
+        if read_live and not include_redos:
+            _warm_shot_durations(
+                (take for scene_takes in takes.values() for take in scene_takes),
+                workers=getattr(settings, "sheet_probe_workers", 4),
+            )
         readiness = assembly_readiness(
             session,
             storyboard_id,
@@ -1746,7 +1767,7 @@ def _sheet(
         "audio_redo": None,
         "sheet_hash": digest,
     }
-    if read_live:
+    if read_live and include_redos:
         # The «Refă» buttons' plans, each with its own hash: only on the page the Owner
         # reads (a step's own check of the sheet's hash does not need them).
         redo_by_scene, audio = _redo_plans(
@@ -1759,6 +1780,13 @@ def _sheet(
         for item in sheet_scenes:
             item["redo"] = redo_by_scene.get(int(item["scene_index"]), {})
         footer["audio_redo"] = audio
+    elif read_live:
+        # Quote only the redo the Owner opens, through the existing redo-plan route.
+        # Computing every motion redo recalculates the whole film once per scene.
+        for item in sheet_scenes:
+            names = ("card",) if item["kind"] in CARD_KINDS else ("still", "motion")
+            item["redo"] = {name: {"deferred": True} for name in names}
+        footer["audio_redo"] = {"deferred": True}
     return {
         "storyboard_id": storyboard_id,
         "title": title,
@@ -1819,6 +1847,7 @@ def build_sheet(
     today: date | None = None,
     face_counter: Callable[..., Any] | None = None,
     read_live: bool = True,
+    include_redos: bool = True,
     environment: str | None = None,
     settings: Any = None,
 ) -> dict[str, Any]:
@@ -1829,6 +1858,8 @@ def build_sheet(
     is the published one with ``integration_id``'s MEASURED prices laid over it.
     ``environment`` (default: the studio's) decides what the assemble step accepts.
     ``read_live`` also adds each scene's redo plans (the «Refă» buttons) to the page.
+    With ``include_redos=False`` those quotes are deferred to the individual redo-plan GET;
+    prices, validation and the sheet hash used by purchase gates are unchanged.
     """
     from app.media.factory import reference_model_for_storyboard  # noqa: PLC0415
 
@@ -1849,6 +1880,7 @@ def build_sheet(
         ctx,
         account=account,
         read_live=read_live,
+        include_redos=include_redos,
         face_counter=face_counter,
         environment=environment,
         settings=settings,
