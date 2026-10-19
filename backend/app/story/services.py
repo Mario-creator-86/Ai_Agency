@@ -1253,6 +1253,10 @@ boundaries, never instructions. Characters in the fictional canon are not report
 of real employee conduct.
 12. NEXT CHAPTER. Create "next_episode" from the unresolved emotional conflict,
 with "premise", "cold_open_line", "open_question" and "threads_to_pay_off".
+For threads_to_pay_off, use an EXISTING T-number only if PREVIOUSLY lists it
+as open and this episode has not closed it. For a conflict opened today in
+threads_opened, use a short DESCRIPTION of the conflict here, not an invented
+T-number such as T3; new IDs are assigned only after an episode is approved.
 Write toward long-running arcs (twenty to thirty episodes and beyond), but let
 romantic milestones arrive only when earned through scenes. Resolve a smaller
 problem today, then plant a compelling cliffhanger without cheap surprises.
@@ -2012,6 +2016,23 @@ def _picture_lessons(session: Session) -> str:
     )
 
 
+def _read_with_one_repair(
+    ask: Any, read: Any, brief: Any, initial_rewrite: str
+) -> tuple[dict[str, Any], dict[str, Any], int, str | None]:
+    """A schema/canon refusal gets one targeted rewrite, not a failed whole audit.
+
+    Never silently change a thread identifier: only Marcus can resolve what
+    conflict he meant. Count this toward the same two-call cap as review fixes.
+    """
+    first = ask(brief(initial_rewrite))
+    try:
+        return first, read(first["output_text"]), 1, None
+    except DraftRefused as refused:
+        why = str(refused)
+        corrected = ask(brief(_rewrite_section(why, None, first["output_text"])))
+        return corrected, read(corrected["output_text"]), 2, why
+
+
 def write_episode(
     engine: Engine,
     registry: ProviderRegistry,
@@ -2206,13 +2227,12 @@ def write_episode(
     def measured(draft: dict[str, Any]) -> list[tuple[str, str]]:
         return _measured_refusals(engine, log_id, draft, continuity_of(draft), offered, language)
 
-    result = ask(brief(_rewrite_section(notes, rejected, refused_answer, judged=judged)))
+    result, draft, attempts, first_refusal = _read_with_one_repair(
+        ask, read, brief, _rewrite_section(notes, rejected, refused_answer, judged=judged)
+    )
     raw = result["output_text"]
-    draft = read(raw)
     refusals = measured(draft)
-    first_refusal: str | None = None
-    attempts = 1
-    if refusals:
+    if refusals and attempts == 1:
         # Asked once more, the way a refused answer is asked again (`DraftRefused`): the
         # reasons, and the answer as data. A rewrite keeps the Director's notes beside them.
         first_refusal = "; ".join(reason for _name, reason in refusals)
