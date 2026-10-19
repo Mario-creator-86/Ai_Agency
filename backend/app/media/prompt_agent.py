@@ -448,7 +448,7 @@ _SHOTS_INSTRUCTIONS = (
     "a shot the story holds its breath on, and rack focus only beside a clear action of the "
      "subject. Vary shot size and movement only when a dramatic change makes them useful. "
     "A static or repeated framing is right when a gesture or reaction needs time; never "
-    "move just to fulfill a novelty quota. Optionally give second_framing as a closer crop "
+    "move just to fulfill a novelty quota. Optionally give second_framing as a closer crop the "
     "editor can cut to halfway through a long scene, at no extra cost — what it shows and "
     "where its centre is, as fractions of the frame's width and height (0 left or top, 1 "
     "right or bottom). In motion, say what the subject does across the clip's seconds, as "
