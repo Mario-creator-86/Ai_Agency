@@ -111,6 +111,7 @@ from app.story.lines import (
 )
 from app.story.locations import location_id, studio_locations
 from app.story.models import ContinuityState, DailyStudioLog, StoryEpisode
+from app.story.quality_contract import QualityAnswer, director_instructions, quality_issues
 from app.story.projection import leaks
 from app.story.services import (
     EPISODE_PARTS,
@@ -192,6 +193,7 @@ class EpisodeVerdict(BaseModel):
     story: str = Field(default="", max_length=400)
     #: The rubric, 1-5 for each part of `RUBRIC`; only the rubric's own keys are kept.
     scores: dict[str, int | float] = Field(default_factory=dict)
+    quality: list[QualityAnswer] = Field(default_factory=list, max_length=8)
     _clip_notes = field_validator("notes", mode="before")(clipped(1200))
     _clip_story = field_validator("story", mode="before")(clipped(400))
     _one_reason = field_validator("reasons", mode="before")(
@@ -1125,14 +1127,18 @@ def _held_to_her_rubric(verdict: EpisodeVerdict, director_name: str) -> EpisodeV
             + (f" (în afara 1-5: {', '.join(outside)})" if outside else "")
         )
     low = [f"{part} {scores[part]}/5" for part in RUBRIC if scores[part] < RUBRIC_FLOOR]
-    if not low:
+    narrative_issues = quality_issues(verdict.quality)
+    if not low and not narrative_issues:
         return verdict
-    because = f"notele Directorului sub {RUBRIC_FLOOR}: {', '.join(low)}"
+    issues = (
+        ([f"notele Directorului sub {RUBRIC_FLOOR}: {', '.join(low)}"] if low else [])
+        + narrative_issues[:4]
+    )
     return verdict.model_copy(
         update={
             "verdict": "FAIL",
-            "reasons": [because, *verdict.reasons],
-            "notes": (verdict.notes or f"Rescrie părțile notate slab ({', '.join(low)})."),
+            "reasons": [*issues, *verdict.reasons][:8],
+            "notes": (verdict.notes or "Rescrie: " + "; ".join(issues))[:1200],
         }
     )
 
@@ -1245,6 +1251,7 @@ def review_episode(
         prompt = (
             audience_language_line(language)
             + _INSTRUCTIONS
+            + director_instructions()
             + wrap_in_inert_boundary(
                 # A line or a scene could hold the boundary's closing tag and end the data
                 # early; it is broken up, as the showrunner's brief does with its events.
@@ -1298,6 +1305,8 @@ def review_episode(
             "notes": verdict.notes,
             "story": verdict.story,
             "scores": dict(verdict.scores),
+            "quality": [item.model_dump() for item in verdict.quality],
+            "quality_missing": not bool(verdict.quality),
             "template_version": TEMPLATE_VERSION,
             "run_id": run_id,
             "model_used": run_id is not None,
@@ -1379,6 +1388,8 @@ def review_episode(
         "notes": verdict.notes,
         "story": verdict.story,
         "scores": dict(verdict.scores),
+        "quality": [item.model_dump() for item in verdict.quality],
+        "quality_missing": not bool(verdict.quality),
         "run_id": run_id,
         "model_used": run_id is not None,
         "approved_by_policy": status == "APPROVED",
@@ -1631,7 +1642,7 @@ def judged_review(
         first=first,
         rewrite=rewrite,
         correlation_id=correlation,
-        rounds=rounds,
+        rounds=2 if rounds is None else min(rounds, 2),
     )
     shipped = outcome.shipped
     shipped_id = shipped.version.id

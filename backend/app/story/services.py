@@ -73,6 +73,7 @@ from app.story.lines import (
 )
 from app.story.locations import location_id, studio_locations
 from app.story.models import ContinuityState, DailyStudioLog, StoryEpisode
+from app.story.quality_contract import QualityAnswer, writer_instructions
 from app.story.projection import (
     is_stage_report,
     left_out,
@@ -393,6 +394,7 @@ class _Episode(BaseModel):
     #: What the writer did with the plan it was handed: kept, dropped, or None (no plan, or
     #: it did not say), with one sentence why.
     plan_kept: bool | None = None
+    self_review: list[QualityAnswer] = Field(default_factory=list, max_length=8)
     plan_note: str = Field(default="", max_length=300)
     _kept = field_validator("plan_kept", mode="before")(_kept_or_unsaid)
     _clip_note = field_validator("plan_note", mode="before")(
@@ -1835,6 +1837,7 @@ def _episode_from_answer(
         "next_episode": _next_episode_plan(draft.next_episode, open_ids, threads_closed, raw),
         "plan_kept": draft.plan_kept,
         "plan_note": draft.plan_note.strip(),
+        "self_review": [answer.model_dump() for answer in draft.self_review],
     }
 
 
@@ -2038,7 +2041,7 @@ def write_episode(
             previously=previously,
             plan=_plan_block(plan, episode_number),
             rewrite=picture_lessons + rewrite,
-        )
+        ) + writer_instructions()
 
     def ask(prompt: str) -> dict[str, Any]:
         result = run_agent_task(
@@ -2097,6 +2100,7 @@ def write_episode(
             ),
             # Who the brief let speak (v7): the writer is held to it before the draft is kept.
             "speakers_offered": offered,
+            "writer_quality": draft.get("self_review", []),
         }
 
     def measured(draft: dict[str, Any]) -> list[tuple[str, str]]:
