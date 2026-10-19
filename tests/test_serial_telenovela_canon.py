@@ -81,7 +81,7 @@ def test_writer_and_reviewers_receive_varied_character_drama_not_work_log():
     assert "event_ids" in _INSTRUCTIONS
     assert "character_updates" in _INSTRUCTIONS
     assert "PREVIOUSLY is the binding fictional canon" in _INSTRUCTIONS
-    assert "production meetings, ledgers and model tests must NEVER" in _INSTRUCTIONS
+    assert "Production meetings, ledgers and model tests must NEVER" in _INSTRUCTIONS
     assert "silently consider" in _INSTRUCTIONS
     assert "BUT or THEREFORE" in _INSTRUCTIONS
     assert "Romance is OPTIONAL" in _INSTRUCTIONS
